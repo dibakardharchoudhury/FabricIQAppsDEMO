@@ -1558,9 +1558,15 @@ def prepare_rayfin_env(
     capacity_id: str,
     client_id: str | None,
     *,
-    enable_energy_map: bool = False,
+    enable_energy_map: bool | None = None,
 ) -> bool:
     values, deployment = current_rayfin_target()
+    if enable_energy_map is None:
+        same_scope = (
+            _public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
+            and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace_id.casefold()
+        )
+        enable_energy_map = same_scope and _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
     public_artifacts = resolve_public_artifact_config(workspace_id, tenant, values)
     same_target = deployment and all(
         (
@@ -2280,6 +2286,28 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
     foundry.provision(sys.modules[__name__], tenant, workspace_id)
 
 
+def verify_foundry_agents(tenant: str, workspace_id: str) -> None:
+    from provision_foundry_agents import verify_existing
+
+    verify_existing(sys.modules[__name__], tenant, workspace_id)
+
+
+def energy_workspace(tenant: str, workspace_id: str):
+    from feature_workspace import EnergyConfig, FeatureWorkspace
+
+    items = _workspace_artifacts(workspace_id, fabric_headers(tenant))
+    matches = [item for item in items if item["type"] == "Eventhouse"
+               and re.fullmatch(rf"RTI_Demo_Eventhouse_({RTI_ARTIFACT_SUFFIX_RE})", item["displayName"])]
+    if len(matches) != 1:
+        raise DeployError("Run Fabric setup first: energy setup requires one unambiguous RTI Eventhouse.")
+    suffix = matches[0]["displayName"].removeprefix("RTI_Demo_Eventhouse_")
+    state_dir = Path(tempfile.gettempdir()) / "fabric-demo-energy" / tenant
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return FeatureWorkspace(EnergyConfig(
+        tenant, workspace_id, state_dir / f"{workspace_id}.json", suffix,
+    ), REPO_ROOT)
+
+
 def deploy(args: argparse.Namespace) -> None:
     _FABRIC_TOKEN_CACHE.clear()
     timings = DeploymentTimings()
@@ -2301,8 +2329,26 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, tenant_id)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
+    stage = getattr(args, "stage", "all")
+    energy_setting = getattr(args, "energy_map", "keep")
+    if stage == "energy":
+        from feature_workspace import FeatureWorkspaceError
+
+        timings.stage(2, "Preparing energy sources and verifying serving readback")
+        print("Energy: setup - preparing map sources independently of app publication.", flush=True)
+        try:
+            energy_workspace(tenant_id, workspace_id).prepare_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
+        values, _ = current_rayfin_target()
+        if (_public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID") == tenant_id
+                and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID") == workspace_id):
+            configure_app_feature_flags(RAYFIN_DIR / ".env", enable_energy_map=True)
+        print("ENERGY_SETUP_SUCCESS (source readback verified; app publication is separate).", flush=True)
+        return
+
     feature_workspace = None
-    enable_energy_map = False
+    enable_energy_map = None if energy_setting == "keep" else energy_setting == "enabled"
     if os.environ.get("FABRIC_FEATURE_CONFIG", "").strip():
         from feature_workspace import FeatureWorkspace, FeatureWorkspaceError, load_feature_config
 
@@ -2310,6 +2356,8 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             feature_config = load_feature_config(tenant_id, workspace_id)
             if feature_config is None:
                 raise DeployError("Feature bootstrap configuration was not loaded.")
+            if energy_setting != "keep" and enable_energy_map != feature_config.enable_energy_map:
+                raise DeployError("Energy-map selection conflicts with FABRIC_FEATURE_CONFIG; use one consistent target configuration.")
             enable_energy_map = feature_config.enable_energy_map
             feature_workspace = FeatureWorkspace(feature_config, REPO_ROOT)
         except (FeatureWorkspaceError, ValueError, OSError) as exc:
@@ -2346,13 +2394,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         _unique_redirect_uris(original_entra_redirects, ["http://localhost:5173"])
     )
 
-    if feature_workspace:
+    if feature_workspace and stage == "all":
         try:
             feature_workspace.prepare()
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
 
-    timings.stage(3, "Preparing target configuration and agents")
+    timings.stage(3, "Preparing target configuration and checking deployment prerequisites")
     reuse_deployment = prepare_rayfin_env(
         tenant_id,
         workspace_id,
@@ -2365,7 +2413,30 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         feature_workspace.configure_app(RAYFIN_DIR / ".env")
     ensure_deploy_dependencies()
     run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
-    provision_foundry_agents(args.tenant, workspace_id)
+    if stage == "all" and energy_setting == "enabled" and not feature_workspace:
+        from feature_workspace import FeatureWorkspaceError
+
+        try:
+            energy_workspace(tenant_id, workspace_id).prepare_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
+    if stage == "app":
+        if not reuse_deployment:
+            raise DeployError("Run the local Foundry setup module first to prepare this target's AppBackend and agents.")
+        verify_foundry_agents(tenant_id, workspace_id)
+    else:
+        provision_foundry_agents(tenant_id, workspace_id)
+        if stage == "foundry":
+            print("FOUNDRY_SETUP_SUCCESS (configuration readback verified; agent execution is separate).", flush=True)
+            return
+    values, _ = current_rayfin_target()
+    if _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true":
+        from feature_workspace import FeatureWorkspaceError
+
+        try:
+            energy_workspace(tenant_id, workspace_id).verify_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(f"Energy prerequisites failed; run the local energy setup module first: {exc}") from exc
 
     timings.stage(4, "Authenticating Rayfin to the target tenant")
     ensure_rayfin_login(tenant_id, workspace_id)
@@ -2461,7 +2532,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             f"Entra validation was skipped. After an administrator creates the SPA, register "
             f"{hosting_url} as its redirect URI and run npm run setup-live-auth."
         )
-    if feature_workspace:
+    if feature_workspace and stage == "all":
         try:
             feature_workspace.finish(lakehouse_counts=verify_lakehouse_connector(tenant_id))
         except FeatureWorkspaceError as exc:
@@ -2484,6 +2555,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tenant", required=True, help="Target Entra tenant GUID or domain.")
     parser.add_argument("--workspace", required=True, help="Target Fabric workspace GUID or name.")
     parser.add_argument("--client-id", help="Existing SPA app client id; auto-resolved/created when omitted.")
+    parser.add_argument("--stage", choices=("all", "energy", "foundry", "app"), default="all",
+                        help="Independent local setup module; app verifies existing Foundry without provisioning it.")
+    parser.add_argument("--energy-map", choices=("keep", "enabled", "disabled"), default="keep",
+                        help="Keep this target's visibility setting, or explicitly enable/disable energy navigation.")
     parser.add_argument(
         "--push-config",
         action="store_true",

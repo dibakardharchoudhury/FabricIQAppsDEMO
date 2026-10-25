@@ -5,6 +5,9 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 **three independent data stores** — plus an in‑browser 3D digital‑twin viewer.
 
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
+> The local launcher separates Fabric/energy source setup, Foundry multi-agent
+> provisioning, and final app publication. The hosted Administration page manages
+> operational data and source connections; it is not a Foundry deployment interface.
 > **Agent behavior and acceptance:** see [AGENT-ACCEPTANCE.md](AGENT-ACCEPTANCE.md) for the
 > complete routing policy, actual tools/runtime, scientific RCA criteria, proposed enterprise
 > specialists, and ten multi-turn test scenarios with verified versus pending outcomes.

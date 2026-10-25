@@ -56,7 +56,9 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 SYNC_TIMEOUT_S = 1800
 DELETE_TIMEOUT_S = 600
 PIPELINE_TIMEOUT_S = 3 * 3600
-DEPLOY_TIMEOUT_S = 90 * 60  # includes creating a Foundry project (~10 min) and building/publishing the Hosted Agent
+DEPLOY_TIMEOUT_S = 30 * 60
+FOUNDRY_TIMEOUT_S = 90 * 60
+ENERGY_TIMEOUT_S = 3 * 3600
 
 # Ordered phase labels + the substrings that mark reaching each phase. Index 0 is
 # the initial state; success jumps to the final phase.
@@ -94,7 +96,6 @@ PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
 
 DEPLOY_PHASES = [
     "Queued", "Checking prerequisites", "Resolving SPA", "Preparing state",
-    "Foundry project", "Foundry agents", "Hosted Agent",
     "Signing in", "Provisioning app", "Syncing backend settings", "Setting up sign-in",
     "Checking endpoint and CORS readiness", "Done",
 ]
@@ -102,20 +103,31 @@ DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("[1/8]",)),
     (2, ("[2/8]",)),
     (3, ("[3/8]",)),
-    (4, ("Foundry: project",)),
-    (5, ("Foundry: agents",)),
-    (6, ("Foundry: Hosted Agent",)),
-    (7, ("[4/8]",)),
-    (8, ("[5/8]",)),
-    (9, ("[6/8]",)),
-    (10, ("[7/8]",)),
-    (11, ("[8/8]",)),
+    (4, ("[4/8]",)),
+    (5, ("[5/8]",)),
+    (6, ("[6/8]",)),
+    (7, ("[7/8]",)),
+    (8, ("[8/8]",)),
+]
+FOUNDRY_PHASES = [
+    "Queued", "Checking prerequisites", "Resolving SPA", "Preparing source/gateway",
+    "Foundry project", "Foundry agents", "Hosted Agent", "Done",
+]
+FOUNDRY_MARKERS = [
+    (1, ("[1/8]",)), (2, ("[2/8]",)), (3, ("[3/8]",)),
+    (4, ("Foundry: project",)), (5, ("Foundry: agents",)), (6, ("Foundry: Hosted Agent",)),
+]
+ENERGY_PHASES = ["Queued", "Checking prerequisites", "Preparing energy sources", "Verifying read models", "Done"]
+ENERGY_MARKERS = [
+    (1, ("[1/8]",)), (2, ("Energy: setup",)), (3, ("Energy map read models are ready",)),
 ]
 
 WORKFLOW_PHASES = [
     "Queued",
     *[f"Sync · {phase}" for phase in SYNC_PHASES[1:-1]],
     *[f"Pipeline · {phase}" for phase in PIPELINE_PHASES[1:-1]],
+    *[f"Energy · {phase}" for phase in ENERGY_PHASES[1:-1]],
+    *[f"Foundry · {phase}" for phase in FOUNDRY_PHASES[1:-1]],
     *[f"Deploy · {phase}" for phase in DEPLOY_PHASES[1:-1]],
     "Done",
 ]
@@ -428,8 +440,8 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
             job.lines.append("[workflow] Sync, pipeline, and app deployment completed successfully.")
 
 
-def _start_workflow(steps: list[dict[str, object]]) -> str | None:
-    job = Job(WORKFLOW_PHASES, exclusive=True)
+def _start_workflow(steps: list[dict[str, object]], *, phases: list[str] | None = None) -> str | None:
+    job = Job(WORKFLOW_PHASES if phases is None else phases, exclusive=True)
     with JOBS_LOCK:
         running = [existing for existing in JOBS.values() if existing.status == "running"]
         if running:
@@ -673,12 +685,34 @@ def api_deploy_app():
     try:
         argv = _deploy_invocation(data)
         env = _deploy_environment(data)
+        if any(key != "HYDRO_ONTOLOGY_GRAPH_BINDING" for key in env):
+            raise ValueError("Use the Foundry multi-agent setup module to change Foundry settings, then deploy the app.")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     job_id = _start(
         argv, env or None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
     )
     return job_response(job_id)
+
+
+@app.post("/api/setup-foundry")
+def api_setup_foundry():
+    return _setup_stage("foundry", FOUNDRY_TIMEOUT_S, FOUNDRY_PHASES, FOUNDRY_MARKERS)
+
+
+@app.post("/api/setup-energy")
+def api_setup_energy():
+    return _setup_stage("energy", ENERGY_TIMEOUT_S, ENERGY_PHASES, ENERGY_MARKERS)
+
+
+def _setup_stage(stage, timeout, phases, markers):
+    data = request.get_json(silent=True) or {}
+    try:
+        argv = _deploy_invocation(data, stage=stage)
+        env = _deploy_environment(data) if stage == "foundry" else {}
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return job_response(_start(argv, env or None, timeout, phases, markers, exclusive=True))
 
 
 FOUNDRY_ENDPOINT_RE = re.compile(r"^https://[a-z0-9-]+\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_.-]+/?$")
@@ -761,7 +795,7 @@ def _deploy_environment(data: dict) -> dict[str, str]:
     return env
 
 
-def _deploy_invocation(data: dict) -> list[str]:
+def _deploy_invocation(data: dict, *, stage: str = "app") -> list[str]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
     client_id = (data.get("clientId") or "").strip()
@@ -776,11 +810,16 @@ def _deploy_invocation(data: dict) -> list[str]:
         client_id,
     ):
         raise ValueError("SPA client id must be a GUID.")
+    energy = data.get("energyMap", "keep")
+    if energy not in ("keep", "enabled", "disabled"):
+        raise ValueError("Energy map must be keep, enabled or disabled.")
 
     argv = [
         str(DEPLOY_SCRIPT),
         "--tenant", tenant,
         "--workspace", workspace,
+        "--stage", stage,
+        "--energy-map", energy,
     ]
     if client_id:
         argv += ["--client-id", client_id]
@@ -795,12 +834,17 @@ def api_full_workflow():
         pipeline_argv, pipeline_env = _pipeline_invocation(data)
         deploy_argv = _deploy_invocation(data)
         deploy_env = _deploy_environment(data)
+        foundry_argv = _deploy_invocation(data, stage="foundry")
+        energy_argv = _deploy_invocation(data, stage="energy")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
     sync_offset = 1
     pipeline_offset = sync_offset + len(SYNC_PHASES) - 2
-    deploy_offset = pipeline_offset + len(PIPELINE_PHASES) - 2
+    energy_offset = pipeline_offset + len(PIPELINE_PHASES) - 2
+    energy_enabled = data.get("energyMap") == "enabled"
+    foundry_offset = energy_offset + (len(ENERGY_PHASES) - 2 if energy_enabled else 0)
+    deploy_offset = foundry_offset + len(FOUNDRY_PHASES) - 2
     steps = [
         {
             "name": "GitHub sync", "argv": sync_argv, "env": sync_env,
@@ -812,12 +856,27 @@ def api_full_workflow():
             "phase_offset": pipeline_offset,
         },
         {
-            "name": "Fabric app deploy", "argv": deploy_argv, "env": deploy_env or None,
+            "name": "Foundry multi-agent setup", "argv": foundry_argv, "env": deploy_env or None,
+            "timeout": FOUNDRY_TIMEOUT_S, "markers": FOUNDRY_MARKERS,
+            "phase_offset": foundry_offset,
+        },
+        {
+            "name": "Fabric app deploy", "argv": deploy_argv,
+            "env": {key: value for key, value in deploy_env.items()
+                    if key == "HYDRO_ONTOLOGY_GRAPH_BINDING"} or None,
             "timeout": DEPLOY_TIMEOUT_S, "markers": DEPLOY_MARKERS,
             "phase_offset": deploy_offset,
         },
     ]
-    job_id = _start_workflow(steps)
+    if energy_enabled:
+        steps.insert(2, {
+            "name": "Energy setup", "argv": energy_argv, "env": None,
+            "timeout": ENERGY_TIMEOUT_S, "markers": ENERGY_MARKERS, "phase_offset": energy_offset,
+        })
+    phases = WORKFLOW_PHASES if energy_enabled else [
+        phase for phase in WORKFLOW_PHASES if not phase.startswith("Energy ·")
+    ]
+    job_id = _start_workflow(steps, phases=phases)
     return job_response(job_id)
 
 

@@ -248,6 +248,122 @@ def select_model_deployment(deployments: list[dict], wanted: str) -> str:
     return matches[0]["name"]
 
 
+def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> None:
+    value = lambda key: deploy._public_config_value(values, key)
+    project_id = value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID")
+    agent_id = value("RAYFIN_PUBLIC_FOUNDRY_DATA_AGENT_ID")
+    if (not re.fullmatch(
+            r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/?#]+/providers/"
+            r"Microsoft\.CognitiveServices/accounts/[^/?#]+/projects/[^/?#]+", project_id)
+            or not deploy.GUID_RE.fullmatch(agent_id)):
+        raise RuntimeError("Prepared Foundry project/Data Agent identity is missing.")
+    token = deploy.run_capture(deploy.az(
+        "account", "get-access-token", "--tenant", tenant, "--resource", "https://management.azure.com/",
+        "--query", "accessToken", "-o", "tsv",
+    ))
+    if not token:
+        raise RuntimeError("No delegated Azure management token was returned.")
+
+    def read(path: str) -> dict:
+        response = request_with_read_retry(
+            "GET", f"https://management.azure.com{path}", headers={"Authorization": f"Bearer {token}"}, timeout=60,
+        )
+        if not response.ok:
+            raise RuntimeError(f"Prepared Foundry metadata read failed: HTTP {response.status_code}.")
+        return response.json().get("properties", {})
+
+    project = read(project_id + "?api-version=2025-06-01")
+    if project.get("endpoints", {}).get("AI Foundry API", "").rstrip("/") != value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT").rstrip("/"):
+        raise RuntimeError("Prepared Foundry project resource and endpoint do not match.")
+    targets = {
+        "hydro-fabric-iq": f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{workspace}/dataagents/{agent_id}/agent",
+        "hydro-fabric-ontology": f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/{ontology}/ontologyEndpoint",
+    }
+    for name, target in targets.items():
+        connection = read(f"{project_id}/connections/{name}?api-version=2025-10-01-preview")
+        expected = {"category": "RemoteTool", "authType": "UserEntraToken", "target": target,
+                    "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False}
+        if any(connection.get(key) != expected_value for key, expected_value in expected.items()):
+            raise RuntimeError(f"Prepared Foundry connection {name} no longer matches the selected source/authentication.")
+    definition = read_data_agent_definition(deploy, workspace, agent_id, deploy.fabric_headers(tenant))
+    verify_published_identity(definition, workspace, ontology)
+    if not published_sql_source_ready(definition, workspace, value("RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")):
+        raise RuntimeError("The connected Data Agent no longer exposes the verified operational SQL source.")
+
+
+def verify_existing(deploy, tenant: str, workspace: str) -> None:
+    """Read back prepared agents without project discovery, builds, or publication."""
+    values, _ = deploy.current_rayfin_target()
+    value = lambda key: deploy._public_config_value(values, key)
+    guidance = "Run the local Foundry multi-agent setup module, then publish the Fabric app again."
+    if value("RAYFIN_PUBLIC_TENANT_ID") != tenant or value("RAYFIN_PUBLIC_WORKSPACE_ID") != workspace:
+        raise deploy.DeployError(f"Foundry configuration belongs to a different target. {guidance}")
+    endpoint = value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT").rstrip("/")
+    model = value("RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT")
+    if not re.fullmatch(r"https://[a-z0-9-]+\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_.-]+", endpoint) or not model:
+        raise deploy.DeployError(f"Verified Foundry project/model configuration is missing. {guidance}")
+    hosted_module = _load_sibling("deploy_hosted_agent")
+    if value("RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST") != hosted_module.source_fingerprint(deploy.REPO_ROOT):
+        raise deploy.DeployError(f"Foundry setup is missing or its packaged code is stale. {guidance}")
+    try:
+        binding = json.loads(value("RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
+        ontology = binding["ontologyId"]
+        public_values = {key: deploy._public_config_value(values, key) for key in (
+            "RAYFIN_PUBLIC_EVENTHOUSE_ID", "RAYFIN_PUBLIC_KQL_DATABASE_ID", "RAYFIN_PUBLIC_LAKEHOUSE_ID",
+            "RAYFIN_PUBLIC_ITEM_ID", "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID",
+            "RAYFIN_PUBLIC_API_URL", "RAYFIN_PUBLIC_PUBLISHABLE_KEY",
+        )}
+        digest = source_configuration_digest(tenant, workspace, ontology, public_values)
+    except (ValueError, KeyError, TypeError, RuntimeError) as error:
+        raise deploy.DeployError(f"Foundry source configuration is invalid. {guidance} {error}") from error
+    if digest != value("RAYFIN_PUBLIC_ORCHESTRATOR_SOURCE_DIGEST"):
+        raise deploy.DeployError(f"Foundry source identities changed. {guidance}")
+    metadata = deploy.fabric_get(f"workspaces/{workspace}/ontologies/{ontology}", deploy.fabric_headers(tenant))
+    generation = metadata.get("properties", {}).get("generation")
+    if type(generation) is not int or generation != 2:
+        raise deploy.DeployError("Live numeric Ontology generation 2 is required.")
+    if not deploy._published_operational_source_ready(workspace, values, "", deploy.fabric_headers(tenant)):
+        raise deploy.DeployError(f"Published Data Agent/SQL source configuration is incomplete. {guidance}")
+    try:
+        verify_prepared_connections(deploy, tenant, workspace, ontology, values)
+    except RuntimeError as error:
+        raise deploy.DeployError(f"{error} {guidance}") from error
+    token = deploy.run_capture(deploy.az(
+        "account", "get-access-token", "--tenant", tenant, "--resource", "https://ai.azure.com",
+        "--query", "accessToken", "-o", "tsv",
+    ))
+    if not token:
+        raise deploy.DeployError("No delegated Foundry token was returned.")
+    headers = {"Authorization": f"Bearer {token}"}
+    definitions = json.loads(deploy.run_capture(deploy.node24_script(
+        deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, "hydro-fabric-iq",
+    ), cwd=deploy.APP_DIR))
+    print("Foundry: read-only verification of prepared specialists and Hosted coordinator.", flush=True)
+    for name in (*definitions, "hydro-orchestrator"):
+        response = request_with_read_retry(
+            "GET", f"{endpoint}/agents/{name}?api-version=v1", headers=headers, timeout=60,
+        )
+        if not response.ok:
+            raise deploy.DeployError(f"Cannot verify Foundry agent {name}: HTTP {response.status_code}. {guidance}")
+        agent = response.json()
+        latest = agent.get("versions", {}).get("latest", {})
+        if name != "hydro-orchestrator":
+            if any(latest.get("definition", {}).get(key) != expected for key, expected in definitions[name].items()):
+                raise deploy.DeployError(f"Foundry specialist {name} is stale. {guidance}")
+            continue
+        try:
+            verify_hosted_source(agent, tenant, workspace, ontology, digest)
+            version, image = hosted_runtime_identity(agent)
+            url = hosted_invocations_url(agent, endpoint)
+        except RuntimeError as error:
+            raise deploy.DeployError(f"{error} {guidance}") from error
+        if (version != value("RAYFIN_PUBLIC_ORCHESTRATOR_VERSION")
+                or image != value("RAYFIN_PUBLIC_ORCHESTRATOR_IMAGE_DIGEST")
+                or url != value("RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL")):
+            raise deploy.DeployError(f"Foundry Hosted runtime identity changed. {guidance}")
+    print("Prepared Foundry configuration verified; no agents were provisioned or republished.", flush=True)
+
+
 def provision(deploy, tenant: str, workspace: str) -> None:
     values, _ = deploy.current_rayfin_target()
     print("Foundry: project - resolving the Foundry project.", flush=True)
@@ -490,6 +606,8 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     env_path = deploy.RAYFIN_DIR / ".env"
     env_path.write_text(deploy._rebind_public_env(env_path.read_text(encoding="utf-8"), {
         "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
+        "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project_id,
+        "RAYFIN_PUBLIC_FOUNDRY_DATA_AGENT_ID": selected[0]["id"],
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,
         "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": model,
         "RAYFIN_PUBLIC_FOUNDRY_APP_INSIGHTS_RESOURCE_ID": insights_id,
@@ -497,5 +615,6 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         "RAYFIN_PUBLIC_ORCHESTRATOR_VERSION": runtime_version,
         "RAYFIN_PUBLIC_ORCHESTRATOR_IMAGE_DIGEST": runtime_image_digest,
         "RAYFIN_PUBLIC_ORCHESTRATOR_SOURCE_DIGEST": source_digest,
+        "RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST": hosted_module.source_fingerprint(deploy.REPO_ROOT),
     }), encoding="utf-8")
     print("Foundry configuration readback verified; agent runtime acceptance is a separate check.", flush=True)

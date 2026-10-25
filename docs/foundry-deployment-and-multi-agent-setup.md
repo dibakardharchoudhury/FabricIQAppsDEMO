@@ -47,9 +47,10 @@ records the read-only comparison and proposed FEATURE acceptance gates.
 Use the [merged feature-branch deployment matrix](../HydroOperationsApp/DEPLOY.md#deploying-the-merged-feature-branch)
 for PR #19/#20. The local launcher must run from the updated `feat/dibakar`
 checkout; Fabric Git sync must separately select that branch instead of the
-form's `main` default. **Deploy app** includes the separate Weather specialist,
-not an immediate Weather ingestion run or an automatic energy-map opt-in.
-Weather source publication/provider authentication, the map feature profile,
+form's `main` default. **Set up Foundry agents** owns the five specialists,
+including Weather, and the Hosted coordinator. **Deploy app** is the final,
+read-only agent-verification and SPA-publication module, not agent provisioning.
+Weather source publication/provider authentication, energy-source setup,
 and manual native graph materialization remain separate prerequisites.
 
 **One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
@@ -61,12 +62,18 @@ the model settings available in your subscription/region. No original demo tenan
 |---|---|---|
 | 1 | Double-click [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) | |
 | 2 | Pick tenant + workspace, subscription and Foundry/model settings. Opt into target-specific project creation when needed | Target-specific env vars, Section 6 |
-| 3 | Press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config` |
-| 4 | Wait for `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it | same |
+| 3 | Press **Set up Foundry agents** | The same engine with `--stage foundry` prepares/verifies agents, without publishing the website |
+| 4 | Press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --stage app --push-config` |
+| 5 | Wait for `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it | same |
 
-Once the prerequisites below are satisfied, that single run does the Foundry deployment: the project (only if you opted in), connections, the five
-prompt agents, the **Hosted Agent image build and publish**, and the final verification. Nothing needs to be run by
-hand. **It deploys into the selected Fabric workspace**, exactly as before; pick the target deliberately.
+Once the prerequisites below are satisfied, the independent Foundry module owns
+the project (only if you opted in), connections, five prompt agents, Hosted image
+build/publication and readback. Final app publication then verifies those prepared
+definitions, code/source fingerprints and active immutable runtime, without
+provisioning. Missing/stale setup stops publication. The original command without
+`--stage` retains combined behavior; **Initialize everything** runs the modules
+serially with selected energy setup before Foundry and the app last. Pick the
+target deliberately; no project is created simply to update the website.
 
 ## 1. The multi-agent setup
 
@@ -122,9 +129,10 @@ current code; earlier records that describe a separate Chief prompt agent are hi
 
 Run state is local filesystem state in the hosted container (`HYDRO_RUNTIME_STATE_DIR`), not a distributed store.
 
-## 2. What one deploy does on the Foundry side
+## 2. What the independent Foundry setup module does
 
-Phase 3 of the deployer's eight phases ([`provision_foundry_agents.py`](../Raw/workspace-reset/provision_foundry_agents.py),
+The separate setup stage (also used by combined CLI deployment;
+[`provision_foundry_agents.py`](../Raw/workspace-reset/provision_foundry_agents.py),
 [`deploy_hosted_agent.py`](../Raw/workspace-reset/deploy_hosted_agent.py)):
 
 | Step | Behaviour | Skipped when |
@@ -145,7 +153,8 @@ Consequences:
 
 - **Code changes deploy themselves.** The fingerprint covers the Python service, the Node bridge and the TypeScript
   files copied into the image. A change anywhere there triggers one build and one new Hosted Agent version on the next
-  deploy; an unchanged tree costs a single registry lookup.
+  Foundry setup; an unchanged tree costs a single registry lookup. Final app
+  publication never builds or publishes the image.
 - **Build context is exact and temporary.** The deployer stages only that fingerprinted Dockerfile/COPY manifest
   before invoking ACR, preserving relative paths and verifying its image tag. The CLI never packages the entire
   checkout, dependency trees, generated deployment state or unrelated files. It logs file/byte counts and removes
@@ -211,7 +220,7 @@ Consequences:
 1. Launch [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) (`python launch.py` on any OS).
    It installs missing Python packages, signs in to Azure and opens `http://127.0.0.1:5000`.
 2. Choose the tenant and workspace. Add a **SPA client id** only if discovery is ambiguous or you were given one.
-3. **Deploy app** tab (or the same fields in the **Full workflow** tab), *Foundry* block:
+3. **Set up Foundry agents** tab (or its section in **Full workflow**), *Foundry* block:
 
    | Field | Use it when |
    |---|---|
@@ -229,14 +238,18 @@ Consequences:
    Values are validated by the local server and passed to the deployer as environment variables; nothing secret is
    collected. Blank text fields fall back to the launch environment, then target-scoped discovery where supported.
    The creation checkbox explicitly overrides an inherited `HYDRO_FOUNDRY_CREATE`; unchecked cannot opt into billing.
-4. Fresh data environment: use the **Full workflow** tab (GitHub sync, `01_Pipe_Setup`, deploy), or run those first.
+4. Fresh data environment: use **Full workflow** (GitHub sync, setup, selected energy, Foundry, final app), or run those modules first.
    An ordinary update needs none of that. The workflow does not materialize the native graph: on a fresh target,
    complete the selected ontology's **Manage graph → select eligible entities/relationships → Continue → Materialize**
    flow and resolve the explicit graph binding before app deployment can succeed. If Full workflow stops at this
-   prerequisite after setup, complete it and resume with **Deploy app**, not a workspace reset or another full sync.
-5. Press **Deploy app** and watch the stages. Expect extra minutes when the project is created (about 10) or the image
-   builds. The job limit is 90 minutes. The UI never passes `--push-config`, so commit `rayfin/rayfin.yml` yourself.
-6. Finish when you see `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
+   prerequisite after setup, complete it and resume **Set up Foundry agents**, then **Deploy app**, not another reset/sync.
+5. Press **Set up Foundry agents**. Project creation/image builds belong here
+   (90-minute job limit). Wait for `FOUNDRY_SETUP_SUCCESS`; configuration is verified,
+   not business execution. Then press **Deploy app** (30-minute job limit).
+   The local UI does not require GitHub write permission or pass `--push-config`.
+   Repository owners can commit the generated hosting-origin configuration;
+   agents using the canonical CLI retain `--push-config`.
+6. Finish when final publication prints `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
 
 ## 5. Command line
 

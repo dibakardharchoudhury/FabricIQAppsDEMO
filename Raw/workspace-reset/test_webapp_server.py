@@ -23,6 +23,43 @@ class WorkspaceActionTests(unittest.TestCase):
     def setUp(self):
         self.client = SERVER.app.test_client()
 
+    def test_setup_modules_are_separate_from_app_publication(self):
+        target = {"tenant": "tenant.example", "workspace": "Demo"}
+        for endpoint, stage in (
+            ("/api/setup-energy", "energy"), ("/api/setup-foundry", "foundry"), ("/api/deploy-app", "app"),
+        ):
+            with self.subTest(stage=stage), patch.object(SERVER, "_start", return_value="job") as start:
+                response = self.client.post(endpoint, json=target)
+                self.assertEqual(response.status_code, 200, response.get_json())
+                argv = start.call_args.args[0]
+                self.assertEqual(argv[argv.index("--stage") + 1], stage)
+                self.assertNotIn("--push-config", argv)
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/deploy-app", json={**target, "createFoundry": True})
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Foundry multi-agent setup module", response.get_json()["error"])
+            start.assert_not_called()
+
+    def test_full_workflow_prepares_energy_and_foundry_before_final_app(self):
+        target = {
+            "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo", "connectionId": "yes",
+            "parameters": {"key_vault_uri": "https://vault.vault.azure.net/", "alert_email_to": "a@example.test"},
+            "energyMap": "enabled", "createFoundry": False,
+        }
+        with patch.object(SERVER, "_start_workflow", return_value="job") as start:
+            response = self.client.post("/api/full-workflow", json=target)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        steps = start.call_args.args[0]
+        self.assertEqual([step["name"] for step in steps], [
+            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+        ])
+        self.assertEqual(steps[3]["env"], {"HYDRO_FOUNDRY_CREATE": "false"})
+        self.assertIsNone(steps[4]["env"])
+        for step, stage in zip(steps[2:], ("energy", "foundry", "app")):
+            self.assertEqual(step["argv"][step["argv"].index("--stage") + 1], stage)
+        self.assertEqual([step["phase_offset"] for step in steps],
+                         sorted({step["phase_offset"] for step in steps}))
+
     def test_subscription_discovery_returns_only_enabled_metadata_without_mutating_azure(self):
         accounts = [
             {"id": "sub-a", "name": "Demo", "tenantId": "tenant-a", "state": "Enabled", "user": {"name": "private"}},
@@ -115,6 +152,8 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
                 },
             ),
             ("/api/deploy-app", target),
+            ("/api/setup-foundry", target),
+            ("/api/setup-energy", target),
             (
                 "/api/full-workflow",
                 {
@@ -325,29 +364,26 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
         self.assertIn("Checking endpoint and CORS readiness", SERVER.DEPLOY_PHASES)
 
     def test_deploy_progress_shows_each_foundry_stage_in_the_order_the_deployer_prints_them(self):
-        phases = SERVER.DEPLOY_PHASES
+        phases = SERVER.FOUNDRY_PHASES
         for name in ("Foundry project", "Foundry agents", "Hosted Agent"):
             self.assertIn(name, phases)
-        indexes = [index for index, _markers in SERVER.DEPLOY_MARKERS]
+        indexes = [index for index, _markers in SERVER.FOUNDRY_MARKERS]
         self.assertEqual(indexes, sorted(set(indexes)))
         self.assertLess(max(indexes), len(phases) - 1)
         deployer_lines = [
             "[1/8] Checking Azure tenant", "[2/8] Resolving the tenant SPA", "[3/8] Resetting local Rayfin deployment state",
             "Foundry: project - resolving the Foundry project.", "Foundry: agents - provisioning the specialist prompt agents.",
-            "Foundry: Hosted Agent - converging hydro-orchestrator.", "[4/8] Authenticating Rayfin",
-            "[5/8] Provisioning backend", "[6/8] Adding the current app URL", "[7/8] Setting up browser sign-in",
-            "[8/8] Checking the hosted page",
+            "Foundry: Hosted Agent - converging hydro-orchestrator.",
         ]
         job, seen = SERVER.Job(phases), []
         for line in deployer_lines:
-            for index, markers in SERVER.DEPLOY_MARKERS:
+            for index, markers in SERVER.FOUNDRY_MARKERS:
                 if index > job.phase_index and any(marker in line for marker in markers):
                     job.phase_index = index
             seen.append(phases[job.phase_index])
         self.assertEqual(seen, [
-            "Checking prerequisites", "Resolving SPA", "Preparing state", "Foundry project", "Foundry agents",
-            "Hosted Agent", "Signing in", "Provisioning app", "Syncing backend settings", "Setting up sign-in",
-            "Checking endpoint and CORS readiness",
+            "Checking prerequisites", "Resolving SPA", "Preparing source/gateway", "Foundry project", "Foundry agents",
+            "Hosted Agent",
         ])
         # The markers must be lines the deployer really prints, not an assumption.
         printed = (SERVER.SCRIPT_DIR / "provision_foundry_agents.py").read_text(encoding="utf-8")
@@ -355,7 +391,8 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             self.assertIn(f'"{marker}', printed)
 
     def test_deploy_job_limit_covers_project_creation_build_and_publish(self):
-        self.assertGreaterEqual(SERVER.DEPLOY_TIMEOUT_S, 75 * 60)
+        self.assertGreaterEqual(SERVER.FOUNDRY_TIMEOUT_S, 75 * 60)
+        self.assertLess(SERVER.DEPLOY_TIMEOUT_S, SERVER.FOUNDRY_TIMEOUT_S)
 
     def test_deploy_environment_forwards_only_validated_foundry_settings(self):
         env = SERVER._deploy_environment({
@@ -420,14 +457,14 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
         payload = {"tenant": "tenant.example", "workspace": "Demo Workspace", "createFoundry": True,
                    "foundryModel": "m1", "productionWrites": "false"}
         with patch.object(SERVER, "_start", return_value="job-id") as start:
-            response = self.client.post("/api/deploy-app", json=payload)
+            response = self.client.post("/api/setup-foundry", json=payload)
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertEqual(start.call_args.args[1], {
             "HYDRO_FOUNDRY_MODEL": "m1", "HYDRO_FOUNDRY_CREATE": "true", "HYDRO_PRODUCTION_WRITES_ENABLED": "false",
         })
         self.assertNotIn("m1", " ".join(start.call_args.args[0]))  # settings never ride on the command line
         with patch.object(SERVER, "_start", return_value="job-id") as start:
-            self.client.post("/api/deploy-app", json={"tenant": "tenant.example", "workspace": "w"})
+            self.client.post("/api/setup-foundry", json={"tenant": "tenant.example", "workspace": "w"})
         self.assertIsNone(start.call_args.args[1])  # nothing set: the server's own environment still applies
 
     def test_invalid_foundry_settings_stop_the_request_before_any_job_starts(self):
@@ -503,7 +540,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
         self.assertEqual([step["name"] for step in steps], [
-            "GitHub sync", "Setup pipeline", "Fabric app deploy",
+            "GitHub sync", "Setup pipeline", "Foundry multi-agent setup", "Fabric app deploy",
         ])
         self.assertEqual(Path(steps[0]["argv"][0]).name, "sync_workspace_from_git.py")
         self.assertEqual(Path(steps[1]["argv"][0]).name, "run_pipeline.py")

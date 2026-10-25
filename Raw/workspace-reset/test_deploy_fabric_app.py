@@ -314,6 +314,9 @@ class DeployOrderTests(unittest.TestCase):
     def setUp(self):
         DEPLOY._FABRIC_TOKEN_CACHE.clear()
         self.addCleanup(DEPLOY._FABRIC_TOKEN_CACHE.clear)
+        energy = patch.object(DEPLOY, "energy_workspace")
+        energy.start()
+        self.addCleanup(energy.stop)
 
     def test_inactive_capacity_stops_before_configuration_changes(self):
         workspace = "11111111-1111-1111-1111-111111111111"
@@ -1256,6 +1259,7 @@ class DeployOrderTests(unittest.TestCase):
             workspace="workspace-id",
             client_id=client_id,
             push_config=False,
+            stage="app",
         )
 
         with (
@@ -1282,6 +1286,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "export_frontend_env"),
             patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}, {"RAYFIN_TOKEN": "connector"}, {"RAYFIN_TOKEN": "operational"}]),
             patch.object(DEPLOY, "provision_foundry_agents") as provision_agents,
+            patch.object(DEPLOY, "verify_foundry_agents") as verify_agents,
             patch.object(
                 DEPLOY,
                 "rayfin24",
@@ -1316,7 +1321,8 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "first")
         self.assertEqual(run_stream.call_args_list[2].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
         self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[5].kwargs["env"])
-        provision_agents.assert_called_once_with(args.tenant, "workspace-id")
+        provision_agents.assert_not_called()
+        verify_agents.assert_called_once_with("11111111-1111-4111-8111-111111111111", "workspace-id")
 
     @patch.object(DEPLOY, "provision_foundry_agents")
     def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents):
@@ -1378,7 +1384,7 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.deploy(args)
 
         self.assertEqual(run_stream.call_count, 6)
-        provision_agents.assert_called_once_with(args.tenant, "workspace-id")
+        provision_agents.assert_called_once_with("11111111-1111-4111-8111-111111111111", "workspace-id")
         self.assertEqual(run_stream.call_args_list[0].args[0], ["validate-env"])
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
         self.assertEqual(
@@ -1672,6 +1678,28 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.configure_app_feature_flags(env, enable_energy_map=False)
 
             self.assertEqual(env.read_text(encoding="utf-8"), "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false\n")
+
+    def test_routine_env_preparation_preserves_target_energy_flag_unless_explicitly_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rayfin = Path(directory)
+            values = {
+                "FABRIC_WORKSPACE_NAME": "Demo",
+                "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
+                "RAYFIN_PUBLIC_AAD_CLIENT_ID": "client", "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true",
+            }
+            deployment = {"fabricWorkspaceId": "workspace", "fabricTenantId": "tenant", "fabricItemId": "item"}
+            for selection, expected in ((None, "true"), (False, "false")):
+                with self.subTest(selection=selection):
+                    (rayfin / ".env").write_text("RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=true\n", encoding="utf-8")
+                    with patch.object(DEPLOY, "RAYFIN_DIR", rayfin), \
+                            patch.object(DEPLOY, "current_rayfin_target", return_value=(values, deployment)), \
+                            patch.object(DEPLOY, "resolve_public_artifact_config", return_value={}), \
+                            patch.object(DEPLOY, "rayfin_api_targets_capacity", return_value=True), \
+                            patch.object(DEPLOY, "fabric_item_exists", return_value=True):
+                        self.assertTrue(DEPLOY.prepare_rayfin_env(
+                            "tenant", "workspace", "Demo", "capacity", "client", enable_energy_map=selection,
+                        ))
+                    self.assertIn(f"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP={expected}", (rayfin / ".env").read_text())
 
     def test_write_rayfin_redirects_retains_current_entra_origin(self):
         current = "https://current-app-swedencentral.webapp.fabricapps.net"

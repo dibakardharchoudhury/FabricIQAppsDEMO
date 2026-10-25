@@ -64,7 +64,7 @@ export function OverviewPage() {
       <SummaryCard icon={Factory} label="Assets" value={data.stidState === 'connected' ? data.counts.assets : '—'} detail="Selected facility" />
       <SummaryCard icon={Gauge} label="Instruments" value={data.stidState === 'connected' ? data.counts.instruments : '—'} detail="Mapped OPC UA nodes" />
       <SummaryCard icon={Activity} label="Live signals" value={data.counts.liveSignals || '—'} detail="Eventhouse · 24h" />
-      <SummaryCard icon={Wrench} label="Open work orders" value={data.operationsState === 'connected' ? data.counts.openWorkOrders : '—'} detail="Rayfin SQL" />
+      <SummaryCard icon={Wrench} label="Open work orders" value={data.operationsState === 'connected' ? data.counts.openWorkOrders : '—'} detail="Operational SQL" />
     </section>
 
     <section className="v2-health-panel">

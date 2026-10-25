@@ -29,6 +29,36 @@ def config_dict():
 
 
 class FeatureWorkspaceTests(unittest.TestCase):
+    def test_energy_only_setup_has_no_core_or_azure_prerequisite_configuration(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            config = feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V9")
+            workspace = feature.FeatureWorkspace(config, ROOT)
+            workspace.fabric.list_workspace_items.return_value = []
+            with patch.object(workspace, "_upsert", side_effect=["notebook", "pipeline"]) as upsert, \
+                    patch.object(workspace, "_folder", return_value="folder"), \
+                    patch.object(workspace, "_prepare_energy_map") as prepare:
+                workspace.prepare_energy()
+            self.assertEqual([call.args[0]["name"] for call in upsert.call_args_list],
+                             [feature.ENERGY_NOTEBOOK, feature.ENERGY_PIPELINE])
+            self.assertEqual(upsert.call_args_list[1].args[2],
+                             {next(spec["logical_id"] for spec in workspace.specs
+                                   if spec["name"] == feature.ENERGY_NOTEBOOK): "notebook"})
+            prepare.assert_called_once_with()
+            with self.assertRaisesRegex(feature.FeatureWorkspaceError, "cannot provision the core"):
+                workspace.prepare()
+
+    def test_energy_verification_does_not_publish_read_models_or_start_jobs(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V9"), ROOT,
+            )
+            with patch.object(workspace, "_item", return_value={"id": "lakehouse"}), \
+                    patch.object(workspace, "_publish_energy_read_models") as publish, \
+                    patch.object(workspace, "_run") as run:
+                workspace.verify_energy()
+            publish.assert_called_once_with("lakehouse", publish=False)
+            run.assert_not_called()
+
     def test_bootstrap_is_opt_in(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(feature.load_feature_config(TENANT, WORKSPACE))
@@ -66,6 +96,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
         self.assertIn('"synapse_pyspark"', cleaned)
         self.assertIn('print("old-id in code stays")', cleaned)
         self.assertNotIn("default_lakehouse", cleaned)
+        self.assertEqual(feature.clean_notebook_dependencies(source.replace("\n", "\r\n")), cleaned)
         with self.assertRaises(feature.FeatureWorkspaceError):
             feature.clean_notebook_dependencies("print('missing metadata')")
 

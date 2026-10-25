@@ -360,7 +360,7 @@ function useHydroOperationsDataController() {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setProvisionState('idle'); setNotice('Sign in with Fabric to seed operational data.'); return }
       if (isPostSeedConfigured()) {
-        beginProgress('seed', 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)...', SEED_ETA_MS)
+        beginProgress('seed', 'Seeding independent operational SQL and refreshing its verified Data Agent source (RTI_011)...', SEED_ETA_MS)
         await awaitProvision(() => runPostSeedNotebook(status => updateJob('seed', humanStatus(status))))
       } else {
         const result = await seedOperationalDataIfEmpty(activeUser)

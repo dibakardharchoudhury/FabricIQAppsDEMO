@@ -313,6 +313,8 @@
         <div class="nav-group"><span class="tag"></span> Actions</div>
         <button id="tabSync" class="tab" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
         <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
+        <button id="tabEnergy" class="tab run" data-tab="energy" type="button">Set up energy sources</button>
+        <button id="tabFoundry" class="tab run" data-tab="foundry" type="button">Set up Foundry agents</button>
         <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Deploy app</button>
         <button id="tabWorkflow" class="tab active" data-tab="workflow" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg> Full workflow</button>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
@@ -342,7 +344,9 @@
       <div class="workflow-steps">
         <div class="workflow-step"><strong>1. Sync from GitHub</strong>Imports the selected branch into the target Fabric workspace.</div>
         <div class="workflow-step"><strong>2. Run setup pipeline</strong>Runs Key Vault preflight and <code>01_Pipe_Setup</code>.</div>
-        <div class="workflow-step"><strong>3. Deploy Fabric app</strong>Runs the approved deploy orchestrator and endpoint/CORS verification.</div>
+        <div class="workflow-step"><strong>3. Set up energy sources</strong>Prepares the selected energy-map data independently.</div>
+        <div class="workflow-step"><strong>4. Set up Foundry agents</strong>Reuses the selected project; converges five specialists and the Hosted coordinator.</div>
+        <div class="workflow-step"><strong>5. Deploy Fabric app</strong>Publishes the app last, with read-only agent verification and endpoint/CORS checks.</div>
       </div>
       <div class="workflow-config">
         <section class="workflow-config-section" aria-labelledby="workflowSyncHeading">
@@ -368,9 +372,10 @@
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
           <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Setup pipeline</strong><span>Complete parameters for Key Vault, agents, alert delivery, and notebook execution.</span></div></div>
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
+          <label class="check"><input id="workflowEnableEnergy" type="checkbox" checked /> Prepare and enable the energy map after core setup (no hidden bootstrap profile required).</label>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Fabric app deployment</strong><span>The deployer discovers the tenant SPA automatically unless you provide its verified client ID. It also converges the Foundry agents and Hosted Agent.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">4. Foundry multi-agent setup</strong><span>Separate from app publication. The tenant SPA is discovered automatically; its verified client ID is also used by the final app stage.</span></div></div>
           <div class="grid">
             <label>SPA client id (optional)
               <input id="workflowDeployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
@@ -413,12 +418,15 @@
             </div>
           </details>
         </section>
+        <section class="workflow-config-section">
+          <div class="workflow-config-head"><div><strong>5. Final Fabric app deployment</strong><span>No Foundry project discovery, agent builds or publication. Verifies prepared source/runtime identities, publishes the SPA, and checks connectors, browser sign-in and CORS.</span></div></div>
+        </section>
       </div>
       <aside class="notice">
         Tenant and workspace come from the target card. The GitHub PAT and pipeline parameters remain
         environment-only, and deployment uses <code>deploy_fabric_app.py</code>.
       </aside>
-      <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Sync, run pipeline &amp; deploy app</button>
+      <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Initialize sources, set up Foundry &amp; deploy app last</button>
       <div id="workflowPanel"><pre class="output muted">Combined progress and phase-tagged output will appear here.</pre></div>
     </div>
   </section>
@@ -465,21 +473,31 @@
     </div>
   </section>
 
-  <section id="paneDeploy" class="pane">
+  <section id="paneEnergy" class="pane">
+    <div class="card">
+      <div class="card-head"><h2>Set up energy-map sources</h2></div>
+      <p class="hint">Run core Fabric setup first. This module reuses the selected workspace's RTI Eventhouse, prepares GeoContext, runs only energy ingestion, and verifies the twelve serving layers and nine reservoir polygons. It does not rerun core setup, SQL seeding, or Foundry deployment. Sync Git first to update existing Git-managed energy notebooks.</p>
+      <p class="hint">Provider failures stop setup explicitly. Map Data Agent chat is a separate prerequisite; this module does not create an unverified agent or certify AI responses.</p>
+      <button id="energyBtn" class="primary" disabled>Set up energy sources</button>
+      <div id="energyPanel"><pre class="output muted">Energy setup output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneFoundry" class="pane">
     <div class="card">
       <div class="card-head">
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
-        <h2>Deploy Hydro Operations app</h2>
+        <h2>Set up Foundry multi-agent runtime</h2>
       </div>
-      <p class="hint">Resolves the selected tenant, workspace, and current capacity; safely repairs stale Rayfin state; then deploys and verifies the backend, database, and website. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
+      <p class="hint">Independent of final app publication. Reuses the selected Foundry project, verifies Fabric sources, prepares an AppBackend gateway only when needed, and converges the five specialists (including Weather) and Hosted coordinator. This stage does not publish the website. Creating a new project is opt-in below.</p>
       <aside class="notice" aria-label="Browser sign-in setup">
-        <strong>Portable deployment and browser readiness</strong>
+        <strong>Source and identity prerequisites</strong>
         <ul>
           <li>Workspace or capacity changes are detected automatically; generated API URLs are never copied between targets.</li>
-          <li>Every deploy reapplies AppBackend runtime/CORS settings and the SQL data configuration, including same-workspace redeploys.</li>
-          <li>Success requires working CORS preflights and POST probes for both <code>/graphql</code> and <code>/api/auth/v1/token</code>; backend warm-up and token HTTP 5xx responses are retried automatically.</li>
-          <li>The deployer registers the current app URL and requests the permissions needed for live Fabric data.</li>
-          <li>A tenant administrator may need to approve those permissions.</li>
+          <li>Complete core Fabric setup, operational SQL publication and the ontology's manual Manage graph materialization first.</li>
+          <li>This stage verifies configuration readback, not agent execution or alert delivery.</li>
+          <li>The final app stage owns hosting, browser permission/consent setup and endpoint/CORS verification.</li>
+          <li>A tenant administrator may need to approve browser permissions; no tenant-wide administrator role is assumed.</li>
           <li>If no usable SPA client ID can be resolved, deployment stops before changing local Rayfin state.</li>
         </ul>
         <strong>Next step if stopped:</strong> ask your Entra administrator for the SPA client ID,
@@ -488,14 +506,14 @@
       </aside>
       <div class="grid">
         <label>SPA client id (optional)
-          <input id="deployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+          <input id="foundryClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
         <label>Azure subscription ID
           <input id="deployAzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Choose a signed-in subscription or enter its ID" /></label>
       </div>
       <button type="button" data-load-subscriptions>Load signed-in subscriptions</button>
       <details class="foundry-block">
         <summary>Advanced / first-time Foundry setup</summary>
-        <p class="hint">Every deploy converges connections, five specialists and the <code>hydro-orchestrator</code> Hosted Agent. Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires <code>azd</code>; missing Foundry extensions are installed for you.</p>
+        <p class="hint">This setup module converges connections, five specialists and the <code>hydro-orchestrator</code> Hosted Agent; final app publication does not. Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires <code>azd</code>; missing Foundry extensions are installed for you.</p>
         <div class="grid">
           <label>Operator-verified ontology graph binding (JSON)
             <textarea id="deployOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
@@ -527,7 +545,29 @@
             <input id="deployFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
         </div>
       </details>
-      <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
+      <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
+      <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneDeploy" class="pane">
+    <div class="card">
+      <div class="card-head"><h2>Deploy Fabric app last</h2></div>
+      <p class="hint">Use after source and Foundry setup. Publishes the app without provisioning Foundry, running ingestion or seeding SQL. Missing or stale agent/source configuration stops publication and directs you to the setup module. Existing backend state is reused; runtime/CORS, SQL connector and browser-auth checks are still required.</p>
+      <p class="hint">Success requires CORS preflights and POST probes for <code>/graphql</code> and <code>/api/auth/v1/token</code>, with the current app origin and all existing Entra redirects preserved.</p>
+      <div class="grid">
+        <label>SPA client id (optional)
+          <input id="deployClientId" type="text" placeholder="Blank: discover the target tenant SPA" /></label>
+        <label>Energy-map navigation
+          <select id="appEnergyMap">
+            <option value="keep">Keep this target's setting</option>
+            <option value="enabled">Enable (requires verified energy setup)</option>
+            <option value="disabled">Disable</option>
+          </select></label>
+        <label>Operator-verified ontology graph binding (JSON, optional)
+          <textarea id="appOntologyGraphBinding" rows="3" placeholder="Blank: authoritative lineage or the verified target configuration."></textarea></label>
+      </div>
+      <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
   </section>
@@ -664,6 +704,8 @@ document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
 const WORKFLOW_PHASE_GROUPS = [
   { key: "sync", title: "GitHub Sync", prefix: "Sync \u00b7", component: "GitHub sync" },
   { key: "pipeline", title: "Setup Pipeline", prefix: "Pipeline \u00b7", component: "Setup pipeline" },
+  { key: "energy", title: "Energy Sources", prefix: "Energy \u00b7", component: "Energy setup" },
+  { key: "foundry", title: "Foundry Multi-agent Setup", prefix: "Foundry \u00b7", component: "Foundry multi-agent setup" },
   { key: "deploy", title: "Fabric App Deployment", prefix: "Deploy \u00b7", component: "Fabric app deploy" },
 ];
 
@@ -841,6 +883,8 @@ function refresh() {
   $("workflowTestBtn").disabled = !workflowTestValid();
   $("deleteBtn").disabled = !deleteValid();
   $("deployBtn").disabled = !deployValid();
+  $("foundryBtn").disabled = !deployValid();
+  $("energyBtn").disabled = !deployValid();
   $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid());
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
@@ -953,7 +997,7 @@ $("deleteBtn").addEventListener("click", async () => {
   }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
 });
 
-// Foundry settings of one deploy form (`deploy` or `workflow`); each form submits only its own fields.
+// Standalone Foundry controls retain the deploy-prefixed IDs.
 function foundryPayload(prefix) {
   const value = (suffix) => $(prefix + suffix).value.trim();
   const creating = $(prefix + "FoundryCreate").checked;
@@ -987,8 +1031,24 @@ $("deployBtn").addEventListener("click", async () => {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     clientId: $("deployClientId").value,
-    ...foundryPayload("deploy"),
+    ontologyGraphBinding: $("appOntologyGraphBinding").value,
+    energyMap: $("appEnergyMap").value,
   }, $("deployPanel"), () => refresh());
+});
+
+$("foundryBtn").addEventListener("click", async () => {
+  $("foundryBtn").disabled = true;
+  await runJob("/api/setup-foundry", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    clientId: $("foundryClientId").value, ...foundryPayload("deploy"),
+  }, $("foundryPanel"), () => refresh());
+});
+
+$("energyBtn").addEventListener("click", async () => {
+  $("energyBtn").disabled = true;
+  await runJob("/api/setup-energy", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+  }, $("energyPanel"), () => refresh());
 });
 
 $("workflowBtn").addEventListener("click", async () => {
@@ -1005,6 +1065,7 @@ $("workflowBtn").addEventListener("click", async () => {
     pipeline: "01_Pipe_Setup",
     parameters: collectPipelineParams("wf_pp_"),
     clientId: $("workflowDeployClientId").value,
+    energyMap: $("workflowEnableEnergy").checked ? "enabled" : "keep",
     ...foundryPayload("workflow"),
   }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
 });
@@ -1060,6 +1121,8 @@ function activateTab(name) {
   $("paneSync").classList.toggle("active", name === "sync");
   $("panePipeline").classList.toggle("active", name === "pipeline");
   $("paneDeploy").classList.toggle("active", name === "deploy");
+  $("paneFoundry").classList.toggle("active", name === "foundry");
+  $("paneEnergy").classList.toggle("active", name === "energy");
   $("paneDelete").classList.toggle("active", name === "delete");
 }
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => activateTab(b.dataset.tab)));

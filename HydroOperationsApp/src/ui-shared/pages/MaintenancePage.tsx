@@ -17,7 +17,7 @@ export function MaintenancePage() {
   return <div className="v2-domain-page">
     <FacilityContext />
     {data.notice && <div className="v2-notice"><AlertTriangle size={15} /><span>{data.notice}</span></div>}
-    <section className="v2-page-head"><div><span className="v2-eyebrow">Maintenance Operations</span><h1>Work orders and maintenance</h1><p>Manage operational work and inspect readiness records from Rayfin SQL.</p></div><div className="v2-page-metrics"><strong>{selectedOpenOrders.length}</strong><span>open for turbine</span><strong>{lowStock.length}</strong><span>parts below reorder</span></div></section>
+    <section className="v2-page-head"><div><span className="v2-eyebrow">Maintenance Operations</span><h1>Work orders and maintenance</h1><p>Manage operational work and inspect readiness records from the independent operational SQL store.</p></div><div className="v2-page-metrics"><strong>{selectedOpenOrders.length}</strong><span>open for turbine</span><strong>{lowStock.length}</strong><span>parts below reorder</span></div></section>
 
     <section className="v2-maintenance-grid">
       <article className="v2-data-panel v2-orders-panel"><div className="v2-panel-headline v2-panel-headline-action"><div><span className="v2-eyebrow">Work Queue</span><h2>{visibleOrders.length} work orders</h2></div><button className="v2-primary-action" type="button" disabled={!selectedAsset || Boolean(data.mutationKey)} onClick={() => selectedAsset && void data.actions.addWorkOrder(selectedAsset.equipment_id)}><Plus size={15} />Create work order</button></div>

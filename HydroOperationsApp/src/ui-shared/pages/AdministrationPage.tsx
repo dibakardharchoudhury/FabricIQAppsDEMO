@@ -19,11 +19,11 @@ export function AdministrationPage() {
     },
     {
       n: 2,
-      title: 'Seed & provision',
-      why: 'Loads demo work orders/inspections into SQL and publishes the independent STID GraphQL API + Data Agent source (runs the RTI_011 notebook). Lakehouse connector reads do not depend on this step.',
+      title: 'Seed operational demo data',
+      why: 'Adds missing demo records to the independent operational SQL store and refreshes its verified v2 Data Agent source (RTI_011). Does not deploy Foundry agents or create a STID GraphQL API. Use the local launcher for infrastructure and multi-agent setup.',
       done: data.provisionState === 'complete',
       busy: data.provisionState === 'running' || Boolean(data.jobs.seed),
-      action: 'Seed & provision',
+      action: 'Seed demo data',
       run: () => void data.actions.seedAndProvision(),
     },
     {

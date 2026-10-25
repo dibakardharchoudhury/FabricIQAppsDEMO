@@ -24,6 +24,127 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
     }]}}
 
 
+class PreparedFoundryTests(unittest.TestCase):
+    def prepared(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.APP_DIR = Path(__file__).resolve().parents[2] / "HydroOperationsApp"
+        deploy.REPO_ROOT = deploy.APP_DIR.parent
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        tenant, workspace, ontology = [f"{i:08x}-1111-4111-8111-{i:012x}" for i in range(1, 4)]
+        values = {
+            "RAYFIN_PUBLIC_TENANT_ID": tenant, "RAYFIN_PUBLIC_WORKSPACE_ID": workspace,
+            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({"ontologyId": ontology}),
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://hydro.services.ai.azure.com/api/projects/hydro",
+            "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "model",
+            "RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST": "code",
+            "RAYFIN_PUBLIC_ORCHESTRATOR_VERSION": "7",
+            "RAYFIN_PUBLIC_ORCHESTRATOR_IMAGE_DIGEST": "sha256:" + "a" * 64,
+            "RAYFIN_PUBLIC_API_URL": "https://" + "a" * 32 + ".pbidedicated.windows.net",
+            "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-test",
+        }
+        for index, key in enumerate((
+            "RAYFIN_PUBLIC_EVENTHOUSE_ID", "RAYFIN_PUBLIC_KQL_DATABASE_ID", "RAYFIN_PUBLIC_LAKEHOUSE_ID",
+            "RAYFIN_PUBLIC_ITEM_ID", "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID",
+        ), 4):
+            values[key] = f"{index:08x}-1111-4111-8111-{index:012x}"
+        digest = module.source_configuration_digest(tenant, workspace, ontology, values)
+        values["RAYFIN_PUBLIC_ORCHESTRATOR_SOURCE_DIGEST"] = digest
+        source = {"tenant_id": tenant, "workspace_id": workspace, "ontology_id": ontology,
+                  "generation": 2, "configuration_digest": digest}
+        agent = {"name": "hydro-orchestrator", "versions": {"latest": {
+            "version": "7", "status": "active", "definition": {
+                "kind": "hosted", "container_configuration": {"image": "registry/image@sha256:" + "a" * 64},
+                "environment_variables": {"HYDRO_ORCHESTRATOR_CONFIG": json.dumps({
+                    "source": source,
+                    "native_binding": {"source": source, "connections": {"data-agent": "hydro-fabric-iq"}},
+                })},
+            },
+        }}}
+        values["RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL"] = module.hosted_invocations_url(
+            agent, values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"],
+        )
+        deploy.current_rayfin_target.return_value = values, None
+        deploy.fabric_get.return_value = {"properties": {"generation": 2}}
+        deploy._published_operational_source_ready.return_value = True
+        deploy.run_capture.side_effect = ["token", json.dumps({"hydro-weather-agent": {"model": "model"}})]
+        return deploy, values, agent, tenant, workspace
+
+    def test_app_verifies_prepared_agents_using_get_only(self):
+        deploy, _, agent, tenant, workspace = self.prepared()
+        hosted = Mock(source_fingerprint=Mock(return_value="code"))
+        responses = [
+            Mock(ok=True, json=lambda: {"versions": {"latest": {"definition": {"model": "model"}}}}),
+            Mock(ok=True, json=lambda: agent),
+        ]
+        with patch.object(module, "_load_sibling", return_value=hosted), \
+                patch.object(module, "verify_prepared_connections") as connections, \
+                patch.object(module, "request_with_read_retry", side_effect=responses) as request:
+            module.verify_existing(deploy, tenant, workspace)
+        connections.assert_called_once()
+        self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "GET"])
+        self.assertEqual([call.args[:2] for call in deploy.az.call_args_list], [("account", "get-access-token")])
+
+    def test_stale_code_sources_and_specialists_fail_instead_of_provisioning(self):
+        for stale in ("code", "source", "specialist", "hosted"):
+            with self.subTest(stale=stale):
+                deploy, values, agent, tenant, workspace = self.prepared()
+                if stale == "code":
+                    values["RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST"] = "old"
+                if stale == "source":
+                    values["RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID"] = workspace
+                if stale == "hosted":
+                    agent["versions"]["latest"]["version"] = "8"
+                response = Mock(ok=True, json=lambda: {
+                    "versions": {"latest": {"definition": {"model": "old" if stale == "specialist" else "model"}}},
+                })
+                with patch.object(module, "_load_sibling", return_value=Mock(
+                    source_fingerprint=Mock(return_value="code"),
+                )), patch.object(module, "verify_prepared_connections"), \
+                        patch.object(module, "request_with_read_retry", side_effect=[
+                    response, Mock(ok=True, json=lambda: agent),
+                ]) as request:
+                    with self.assertRaisesRegex(RuntimeError, "setup module"):
+                        module.verify_existing(deploy, tenant, workspace)
+                    self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+
+    def test_connection_readback_rejects_cross_workspace_targets_before_reading_their_agent(self):
+        for wrong_workspace in (False, True):
+            with self.subTest(wrong_workspace=wrong_workspace):
+                deploy, values, _, tenant, workspace = self.prepared()
+                deploy.GUID_RE = re.compile(r"[0-9a-f-]{36}")
+                agent_id = "00000009-1111-4111-8111-000000000009"
+                project_id = f"/subscriptions/{tenant}/resourceGroups/hydro/providers/Microsoft.CognitiveServices/accounts/ai/projects/hydro"
+                values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID"] = project_id
+                values["RAYFIN_PUBLIC_FOUNDRY_DATA_AGENT_ID"] = agent_id
+                deploy.run_capture.side_effect = None
+                deploy.run_capture.return_value = "token"
+                def respond(method, url, **kwargs):
+                    props = {"endpoints": {"AI Foundry API": values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]}}
+                    if "/connections/" in url:
+                        target_workspace = tenant if wrong_workspace else workspace
+                        target = (f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{target_workspace}/dataagents/{agent_id}/agent"
+                                  if "/hydro-fabric-iq?" in url else
+                                  f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/"
+                                  f"{json.loads(values['RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING'])['ontologyId']}/ontologyEndpoint")
+                        props = {"category": "RemoteTool", "authType": "UserEntraToken", "target": target,
+                                 "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False}
+                    return Mock(ok=True, json=lambda: {"properties": props})
+                ontology = json.loads(values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"])["ontologyId"]
+                with patch.object(module, "request_with_read_retry", side_effect=respond) as request, \
+                        patch.object(module, "read_data_agent_definition", return_value=definition(
+                            workspace=workspace, ontology=ontology,
+                        )) as read_agent, patch.object(module, "published_sql_source_ready", return_value=True):
+                    if wrong_workspace:
+                        with self.assertRaisesRegex(RuntimeError, "no longer matches"):
+                            module.verify_prepared_connections(deploy, tenant, workspace, ontology, values)
+                        read_agent.assert_not_called()
+                    else:
+                        module.verify_prepared_connections(deploy, tenant, workspace, ontology, values)
+                        read_agent.assert_called_once()
+                    self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+
+
 class PublishedIdentityTests(unittest.TestCase):
     def test_published_sql_requires_target_identity_and_all_selected_operational_tables(self):
         tables = ["WorkOrders", "MaintenanceNotifications", "Inspections", "SpareParts", "Asset3DModels"]

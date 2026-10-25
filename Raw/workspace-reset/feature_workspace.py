@@ -99,6 +99,7 @@ def load_feature_config(tenant_id: str, workspace_id: str) -> FeatureConfig | No
 
 
 def clean_notebook_dependencies(source: str) -> str:
+    source = source.replace("\r\n", "\n")
     pattern = r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)"
     match = re.search(pattern, source)
     if not match:
@@ -216,8 +217,18 @@ def check_response(response: requests.Response, action: str, expected: set[int])
         )
 
 
+@dataclass(frozen=True)
+class EnergyConfig:
+    tenant_id: str
+    workspace_id: str
+    state_path: Path
+    env_suffix: str
+    enable_energy_map: bool = True
+    enable_map_chat: bool = False
+
+
 class FeatureWorkspace:
-    def __init__(self, config: FeatureConfig, repo_root: Path):
+    def __init__(self, config: FeatureConfig | EnergyConfig, repo_root: Path):
         self.config = config
         self.repo_root = repo_root
         self.fabric = FeatureFabric(config.tenant_id)
@@ -427,6 +438,8 @@ class FeatureWorkspace:
     def prepare(self) -> None:
         from feature_prerequisites import FeaturePrerequisiteError, ensure_feature_prerequisites
 
+        if not isinstance(self.config, FeatureConfig):
+            raise FeatureWorkspaceError("Energy-only configuration cannot provision the core workspace.")
         connection = self.fabric.request("GET", f"{self.base}/git/connection")
         check_response(connection, "Check Git isolation", {200})
         if connection.json().get("gitConnectionState") != "NotConnected":
@@ -507,6 +520,28 @@ class FeatureWorkspace:
         if self.config.enable_energy_map:
             self._prepare_energy_map()
 
+    def prepare_energy(self) -> None:
+        """Prepare only energy artifacts; never rerun core setup, SQL, or Foundry."""
+        notebook_ids = {}
+        for item_type in ("Notebook", "DataPipeline"):
+            for spec in self.specs:
+                if spec["name"] not in ENERGY_ITEMS or spec["type"] != item_type:
+                    continue
+                matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
+                           if item.get("type") == item_type and item.get("displayName") == spec["name"]]
+                if len(matches) > 1:
+                    raise FeatureWorkspaceError(f"Ambiguous energy artifact {spec['name']}.")
+                if matches and matches[0].get("description") != self.marker:
+                    item_id = matches[0]["id"]
+                    print(f"Using Git-managed {spec['name']}; sync Git first to update its source.", flush=True)
+                else:
+                    item_id = self._upsert(spec, self._folder(spec["folder"]), notebook_ids, {
+                        "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
+                    })
+                if item_type == "Notebook":
+                    notebook_ids[spec["logical_id"]] = item_id
+        self._prepare_energy_map()
+
     def _prepare_energy_map(self) -> None:
         name = f"Hydro_GeoContext_{self.config.env_suffix}"
         matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
@@ -564,7 +599,11 @@ class FeatureWorkspace:
             self.state["map_agent_id"] = agent["id"]
             self._save()
 
-    def _publish_energy_read_models(self, lakehouse_id: str) -> None:
+    def verify_energy(self) -> None:
+        lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
+        self._publish_energy_read_models(lakehouse["id"], publish=False)
+
+    def _publish_energy_read_models(self, lakehouse_id: str, *, publish: bool = True) -> None:
         database = f"RTI_Demo_Eventhouse_{self.config.env_suffix}"
         eventhouse = self._item(database, "Eventhouse")
         response = self.fabric.request("GET", f"{self.base}/eventhouses/{eventhouse['id']}")
@@ -605,6 +644,8 @@ class FeatureWorkspace:
                         or not parts.path.startswith(f"/{lakehouse_id}/Tables/")
                         or parts.query or parts.fragment or "'" in location or ";" in location):
                     raise FeatureWorkspaceError("Energy table location is outside the selected GeoContext Lakehouse.")
+                if not publish:
+                    continue
                 query = f".create-or-alter external table {name} kind=delta (h@'{location};impersonate')"
                 response = session.post(f"{cluster}/v1/rest/mgmt", headers=headers,
                                         json={"db": database, "csl": query}, timeout=90, allow_redirects=False)

@@ -49,8 +49,9 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
   workflows and streams live progress.
-- **Full workflow** — the local web UI can run GitHub sync, `01_Pipe_Setup`, and
-  the approved Fabric app deploy orchestrator in one monitored serial job.
+- **Full workflow** — the local web UI runs GitHub sync, `01_Pipe_Setup`, selected
+  energy setup, independent Foundry setup, then final app publication in one
+  monitored serial job. Each component has its own progress and failure boundary.
 
 ## Easiest start — just launch it (no commands to type)
 
@@ -80,17 +81,20 @@ it (or press Ctrl+C) to stop.
 For the simplest deployment, choose the target tenant/workspace, then use **Load signed-in
 subscriptions** instead of copying a subscription GUID. The list shows tenant IDs and does
 not switch Azure subscriptions. Use **Deploy app** for an existing prepared workspace; only
-use **Initialize everything** when Git sync and data setup are actually needed. Foundry
-overrides and explicitly billable first-time provisioning are under **Advanced / first-time
-Foundry setup**. Blank overrides use verified discovery, never another tenant's saved target.
+use **Initialize everything** when Git sync and data setup are actually needed.
+**Set up Foundry agents** is a separate module before final app publication;
+it owns project/model/registry settings and explicitly billable first-time
+provisioning. Blank overrides use verified discovery, never another tenant's saved target.
 
 For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
 checkout and explicitly select **Branch = `feat/dibakar`** when using Git sync or
 **Initialize everything**; those branch fields default to `main`. **Deploy app**
-deploys the app and Foundry specialists, including Weather, but does not update
-Fabric notebook source or run Weather ingestion. PR #19's map remains gated by
-the target-specific feature profile; a plain deployment without it sets the map
-flag to false. See the
+verifies prepared Foundry specialists, including Weather, without creating or
+publishing agents. It does not update Fabric notebook source or run Weather
+ingestion. **Set up energy sources** prepares PR #19 without a hidden feature
+profile; routine app publication preserves the same target's map setting.
+Explicit map enablement verifies the twelve live serving layers before build.
+Map Data Agent chat remains a separate prerequisite. See the
 [feature-branch deployment matrix and remaining prerequisites](../../HydroOperationsApp/DEPLOY.md#deploying-the-merged-feature-branch)
 before treating either workflow as complete end-to-end readiness.
 
@@ -610,7 +614,8 @@ tenant and workspace selected in the sidebar:
   current capacity. A workspace/capacity/tenant mismatch moves only the three Rayfin state files
   into a unique temporary backup, then generates and validates a fresh ignored `rayfin/.env`.
   Existing state is not deleted.
-   Still in this phase, before Rayfin publishes the app, the deployer converges the **Foundry** side: the
+   In the independent **Set up Foundry agents** module (or the combined CLI flow),
+   the deployer converges the **Foundry** side: the
    Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
@@ -622,7 +627,10 @@ tenant and workspace selected in the sidebar:
    `azure.ai.agents` and `microsoft.foundry` extensions are installed
    by the deployer. Native graph materialization remains a manual prerequisite; if the full workflow stops
    there after setup, complete the ontology's Manage graph flow, resolve the explicit binding and resume
-   **Deploy app**, not another workspace reset. Pass a fallback operator-verified binding through the form or
+   **Set up Foundry agents**, followed by **Deploy app**, not another workspace reset.
+   The final app module only reads prepared Foundry definitions/runtime identities;
+   it does not discover projects, bootstrap SQL, build images or publish agents.
+   Pass a fallback operator-verified binding through the form or
    `HYDRO_ONTOLOGY_GRAPH_BINDING`; do not hand-edit generated state. See
    [Foundry deployment and multi-agent setup](../../docs/foundry-deployment-and-multi-agent-setup.md).
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build

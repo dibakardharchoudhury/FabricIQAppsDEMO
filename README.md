@@ -326,12 +326,16 @@ hosting checks passed, but these API/model results do not certify interactive ap
 
 Start with that guide's interface chooser: the local deployment web app and the
 operator/agent command line use the same deployment orchestrator. For the Foundry
-multi-agent setup and its one-step deployment (including the Hosted Agent), see
+multi-agent setup module (including the Hosted Agent), followed by final app-only
+publication, see
 [`docs/foundry-deployment-and-multi-agent-setup.md`](docs/foundry-deployment-and-multi-agent-setup.md). Manual portal work
 is limited to documented access/setup prerequisites and ontology-managed graph materialization.
 Deployment targets are not pinned to the original demo: select the tenant/workspace and Azure subscription,
 then supply or discover the target's Foundry project/model/registry. New project creation requires explicit
-model/version/SKU/capacity inputs; both local forms expose them. Generated endpoints, item GUIDs and azd state
+model/version/SKU/capacity inputs; the Foundry and full-workflow forms expose them.
+Energy-source setup is also explicit, without requiring a hidden bootstrap profile.
+Routine app publication preserves the target's energy setting and verifies prepared
+agents without provisioning them. Generated endpoints, item GUIDs and azd state
 are resolved and verified for that target, not copied from another workspace.
 For agent responsibilities, routing, evidence-based RCA, proposed maintenance specialists,
 and the ten-flow acceptance status, see

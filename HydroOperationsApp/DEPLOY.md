@@ -21,10 +21,18 @@ Fabric Git synchronization imports the remote branch selected in the form.
 
 | Target/action | What runs | Important limit |
 |---|---|---|
-| Fresh workspace: **Initialize everything** | GitHub sync, `01_Pipe_Setup`, then the canonical app/Foundry deployer | Explicitly set **Branch = `feat/dibakar`**; the form defaults to `main`. Setup/tenant prerequisites must be satisfied. |
-| Prepared workspace: **Deploy app** | App deployment, connector/runtime configuration, all five prompt specialists including `hydro-weather-agent`, and the Hosted coordinator | Does **not** publish changed Fabric notebook definitions or rerun source ingestion. |
+| Fresh workspace: **Initialize everything** | GitHub sync, `01_Pipe_Setup`, selected energy setup, independent Foundry setup, then final app publication | Explicitly set **Branch = `feat/dibakar`**; the form defaults to `main`. Setup/tenant prerequisites must be satisfied. |
+| Prepared workspace: **Set up Foundry agents** | Reuses the selected project, configures connections, all five specialists including Weather, and the Hosted coordinator | Does not publish the SPA. Creates a gateway only if missing; prepares/verifies the published operational source. New projects remain an explicit billable opt-in. |
+| Prepared workspace: **Deploy app** | Read-only Foundry/source verification, SPA publication, connector/runtime and browser-auth checks | Does **not** discover/create Foundry projects, build/publish agents, run ingestion or seed SQL. Stale agents/source identities stop publication with a setup handoff. |
 | Weather setup/refresh | Setup creates the Weather schema and enables its schedule; `03_Pipe_Weather` runs Aurora, UKMet, then serving calculations | The full initializer does not immediately execute these three ingestion notebooks. Use **Connect weather** in the deployed app, or wait for the enabled schedule, with valid provider credentials. |
-| Energy-map feature from PR #19 | The target-specific `FABRIC_FEATURE_CONFIG` profile enables provisioning and the app feature with `enable_energy_map: true` | Checking out the branch is not the opt-in. Without that profile, the current deployer sets the energy-map app flag to false, including on an existing target. |
+| Energy-map feature from PR #19 | **Set up energy sources**, or leave energy selected in **Initialize everything**, then publish the app | No hidden bootstrap profile is required. Prepares only the two ingestion artifacts and GeoContext, publishes Eventhouse read models, and verifies all twelve layers/nine polygons. Provider failures propagate. |
+
+Routine publication preserves the energy visibility setting **only for the same
+tenant/workspace**. The final app form also exposes an explicit enable/disable
+selection; enabling requires live serving-data verification before the build.
+Checking out a PR is not source provisioning or deployment. Map Data Agent chat
+is a separate prerequisite: energy ingestion alone neither creates a new Data
+Agent nor certifies chat grounding.
 
 Reuse the approved, target-matching feature profile and its retained state for a
 workspace originally bootstrapped that way. Do not create a replacement bootstrap
@@ -49,6 +57,45 @@ and [Foundry agent deployment guide](../docs/foundry-deployment-and-multi-agent-
 
 ## Faster deployment and a simpler operator path
 
+### Independent local modules; app publication last
+
+Use the local launcher's modules in this order:
+
+1. **Sync from GitHub / Run pipeline** when core source/data setup is needed.
+   This owns Lakehouse, Eventhouse, operational SQL, ontology and Fabric agents.
+2. **Set up energy sources** when enabling/upgrading PR #19 data.
+3. **Set up Foundry agents** when agent code, instructions, project or source
+   identity changes. Reuse the existing project unless explicitly creating one.
+4. **Deploy app** last. This verifies the prepared specialists, source digest,
+   packaged-code fingerprint and active immutable Hosted runtime without
+   publishing agents. It still reapplies backend settings and validates CORS,
+   connectors, browser auth and the generated endpoint contract.
+
+All modules use the same deployment engine, not hand-assembled Rayfin commands.
+Its `--stage energy`, `--stage foundry` and `--stage app` select lifecycle stages,
+not agent modes or exemptions. Required Fabric and Foundry agents remain required.
+The original command without `--stage` retains the combined deployment flow.
+For a prepared target, the final-only equivalent is:
+
+```powershell
+python Raw\workspace-reset\deploy_fabric_app.py `
+  --tenant <tenant> --workspace <workspace> --stage app --push-config
+```
+
+`--energy-map keep` is the default; `enabled` or `disabled` is an explicit
+visibility choice. Combined deployment with `--energy-map enabled` performs the
+energy setup first. First-time staged upgrades must run Foundry setup once to
+record the packaged-code fingerprint. Missing/stale prerequisites are failures,
+not permission to skip agents. The final app stage needs read access to prepared
+Foundry agents and the selected project's ARM connection metadata, not Azure
+project creation or ACR build rights; setup permissions
+and any administrator consent remain separate.
+
+This removes ingestion, SQL bootstrap, project discovery and agent/image
+publication from routine local app publishing. It does **not** promise an
+instantaneous Fabric build, eliminate service latency, or bypass readiness checks.
+Use the emitted timing receipt for measured durations.
+
 ### Independent operational SQL lifecycle
 
 Both NB01 Lakehouse setup variants create/reuse `RTI_Demo_SQLDatabase_<env_suffix>`
@@ -57,7 +104,7 @@ This workspace-owned Fabric SQLDatabase is independent of AppBackend. NB01 initi
 its five operational tables. Stage 2 automatically runs NB11 after both agents and
 Weather_001, inserts missing demo records, verifies the additive v2 ontology bindings,
 and publishes the SQL source to the Data Agent. Fresh setup needs no existing app
-or legacy SQL database. The app's **Seed & provision** action uses the same saved
+or legacy SQL database. The app's **Seed demo data** action uses the same saved
 SQL identity/settings; it does not hardcode a database name.
 
 For an existing marked `HydroOperationalStore`, provisioning moves the same item
@@ -131,11 +178,12 @@ Subscription discovery uses Azure CLI account metadata, not directory-wide Graph
 The selected Azure subscription locates Foundry resources; the workspace's assigned Fabric
 capacity can belong to a different subscription. Its authoritative assignment is read separately.
 
-- **Prepared workspace / app update:** use **Deploy app**. Leave the SPA/Foundry overrides
-  blank when live discovery is unambiguous. Advanced settings are collapsed by default.
-  Existing resources, application registrations and work-order write policy are reused.
+- **Prepared workspace / app update:** run **Set up Foundry agents** once after
+  upgrading to staged deployment or changing agent/source configuration, then
+  **Deploy app**. Routine app-only updates reuse prepared agents and the SPA.
 - **New workspace:** use the existing serial **Initialize everything** workflow:
-  Git sync, Key Vault/setup pipeline, then the same app deployment engine. Review the
+  Git sync, Key Vault/setup pipeline, selected energy setup, Foundry setup, then app
+  publication through the same engine. Review the
   sync's resource-removal implications before using it in a populated workspace.
 - **No Foundry project yet:** open **Advanced / first-time Foundry setup** and explicitly
   opt into billable provisioning. Supply a region-supported model/version/SKU/capacity.
@@ -520,7 +568,7 @@ success is point-in-time evidence, not an availability guarantee.
    Missing graph binding stops the canonical engine before AppBackend/Foundry provisioning.
    A portal status of Complete with zero materialized nodes/edges is not usable graph readiness;
    resolve ineligible/unsupported source types rather than inventing a binding.
-4. For a fresh environment, explicitly finish **Seed & provision** to write demo operational data,
+4. For a fresh environment, verify setup's NB11 seed receipt; use **Seed demo data** for an explicit additive rerun,
    and start the telemetry stream. The deployment's source-only bootstrap does not seed those rows.
    Verify real source timestamps, not just a connected badge.
 5. Require `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it. Hosting readiness,
@@ -1655,14 +1703,17 @@ otherwise deployment runs the non-seeding source extension and verifies its publ
 Lakehouse connector reads do not depend on that step;
 hosting success does not establish native graph readiness.
 
-## 7. Seed & provision (RTI_011)
+## 7. Seed demo data (RTI_011)
 
-`RTI_011` is the authoritative seeder — its `MERGE` re‑seeds all five tables safely on every run.
+`RTI_011` is the authoritative additive seeder. Its insert-only MERGEs add missing
+demo records to the five independent operational tables without resetting existing
+records. Fresh setup runs it before app deployment; the hosted action is an
+explicit data-management rerun, not infrastructure or Foundry setup.
 
 1. Open the deployed app and sign in (avatar button).
-2. Click **"Seed & provision"** in the header.
+2. Open Administration and click **"Seed demo data"**.
 
-It runs `RTI_011` in your workspace, which upserts the operational tables and always adds SQL to the live Data
+It runs `RTI_011` in your workspace, which preserves existing operational records and always adds SQL to the live Data
 Agent, preserving existing sources and custom configuration and verifying exact draft and published
 SQL-source readback. Missing agents and extension failures fail the notebook even if SQL
 writes already succeeded. Successful configuration does not certify agent runtime. RTI_011 does
@@ -1780,10 +1831,10 @@ npm version 1.0.2 --no-git-tag-version
 | Problem | Fix |
 | --- | --- |
 | **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**, or script it via [Raw/workspace-reset](../Raw/workspace-reset/README.md)) or re‑run `RTI_001`, then retry. |
-| **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7). If STEP B reports auto‑bind failed, bind the STID tables in the portal. |
+| **"No GraphQL API found"** / STID panels empty | Deploy the current connector-backed app and revised notebooks. STID uses `hydrolakehouse`, not a GraphQL item or a seeding prerequisite; verify the selected Lakehouse identity and delegated connector permissions. Do not recreate `Hydro_STID_API`. |
 | Live signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live‑auth must be in place. |
 | **Static deploy `401 Unauthorized`** | Rayfin's cached Fabric token is stale/expired. An operator can refresh it with `npx rayfin login --select`; agents rerun the one-shot orchestrator, which owns login recovery and state reuse. |
-| **Consent popup on Step 2 (Seed & provision)** | Should **not** appear anymore — `setup-live-auth` now pre‑grants all Fabric REST scopes (`GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`) AllPrincipals (tenant‑wide) on the Power BI Service resource. If you still see it (edge‑cached config), click **Accept** once; it's harmless. |
+| **Consent popup during operational seeding** | The canonical final app stage runs idempotent live-auth setup and verifies required permissions/consent. If blocked, follow its precise administrator handoff. Do not assume configured permission rows prove consent or approve an unexpected scope request blindly. |
 | **Connect telemetry → "No Eventhouse found in the workspace"** (STID/GraphQL works) | **Root cause (proven): an OAuth scope gap, not RBAC.** Discovery reads the Eventhouse's `queryServiceUri` via `GET /v1/workspaces/{ws}/eventhouses/{id}`, which needs **`Item.Read.All`** (or `Eventhouse.Read.All`). Without it the call returns **403 InsufficientScopes** and the app reports "No Eventhouse found" — even for a workspace admin (admin RBAC ≠ token scope). `List Items` (used to find STID's GraphQL) only needs `Workspace.Read.All`, which is why STID works but telemetry doesn't. **Fix:** the app now requests `Item.Read.All` (`src/services/fabric.ts` `FABRIC_SCOPES`) and `setup-live-auth` pre‑grants it. Agents rerun the one-shot orchestrator, then hard-refresh (Ctrl+F5). If telemetry connects but shows no data, ensure the signed-in user has **KQL Database Viewer** on the Eventhouse and the app origin is in the Eventhouse **CORS** allow-list. |
 | Sign‑in fails with **AADSTS** | Ensure your deployed hosting URL is in `rayfin/rayfin.yml` (`allowedRedirectUris`), then run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
 | Local **Deploy app** says the identity is missing from the MSAL token cache | The deployer opens `az login --tenant <selected-tenant>` and retries the Fabric token once automatically. Complete the browser sign-in; it does not switch the configured tenant or rotate Rayfin state. |
