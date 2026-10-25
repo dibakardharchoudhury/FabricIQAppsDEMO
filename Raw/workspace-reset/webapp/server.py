@@ -578,7 +578,7 @@ def api_delete():
 
 # Declared parameters of the 01_Pipe_Setup pipeline, in display order. Each entry
 # drives one field in the UI (label + help + prefilled default) and is validated
-# here. Defaults mirror the pipeline's own defaultValue in pipeline-content.json
+# here. Defaults are tenant-neutral; target destinations must be supplied explicitly.
 # (they are ids and secret *names*, not secret values); "int" values are coerced
 # so they reach the pipeline as JSON numbers, not strings.
 PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
@@ -588,7 +588,7 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
     {"name": "workspace_id", "type": "string", "default": "",
      "label": "Workspace name or ID",
      "help": "Mirrors the target workspace on the left. Names are resolved to the canonical workspace GUID before the pipeline starts."},
-    {"name": "key_vault_uri", "type": "string", "default": "https://akvfabcapnew.vault.azure.net/",
+    {"name": "key_vault_uri", "type": "string", "default": "",
      "label": "Key Vault URI",
      "help": "Azure Key Vault that holds the service-principal secrets the notebooks read (e.g. https://myvault.vault.azure.net/)."},
     {"name": "key_vault_tenant_id_secret_name", "type": "string", "default": "tenantid",
@@ -600,13 +600,13 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
     {"name": "key_vault_client_secret_name", "type": "string", "default": "clientsecret",
      "label": "KV secret · client secret",
      "help": "Name of the Key Vault secret that stores the client secret."},
-    {"name": "ops_agent_teams_team_id", "type": "string", "default": "c480320e-9204-474b-9b2c-54a53e94f220",
+    {"name": "ops_agent_teams_team_id", "type": "string", "default": "",
      "label": "Teams team id",
      "help": "GUID of the Microsoft Teams team targeted by Operations Agent alert configuration."},
-    {"name": "ops_agent_teams_channel_id", "type": "string", "default": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
+    {"name": "ops_agent_teams_channel_id", "type": "string", "default": "",
      "label": "Teams channel id",
      "help": "Target Teams channel (thread) id, e.g. 19:...@thread.tacv2. Delivery requires verified agent configuration and permissions."},
-    {"name": "ops_agent_run_as_user", "type": "string", "default": "admin@mngenvmcap218279.onmicrosoft.com",
+    {"name": "ops_agent_run_as_user", "type": "string", "default": "",
      "label": "Agent run-as user",
      "help": "Optional UPN guard for the delegated user that provisions and runs the Operations Agents; blank uses the signed-in deploying user."},
     {"name": "alert_email_to", "type": "string", "default": "",
@@ -638,6 +638,12 @@ def _pipeline_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
         raise ValueError("Key Vault URI is required for connectivity preflight.")
     if not str(raw_params.get("alert_email_to") or "").strip():
         raise ValueError("Alert email recipient is required.")
+    for name, label in (
+        ("ops_agent_teams_team_id", "Teams team id"),
+        ("ops_agent_teams_channel_id", "Teams channel id"),
+    ):
+        if not str(raw_params.get(name) or "").strip():
+            raise ValueError(f"{label} is required for Operations Agent provisioning.")
     params: dict[str, object] = {}
     for spec in PIPELINE_PARAM_SPEC:
         name = spec["name"]
@@ -654,6 +660,7 @@ def _pipeline_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
         else:
             params[name] = str(value).strip()
     params["workspace_id"] = workspace
+    params["ops_agent_run_as_user"] = str(raw_params.get("ops_agent_run_as_user") or "").strip()
     argv = [
         str(PIPELINE_SCRIPT), "--tenant", tenant, "--workspace", workspace,
         "--pipeline", pipeline, "--yes",
@@ -753,6 +760,15 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         if not FOUNDRY_ENDPOINT_RE.fullmatch(endpoint):
             raise ValueError("Foundry project endpoint must look like https://<resource>.services.ai.azure.com/api/projects/<project>.")
         env["HYDRO_FOUNDRY_PROJECT_ENDPOINT"] = endpoint
+    project_id = text("foundryProjectResourceId")
+    if project_id:
+        if not re.fullmatch(
+            r"/subscriptions/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+            r"/resourceGroups/[^/?#]+/providers/Microsoft\.CognitiveServices"
+            r"/accounts/[A-Za-z0-9-]+/projects/[A-Za-z0-9_.-]+", project_id, re.IGNORECASE,
+        ):
+            raise ValueError("Foundry project resource ID must be a full project ARM resource ID.")
+        env["HYDRO_FOUNDRY_PROJECT_RESOURCE_ID"] = project_id
     model = text("foundryModel")
     if model:
         if not FOUNDRY_MODEL_RE.fullmatch(model):
@@ -1091,6 +1107,8 @@ def app_version():
         commit_count = git_value("rev-list", "--count", "HEAD")
         revision = git_value("rev-parse", "--short=8", "HEAD")
         timestamp = git_value("show", "-s", "--format=%cI", "HEAD")
+        branch = git_value("branch", "--show-current")
+        repository = clean_repo(git_value("remote", "get-url", "origin"))
     except (OSError, subprocess.SubprocessError) as exc:
         timestamp = datetime.fromtimestamp(Path(__file__).stat().st_mtime, UTC).isoformat()
         response = jsonify(
@@ -1102,9 +1120,17 @@ def app_version():
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    response = jsonify(version=f"v1.0.{commit_count}", timestamp=timestamp, revision=revision)
+    response = jsonify(
+        version=f"v1.0.{commit_count}", timestamp=timestamp, revision=revision,
+        branch=branch, repository=repository,
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.get("/deploy-guide")
+def deploy_guide():
+    return send_from_directory(REPO_ROOT / "HydroOperationsApp", "DEPLOY.md", mimetype="text/plain")
 
 
 @app.get("/")

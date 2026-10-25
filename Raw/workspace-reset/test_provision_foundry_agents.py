@@ -146,6 +146,74 @@ class PreparedFoundryTests(unittest.TestCase):
 
 
 class PublishedIdentityTests(unittest.TestCase):
+    def test_prepared_project_uses_direct_read_without_subscription_discovery(self):
+        subscription = "11111111-2222-3333-4444-555555555555"
+        project_id = f"/subscriptions/{subscription}/resourceGroups/hydro/providers/Microsoft.CognitiveServices/accounts/hydro/projects/demo"
+        endpoint = "https://hydro.services.ai.azure.com/api/projects/demo"
+        for explicit in (False, True, "different-prepared-project"):
+            with self.subTest(explicit=explicit):
+                deploy = Mock()
+                deploy.DeployError = RuntimeError
+                deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+                deploy.az.side_effect = lambda *args: list(args)
+                deploy.current_rayfin_target.return_value = ({
+                    "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
+                    "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
+                    "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project_id,
+                    "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,
+                } if not explicit else {
+                    "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
+                    "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project_id + "-previous",
+                    "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint + "-previous",
+                } if explicit == "different-prepared-project" else {}, None)
+                def capture(arguments):
+                    if arguments[:2] == ["resource", "show"]:
+                        return json.dumps({"id": project_id, "properties": {"endpoints": {"AI Foundry API": endpoint}}})
+                    raise RuntimeError("direct project verified; stop before provisioning")
+                deploy.run_capture.side_effect = capture
+                with patch.dict(os.environ, {
+                    "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": project_id if explicit else "",
+                    "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "", "HYDRO_AZURE_SUBSCRIPTION_ID": "",
+                }), patch.object(module, "resolve_subscription", return_value=subscription) as resolve, \
+                        patch.object(module, "_load_sibling"):
+                    with self.assertRaisesRegex(RuntimeError, "direct project verified"):
+                        module.provision(deploy, "tenant", "workspace")
+                resolve.assert_called_once_with(deploy, "tenant", subscription)
+                self.assertEqual(deploy.run_capture.call_args_list[0].args[0][:2], ["resource", "show"])
+                self.assertFalse(any(call.args[0][:2] == ["resource", "list"]
+                                     for call in deploy.run_capture.call_args_list))
+
+    def test_direct_project_mismatch_fails_without_discovery_or_creation(self):
+        subscription = "11111111-2222-3333-4444-555555555555"
+        project_id = f"/subscriptions/{subscription}/resourceGroups/hydro/providers/Microsoft.CognitiveServices/accounts/hydro/projects/demo"
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({}, None)
+        deploy.run_capture.return_value = json.dumps({"id": project_id, "properties": {"endpoints": {
+            "AI Foundry API": "https://other.services.ai.azure.com/api/projects/other",
+        }}})
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": project_id,
+            "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "https://selected.services.ai.azure.com/api/projects/demo",
+        }), patch.object(module, "resolve_subscription", return_value=subscription), \
+                patch.object(module, "_load_sibling") as load:
+            with self.assertRaisesRegex(RuntimeError, "refusing project discovery"):
+                module.provision(deploy, "tenant", "workspace")
+        deploy.run_capture.assert_called_once()
+        load.assert_not_called()
+
+    def test_prepared_subscription_is_verified_without_using_current_cli_default(self):
+        subscription = "11111111-2222-3333-4444-555555555555"
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.GUID_RE = re.compile(r"[0-9a-f-]{36}")
+        deploy.az.side_effect = lambda *args: list(args)
+        deploy.run_capture.return_value = json.dumps({"id": subscription, "tenantId": "tenant", "state": "Enabled"})
+        with patch.dict(os.environ, {"HYDRO_AZURE_SUBSCRIPTION_ID": ""}):
+            self.assertEqual(module.resolve_subscription(deploy, "tenant", subscription), subscription)
+        deploy.run_capture.assert_called_once_with(["account", "show", "--subscription", subscription, "-o", "json"])
+
     def test_published_sql_requires_target_identity_and_all_selected_operational_tables(self):
         tables = ["WorkOrders", "MaintenanceNotifications", "Inspections", "SpareParts", "Asset3DModels"]
         source = {"type": "sql_database", "workspaceId": "workspace", "artifactId": "sql",

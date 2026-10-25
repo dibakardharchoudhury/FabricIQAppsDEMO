@@ -31,10 +31,11 @@ def source(number):
 
 def functions(number, *names, **overrides):
     namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib,
-                 "provision_shared_store": False}
+                 "provision_shared_store": False, "OPERATIONAL_STORE_NAME": "HydroOperationalStore",
+                 "sql_db_item_name": "sql"}
     namespace.update(overrides)
     tree = ast.parse(source(number))
-    included = set(names) | {"definition_parts", "is_ontology_context_path"}
+    included = set(names) | {"definition_parts", "is_ontology_context_path", "operational_source_path"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)
     return namespace
@@ -1611,7 +1612,7 @@ class CapabilityTests(unittest.TestCase):
             }),
         ]
         ns, state = self.sql_extension_namespace(baseline)
-        existing = ns["build_sql_datasource_obj"]({}, "stale-sql-id", {"table": [("id", "int")]})
+        existing = ns["build_sql_datasource_obj"]({}, "sql-id", {"table": [("id", "int")]})
         existing.update(dataSourceInstructions="Keep SQL instructions", userDescription="My source",
                         metadata={"keep": True}, customSetting={"x": 1})
         table = existing["elements"][0]["children"][0]["children"][0]["children"][0]
@@ -1630,6 +1631,17 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(stage["aiInstructions"],
                              "My custom instructions\nOperational guidance\nAsset guidance")
         ns["get_ontology_generation"].assert_not_called()
+
+    def test_sql_extension_rejects_replacing_another_database_at_the_preferred_path(self):
+        ns, state = self.sql_extension_namespace([])
+        existing = ns["build_sql_datasource_obj"]({}, "another-sql-id", {"table": [("id", "int")]})
+        state["definition"]["parts"].append(
+            json_part(ns["SQL_DATASOURCE_PATH"], existing)
+        )
+        with self.assertRaisesRegex(RuntimeError, "preferred operational SQL source path belongs to another source"):
+            ns["extend_data_agent_sql_source"]("agent")
+        ns["update_item_definition"].assert_not_called()
+        ns["publish_data_agent"].assert_not_called()
 
     def test_sql_extension_full_api_lifecycle_without_ontology(self):
         ns, state = self.sql_extension_namespace()
@@ -1768,7 +1780,7 @@ class CapabilityTests(unittest.TestCase):
             ns = self.extension_namespace(agents)
             ns.update({
                 "resolve_sql_database": Mock(return_value=("sql-id", "server", "database")),
-                "sql_db_item_name": "sql", "seed_sql_database": Mock(), "seed_demo_data": seed_demo_data,
+                "sql_db_item_name": "sql", "seed_sql_database": Mock(return_value={}), "seed_demo_data": seed_demo_data,
                 "create_graphql_api": Mock(return_value={"id": "graphql-id"}),
                 "graphql_api_name": "graphql", "lakehouse_name": "lakehouse", "lakehouse_id": "lh-id",
                 "resolve_sql_analytics_endpoint_id": Mock(return_value="endpoint"),
@@ -1805,11 +1817,16 @@ class CapabilityTests(unittest.TestCase):
         tree = ast.parse(source("011"))
         start = next(i for i, node in enumerate(tree.body) if assign_to(node, "persist"))
         for seed_demo_data in (True, False):
-            ns = {"seed_demo_data": seed_demo_data, "provision_shared_store": False, "step_results": {
-                "graphql": {"status": "configured"}, "sql_seed": {"status": "completed"},
-            }}
-            exec(compile(ast.Module(body=tree.body[start:start + 3], type_ignores=[]), "persist", "exec"), ns)
-            self.assertEqual("operational_sql_seed_status" in ns["persist"], seed_demo_data)
+            for result in ({"status": "completed", "receipt": {"tables": {}}},
+                           {"status": "failed", "reason": "original seed error"}):
+                with self.subTest(seed=seed_demo_data, status=result["status"]):
+                    ns = {"json": json, "seed_demo_data": seed_demo_data, "provision_shared_store": False,
+                          "step_results": {"sql_seed": result}}
+                    exec(compile(ast.Module(body=tree.body[start:start + 3], type_ignores=[]), "persist", "exec"), ns)
+                    self.assertEqual("operational_sql_seed_status" in ns["persist"], seed_demo_data)
+                    if seed_demo_data:
+                        receipt = json.loads(ns["persist"]["operational_sql_seed_receipt"])
+                        self.assertEqual(receipt, result.get("receipt", result))
 
     def test_sql_extension_failure_is_persisted_and_reraised(self):
         tree = ast.parse(source("011"))

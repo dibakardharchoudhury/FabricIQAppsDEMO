@@ -566,6 +566,7 @@ class FeatureWorkspace:
         if len(matches) != 1:
             raise FeatureWorkspaceError("The energy context Lakehouse did not become visible.")
         lakehouse = matches[0]
+        self.ensure_energy_folder(lakehouse)
         self.state["energy_lakehouse_id"] = lakehouse["id"]
         self._save()
         target_lakehouse = {
@@ -598,6 +599,26 @@ class FeatureWorkspace:
             agent = self._item(f"Hydro_Map_Agent_{self.config.env_suffix}", "DataAgent")
             self.state["map_agent_id"] = agent["id"]
             self._save()
+
+    def ensure_energy_folder(self, lakehouse: dict[str, Any] | None = None) -> None:
+        lakehouse = lakehouse if lakehouse is not None else self._item(
+            f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse",
+        )
+        if lakehouse.get("description") != f"{self.marker}: energy context":
+            raise FeatureWorkspaceError("Refusing to move an unowned energy context Lakehouse.")
+        folder_id = self._folder(f"RTI_DEMO_{self.config.env_suffix}")
+        if lakehouse.get("folderId") != folder_id:
+            response = self.fabric.request(
+                "POST", f"{self.base}/items/{lakehouse['id']}/move", json={"targetFolderId": folder_id},
+            )
+            check_response(response, "Move energy context Lakehouse into setup folder", {200})
+        response = self.fabric.request(
+            "GET", f"{self.base}/items?rootFolderId={folder_id}&recursive=false",
+        )
+        check_response(response, "Verify energy context Lakehouse folder", {200})
+        if not any(item.get("id") == lakehouse["id"] for item in response.json().get("value", [])):
+            raise FeatureWorkspaceError("Energy context Lakehouse folder readback did not match setup.")
+        print(f"Energy context Lakehouse folder verified: RTI_DEMO_{self.config.env_suffix}.", flush=True)
 
     def verify_energy(self) -> None:
         lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")

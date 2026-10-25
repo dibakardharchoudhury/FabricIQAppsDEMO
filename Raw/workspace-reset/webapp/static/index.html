@@ -286,7 +286,7 @@
         </div>
         <div>
           <h1>Initialize Your Fabric Demo</h1>
-          <p class="sub">Sync a workspace from GitHub &amp; clear its items &mdash; powered by your <code>az login</code> session.</p>
+          <p class="sub">Choose a target, prepare its services, publish the app last.</p>
         </div>
       </div>
 
@@ -338,9 +338,16 @@
     <div class="card">
       <div class="card-head">
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
-        <h2>Initialize everything in one serial workflow</h2>
+        <h2>New workspace: guided deployment</h2>
       </div>
       <p class="hint">Configure the complete workflow here. Only the tenant and workspace are shared from the target card on the left. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
+      <aside class="notice">
+        <strong>Already deployed? Use Deploy app instead.</strong> Do not import Git or rerun setup to update the website.
+        For a new target, reuse an administrator-prepared SPA, Key Vault and Foundry project.
+        You do not need Global Administrator or subscription Owner. Tenant consent, capacity access,
+        private endpoints and scoped Azure permissions must still be prepared by their owners.
+        <a href="/deploy-guide" target="_blank" rel="noopener">Open the short deployment guide</a>.
+      </aside>
       <div class="workflow-steps">
         <div class="workflow-step"><strong>1. Sync from GitHub</strong>Imports the selected branch into the target Fabric workspace.</div>
         <div class="workflow-step"><strong>2. Run setup pipeline</strong>Runs Key Vault preflight and <code>01_Pipe_Setup</code>.</div>
@@ -355,7 +362,7 @@
             <label>Repository (owner/repo or URL)
               <input id="workflowRepository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
             <label>Branch
-              <input id="workflowBranch" type="text" value="main" /></label>
+              <input id="workflowBranch" type="text" placeholder="Published branch matching this checkout" /></label>
             <label>Directory (workspace root)
               <input id="workflowDirectory" type="text" value="/" /></label>
             <label class="check"><input id="workflowReuseConn" type="checkbox" checked /> Reuse existing connection</label>
@@ -391,6 +398,8 @@
                 <textarea id="workflowOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
               <label>Foundry project endpoint
                 <input id="workflowFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
+              <label>Foundry project ARM resource ID (recommended)
+                <input id="workflowFoundryProjectResourceId" type="text" placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/.../projects/..." /></label>
               <label>Model deployment
                 <input id="workflowFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
               <label>Container registry
@@ -442,7 +451,7 @@
         <label>Repository (owner/repo or URL)
           <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
         <label>Branch
-          <input id="branch" type="text" value="main" /></label>
+          <input id="branch" type="text" placeholder="Published branch matching this checkout" /></label>
         <label>Directory (workspace root)
           <input id="directory" type="text" value="/" /></label>
         <label class="check"><input id="reuseConn" type="checkbox" checked /> Reuse existing connection</label>
@@ -519,6 +528,8 @@
             <textarea id="deployOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
           <label>Foundry project endpoint
             <input id="deployFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
+          <label>Foundry project ARM resource ID (recommended)
+            <input id="deployFoundryProjectResourceId" type="text" placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/.../projects/..." /></label>
           <label>Model deployment
             <input id="deployFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
           <label>Container registry
@@ -668,7 +679,7 @@ function renderDeploymentTimings(lines) {
       throw new Error("Invalid deployment timing receipt");
     }
     const rows = data.steps.map((step) => `<tr><td>${step.section}. ${escapeHtml(step.label)}</td><td>${formatElapsed(step.seconds * 1000)}</td><td>${escapeHtml(step.status)}</td></tr>`).join("");
-    return `<section aria-label="Deployment timings"><h3>App deployment timings (${escapeHtml(data.status)})</h3><table><thead><tr><th>Section</th><th>Elapsed</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table><p>Total: ${formatElapsed(data.total_seconds * 1000)}. Setup-pipeline time is separate.</p></section>`;
+    return `<section aria-label="Deployment timings"><h3>Module timings (${escapeHtml(data.status)})</h3><table><thead><tr><th>Section</th><th>Elapsed</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table><p>Total: ${formatElapsed(data.total_seconds * 1000)}. Other modules and setup-pipeline time are separate.</p></section>`;
   } catch (error) {
     return `<p class="error" role="alert">Could not read deployment timings: ${escapeHtml(error.message)}</p>`;
   }
@@ -1005,6 +1016,7 @@ function foundryPayload(prefix) {
     azureSubscriptionId: value("AzureSubscriptionId"),
     ontologyGraphBinding: value("OntologyGraphBinding"),
     foundryEndpoint: value("FoundryEndpoint"),
+    foundryProjectResourceId: value("FoundryProjectResourceId"),
     foundryModel: value("FoundryModel"),
     acrName: value("AcrName"),
     foundryLocation: creating ? value("FoundryLocation") : "",
@@ -1131,6 +1143,22 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 // The parameter spec (labels, help, defaults, types) is served by the backend so
 // the form stays in sync with the pipeline without duplicating it in the page.
 let pipelineSpec = [];
+const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
+function renderPipelineFields(prefix) {
+  const fields = pipelineSpec.map((p) => {
+    const advanced = !["env_suffix", ...requiredPipelineFields].includes(p.name);
+    const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
+    const html = `<div class="param${wide ? " wide" : ""}">
+      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
+      <span class="phelp">${escapeHtml(p.help)}</span>
+      <input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />
+    </div>`;
+    return { advanced, html };
+  });
+  return `<div class="params">${fields.filter(p => !p.advanced).map(p => p.html).join("")}</div>
+    <details class="foundry-block"><summary>Advanced: secret names, run-as identity and timeout</summary>
+    <div class="params">${fields.filter(p => p.advanced).map(p => p.html).join("")}</div></details>`;
+}
 function syncPipelineWorkspace() {
   ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
     const field = $(id);
@@ -1141,30 +1169,18 @@ async function loadPipelineParams() {
   try {
     const res = await fetch("/api/pipeline-params");
     const data = await res.json();
-    pipelineSpec = data.parameters || [];
+    if (!res.ok || !Array.isArray(data.parameters)) throw new Error(data.error || `HTTP ${res.status}`);
+    pipelineSpec = data.parameters;
   } catch (e) {
-    $("pipelineFields").innerHTML = `<p class="phelp">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
+    for (const id of ["pipelineFields", "workflowPipelineFields"]) {
+      $(id).innerHTML = `<p class="phelp" role="alert">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
+    }
     return;
   }
-  $("pipelineFields").innerHTML = pipelineSpec.map((p) => {
-    // A couple of long-value fields span the full width for readability.
-    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user" || p.name === "alert_email_to");
-    const numeric = p.type === "int";
-    return `<div class="param${wide ? " wide" : ""}">
-      <span class="plabel">${escapeHtml(p.label)}</span>
-      <span class="phelp">${escapeHtml(p.help)}</span>
-      <input id="pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${p.name === "alert_email_to" ? "required" : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
-    </div>`;
-  }).join("");
-  $("workflowPipelineFields").innerHTML = pipelineSpec.map((p) => {
-    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user" || p.name === "alert_email_to");
-    const numeric = p.type === "int";
-    return `<div class="param${wide ? " wide" : ""}">
-      <span class="plabel">${escapeHtml(p.label)}</span>
-      <span class="phelp">${escapeHtml(p.help)}</span>
-      <input id="wf_pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${p.name === "alert_email_to" ? "required" : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
-    </div>`;
-  }).join("");
+  $("pipelineFields").classList.remove("params");
+  $("workflowPipelineFields").classList.remove("params");
+  $("pipelineFields").innerHTML = renderPipelineFields("pp_");
+  $("workflowPipelineFields").innerHTML = renderPipelineFields("wf_pp_");
   syncPipelineWorkspace();
   // Re-run validation whenever a pipeline field changes.
   pipelineSpec.forEach((p) => {
@@ -1181,18 +1197,12 @@ function collectPipelineParams(prefix = "pp_") {
   return out;
 }
 function pipelineValid() {
-  const keyVault = $("pp_key_vault_uri");
-  const alertEmail = $("pp_alert_email_to");
   return $("tenant").value.trim() && $("workspace").value.trim()
-    && keyVault && keyVault.value.trim()
-    && alertEmail && alertEmail.value.trim();
+    && requiredPipelineFields.every(name => $("pp_" + name)?.value.trim());
 }
 function workflowPipelineValid() {
-  const keyVault = $("wf_pp_key_vault_uri");
-  const alertEmail = $("wf_pp_alert_email_to");
   return $("tenant").value.trim() && $("workspace").value.trim()
-    && keyVault && keyVault.value.trim()
-    && alertEmail && alertEmail.value.trim();
+    && requiredPipelineFields.every(name => $("wf_pp_" + name)?.value.trim());
 }
 
 $("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });
@@ -1250,12 +1260,19 @@ async function loadVersion() {
     const res = await fetch("/api/version", { cache: "no-store" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    for (const [ids, value] of [
+      [["branch", "workflowBranch"], data.branch],
+      [["repository", "workflowRepository"], data.repository],
+    ]) {
+      if (value) for (const id of ids) if (!$(id).value) $(id).value = value;
+    }
+    refresh();
     const builtAt = new Date(data.timestamp);
     version.textContent = data.version;
     timestamp.textContent = Number.isNaN(builtAt.getTime()) ? data.timestamp : new Intl.DateTimeFormat(undefined, {
       year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     }).format(builtAt);
-    stamp.title = data.detail || `Git commit ${data.revision}\nCommitted ${data.timestamp}`;
+    stamp.title = data.detail || `Checkout ${data.branch || "(detached)"}\nGit commit ${data.revision}\nCommitted ${data.timestamp}`;
   } catch (error) {
     version.textContent = "Version check failed";
     timestamp.textContent = "Hover for details";

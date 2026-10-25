@@ -212,8 +212,15 @@ def _load_sibling(name: str):
     return module
 
 
-def resolve_subscription(deploy, tenant: str) -> str:
-    selected = os.environ.get("HYDRO_AZURE_SUBSCRIPTION_ID", "").strip()
+PROJECT_RESOURCE_RE = re.compile(
+    r"/subscriptions/([0-9a-f-]{36})/resourceGroups/[^/?#]+/providers/"
+    r"Microsoft\.CognitiveServices/accounts/[A-Za-z0-9-]+/projects/[A-Za-z0-9_.-]+",
+    re.IGNORECASE,
+)
+
+
+def resolve_subscription(deploy, tenant: str, prepared_subscription: str = "") -> str:
+    selected = os.environ.get("HYDRO_AZURE_SUBSCRIPTION_ID", "").strip() or prepared_subscription
     if selected and not deploy.GUID_RE.fullmatch(selected):
         raise deploy.DeployError("HYDRO_AZURE_SUBSCRIPTION_ID must be a subscription GUID.")
     arguments = ("--subscription", selected) if selected else ()
@@ -367,13 +374,29 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
 def provision(deploy, tenant: str, workspace: str) -> None:
     values, _ = deploy.current_rayfin_target()
     print("Foundry: project - resolving the Foundry project.", flush=True)
-    subscription = resolve_subscription(deploy, tenant)
     same_target = (
         deploy._public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
         and deploy._public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace.casefold()
+    )
+    explicit_project_id = os.environ.get("HYDRO_FOUNDRY_PROJECT_RESOURCE_ID", "").strip()
+    project_match = PROJECT_RESOURCE_RE.fullmatch(explicit_project_id) if explicit_project_id else None
+    if explicit_project_id and not project_match:
+        raise deploy.DeployError("HYDRO_FOUNDRY_PROJECT_RESOURCE_ID must be the full Foundry project ARM resource ID.")
+    prepared_subscription = (
+        project_match[1] if project_match else
+        deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID") if same_target else ""
+    )
+    subscription = resolve_subscription(deploy, tenant, prepared_subscription)
+    same_target = (
+        same_target
         and deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID").casefold() in ("", subscription.casefold())
     )
-    saved_endpoint = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT") if same_target else ""
+    saved_project_id = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID") if same_target else ""
+    saved_endpoint = (
+        deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT")
+        if same_target and (not explicit_project_id or explicit_project_id.casefold() == saved_project_id.casefold())
+        else ""
+    )
     explicit_endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip()
     endpoint = explicit_endpoint or saved_endpoint
     model = os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip()
@@ -395,7 +418,25 @@ def provision(deploy, tenant: str, workspace: str) -> None:
                 found.append((detail["id"], url))
         return found
 
-    candidates = discover(endpoint)
+    project_id = explicit_project_id or (
+        saved_project_id if not explicit_endpoint or explicit_endpoint.rstrip("/") == saved_endpoint.rstrip("/") else ""
+    )
+    if project_id:
+        identity = PROJECT_RESOURCE_RE.fullmatch(project_id)
+        if not identity or identity[1].casefold() != subscription.casefold():
+            raise deploy.DeployError("The selected Foundry project resource ID must belong to the selected subscription.")
+        detail = json.loads(deploy.run_capture(deploy.az(
+            "resource", "show", "--ids", project_id, "--api-version", "2025-06-01", "-o", "json",
+        )))
+        live_endpoint = str(detail.get("properties", {}).get("endpoints", {}).get("AI Foundry API") or "").rstrip("/")
+        if (str(detail.get("id") or "").casefold() != project_id.casefold()
+                or not live_endpoint or (endpoint and endpoint.rstrip("/") != live_endpoint)):
+            raise deploy.DeployError("Foundry project identity/endpoint readback does not match; refusing project discovery or replacement.")
+        candidates = [(project_id, live_endpoint)]
+        endpoint = live_endpoint
+        print("Foundry: verified the selected project directly; no subscription-wide resource discovery.", flush=True)
+    else:
+        candidates = discover(endpoint)
     if endpoint and not candidates and not explicit_endpoint:
         print("Foundry: saved project is absent from the selected subscription; discarding its endpoint/model hints.", flush=True)
         endpoint = ""

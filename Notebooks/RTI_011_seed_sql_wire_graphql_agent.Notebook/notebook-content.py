@@ -3228,7 +3228,11 @@ if provision_shared_store:
 
 if seed_demo_data:
     persist["operational_sql_seed_status"] = step_results["sql_seed"]["status"]
-    persist["operational_sql_seed_receipt"] = json.dumps(step_results["sql_seed"]["receipt"], sort_keys=True)
+    seed_result = step_results["sql_seed"]
+    persist["operational_sql_seed_receipt"] = json.dumps(
+        seed_result["receipt"] if seed_result["status"] == "completed" else seed_result,
+        sort_keys=True,
+    )
 
 if persist:
     from delta.tables import DeltaTable

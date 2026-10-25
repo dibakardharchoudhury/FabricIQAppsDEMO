@@ -17,6 +17,12 @@ SPEC = importlib.util.spec_from_file_location("fabric_demo_server", MODULE_PATH)
 assert SPEC and SPEC.loader
 SERVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SERVER)
+PIPELINE_PARAMS = {
+    "key_vault_uri": "https://vault.vault.azure.net/",
+    "alert_email_to": "operations@example.test",
+    "ops_agent_teams_team_id": "team",
+    "ops_agent_teams_channel_id": "channel",
+}
 
 
 class WorkspaceActionTests(unittest.TestCase):
@@ -43,7 +49,7 @@ class WorkspaceActionTests(unittest.TestCase):
     def test_full_workflow_prepares_energy_and_foundry_before_final_app(self):
         target = {
             "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo", "connectionId": "yes",
-            "parameters": {"key_vault_uri": "https://vault.vault.azure.net/", "alert_email_to": "a@example.test"},
+            "parameters": PIPELINE_PARAMS,
             "energyMap": "enabled", "createFoundry": False,
         }
         with patch.object(SERVER, "_start_workflow", return_value="job") as start:
@@ -145,10 +151,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
                 "/api/run-pipeline",
                 {
                     **target,
-                    "parameters": {
-                        "key_vault_uri": "https://vault.vault.azure.net/",
-                        "alert_email_to": "operations@example.test",
-                    },
+                    "parameters": PIPELINE_PARAMS,
                 },
             ),
             ("/api/deploy-app", target),
@@ -160,10 +163,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
                     **target,
                     "repository": "owner/repository",
                     "connectionId": "yes",
-                    "parameters": {
-                        "key_vault_uri": "https://vault.vault.azure.net/",
-                        "alert_email_to": "operations@example.test",
-                    },
+                    "parameters": PIPELINE_PARAMS,
                 },
             ),
         ]
@@ -184,18 +184,27 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
         specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
         self.assertEqual(specs["alert_email_to"]["default"], "")
         self.assertIn("independent", specs["alert_email_to"]["help"])
-        self.assertEqual(
-            specs["ops_agent_teams_team_id"]["default"],
-            "c480320e-9204-474b-9b2c-54a53e94f220",
-        )
-        self.assertEqual(
-            specs["ops_agent_teams_channel_id"]["default"],
-            "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
-        )
-        self.assertEqual(
-            specs["ops_agent_run_as_user"]["default"],
-            "admin@mngenvmcap218279.onmicrosoft.com",
-        )
+        pipeline = json.loads((SERVER.REPO_ROOT / "Orchestrator_Pipelines" /
+                               "01_Pipe_Setup.DataPipeline" / "pipeline-content.json").read_text())
+        for name in ("key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id",
+                     "ops_agent_run_as_user"):
+            self.assertEqual(specs[name]["default"], "")
+            self.assertEqual(pipeline["properties"]["parameters"][name]["defaultValue"], "")
+
+    def test_pipeline_requires_destinations_before_start_and_clears_legacy_run_as_default(self):
+        for name in ("ops_agent_teams_team_id", "ops_agent_teams_channel_id"):
+            with self.subTest(name=name), patch.object(SERVER, "_start") as start:
+                response = self.client.post("/api/run-pipeline", json={
+                    "tenant": "tenant.example", "workspace": "Demo",
+                    "parameters": {**PIPELINE_PARAMS, name: ""},
+                })
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("required for Operations Agent", response.get_json()["error"])
+                start.assert_not_called()
+        _, env = SERVER._pipeline_invocation({
+            "tenant": "tenant.example", "workspace": "Demo", "parameters": PIPELINE_PARAMS,
+        })
+        self.assertEqual(json.loads(env["FABRIC_PIPELINE_PARAMS"])["ops_agent_run_as_user"], "")
 
     def test_pipeline_rejects_blank_alert_recipient(self):
         with patch.object(SERVER, "_start") as start:
@@ -213,10 +222,10 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
     def test_alert_recipient_uses_the_standard_styled_input(self):
         html = (Path(SERVER.__file__).with_name("static") / "index.html").read_text(encoding="utf-8")
         self.assertIn(
-            '<input id="pp_${p.name}" type="text"',
+            '<input id="${prefix}${p.name}" type="text"',
             html,
         )
-        self.assertIn('${p.name === "alert_email_to" ? "required" : ""}', html)
+        self.assertIn('${requiredPipelineFields.includes(p.name) ? "required" : ""}', html)
         self.assertNotIn('type="${p.name === "alert_email_to" ? "email" : "text"}"', html)
 
     def test_pipeline_rejects_old_published_environment_before_starting(self):
@@ -276,7 +285,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
                     with patch.object(SERVER, "_start", side_effect=start_job):
                         response = self.client.post("/api/run-pipeline", json={
                             "tenant": "tenant.example", "workspace": "DEV",
-                            "parameters": {"key_vault_uri": "https://mock.vault.azure.net/",
+                            "parameters": {**PIPELINE_PARAMS, "key_vault_uri": "https://mock.vault.azure.net/",
                                            "alert_email_to": "operations@example.test",
                                            "ontology_data_agent_mode": "enabled",
                                            "ontology_operations_agent_mode": "enabled"},
@@ -304,6 +313,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             response = self.client.post("/api/run-pipeline", json={
                 "tenant": "tenant.example", "workspace": "DEV",
                 "parameters": {
+                    **PIPELINE_PARAMS,
                     "key_vault_uri": "https://vault.vault.azure.net/",
                     "alert_email_to": "operations@example.test",
                     "ontology_data_agent_mode": "force",
@@ -426,6 +436,37 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             "HYDRO_FOUNDRY_MODEL_CAPACITY": "12", "HYDRO_FOUNDRY_CREATE": "false",
         })
 
+    def test_project_resource_id_is_explicit_validated_and_forwarded_only_to_setup(self):
+        project_id = (
+            "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/demo"
+            "/providers/Microsoft.CognitiveServices/accounts/hydro/projects/demo"
+        )
+        self.assertEqual(SERVER._deploy_environment({"foundryProjectResourceId": project_id}), {
+            "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": project_id,
+        })
+        for invalid in ("demo", project_id + "?other=true", project_id.replace("projects/demo", "accounts/demo")):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "ARM resource ID"):
+                SERVER._deploy_environment({"foundryProjectResourceId": invalid})
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/deploy-app", json={
+                "tenant": "tenant.example", "workspace": "Demo", "foundryProjectResourceId": project_id,
+            })
+            self.assertEqual(response.status_code, 400)
+            start.assert_not_called()
+
+    def test_checkout_metadata_prefills_source_and_guide_is_locally_available(self):
+        values = ["100", "abcd1234", "2026-10-25T00:00:00+00:00", "feat/example",
+                  "https://github.com/owner/repository.git"]
+        with patch.object(SERVER.shutil, "which", return_value="git"), \
+                patch.object(SERVER.Path, "exists", return_value=True), \
+                patch.object(SERVER.subprocess, "run", side_effect=[Mock(stdout=value) for value in values]):
+            data = self.client.get("/api/version").get_json()
+        self.assertEqual((data["branch"], data["repository"]), ("feat/example", "owner/repository"))
+        guide = self.client.get("/deploy-guide")
+        self.assertEqual(guide.status_code, 200)
+        self.assertIn("text/plain", guide.content_type)
+        guide.close()
+
     def test_operator_graph_binding_is_passed_only_as_explicit_json(self):
         binding = {
             key: f"{index:08x}-1111-4111-8111-{index:012x}"
@@ -473,7 +514,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
                 "tenant": "tenant.example", "workspace": "w", "acrName": "BAD"})
             full = self.client.post("/api/full-workflow", json={
                 "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes",
-                "parameters": {"key_vault_uri": "https://v.vault.azure.net/", "alert_email_to": "a@example.test"},
+                "parameters": PIPELINE_PARAMS,
                 "productionWrites": "maybe"})
         self.assertEqual((deploy.status_code, full.status_code), (400, 400))
         self.assertIn("Container registry", deploy.get_json()["error"])
@@ -484,7 +525,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
     def test_full_workflow_gives_foundry_settings_to_the_deploy_step_only(self):
         payload = {
             "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes", "pat": "x",
-            "parameters": {"key_vault_uri": "https://v.vault.azure.net/", "alert_email_to": "a@example.test"},
+            "parameters": PIPELINE_PARAMS,
             "createFoundry": True, "foundryLocation": "swedencentral",
         }
         with patch.object(SERVER, "_start_workflow", return_value="id") as start:
@@ -528,6 +569,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             "connectionId": "yes",
             "pat": "test-pat",
             "parameters": {
+                **PIPELINE_PARAMS,
                 "key_vault_uri": "https://vault.vault.azure.net/",
                 "alert_email_to": "operations@example.test",
                 "per_notebook_timeout_secs": "3600",
@@ -659,7 +701,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             response = self.client.get("/api/version")
 
         self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_count, 5)
         for call in run.call_args_list:
             self.assertEqual(call.kwargs["creationflags"], SERVER.NO_WINDOW)
 
@@ -669,10 +711,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             "workspace": "Demo Workspace",
             "repository": "owner/repository",
             "connectionId": "yes",
-            "parameters": {
-                "key_vault_uri": "https://vault.vault.azure.net/",
-                "alert_email_to": "operations@example.test",
-            },
+            "parameters": PIPELINE_PARAMS,
         }
         cases = (
             ({**base, "repository": ""}, "repository"),
@@ -715,7 +754,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             self.assertIn(f'id="{field_id}"', workflow_pane)
         self.assertIn("Only the tenant and workspace are shared", workflow_pane)
         self.assertNotIn("Configure all required fields in the other tabs", workflow_pane)
-        self.assertIn('id="wf_pp_${p.name}"', page)
+        self.assertIn('renderPipelineFields("wf_pp_")', page)
 
     def test_full_workflow_submission_uses_only_its_own_fields(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")

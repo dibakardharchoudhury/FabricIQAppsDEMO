@@ -259,6 +259,12 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 
 ## Deploy
 
+**Recommended:** follow the [short deployment guide](HydroOperationsApp/DEPLOY.md)
+and launch `python Raw\workspace-reset\launch.py` from the repository root.
+The guided flow separates data/energy/Foundry setup from final app publication.
+Existing-workspace website updates use **Deploy app**, not Git import or core setup.
+The following pipeline details are a manual Fabric reference.
+
 1. Open **`01_Pipe_Setup`** and fill its **pipeline parameters**:
 
    | Parameter | Example | Notes |
@@ -276,7 +282,10 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
    | `per_notebook_timeout_secs` | `3600` | Per‑child DAG timeout. |
 
    > [!IMPORTANT]
-   > The demo Team ID, channel ID, and run-as user are prefilled in both the pipeline and local launcher. Replace them when targeting another tenant or destination. The alert email recipient remains an explicit required launcher input. Enter each **full** value (the UI truncates long values visually).
+   > Tenant-specific Key Vault, Team ID, channel ID and run-as defaults are blank.
+   > Supply your own destinations; the launcher checks Teams/email inputs before
+   > starting Spark. Blank run-as uses the deploying user. Enter each **full**
+   > value (the UI truncates long values visually).
 
 2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning. Use a fresh workspace or unused suffix if the target ontology is v1. Data Agent and Operations Agent provisioning are independent branches after NB06, so one product failure does not prevent the other attempt. All real notebook failures still fail setup; NB09 alone reports the exact documented temporary unsupported-Ontology-v2 response without claiming readiness. Inspect status/reasons and verify execution/delivery separately from configuration.
 3. **Run `Pipe_Stream`** whenever you want a burst of live telemetry.

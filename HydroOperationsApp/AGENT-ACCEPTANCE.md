@@ -1,5 +1,9 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
+For current FEATURE deployment receipts and limitations, use the
+[current verification record](../docs/ontology-test-review.md).
+Dated release/version claims below are historical, not the current target's inventory.
+
 This report distinguishes implemented behavior, observed runtime results and proposals.
 **The earlier v22 ten-flow result is historical evidence, not acceptance of the
 current planner/executor release.** Deployment success, unit tests and planner-only
@@ -1243,7 +1247,7 @@ between scenarios. Capture deployment/agent versions, response IDs, routes, sour
 receipts, UTC intervals, elapsed time, chart values, errors and proposal outcomes.
 Reject test proposals; never recreate/delete the user's confirmed T002 order.
 For scenarios 1-5, the full first-turn prompts remain in
-[DEPLOY.md](DEPLOY.md#first-five-complex-orchestration-acceptance-scenarios).
+[current deployment and acceptance record](../docs/ontology-test-review.md).
 
 ### Historical hosted results: October 8, release 1.0.737
 

@@ -29,6 +29,38 @@ def config_dict():
 
 
 class FeatureWorkspaceTests(unittest.TestCase):
+    def test_energy_folder_move_preserves_identity_and_never_runs_ingestion(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V11"), ROOT,
+            )
+            item = {"id": "geo", "description": f"{workspace.marker}: energy context"}
+            workspace.fabric.request.side_effect = [
+                Mock(status_code=200), Mock(status_code=200, json=lambda: {"value": [{"id": "geo"}]}),
+            ]
+            with patch.object(workspace, "_folder", return_value="folder") as folder, \
+                    patch.object(workspace, "_run") as run:
+                workspace.ensure_energy_folder(item)
+            folder.assert_called_once_with("RTI_DEMO_V11")
+            request = workspace.fabric.request.call_args_list
+            self.assertEqual(request[0].args, ("POST", f"{workspace.base}/items/geo/move"))
+            self.assertEqual(request[0].kwargs["json"], {"targetFolderId": "folder"})
+            run.assert_not_called()
+            with self.assertRaisesRegex(feature.FeatureWorkspaceError, "unowned"):
+                workspace.ensure_energy_folder({**item, "description": "operator-owned"})
+
+    def test_energy_folder_readback_failure_is_not_success(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V11"), ROOT,
+            )
+            workspace.fabric.request.return_value = Mock(status_code=200, json=lambda: {"value": []})
+            with patch.object(workspace, "_folder", return_value="folder"):
+                with self.assertRaisesRegex(feature.FeatureWorkspaceError, "readback"):
+                    workspace.ensure_energy_folder({
+                        "id": "geo", "folderId": "folder", "description": f"{workspace.marker}: energy context",
+                    })
+
     def test_energy_only_setup_has_no_core_or_azure_prerequisite_configuration(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             config = feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V9")
@@ -223,6 +255,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     patch.object(feature, "notebook_definition", return_value={}),
                     patch.object(feature, "bind_notebook_definition", return_value=False) as bind,
                     patch.object(workspace, "_publish_energy_read_models"),
+                    patch.object(workspace, "ensure_energy_folder"),
                     patch.object(workspace, "_run", return_value=source_ran) as run,
                 ):
                     workspace._prepare_energy_map()
@@ -271,11 +304,13 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 patch.object(feature, "bind_notebook_definition", return_value=False) as bind,
                 patch.object(workspace, "_run") as run,
                 patch.object(workspace, "_publish_energy_read_models") as publish,
+                patch.object(workspace, "ensure_energy_folder") as place,
             ):
                 workspace._prepare_energy_map()
             payload = workspace.fabric.request.call_args.kwargs["json"]
             self.assertNotIn("creationPayload", payload)
             self.assertEqual(payload["displayName"], "Hydro_GeoContext_V6")
+            place.assert_called_once_with(lakehouse)
             self.assertEqual(bind.call_args.args[1]["default_lakehouse"], SUBSCRIPTION)
             self.assertEqual(run.call_args.args[0], feature.ENERGY_PIPELINE)
             self.assertEqual(run.call_args.args[2]["executionData"]["parameters"]["workspace_id"], WORKSPACE)
@@ -489,7 +524,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertEqual(generated.read_text(), "unchanged")
 
     def test_feature_schedule_flag_is_wired_and_disables_before_api_access(self):
-        source = (ROOT / "Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py").read_text()
+        source = (ROOT / "Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_activate_weather_schedule")
         namespace = {"enable_weather_schedule": False}
@@ -503,23 +538,24 @@ class FeatureWorkspaceTests(unittest.TestCase):
     def test_setup_preserves_teams_contract_and_mirrors_remain_valid(self):
         for name in ("RTI_001_create_lakehouse_SelfContained", "RTI_010_build_operations_agent",
                      "RTI_011_seed_sql_wire_graphql_agent", "RTI_Orchestrator_Setup"):
-            notebook = json.loads((ROOT / f"Raw/RTI_Notebooks/{name}.ipynb").read_text())
+            notebook = json.loads((ROOT / f"Raw/RTI_Notebooks/{name}.ipynb").read_text(encoding="utf-8"))
             for cell in notebook["cells"]:
                 if cell["cell_type"] == "code":
                     code = "".join(cell.get("source", []))
                     if not code.lstrip().startswith("%%"):
                         compile(code, name, "exec")
-        source = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text()
+        source = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
         required = source.split("_required_injected = {", 1)[1].split("}", 1)[0]
         self.assertIn("ops_agent_teams", required)
 
     def test_strict_seed_fails_instead_of_reporting_partial_success(self):
-        source = (ROOT / "Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py").read_text()
-        raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb").read_text())
+        source = (ROOT / "Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb").read_text(encoding="utf-8"))
         mirror = "\n".join("".join(cell.get("source", [])) for cell in raw["cells"] if cell["cell_type"] == "code")
         for text in (source, mirror):
             self.assertNotIn("strict_setup", text)
-            self.assertIn("Operational seed validation failed", text)
+            self.assertIn("seed_operational_records(connection,", text)
+            self.assertIn("transaction rolled back", text)
 
     def test_finish_explicitly_seeds_demo_data_with_the_current_notebook_contract(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
@@ -583,8 +619,9 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         patch.object(deploy, "read_entra_spa_redirects_with_reauth", return_value=[url]),
                         patch.object(deploy, "write_rayfin_redirects", side_effect=lambda uris: uris),
                         patch.object(deploy, "ensure_deploy_dependencies"),
+                        patch.object(deploy, "energy_workspace", return_value=workspace),
                         patch.object(deploy, "provision_foundry_agents", side_effect=lambda *args: events.append("agents")),
-                        patch.object(deploy, "ensure_rayfin_login", side_effect=lambda tenant: events.append("login")),
+                        patch.object(deploy, "ensure_rayfin_login", side_effect=lambda *args: events.append("login")),
                         patch.object(deploy, "npm24", return_value=["validate"]),
                         patch.object(deploy, "node24_script", return_value=["auth"]),
                         patch.object(deploy, "run_stream", side_effect=lambda argv, **_: events.append(argv[0]) or url),
@@ -615,7 +652,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     else:
                         deploy.deploy(args)
                         self.assertEqual(events, [
-                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "auth",
+                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "app", "auth",
                             "endpoint", "cors", "auth-ready", "finish",
                         ])
                         cors.assert_called_once_with(api_url, url, "pk-test")
@@ -634,6 +671,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         ("up", "staticapp", "deploy"),
                         ("up", "--workspace-id", WORKSPACE, "--exclude-services", "staticHosting", "--yes"),
                         ("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
+                        ("up", "connector", "apply", "--name", "hydrooperations", "--json"),
                     ])
 
     def test_private_endpoint_is_ready_before_import_or_setup(self):

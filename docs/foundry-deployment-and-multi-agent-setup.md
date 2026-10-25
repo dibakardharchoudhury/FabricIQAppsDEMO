@@ -46,8 +46,8 @@ records the read-only comparison and proposed FEATURE acceptance gates.
 
 Use the [merged feature-branch deployment matrix](../HydroOperationsApp/DEPLOY.md#deploying-the-merged-feature-branch)
 for PR #19/#20. The local launcher must run from the updated `feat/dibakar`
-checkout; Fabric Git sync must separately select that branch instead of the
-form's `main` default. **Set up Foundry agents** owns the five specialists,
+checkout; Fabric Git sync prefills the checkout's branch and repository. Confirm
+that branch is pushed before importing it. **Set up Foundry agents** owns the five specialists,
 including Weather, and the Hosted coordinator. **Deploy app** is the final,
 read-only agent-verification and SPA-publication module, not agent provisioning.
 Weather source publication/provider authentication, energy-source setup,
@@ -279,7 +279,8 @@ current target configuration. Do not bypass the engine with a hand-published ima
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `HYDRO_AZURE_SUBSCRIPTION_ID` | Subscription for discovery and creation | Active subscription, verified enabled in the selected tenant; no global CLI account change |
+| `HYDRO_AZURE_SUBSCRIPTION_ID` | Subscription for discovery and creation | Explicit choice, else explicit project ARM ID / same-target prepared subscription, else active CLI subscription; verified enabled in the selected tenant without changing the global CLI account |
+| `HYDRO_FOUNDRY_PROJECT_RESOURCE_ID` | Full existing Foundry project ARM ID | Same-target prepared project ID, if available. Direct identity/endpoint readback avoids subscription-wide project discovery and fails rather than replacing an inaccessible selected project |
 | `HYDRO_ONTOLOGY_GRAPH_BINDING` | Operator-verified graph JSON passed into target configuration | Authoritative lineage, else same-target saved binding; old workspace bindings are ignored |
 | `HYDRO_FOUNDRY_PROJECT_ENDPOINT` | Foundry project to use | Saved endpoint from the same tenant/workspace/subscription, else unambiguous discovery (or dedicated creation when opted in) |
 | `HYDRO_FOUNDRY_MODEL` | Model deployment for the agents | Same-target saved selection, else exactly one ready chat-capable deployment; required when creating |

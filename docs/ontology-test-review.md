@@ -38,8 +38,10 @@ deployment verification and remaining acceptance limits are recorded below.
 - Represent composite natural identities with a physical, deterministic string
   `ontology_key`; emit exactly one TMDL `keyProperty`. Preserve all natural members,
   including observation time and forecast reference/valid time.
-- Provision `HydroOperationalStore` during either NB01 setup variant; NB11 handles
-  the explicit, verified legacy-record cutover for an existing workspace.
+- Provision independent operational SQL during either NB01 setup variant;
+  fresh items now use `RTI_Demo_SQLDatabase_<suffix>`. FEATURE retains its existing
+  immutable `HydroOperationalStore` identity. NB11 handles the explicit, verified
+  legacy-record cutover for an existing workspace.
 - Route operational reads and approved writes through the delegated
   `fabric-sqldatabase` connector. Keep the original database and every original row.
 - Preserve compatible custom Data Agent SQL content, deselect only the five
@@ -965,3 +967,43 @@ Final publication sections:
   with additional energy readback now required.
 - V3 was not changed. The healthy native graph was not rematerialized. Earlier
   notebook producer changes were not published by this app-only stage.
+
+## October 25: focused deployment and artifact-placement follow-up
+
+- Simplified the primary [deployment guide](../HydroOperationsApp/DEPLOY.md):
+  one local launcher, explicit prerequisites, scoped administrator handoff, core
+  setup only when required, independent energy/Foundry preparation, app last.
+  Removed obsolete manual Rayfin/Entra/seeding sequences and dated acceptance
+  material from the operator checklist; detailed evidence remains in this record.
+- The launcher derives repository/branch from its checkout, leaves Key Vault,
+  Teams and run-as defaults tenant-neutral, validates required destinations before
+  starting Spark, and hides specialist parameters under Advanced. Its browser
+  check verified `feat/dibakar`, blank target defaults, collapsed advanced fields,
+  the served guide, and no duplicate HTML IDs.
+- Foundry setup accepts an exact existing project ARM resource ID and reuses its
+  verified same-target subscription. It reads the selected resource directly
+  rather than requiring subscription-wide resource enumeration. Explicit
+  identity/endpoint conflicts fail without discovery or replacement creation.
+  This is an access/simplicity improvement, not a measured cloud speedup.
+- Fixed NB11's failed-seed persistence: preserve the original failed status/reason
+  instead of indexing a nonexistent receipt and masking the source error.
+  Successful receipts and non-seeding rerun behavior remain compatible.
+- Moved FEATURE's owned `Hydro_GeoContext_V11` Lakehouse
+  `e0a06e85-f7af-4540-ab48-3f7d9eb0c383` into `RTI_DEMO_V11`
+  (`92053cc6-8a9d-42b2-ad73-b3cbbb8fabf0`). Readback also verified its SQL endpoint
+  `809f70c1-a853-43c1-9e31-6cc49ec27907` in that folder. No recreation,
+  ingestion, source-path change or agent rebinding was required. Future energy
+  provisioning enforces the owned-item move and verifies folder membership.
+- FEATURE's independent SQL `7972fa8c-e2cd-4c9a-bdd6-053b37293f19` was also read
+  back in the same folder. Its name remains `HydroOperationalStore`: Fabric
+  rejects in-place rename. Approval for a replacement/copy/rebinding migration
+  was unavailable, so no duplicate was created and no database was deleted.
+- Focused offline deployment/notebook contracts, app typecheck and canonical/Raw
+  notebook mirror checks passed after fixing directly coupled stale fixtures.
+  Source-preservation tests explicitly reject replacing another SQL source at
+  the preferred Data Agent path. No full cloud workflow, cold ingestion,
+  agent provisioning, core setup or new app publication ran for this review.
+- These source fixes are not live notebook/pipeline publication. V3 remained
+  untouched. The earlier authenticated-app, Weather provider HTTP 401,
+  dedicated map-chat and agent execution/delivery limits remain unresolved;
+  this review does not certify them.

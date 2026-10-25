@@ -1,1860 +1,270 @@
-# Hydro Operations — Deployment Guide
+# Deploy Hydro Operations
 
-<!-- markdownlint-disable MD029 MD033 MD060 -->
+Use the **local deployment app** for guided setup. It calls the same
+[`Raw/workspace-reset/deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py)
+engine used by command-line operators. Do not assemble a separate Rayfin,
+Entra or SQL deployment sequence.
 
-Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engine**.
-Architecture: [README.md](README.md) · [root README](../README.md) ·
-[agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
-End-to-end changes and migration status:
-[Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
+## Start here: choose your interface, not a different deployment process
 
-## Deploying the merged feature branch
+| Your target | Choose in the local app |
+|---|---|
+| Empty workspace | **Full workflow**: Git import, core setup, selected energy sources, Foundry setup, app publication |
+| Existing workspace, update website only | **Deploy app** |
+| Agent code, model, project or source identity changed | **Set up Foundry agents**, then **Deploy app** |
+| Add/update energy data | **Set up energy sources**, then **Deploy app** |
+| Different tenant/workspace | Prepare that target's prerequisites, then use the same modules |
 
-PR #20 (Weather, merge `ccca826`) and PR #19 (energy map, merge `66179c4`)
-are included in `feat/dibakar`. Their GitHub PRs still target `main`; their open
-status does not mean the feature branch lacks the changes.
+**Never reset, delete items, rerun core setup, or perform a full Git import just
+to update an existing website.** Git import can remove generated workspace items.
+Updating a branch field changes Fabric import, not the local app/agent source.
+Run the launcher from the checkout you intend to publish.
 
-Start the local launcher from an updated **`feat/dibakar` checkout**. An already
-running launcher from another checkout does not switch code when you change the
-GitHub branch field. The app/agents use the launcher's local repository, whereas
-Fabric Git synchronization imports the remote branch selected in the form.
+## 1. Prepare access once
 
-| Target/action | What runs | Important limit |
+There is no zero-administrator deployment guarantee for arbitrary tenants.
+Reuse prepared resources to keep the routine operator's permissions small.
+Global Administrator and subscription Owner are not routine requirements.
+
+### Least privilege: operator versus one-time administrator preparation
+
+| Resource | Routine operator needs | Resource owner prepares once |
 |---|---|---|
-| Fresh workspace: **Initialize everything** | GitHub sync, `01_Pipe_Setup`, selected energy setup, independent Foundry setup, then final app publication | Explicitly set **Branch = `feat/dibakar`**; the form defaults to `main`. Setup/tenant prerequisites must be satisfied. |
-| Prepared workspace: **Set up Foundry agents** | Reuses the selected project, configures connections, all five specialists including Weather, and the Hosted coordinator | Does not publish the SPA. Creates a gateway only if missing; prepares/verifies the published operational source. New projects remain an explicit billable opt-in. |
-| Prepared workspace: **Deploy app** | Read-only Foundry/source verification, SPA publication, connector/runtime and browser-auth checks | Does **not** discover/create Foundry projects, build/publish agents, run ingestion or seed SQL. Stale agents/source identities stop publication with a setup handoff. |
-| Weather setup/refresh | Setup creates the Weather schema and enables its schedule; `03_Pipe_Weather` runs Aurora, UKMet, then serving calculations | The full initializer does not immediately execute these three ingestion notebooks. Use **Connect weather** in the deployed app, or wait for the enabled schedule, with valid provider credentials. |
-| Energy-map feature from PR #19 | **Set up energy sources**, or leave energy selected in **Initialize everything**, then publish the app | No hidden bootstrap profile is required. Prepares only the two ingestion artifacts and GeoContext, publishes Eventhouse read models, and verifies all twelve layers/nine polygons. Provider failures propagate. |
+| Fabric workspace/capacity | Access to read, create, update and execute the items used by the selected module; Git operations can require workspace Admin | Active assigned capacity, supported region/preview availability, tenant API/Copilot settings |
+| Browser SPA | Verified target-tenant client ID; permission to update the app registration when redirects change | SPA and enterprise application; delegated permission consent or the exact action reported by live-auth setup |
+| Notebook identity | Approved Key Vault URI and secret **names**, not secret values | Service principal, required workspace/API access, stored credentials and private connectivity |
+| Foundry | Scoped project/connection/agent operations, model use and necessary account/registry metadata reads; builds also need image-publish rights | Existing project, model quota, registry, scoped role assignments and managed-identity access |
+| Final app publication | Read prepared Foundry definitions and project/connection ARM metadata; workspace/app deployment permissions | Foundry setup already completed; no project creation or ACR build rights needed for app-only publication |
+| Teams/email | Target team/channel and independent alert recipient | Authorized Teams access, mailbox-backed Outlook OAuth connection and any required approvals |
 
-Routine publication preserves the energy visibility setting **only for the same
-tenant/workspace**. The final app form also exposes an explicit enable/disable
-selection; enabling requires live serving-data verification before the build.
-Checking out a PR is not source provisioning or deployment. Map Data Agent chat
-is a separate prerequisite: energy ingestion alone neither creates a new Data
-Agent nor certifies chat grounding.
+Leave **Create Foundry** off when subscription/resource creation rights are
+unavailable. For first-time setup with only scoped resource access, enter the
+existing project's **full ARM resource ID** in Advanced Foundry settings.
+The deployer verifies that exact project without listing all subscription
+resources. Same-target reruns reuse and verify its saved subscription/project.
+Fabric capacity and Foundry can use different subscriptions in the same tenant.
 
-Reuse the approved, target-matching feature profile and its retained state for a
-workspace originally bootstrapped that way. Do not create a replacement bootstrap
-profile or run a full `PreferRemote` Git import against a populated workspace just
-to turn on the map or update Weather code. A full import can remove generated
-workspace items. Existing-workspace notebook upgrades require bounded definition
-publication with dependency preservation and readback; FEATURE's Weather source
-publication was separately verified on October 25.
+### No admin rights? Hand this to your Entra admin
 
-**Deployment is not blanket end-to-end runtime certification.** At the latest
-FEATURE check, Weather ingestion still failed with provider HTTP 401. The
-configured provider subscription/key must be corrected securely before a
-successful refresh can be claimed. Key Vault's local diagnostic HTTP 403 was
-`ForbiddenByConnection` because public network access is disabled, not proof of
-missing RBAC; use an authorized private connection rather than opening the vault.
-Native ontology graph materialization still requires the selected ontology's
-portal **Manage graph** flow and a verified graph binding. Agent execution,
-freshness, SQL writes and alert delivery require their own acceptance evidence.
+Ask the appropriate owners to prepare the table above and give you the tenant,
+workspace, SPA client ID, Key Vault URI/secret names, Teams destination and
+Foundry project ARM ID/model. No secret belongs in the launcher or Git.
 
-See the [current FEATURE source/runtime record](../docs/ontology-test-review.md#october-25-follow-up-weather-source-drift-and-sql-lifecycle)
-and [Foundry agent deployment guide](../docs/foundry-deployment-and-multi-agent-setup.md).
+The engine runs `setup-live-auth` to preserve SPA redirects and configure/check
+delegated permissions and consent. If it reports an action your identity cannot
+perform, give **that exact output** to the administrator. Do not grant blanket
+roles, edit redirects/permissions by hand as a first step, or remove old redirects.
+App ownership does not itself authorize tenant-wide consent.
+For a permission-only preview, `npm run setup-live-auth:dry` in this app folder
+prints the configured changes without writing them.
+
+## 2. Start the local app
+
+Install Python **3.11+**, Git and Azure CLI. Node/npm must be available for app
+deployment; the engine resolves **Node 24** and restores the locked packages.
+Foundry setup also needs Azure Developer CLI (`azd`).
+
+From the repository root:
+
+```powershell
+python Raw\workspace-reset\launch.py
+```
+
+Or double-click
+[`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd).
+The browser opens <http://127.0.0.1:5000>. Sign in, then enter the target tenant
+and workspace GUID/name. Do not enter an Azure subscription as the workspace.
+The source repository and branch prefill from this local checkout; verify the
+branch is pushed before importing it.
+
+## 3. Prepare core Fabric data, only when needed
+
+For an empty workspace, use **Full workflow**. Supply:
+
+- Source repository/branch and an approved saved GitHub connection, or a PAT
+  only when creating a connection. The PAT is not stored on disk.
+- Environment suffix, your Key Vault URI, target Teams team/channel and alert
+  email recipient. Advanced settings expose secret names, run-as guard and
+  notebook timeout. Blank run-as means the signed-in deploying user.
+- Existing Foundry settings, or explicit opt-in to new billable resources
+  with a region-supported model/version/SKU/capacity.
+
+Core setup provisions Lakehouse, Eventhouse, independent operational SQL,
+ontology generation **2**, dashboard, Data Agent and retained Operations Agent
+capabilities. NB11 runs after the agents and Weather schema setup, inserts
+missing operational demo records and publishes the SQL Data Agent source.
+Real setup/publication/readback failures stop the workflow. Only NB09's exact
+`This API version is not supported for the specified Ontology item` response,
+after verified v2 publication, is a known product limitation rather than runtime
+success. There are no agent mode/skip flags.
+
+## 4. Materialize the selected ontology graph
+
+This remains a **manual portal prerequisite**, not a published REST automation
+contract: in the selected v2 ontology choose **Manage graph -> select eligible
+entities/relationships -> Continue -> Materialize**.
+
+The ontology/Data Agent generally does not require materialization; this app's
+native graph canvas/tree/scopes do. Start with eligible static asset hierarchy
+entities and relationships. Do not remove valid time-series bindings merely to
+make an entity eligible.
+
+The engine uses authoritative Ontology-to-GraphIndex lineage to generate
+`RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`. If lineage is unavailable, provide an
+operator-verified JSON object with `workspaceId`, `ontologyId`, `graphModelId`
+in Advanced settings. Never infer ownership from names, a sole graph or structure.
+See [native graph details](../docs/knowledge-graph.md).
+
+## 5. Prepare energy and Weather sources
+
+**Set up energy sources** imports/prepares only its ingestion artifacts, reuses
+GeoContext and verifies all twelve serving layers and nine reservoir polygons.
+GeoContext and its SQL endpoint belong in `RTI_DEMO_<suffix>`; placement preserves
+item identity and storage paths. The module does not rerun core setup or SQL seeds.
+Map visibility is preserved only for the same tenant/workspace; explicit enabling
+requires live data verification. Dedicated Map Data Agent chat is a separate
+prerequisite, not implied by successful energy ingestion.
+
+Core setup creates Weather tables and enables the Weather schedule; it does not
+immediately execute all provider ingestion. Run **Connect weather** in the hosted
+app or wait for the schedule, with valid provider credentials and connectivity.
+Provider failures must be fixed, not hidden by stale data or a successful website.
+
+## 6. Set up Foundry agents
+
+### Persistent Foundry agents
+
+Use **Set up Foundry agents** after source/agent changes. Reuse the selected
+project; creating a new project is a separate billable opt-in. This module
+prepares/verifies connections, QA, RCA, WorkOrder, FabricIQ and Weather specialists,
+and the Hosted coordinator. Unchanged images/definitions are reused.
+It does **not** publish the website.
+
+An endpoint alone may require subscription discovery; supplying the project ARM
+ID avoids that discovery. Tenant, subscription, endpoint and live source identity
+are still verified. A missing/inaccessible selected project is a hard failure,
+not permission to create a replacement.
+See [Foundry setup and runtime architecture](../docs/foundry-deployment-and-multi-agent-setup.md).
+
+## 7. Publish the Fabric app last
+
+Use **Deploy app**. Normally only tenant/workspace are needed; supply the existing
+SPA client ID when discovery is ambiguous. Advanced graph binding and explicit
+map visibility remain available. There are no Foundry provisioning controls here.
+
+For command-line deployment from the repository root:
+
+```powershell
+python Raw\workspace-reset\deploy_fabric_app.py `
+  --tenant <tenant-guid-or-domain> `
+  --workspace <workspace-guid-or-name> `
+  --stage app --push-config
+```
+
+Add `--client-id <verified-spa-guid>` only when needed. The local UI does not
+require GitHub write access; `--push-config` is for command-line operators/agents
+with repository write access. The command without `--stage` retains the combined
+setup-and-app behavior. `--stage energy` and `--stage foundry` select the same
+independent lifecycle modules as the UI, not agent exemptions.
+
+The engine validates configuration before building, rejects empty/unverified SPA
+IDs, checks prepared Foundry code/source/runtime identities read-only, reapplies
+backend runtime/CORS and both connectors, preserves existing SPA redirects, runs
+live-auth setup, and checks generated endpoints and browser-equivalent preflights
+and POST readiness. Do not replace it with bare `npm run deploy` or `rayfin up`.
+The locked Rayfin release is **1.36.2**, not a global CLI installation.
+
+## 8. Verify the result
+
+Require **`SUCCESS` and `DEPLOYED_APP_URL`**. Then sign in normally and check one
+actual read from each source you intend to use, the native graph, energy layers
+and the required agent flow. Confirm writes/alerts only through separately
+approved execution and delivery checks.
+
+A protected sign-in gate, item creation, notebook completion, connector apply,
+or Foundry configuration is **not** authenticated runtime certification. Do not
+report unavailable sources as connected or show previous analytical values after
+a failed read. Analytical caches remain bounded, identity-keyed and in memory;
+operational SQL is independent of Lakehouse/Eventhouse availability.
+
+### Independent operational SQL lifecycle
+
+Fresh core setup creates `RTI_Demo_SQLDatabase_<suffix>` in
+`RTI_DEMO_<suffix>`, alongside Lakehouse/Eventhouse. NB01 owns creation; NB11
+owns additive seed/source publication. The app uses the independent
+`hydrooperations` connector, not its retained backend child database.
+
+Existing `HydroOperationalStore` is an immutable legacy display name:
+Fabric rejects rename with `SQLDatabaseDisplayNameCannotBeChanged`.
+It is moved into the setup folder without changing identity. Matching a new name
+requires an explicitly approved replacement, verified copy, source/ontology/
+connector/agent rebinding and retirement plan. Never silently create a duplicate
+or delete either database. AppBackend's retained child database/GraphQL item is
+platform-managed; removing it is not a safe operational-store cleanup.
+
+## Redeploying to a different tenant, workspace, or region
+
+Prepare the new target, then run the same engine/modules. A new workspace needs
+its own data, verified v2 ontology, graph binding and prepared agents before
+app-only publication. A same-tenant move may reuse the tenant SPA; another tenant
+requires a registration verified there.
+
+The engine detects target/capacity drift and backs up only `rayfin/.env`,
+`rayfin/.env.local` and `rayfin/.deployments.json` when rotation is required.
+Never delete deployment state, copy a generated `pbidedicated.windows.net`
+endpoint or recreate an old hosting origin from stale local configuration.
+The assigned capacity must be active; resuming a paused capacity requires explicit
+authorization and scoped rights. Do not resize or reassign capacity implicitly.
 
 ## Faster deployment and a simpler operator path
 
 ### Independent local modules; app publication last
 
-Use the local launcher's modules in this order:
-
-1. **Sync from GitHub / Run pipeline** when core source/data setup is needed.
-   This owns Lakehouse, Eventhouse, operational SQL, ontology and Fabric agents.
-2. **Set up energy sources** when enabling/upgrading PR #19 data.
-3. **Set up Foundry agents** when agent code, instructions, project or source
-   identity changes. Reuse the existing project unless explicitly creating one.
-4. **Deploy app** last. This verifies the prepared specialists, source digest,
-   packaged-code fingerprint and active immutable Hosted runtime without
-   publishing agents. It still reapplies backend settings and validates CORS,
-   connectors, browser auth and the generated endpoint contract.
-
-All modules use the same deployment engine, not hand-assembled Rayfin commands.
-Its `--stage energy`, `--stage foundry` and `--stage app` select lifecycle stages,
-not agent modes or exemptions. Required Fabric and Foundry agents remain required.
-The original command without `--stage` retains the combined deployment flow.
-For a prepared target, the final-only equivalent is:
-
-```powershell
-python Raw\workspace-reset\deploy_fabric_app.py `
-  --tenant <tenant> --workspace <workspace> --stage app --push-config
-```
-
-`--energy-map keep` is the default; `enabled` or `disabled` is an explicit
-visibility choice. Combined deployment with `--energy-map enabled` performs the
-energy setup first. First-time staged upgrades must run Foundry setup once to
-record the packaged-code fingerprint. Missing/stale prerequisites are failures,
-not permission to skip agents. The final app stage needs read access to prepared
-Foundry agents and the selected project's ARM connection metadata, not Azure
-project creation or ACR build rights; setup permissions
-and any administrator consent remain separate.
-
-This removes ingestion, SQL bootstrap, project discovery and agent/image
-publication from routine local app publishing. It does **not** promise an
-instantaneous Fabric build, eliminate service latency, or bypass readiness checks.
-Use the emitted timing receipt for measured durations.
-
-### Independent operational SQL lifecycle
-
-Both NB01 Lakehouse setup variants create/reuse `RTI_Demo_SQLDatabase_<env_suffix>`
-in the same `RTI_DEMO_<env_suffix>` workspace folder as the Lakehouse and Eventhouse.
-This workspace-owned Fabric SQLDatabase is independent of AppBackend. NB01 initializes
-its five operational tables. Stage 2 automatically runs NB11 after both agents and
-Weather_001, inserts missing demo records, verifies the additive v2 ontology bindings,
-and publishes the SQL source to the Data Agent. Fresh setup needs no existing app
-or legacy SQL database. The app's **Seed demo data** action uses the same saved
-SQL identity/settings; it does not hardcode a database name.
-
-For an existing marked `HydroOperationalStore`, provisioning moves the same item
-and preserves its ID and name. Fabric explicitly rejects renames with
-`SQLDatabaseDisplayNameCannotBeChanged`. Matching the new name on an existing target
-requires a separately approved replacement/copy/rebind/retirement migration; setup
-never creates an extra database or drops an existing one to disguise this limitation.
-TDS connection details are read from the service, never guessed from display names.
-Fabric moves the SQL analytics endpoint with its parent. The existing Data Agent
-source path is reused by item identity, preserving custom instructions, selections
-and tables. Naming, folder placement and source publication require readback.
-Unrelated name collisions or duplicate matching sources fail rather than being adopted.
-NB11 and the reference SQL use insert-only MERGEs: existing records are not reset.
-NB11 verifies every pre-existing ID and known operational field and minimum demo counts before committing
-one transaction, and persists a count/hash receipt. Failed preservation rolls back.
-
-On the first existing-workspace app deployment, NB11 checks the selected v2 ontology
-and actual source schemas, adds source-backed operational/weather entities, copies
-all five original operational tables with exact field/ID readback, and establishes
-a write boundary on the original tables. Stale app clients receive an explicit
-"Reload the current Hydro Operations app" error rather than continuing to write the
-old store. Conflicts, custom source columns, or incomplete migration receipts stop
-deployment for explicit remediation; no records are overwritten.
-
-Composite-grain weather/classification tables use a physical deterministic
-`ontology_key`, retaining every natural-key member and UTC timestamps. Fabric
-rejects repeated TMDL `keyProperty` declarations. NB11 adds/backfills this key
-column without replacing source values; the source notebooks retain it on refresh.
-Source identity is verified from the retained TMDL partition/expression bindings,
-not partition annotations that Fabric removes during definition readback.
-
-The SPA and Hosted Agent use the writable delegated `hydrooperations`
-`fabric-sqldatabase` connector. Lakehouse reads continue through `hydrolakehouse`;
-no Lakehouse GraphQL item is created. The canonical deployer discovers and binds
-`RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID` and applies both connectors. No extra
-routine deployment switch, Azure SQL server, or tenant-wide administrator role is
-introduced. The setup SPN needs access to the original SQL database for a cutover;
-normal users require delegated access to the selected shared SQL item.
-
-After verified shared-store/Data Agent cutover, the routine deployer no longer
-requires discovery of the legacy SQL item or runs its migration again. Legacy
-identity verification is retained for an actual NB11 migration/bootstrap.
-The original `hydro-operations-ui` SQL item is identified by the Fabric portal as
-a **child item of a Fabric App**, with a warning against editing its schema.
-The current Rayfin CLI creates AppBackend with only type/name and exposes no
-existing-database replacement option in that creation flow. An independent
-operational store does not imply that this platform child is safely detachable.
-Keep the child and its preserved rows until a supported platform retirement path
-is verified; do not delete it or disable runtime services speculatively. Only
-the independent setup-selected SQL item is the app's active operational read/write
-target (`RTI_Demo_SQLDatabase_<env_suffix>` on fresh setups; the retained immutable
-`HydroOperationalStore` on the existing FEATURE target).
-
-Additional native graph projection remains a separate **Manage graph → select
-eligible entities/relationships → Continue → Materialize** portal prerequisite.
-Additive ontology publication does not certify those entities as materialized or
-certify Data Agent answers. Never run workspace-wide initialization merely to
-upgrade the app in an already populated workspace.
-
-Native graph page loading has a bounded 150-second deadline: the API can spend
-120 seconds on a query, with additional time for graph/ontology discovery. The
-former 30-second page deadline prematurely rejected observed successful cold
-queries taking 47–55 seconds. Failures still clear the displayed topology; this
-does not relax binding, completeness or materialization checks.
-
-Use the existing [local launcher](../Raw/workspace-reset/README.md#easiest-start--just-launch-it-no-commands-to-type).
-Select the target tenant and workspace, click **Load signed-in subscriptions**, and choose a
-subscription belonging to that tenant. Nothing changes the active Azure subscription just
-because it appears in this list; the deployer verifies the selected subscription and tenant.
-Subscription discovery uses Azure CLI account metadata, not directory-wide Graph permissions.
-The selected Azure subscription locates Foundry resources; the workspace's assigned Fabric
-capacity can belong to a different subscription. Its authoritative assignment is read separately.
-
-- **Prepared workspace / app update:** run **Set up Foundry agents** once after
-  upgrading to staged deployment or changing agent/source configuration, then
-  **Deploy app**. Routine app-only updates reuse prepared agents and the SPA.
-- **New workspace:** use the existing serial **Initialize everything** workflow:
-  Git sync, Key Vault/setup pipeline, selected energy setup, Foundry setup, then app
-  publication through the same engine. Review the
-  sync's resource-removal implications before using it in a populated workspace.
-- **No Foundry project yet:** open **Advanced / first-time Foundry setup** and explicitly
-  opt into billable provisioning. Supply a region-supported model/version/SKU/capacity.
-  Missing permissions or quota stop the workflow rather than silently changing targets.
-- **Native graph:** the selected v2 ontology still requires its portal **Manage graph**
-  materialization flow and authoritative lineage or an operator-verified explicit binding.
-  NB11 pins complete, live-verified Lakehouse/SQL source metadata on shared TMDL
-  expressions, preserving pin timestamps and rejecting identity conflicts. Definition
-  readback alone does not establish graph eligibility or materialization success.
-  This is not an unattended REST provisioning step.
+Routine website updates do not run ingestion, SQL bootstrap, project discovery
+or agent publication. Existing dependencies, backend and Hosted images are reused.
+Required runtime/CORS/authentication checks remain.
 
 ### Speed changes and measurements
 
-The independent operational-store FEATURE deployment and its exact eight-section
-timing receipt are recorded in the
-[live ontology/store verification](../docs/ontology-test-review.md#live-feature-verification-october-24-2026).
-It passed deployment in **22m 38.687s**, including a one-time verified 75-row
-cutover and a newly built Hosted Agent image. Do not compare that run directly
-with the earlier unchanged/warm deployment below. Authenticated UI acceptance and
-additional native graph materialization remain explicitly separate.
-
-The canonical deployer now prints each section's monotonic duration and outcome, followed
-by a `DEPLOY_TIMINGS=` JSON receipt with UTC start/end, total seconds, and ordered
-`steps` (`section`, `label`, `seconds`, `status`). Failure also emits the completed
-sections plus the failed section; errors still propagate. The local UI renders this
-receipt as a timing table. These eight sections measure **app deployment**, not a separate
-Git sync/setup-pipeline run or the user-operated graph prerequisite.
-
-Implemented optimizations:
-
-1. Batch all verified bootstrap/runtime `azd env set KEY=VALUE ...` assignments into
-   **one CLI process per Hosted Agent publication**, instead of one per setting.
-   Fresh Foundry infrastructure configuration also uses one batch.
-2. Reuse the Fabric access token **only inside the current deployment process**, keyed by
-   tenant and Azure CLI configuration. The actual CLI `expires_on` controls expiry with
-   a two-minute refresh margin; reauthentication and deployment exit clear the cache.
-   No token is added to reports, repository files or browser storage.
-3. Retain the existing locked-dependency stamp, source-fingerprint/immutable-image reuse,
-   and active-version comparison. An unchanged Hosted Agent is verified, not rebuilt.
-   These existing caches are not claimed as newly implemented savings.
-4. Replace the redundant `rayfin login status` subprocess with a protected read of the
-   exact selected workspace using the same tenant-scoped ambient token supplied to every
-   Rayfin command. Mismatched workspace identity or authentication failure still stops
-   publication. The first timed run spent **83.187s** on the old diagnostic alone;
-   actual backend publication, connector and readiness checks are unchanged.
-
-No readiness gate is removed: every same-workspace deploy still reapplies backend
-runtime/CORS and SQL settings, applies/verifies the Lakehouse connector, preserves Entra
-redirects, checks consent, and verifies the hosted endpoint and real transport readiness.
-There are no agent-skip flags or additional routine-operator privilege requirements.
-
-#### Measured FEATURE verification: October 24, 2026
-
-Final canonical app deployment of source **`b9c32c8`** passed from
-**08:26:27 to 08:32:18 UTC** at
-<https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
-Both measured runs were warm same-workspace deployments with the existing Hosted Agent
-image verified/current, not newly built. The first already included token reuse and
-batched configuration; the second also replaced the slow login-status diagnostic.
-
-| App deployment section | First measured run | Final optimized run |
-|---|---:|---:|
-| 1. Tenant, workspace, capacity and Git readiness | 18.953s | 14.250s |
-| 2. SPA resolution and redirect/config preservation | 21.297s | 14.891s |
-| 3. Target/dependencies, published Data Agent sources, five specialists and Hosted Agent convergence | 157.313s | 119.578s |
-| 4. Tenant-scoped Rayfin authentication | 83.187s | 1.484s |
-| 5. Static-app build/publication (fresh targets also provision backend/schema) | 57.938s | 54.813s |
-| 6. Backend runtime/CORS, SQL, Lakehouse connector and redirect configuration | 50.781s | 40.203s |
-| 7. Browser permissions and consent setup/readback | 82.563s | 62.437s |
-| 8. Hosting, backend/connector transport, Entra checks and Git config persistence | 46.437s | 43.719s |
-| **Total** | **518.469s / 8m 38s** | **351.375s / 5m 51s** |
-
-The observed total reduction is **167.094s (32.2%)**. Authentication directly fell by
-**81.703s**; differences in otherwise unchanged sections include service/CLI latency
-variation and must not all be attributed to code changes. This is not a guaranteed
-fresh-tenant duration or an estimate of the unmeasured Git-sync/setup-pipeline stages.
-Agent convergence (about two minutes) and browser-consent setup (about one minute)
-remain the largest sections; they are not skipped to force a five-minute result.
-
-Final checks verified GraphQL preflight/POST 200/200, token preflight/POST 200/400,
-and protected Lakehouse connector preflight/POST 200/401. Those expected protected
-responses are transport readiness, not delegated query execution certification.
-All **40 workspace item IDs/types/names** exactly match the before snapshot; all
-**40 existing SPA redirects** remain. The retired `Hydro_STID_API` is absent.
-The assigned capacity remained **Active**, so no resume, resize or reassignment was
-performed. No setup pipeline, seed DML, new probe resources or approved work-order
-writes were introduced by these app redeployments.
-
-Validation: **197 focused deployment/hosted/UI tests**, Node 24 app build,
-mandatory environment validation, Python syntax/call-site checks, and local browser
-checks for subscription discovery, collapsed advanced settings and timing rendering.
-Test-only local servers were stopped. Existing business-agent coverage/rate-limit
-limitations below remain separate and are not certified by these deployments.
-
-The preceding changed-image release had these trustworthy measurements:
-
-| Component | Observed elapsed | Evidence / limitation |
-|---|---:|---|
-| ACR image build | 2m 12.634s | Successful run `dt4` start/finish timestamps; queue 0.253s. |
-| Hosted Agent publication | About 55s | `azd` deployment console; separate from ACR build. |
-| Vite production build | 24.19s | Build console; not the whole static-app publish. |
-| Entire prior app deployment | More than 10m | It exceeded the 600-second initial command wait; exact section clocks were not recorded. |
-
-A warm redeploy and a changed-image deployment are different workloads. Do not subtract
-the ACR build from a warm run and claim it as a new optimization, or invent historical
-per-section durations. Fresh-tenant consent, resource provisioning, Spark/pipeline execution,
-quota and portal graph materialization add work beyond an app redeploy.
-
-### Least privilege: operator versus one-time administrator preparation
-
-There is no honest "any tenant with no administrator involvement" guarantee. Tenant policy,
-admin consent, capacity availability, model quota and Fabric preview availability still apply.
-The routine operator should reuse administrator-prepared resources rather than request
-Global Administrator or subscription Owner.
-
-| Area | Routine operator path | One-time / exceptional preparation |
-|---|---|---|
-| Fabric | Workspace/item read, create, update and execute access required by the selected workflow. Git connection/setup can require workspace Admin; app updates do not need another full Git import. | Fabric administrator enables required tenant features/API access. Capacity owner supplies an active assigned capacity. |
-| SPA / sign-in | Reuse the verified existing app and already-consented permissions; redirect/permission updates go through `setup-live-auth`, not manual portal edits. App ownership can cover registration updates subject to tenant policy. | Authorized Entra administrator approves consent or creates/assigns the SPA if operator app registration is blocked. Ownership alone does not authorize tenant-wide consent. |
-| Existing Foundry / ACR | Grant only required project/registry operations: agent and connection management, model invocation, registry metadata/read, and cloud-build/image-publish access. Keep grants at project, account or registry scope as supported. | Resource owner assigns scoped Foundry and ACR roles; builds need more than pull-only access. Managed identity grants are prepared by someone allowed to assign roles. |
-| New Azure resources | Leave **Create Foundry** off and reuse the prepared project when subscription-wide creation rights are unavailable. | Explicit provisioning needs resource-group creation/write and any required role-assignment/provider-registration rights; these are not tenant roles. Supply available model quota. |
-| Key Vault / notebook setup | Reuse approved credentials and private connectivity; never expose secrets to the UI/logs. | Vault/resource owner prepares secret access and approves required private endpoints; tenant administrator prepares any required notebook identity/API allow-list. |
-| Graph / operational delivery | Operator materializes the selected ontology graph and validates actual agent execution separately. | Teams/email/Operations Agent permissions and delivery remain separate requirements, not proven by app hosting. |
-
-If the selected capacity pauses, the deployer stops before publication instead of silently
-resuming billable infrastructure. An explicitly authorized operator with capacity-scoped
-resume rights can resume **that assigned capacity** and rerun; no resizing, reassignment
-or broad capacity-administrator role is required merely to deploy the app.
-
-## Current FEATURE connector retirement (October 24, 2026)
-
-The canonical deployment published **1.0.1036 (`d676b9e`)**, with
-`hydro-orchestrator:4` in Foundry project `ai-project-hydro-foundry-884a839f3132`.
-Deployment/backend/CORS checks passed and all 40 Entra SPA redirects were preserved.
-Weather is published separately as `hydro-weather-agent:1` in that same project.
-
-The obsolete FEATURE `Hydro_STID_API` item
-`22a87e66-5cd8-44e3-95fc-727c413ed689` was deleted after authenticated hosted source
-receipts verified complete Lakehouse equipment/instrument inventories for 15 turbines
-and 90 signals, plus complete independent SQL work inventory. Inventory comparison
-verified preservation of all **40 other workspace items**. A fresh signed-in SPA
-reload after deletion returned HTTP 200 from all four Lakehouse connector reads.
-AppBackend `/graphql` remains necessary for operational SQL; it is not the deleted
-Lakehouse GraphQLApi item.
-
-Cold-start Weather tool-contract validation and native-evidence permissions for the
-two compound quality/work prompts were corrected. Focused regressions cover the
-complete specialist manifest and full Python admission of all three exact prompts.
-Business runtime acceptance is still **not complete**:
-
-| Workflow | Observed result |
-|---|---|
-| BAD telemetry today + open work | Completed through Sparky on Hosted v3, but returned zero native claim rows with explicit unverified-coverage warnings, not a verified finding of no BAD telemetry. |
-| Same facts + work-order drafts | Hosted v4 reached Sparky then Fixer; the final response failed with model HTTP 429 after one rejected review-argument correction. No write was approved. |
-| Same facts + RCA + drafts | Hosted v4 rejected incomplete/inconsistent Data Agent quality/work coverage; Sleuth and Fixer did not start. Missing data was not converted to zero. |
-
-The separate direct-source quality check completed its source reads before Gauge
-hit model HTTP 429. Its receipt reports all 90 expected signals without readings in
-the requested six-hour window. The SPA also reports all 90 signals stale. An
-additional free-form inventory question hit a planner-contract rejection; it is
-not an accepted business prompt. These limits must not be reported as full agent
-readiness, successful draft creation, or fresh telemetry.
-
-The routine deployment did not execute NB11 because its published Data Agent SQL
-source was already valid. The subsequent retirement cleanup applied only the
-approved API-removal hunks to the live FEATURE NB11 and refreshed its obsolete
-introduction. Readback verified the intended Python AST, unchanged Lakehouse
-bindings and all other definition parts; existing SQL/custom behavior was
-preserved. Fabric normalized one Markdown comment during serialization without
-changing executable code. NB11 was not executed and no seed DML ran. Other
-workspaces with older notebook copies must still sync the revised repository
-notebook before explicitly rerunning NB11.
-
-### Historical FEATURE verification (October 23)
-
-The local **Deploy app** action published
-**1.0.979 (`346a95c`)** with Hosted Agent v1 at
-<https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
-Canonical deployment, backend/CORS checks and preservation of all 40 SPA redirects
-passed. Authenticated browser queries exercised all nine Lakehouse connector entities;
-explicit SQL seeding and a bounded three-source Data Agent question also passed.
-All Spark notebooks must use Runtime 2.0, including Weather; both the workspace
-default and published Environment were read back at 2.0.
-Final browser checks also returned real native topology from the explicitly bound
-FEATURE GraphModel, with GQL-backed canvas/tree/scopes and operational overlays.
-This is **not full runtime acceptance**: Weather ingestion is blocked by an invalid
-provider subscription key, and Hosted/Operations Agent actions and Teams/email
-delivery are untested.
-See the [FEATURE deployment record](../Raw/workspace-reset/README.md) for exact
-counts, credential remediation and acceptance limits. No existing Azure resource
-was removed.
-
-Historical October 12 release: **1.0.874 (`30ee16e`)** with Hosted Agent v77.
-The October 12 canonical deployment printed `SUCCESS` and `DEPLOYED_APP_URL`,
-observed the assigned capacity Active, preserved all 39 redirects, and passed
-AppBackend GraphQL/token preflight and POST checks. Hosted Agent v77 uses
-immutable image digest
-`sha256:f8568200db0a496e2aa95f86651e7619f5c860f8727d3cb1e42c9192c5fb04da`
-from ACR run `dt2f`, retains verified ontology generation 2 and keeps the
-separately signed human-approved production-write path enabled. Hosting
-verification returned `protected-sign-in-gate`; the current release's
-signed-user ten-prompt acceptance matrix remains pending. Do not infer runtime
-acceptance from deployment or planner-only checks.
-
-The current executable contract covers all ten canonical prompts and asserts
-required specialists, minimum invocation counts, native sources, chart intent
-and work-order priority. It also requires two Gauge phases when a request
-explicitly asks for a final independent check, preserving the documented
-Gauge -> Sleuth -> Fixer -> Gauge route without prompt-specific asset logic.
-All 388 application/source contracts passed before publication.
-
-The v23 runtime replaces the open-ended Chief tool loop with one schema-bound
-`plan_orchestration` call and bounded serial specialist execution. All ten canonical
-primary prompts, both documented follow-ups and the BAD/UNCERTAIN and T010 RCA
-regression prompts produced the expected one-call plans under GPT-5.6. These checks
-did not execute delegated sources. Refreshing the protected page required normal
-Fabric sign-in, so no interactive authentication was initiated during unattended
-testing and no CLI token was substituted for SPA-issued delegated source leases.
-
-Historical deployment notes follow.
-The browser previously confirmed 1.0.772 and ran several compound tests. On
-refresh after the 1.0.773 deployment, the hosting session had expired and the
-integrated browser blocked its Fabric sign-in popup. The operator must complete
-normal hosting sign-in before current browser identity and live acceptance can
-resume. This is not a new application-consent requirement. No protected-hosting
-or authorization check was bypassed. Universal tables and automatic charts are
-deployed; the same-build live compound-flow matrix remains a separate gate.
-The 1.0.775 native-record presentation/reconciliation follow-up passed 200 affected
-tests and a recorded-response browser fixture. Its first publication attempt
-failed hosting verification with a connection reset; the canonical retry passed
-all readiness checks. Browser reload still requires normal protected-hosting
-sign-in. The fixture is not hosted runtime acceptance.
-
-Earlier release **1.0.758 (`4c0e1a1`)**: the owner-restored capacity was
-Active on October 8, and canonical deployment/backend checks passed. The
-[current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-verification) records
-the deployments and compound reruns; the **full latest-build matrix is not yet accepted**. The earlier explicit
-capacity suspension remains documented as historical evidence.
-Deployment success is not proof of complete multi-agent runtime acceptance.
-Native/direct routing, facility mapping and verification-order corrections are deployed.
-Input-validation and native-instance corrections are deployed. The complete hosted
-matrix still exposed an ontology HTTP 500 and a self-referential Data Agent request;
-neither is an accepted pass. The follow-up business-query routing correction is deployed
-with backend checks passed. Ontology recovered on rerun; native fleet retrieval now
-returns data. Structured JSON, business-header, literal OPC UA identity and inline-unit
-corrections are deployed. The exact fleet rerun passed its bounded comparison in
-3m54s: eight BAD signals, five temperature ranks and six work records, retaining
-timestamp precision differences and stale-data warnings. This is not proof of current
-health, native execution provenance or an enterprise latency SLA.
-The first deployment attempt failed its hosting check with a connection reset.
-A retry of the same canonical command returned `SUCCESS` with backend checks passed;
-no readiness check was bypassed.
-Facility reconciliation and the original simple station chart passed their bounded
-hosted checks on 1.0.754. See the report above.
-The 1.0.758 follow-up-context correction also passed canonical deployment checks.
-Its chart/RCA and verification follow-up ran on the hosted build; this does not
-replace a full same-build matrix or establish an interactive latency SLA.
-The latest deployment refreshed Azure sign-in, preserved all 39 redirects and verified all
-five updated Foundry definitions. Consent covers the current operator; an enterprise
-rollout still requires tenant-wide administrator consent.
-
-Earlier migration diagnostics treated the
-[Agent Framework service](../HydroOperationsService/README.md) as a separate local/gated service.
-That is **not the current deployment contract**: the canonical engine now converges the Hosted
-Agent, five specialist prompt agents and SPA together. New hosted agents default to disabled
-production writes; existing verified boolean write policies are preserved unless explicitly overridden.
-Rayfin direct delegated exchange requires `services.auth.fabric.externalEntraExchange: true`;
-the canonical engine reapplies runtime/CORS and SQL settings on every deployment.
-See its [explicit authentication prerequisites](../HydroOperationsService/README.md#live-source-adapter-verified-access-and-blocking-prerequisites);
-do not treat a disabled exchange or missing delegated scope as an empty source.
-An earlier read-only check returned `CapacityNotActive` for the existing
-capacity. Workspace/item metadata still confirms the ontology exists, but its
-live numeric generation cannot be reverified while capacity execution is paused.
-Do not replace the ontology, infer generation from its name, or bypass that gate.
-Use the same deployment engine rather than publishing the local validation service separately.
-For current operator steps, including fresh-project creation, see
-[Foundry deployment and multi-agent setup](../docs/foundry-deployment-and-multi-agent-setup.md).
-
-## Start here: choose your interface, not a different deployment process
-
-### Lakehouse connector (October 23, 2026)
-
-The SPA now reads STID and weather through the delegated, read-only Rayfin
-`hydrolakehouse` (`fabric-sqlanalytics`) connector. The existing one-shot engine and local
-**Deploy app** button resolve `sqlEndpointProperties.id` from the selected Lakehouse;
-the connector's `itemId` is that SQL analytics endpoint ID, not the Lakehouse ID.
-No manual GraphQL API creation/binding is required for these SPA reads.
-
-Every deployment reapplies runtime/SQL settings, explicitly generates/applies the connector,
-and rejects missing, skipped or partial connector receipts even if Rayfin exits zero.
-Final validation checks connector CORS and requires an HTTP 401 authentication challenge from
-the unauthenticated connector POST. Missing routes, server failures and missing CORS fail deployment.
-This verifies protected transport readiness, not source execution. The engine explicitly prints
-`LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed`. Separately, use normal Fabric browser sign-in
-and verify all nine connector entities return HTTP 200 without GraphQL errors and complete pagination.
-The Knowledge Graph must remain unavailable when its verified native graph is absent or fails;
-connector rows and SQL records must never create replacement graph canvas/tree/scope topology.
-Graph retries query the native source independently of STID connectivity.
-Reference tables must contain seeded rows; weather tables may legitimately be empty.
-This proves that session's access, not every end user's permissions. Connector execution requires
-a deployed backend; local Vite uses that backend, not a local Lakehouse emulation.
-
-Do not make Azure CLI direct-token exchange a deployment prerequisite. Its default token has
-`user_impersonation`; requesting `Item.Execute.All` returned `AADSTS65002`, which requires Microsoft
-API-owner preauthorization of the first-party CLI application, not additional tenant-admin consent.
-Rayfin's documented direct exchange needs that scope, whereas normal Fabric browser brokering works.
-Do not bypass this boundary, copy browser credentials, or substitute CLI tokens into the SPA.
-
-Live browser verification on October 23 used normal Fabric sign-in and received HTTP 200 from
-all nine connector entities: 3 facilities, 3 systems, 15 equipment, 90 instruments,
-3 weather locations, 3 areas, 9 variables, 72 observations and 48 forecasts. No legacy Fabric
-GraphQL item requests were observed for those SPA reads; SQL-backed work orders remained visible.
-The weather UI correctly showed no forecast in its current time window despite source rows.
-The initial canonical run applied the connector but stopped at the unsupported CLI exchange.
-That invalid check was removed in favor of explicit transport readiness and separate authenticated
-browser acceptance; deployment success alone does not certify the nine source reads.
-
-The subsequent canonical deployment of `2af7d5d` completed with `SUCCESS` and `DEPLOYED_APP_URL`.
-All three backend paths passed CORS/POST readiness, connector generation/application succeeded,
-and all 39 existing Entra SPA redirects were preserved. Post-deployment browser acceptance
-confirmed version `1.0.959`, repeated all nine HTTP 200 reads above with complete pagination,
-and observed no legacy Fabric GraphQL item requests. Independent SQL reads also returned HTTP 200:
-13 work orders, 30 inspections, 12 spare parts, 6 maintenance notifications and 15 asset 3D models.
-The selected facility showed 2 work orders. These are bounded read-only checks, not certification
-of agent execution, delivery, writes or every user's permissions.
-
-Rayfin connector packages are pinned to the existing 1.36.0 release. Source discovery reports
-no primary/foreign keys, so entities remain keyless and relationship-free. NB11 still owns SQL
-seeding, agent SQL wiring and the separate Fabric GraphQL API used by the hosted crew's independent
-direct-source verification. Do not delete that shared API.
-For a fresh target without that API, the canonical engine first provisions the AppBackend/schema,
-then runs the current NB11 with Boolean `seed_demo_data=False`, before configuring Foundry.
-It verifies the live notebook's code against the repository and its selected-workspace Lakehouse binding
-before execution, enforces Runtime 2.0,
-waits at most 15 minutes for the notebook job, and refreshes the authoritative GraphQL identity.
-This bootstrap always attempts GraphQL and Data Agent SQL-source publication, but does not execute
-the operational demo MERGE or overwrite a previous demo-seed status. An active NB11 or mismatched
-notebook contract stops deployment instead of silently ignoring the non-seeding parameter.
-Sync the current Git branch before deploying a fresh target. Existing targets with a verified
-GraphQL ID do not rerun the notebook during ordinary app updates.
-SQL operational records, Eventhouse queries and the ontology-managed graph remain independent.
-See the [official connector contract](https://microsoft.github.io/rayfin/docs/guide/cli/connectors/).
-
-| Goal | Simplest supported path |
-|---|---|
-| Operator-led deployment without a coding agent | From the repository root, run the command below. It owns Node 24, dependency restore, target discovery, backend/schema, app publication and live auth. |
-| Local deployment web app | Launch `Raw\workspace-reset\Start Fabric Demo.cmd` on Windows, select the tenant/workspace, then **Deploy app**. It calls the same orchestrator and streams its output. See the [local launcher guide](../Raw/workspace-reset/README.md). |
-| Fresh Fabric data environment | Import the repository items and run `01_Pipe_Setup` with the documented parameters before app deployment. The local web app can orchestrate this as a separate full workflow. Do not reset an existing workspace for an ordinary app update. |
-| Edit/test the SPA locally | Use [local development](README.md#local-development). A local dev server does not publish Fabric resources or certify hosted CORS. |
-| Existing workspace, new code or changed capacity | Run the same deployment command. Do not delete state, recreate the SPA or reuse a capacity-specific endpoint manually. |
-
-```powershell
-# Run from the repository root.
-python Raw\workspace-reset\deploy_fabric_app.py `
-  --tenant <tenant-guid-or-domain> `
-  --workspace <workspace-guid-or-name> `
-  --push-config
-```
-
-Add `--client-id <spa-app-guid>` only for an explicitly supplied registration or ambiguous
-discovery. The supplied ID must be verified in the selected tenant. The orchestrator resolves
-Node 24 itself; no agent-authored npm/Rayfin wrapper sequence is needed.
-
-The initial workspace check also inspects its exact assigned capacity when visible.
-An observed non-Active or unknown state stops deployment before SPA, agent or Rayfin
-configuration changes. The orchestrator never resumes, resizes or reassigns capacity.
-Fabric's capacity-list API is limited to capacity administrators/contributors: HTTP 403
-or a capacity absent from that identity's list produces an explicit **unverified state**
-warning, not a new permission requirement. Final endpoint checks remain mandatory.
-Other API failures propagate. A capacity can still stop after preflight; deployment
-success is point-in-time evidence, not an availability guarantee.
-
-**Manual prerequisites are not a second deployment path:**
-
-1. An authorized operator enables required Fabric preview features and grants workspace/source
-   access. Configure setup-pipeline identities and Operations Agent destinations/connections.
-2. Let `setup-live-auth` configure redirects, permissions and consent. Perform only the exact
-   administrator action it reports as blocked; then rerun the orchestrator.
-3. In the selected verified v2 ontology, use **Manage graph -> select eligible
-   entities/relationships -> Continue -> Materialize**. The app requires authoritative item
-   lineage or an explicit operator-verified graph binding. This is not unattended REST deployment.
-   Missing graph binding stops the canonical engine before AppBackend/Foundry provisioning.
-   A portal status of Complete with zero materialized nodes/edges is not usable graph readiness;
-   resolve ineligible/unsupported source types rather than inventing a binding.
-4. For a fresh environment, verify setup's NB11 seed receipt; use **Seed demo data** for an explicit additive rerun,
-   and start the telemetry stream. The deployment's source-only bootstrap does not seed those rows.
-   Verify real source timestamps, not just a connected badge.
-5. Require `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it. Hosting readiness,
-   agent execution, graph materialization and Teams/email delivery are separate acceptance gates.
-
-The detailed phase descriptions below are troubleshooting reference, not instructions to
-assemble an alternative deployment sequence. Earlier dated acceptance entries are historical;
-the [acceptance report](AGENT-ACCEPTANCE.md) distinguishes current changes from verified runs.
-
-### Persistent Foundry agents
-
-The canonical Python orchestrator also provisions the four Hydro specialist Prompt Agents
-(`hydro-qa-agent`, `hydro-rca-agent`, `hydro-work-order-agent`, `hydro-fabric-iq-agent`) from
-`src/services/copilot/agentDefinitions.ts` and verifies definition readback before publishing
-the SPA. The Supervisor is the `hydro-orchestrator` Hosted Agent, which the same orchestrator builds in
-ACR and publishes with azd when the packaged source or deployment target changed, then verifies; see
-[Foundry deployment and multi-agent setup](../docs/foundry-deployment-and-multi-agent-setup.md). It uses the existing Foundry project selected by `HYDRO_FOUNDRY_PROJECT_ENDPOINT`
-(or a saved endpoint verified for the same tenant/workspace/subscription); discovery must find one matching
-project in the selected subscription. `HYDRO_AZURE_SUBSCRIPTION_ID` selects that subscription without changing
-the global CLI default; its tenant and enabled state are verified. `HYDRO_FOUNDRY_MODEL` selects a live model
-deployment; otherwise exactly one ready deployment advertising chat-completion capability must exist.
-No original demo endpoint, model name, model version, SKU or capacity is assumed.
-A new target-specific Foundry project/account and supporting resources are created only when no endpoint is
-selected and the operator explicitly opts in through the local form or `HYDRO_FOUNDRY_CREATE=true`.
-For a first image build, ACR receives a temporary context containing only the fingerprinted
-Dockerfile/COPY files, not the full repository or local dependencies/state. File/byte counts are
-logged, source identity is checked before upload, and the temporary context is cleaned on failure too.
-The CLI runs from the repository with absolute staged paths, so CLI child processes cannot lock
-the temporary working directory. ACR uses `--no-logs` to avoid Windows Unicode log-stream failures,
-waits for the build result with a 20-minute remote build timeout, and reports its run ID/status.
-An unsuccessful build still fails deployment; the image digest is independently verified afterward.
-Creation requires available model/version/SKU/capacity inputs, exposed in both local forms and documented in
-the operator guide. An unresolved explicitly selected endpoint stops deployment rather than creating elsewhere.
-Every publish uses isolated generated azd state with live target identity; the tracked `azure.yaml` contains
-only an endpoint placeholder. Use a separate Foundry project for each concurrently hosted Fabric workspace,
-because explicitly reusing a project rebinds its stable `hydro-*` coordinator/connections.
-
-Separate Fabric IQ connections target the published Data Agent matching the live selected
-generation-2 ontology and the Ontology endpoint directly. The Data Agent keeps direct-table
-routing; its ontology query limitation does not gate those reads. Connection permissions and
-`Foundry User` RBAC remain required.
-`setup-live-auth` adds the Foundry Agent Service delegated scope and `DataAgent.Execute.All`;
-do not configure the SPA permissions manually. Agent definition readback is not runtime
-certification. Live acceptance must exercise direct-source Q&A, delegation, Fabric IQ, and
-human-approved SQL creation independently of hosting checks.
-
-The provisioner also resolves the existing project's single linked AppInsights resource
-and exports its public resource ID for the crew's diagnostics link. Missing or ambiguous
-monitoring links fail explicitly rather than pointing at an inferred resource. This does
-not certify telemetry ingestion. The SPA shows real streamed execution receipts and a
-response-scoped Logs query; full service spans remain in Application Insights.
-
-#### October 7, 2026 acceptance status
-
-The canonical deployment provisioned and read back Supervisor v1, Q&A v2, RCA v2,
-Work Order v2, and Fabric IQ v1. The separate Data Agent and Ontology connections
-use project-scoped delegated authentication. Older bridge resources were not deleted.
-The SPA bundle was published, backend/CORS POST checks passed, and all 39 pre-existing
-SPA redirect URIs were preserved. **The deployment exited with failure, not SUCCESS:**
-the current identity could configure permissions but could not grant consent.
-
-An Entra administrator must grant consent on **Hydro Operations Fabric Client**
-(`3ccdb72d-6c81-4459-b9fd-d9293c242555`) for the already configured scopes:
-
-- Microsoft Foundry Agent Service / Azure Machine Learning Services: `user_impersonation`.
-- Power BI Service / Microsoft Fabric: `DataAgent.Execute.All`.
-
-This is the exact manual action printed by `setup-live-auth` after its automated
-grant attempts returned `Authorization_RequestDenied`; do not replace the SPA or edit
-redirects. After consent, rerun the canonical deployment command and interactive acceptance.
-
-Independent delegated CLI tests, which do **not** prove SPA consent or browser readiness:
-
-- The persistent Supervisor returned a real Q&A delegation (about 5.8 seconds for that
-  routing response alone, not end-to-end Q&A).
-- Fabric IQ invoked the direct Ontology endpoint and returned the three facilities
-  Foyers, Pitlochry, and Sloy (about 67 seconds). No Data Agent invocation was used
-  for that question. This does not certify every ontology query or repair the known
-  Data Agent-to-Ontology limitation.
-- Fabric IQ separately invoked the published Data Agent and returned a reported open
-  work-order count of 10 from operational SQL (about 45 seconds). Its result included
-  an upstream output-moderation processing-error annotation. The count was not
-  independently reconciled with SQL and does not certify execution provenance.
-
-Browser answer parity, end-to-end latency, chart interaction, and edited Yes/No
-approval followed by SQL readback remain unverified. Do not infer them from the
-successful build, cloud definition readback, or these bounded endpoint tests.
-
-Later verification confirmed Foundry consent for the current user after interactive
-approval; only `DataAgent.Execute.All` remained missing. Tenant-wide admin consent is
-not the only supported route: the validator also accepts complete per-user grants
-for the current identity. A subsequent browser HTTP 400 was separately reproduced
-as missing explicit message types in the Responses input. Typed message input and
-tool-output continuation passed live HTTP 200 checks. The client correction was included
-in the later published bundle below; interactive browser acceptance is still incomplete.
-The Data Agent execution path now requests `DataAgent.Execute.All` explicitly alongside
-its existing Fabric scopes. If tenant policy permits personal consent, asking a Data
-Agent question presents the **Execute data agents** permission once; warm-up never opens
-a popup. Ordinary telemetry and direct Q&A reads do not request this additional scope.
-
-Consent verification combines tenant-wide grants with grants belonging to the current
-signed-in user. It does not require already tenant-approved scopes to be granted again
-per user, and it never counts another user's personal consent. Missing scopes still
-fail verification. Consent coverage alone does not prove application runtime readiness.
-
-The later October 7 deployment of commit `9a81e14` read back Supervisor v2, Q&A v2,
-RCA v2, Work Order v2, and Fabric IQ v1 and published the crew/trace UI plus the typed
-message and Data Agent scope corrections. It reused the existing SPA and hosting
-origin and captured all 39 existing redirects for preservation. The final hosting
-availability check failed with `ConnectionResetError(10054)`; the orchestrator exited
-1 and did **not** print `SUCCESS`. The consent setup also reported insufficient
-privileges to grant the remaining Fabric permission. Refreshing the shared browser
-reached the private-app sign-in gate, preventing authenticated acceptance.
-
-Local validation passed 24 focused TypeScript tests, typecheck, lint, the Node 24
-production build, 81 deployment tests, four provisioner tests, and seven notebook
-deployment-contract tests. Local browser fixtures verified the crew's 320-pixel
-layout, pause/reduced-motion behavior, inactive-agent labeling, and approval-store
-rejection updating the UI without a SQL write. The linked Application Insights
-resource returned real Supervisor/tool spans for a verified response ID. These
-checks do not certify browser answer parity, a live SQL approval, or a hosted
-Microsoft Agent Framework coordinator; those remain outstanding.
-
-Follow-up checks reproduced the sign-in gate's explicit **Please allow pop-ups and
-try again** message and confirmed that `azd` remains signed out. A read-only live
-consent check, including combined tenant/current-user coverage, still identifies
-only `DataAgent.Execute.All` as missing. No authorization check was bypassed.
-Subsequent source fixes remove unused model-endpoint controls, align the Foundry
-greeting with Supervisor routing, and pass additional operator instructions to the
-Supervisor/Fabric IQ as well as direct specialists. These follow-ups passed 25
-focused TypeScript tests, typecheck, lint, a Node 24 build, and 82 deployment tests;
-they require deployment after the live prerequisites are resolved.
-
-The crew/startup follow-up reuses the existing Signal Sprint helper rather
-than separate SVG robots. The initial compact row was subsequently replaced by
-an event-driven Supervisor/specialist diagram with request and matching return/failure
-packets, per-role working motions, and a provenance-labeled activity feed.
-Local browser fixtures verify narrow layout, paused/reduced motion, and nonanimated idle agents. Both UI layouts'
-eight tabs load in a production preview, and an intentionally failed page-chunk
-download shows a reload action while navigation to Maintenance still works.
-The measured production Maintenance startup downloads 751,740 bytes of JavaScript
-including its selected page, compared with the prior hosted 2,080,457-byte entry.
-The entry itself is about 743 KB; `node --test scripts/startup-bundle.test.mjs`
-enforces an entry/preload budget below 900 KB after building. No analytical data
-was persisted or substituted to achieve this. This measures payload reduction,
-not live API latency; the observed 8.6-second STID query remains a separate concern.
-
-The subsequent Supervisor-only/animated-flow follow-up passed 77 focused Node tests
-(trace, consent setup, orchestration, settings, formatting, charts, Battle, approvals,
-streaming and response protocol), 82 Python deployment tests, typecheck, lint and the
-production startup-byte budget. The production build entry was approximately 743 KB.
-Browser visual fixtures verified outward/return packet movement, failure propagation,
-pause, reduced motion, no replay of old packets, and a 56-pixel communication gap with
-no horizontal overflow at narrow width in light/dark themes. Fixtures are not live agent
-execution. Two stale test expectations were corrected to match the shipped human-approval
-prompt and latest-row-before-quality-filter semantics; runtime semantics were not weakened.
-
-The hosted Foundry request at approximately 17:52 UTC failed before receiving HTTP with
-browser `net::ERR_NAME_NOT_RESOLVED`. A second browser probe reproduced the DNS failure;
-Windows DNS resolution and unauthenticated HTTPS reached the same hostname successfully.
-This is not evidence of missing consent. Network failures now display an explicit
-no-HTTP-response diagnostic without automatic retries or inferred agent success.
-Live answer parity and approval-to-SQL readback remain unverified until browser access works.
-
-Canonical deployment of `5cdf370` was attempted twice after source was committed/pushed.
-Both attempts reused the existing SPA and Rayfin state, captured all 39 redirects, passed
-environment validation, then failed during Foundry Supervisor definition readback with
-Python `NameResolutionError` (`getaddrinfo` 11001/11002). Neither attempt reached app
-publication or printed `SUCCESS`. An intervening DNS check and browser HEAD briefly worked,
-but a later real browser POST again failed `ERR_NAME_NOT_RESOLVED`; connectivity is intermittent.
-The hosted bundle therefore remains the earlier deployment, not these source changes.
-The final committed source still passes the Node 24 build, lint and startup budget locally.
-No DNS settings, endpoint identities, permission checks, or existing consent grants were bypassed.
-
-Foundry provisioning now retries only read-only GET connection/time-out failures, at most
-three times after the original attempt with 2/4/8-second backoff and explicit diagnostics.
-This follows the existing workspace-sync read-retry pattern. Certificate failures, HTTP
-authorization/product errors, and all POST/PUT mutations still propagate without replay.
-Exhaustion is a deployment failure, never an inferred readback success.
-
-The next canonical deployment (`8851f9d`, hosted version 1.0.720) completed with
-`SUCCESS` after all five agent readbacks, app build/publication, backend/CORS checks,
-preservation of 39 redirects, and effective current-user consent verification passed.
-Tenant-wide consent could not be granted by this identity, but current-user grants now
-cover all required scopes; no additional permission was missing for this operator.
-
-Authenticated browser acceptance confirmed the deployed version and Supervisor-only UI.
-The direct Data Agent completed the explicit all-open-work SQL comparison in 56.1 seconds
-without a consent popup: 10 open orders across 9 equipment IDs, with tables and a chart.
-Every returned work-order number, equipment ID, title, status and priority matched the
-SQL-backed Maintenance view across all 15 turbines (12 total orders, 10 open). This is
-bounded SQL-answer evidence, not execution-provenance attestation or combined-source
-certification. The Foundry side and subsequent normal chat attempts still failed before
-HTTP with intermittent DNS errors, so Foundry parity and approval-to-SQL acceptance remain
-open. The account reports Succeeded/public access Enabled; Resource Health lookup returned
-an authorization/provider-registration error and does not establish service health.
-
-Review of that failed comparison identified a Battle-only receipt-loss bug: final failure
-state replaced the streamed message. The fix preserves its collected steps/agent receipts
-while displaying the error. Work-order comparisons also show the actual sequential queue
-state even if the operator selected Parallel for ordinary questions.
-
-The following canonical deployment (`f7d62e3`, hosted version 1.0.721) also printed
-`SUCCESS`. Once DNS was reachable, the actual Supervisor -> Q&A -> SQL/chart tools ->
-Supervisor path completed in 25.1 seconds, returning the same 10 open orders as the
-direct Data Agent and independently checked SQL records. No consent popup appeared in
-either successful runtime path. This does not establish a permanent repair of the
-intermittent network failures.
-
-Live human-approval acceptance passed: rejecting the first T005 test draft left SQL
-unchanged; editing the second draft's title, description and priority, then approving
-once, created exactly one Draft. A separate browser's fresh SQL GraphQL response verified
-all edited fields and the returned work-order number. Only that test record was deleted,
-and T005's queue returned to zero. AppInsights independently matched six browser response
-IDs to 10 successful server spans for Supervisor v2 and Work Order v2.
-
-The live Maintenance page loaded 752,264 JavaScript bytes in total, including the
-743,421-byte entry and its selected lazy chunks. The observed 648 ms DOMContentLoaded was
-a warm/cached browser observation, not a cold-load benchmark.
-
-Broader browser acceptance then exposed malformed nested tool JSON, a Fabric IQ
-misinterpretation of SQL as a work-order category, incomplete equipment-level matching
-in the Data Agent answer, stale-time wording, and excessive derived charts. Corrections
-reject malformed arguments before any execution and return explicit corrective feedback
-within the existing six-round budget; source/runtime failures still propagate without
-automatic execution retries. All agent paths now share source/matching/freshness rules,
-and explicit chart CSV takes precedence over unrelated numeric table columns. Thirty
-focused tests, typecheck and lint pass; live revalidation of these corrections is pending.
-
-Deployment `2d1fb34` completed with `SUCCESS` as version 1.0.722. Fabric IQ -> Data Agent
-then returned the independently verified open-work count of 10. Its paired Ontology call
-returned schema rather than the requested instances; the answer disclosed that gap.
-The compound BAD/HOT comparison is **not accepted**: the native Data Agent omitted T015
-from its hottest-five ranking and associated unrelated T003 work with T012. Foundry
-correctly rejected malformed nested arguments, but exhausted its bounded execution budget.
-These failures remain recorded rather than replaced with a successful-looking answer.
-
-The corrective transport now passes Hydro tool arguments as a structured object, removing
-the nested JSON-string encoding that caused repeated invalid escaping. Tool allowlists,
-runtime validation, visible rejection receipts and the six-round bound remain in place.
-Fabric IQ is instructed to finish requested instance reads rather than stop at schema.
-Consent setup also no longer attempts blanket app-wide consent: only the declared resource
-grants are requested, while existing grants remain untouched. Forty focused tests,
-typecheck and lint pass. Further hosted acceptance is still required.
-
-Deployment `581fe05` subsequently completed with `SUCCESS` as version 1.0.723.
-Live browser checks returned an RCA with evidence gaps, the three requested Ontology
-facility instances, and a correct standalone native Data Agent hottest-five result.
-Foundry's HOT request still failed on model-generated KQL. The later user-reported
-BAD-today and `let` failures are not covered by those successful cases.
-
-### Latency design
-
-- **One persistent Node source worker** serves every contract and source call in the hosted container (about
-  0.7 ms per call after a one-off 0.4 s start, instead of a new process per call), and source-identity
-  verification is memoized for 60 s per configuration and token. Nothing analytical is cached.
-- **Container warm-up.** Opening Hydro Intelligence sends one token-less request that the backend rejects
-  immediately; it only boots the hosted session container (about 18 s cold) while the operator reads or types.
-  The browser keeps just the opaque session id per tab and engine, so a reload reuses the warm container.
-- **Tokens** are reused from the Entra cache while they outlive the bounded run (12 minutes) instead of being
-  force-refreshed for every question.
-- **Specialists run `gpt-5.6-sol` at low reasoning effort**, which was faster than `gpt-5-mini` in measured
-  tool-selection steps and avoids its redundant parallel calls.
-
-### Follow-ups reuse the evidence they point at
-
-A follow-up such as "based on this data, which WOs need to be created?" is answered from the dataset the
-operator is already looking at, not from a second, different read of rapidly changing telemetry:
-
-- The runtime keeps the verified receipts of each answer (with their original read times) in the signed-in
-  user's run journal. A follow-up that points back at earlier data (this/these/those/the above, recognised by
-  concept) and needs only kinds of evidence already held carries those receipts forward. No specialist reader
-  is planned for them, so the redundant Gauge run disappears.
-- Only complete direct population datasets from the immediately preceding run are reusable, within 30 minutes
-  and the same source. Staged drafts are never reused. The backend selects the receipts, never the client.
-- Fixer receives the whole carried dataset to choose its target, and still performs its own fresh open-work
-  coverage read for the equipment it picks, because a draft must rest on fresh coverage.
-- The answer says what was reused and how old it is, and the briefing states it. Ask for a fresh read to refresh.
-- If the question does not point back, needs data the earlier answer lacks, or would still need a reader (for
-  example an independent verification), it is planned and read fresh exactly as a standalone question.
-
-### Charts of telemetry
-
-A chart request (chart/plot/graph/visualize of any measure, e.g. "Chart power output for T05 for the past 2
-hours") compiles one governed telemetry line view and is read as a factual question whatever the measure is.
-Raw telemetry rows carry no unit, so the Node source reader attaches each instrument's registered unit
-(unambiguous, nonempty) to its rows, and the backend attests a chart unit only when every row shares one.
-A chart is otherwise withheld with the exact reason. When a requested series already satisfies the focus
-telemetry requirement, no second all-signal read is merged beside it, so unrelated measures and units never
-share a chartable table. A failed or ambiguous metadata read leaves the series valid but unattested.
-
-### Conversation memory (single chat session)
-
-A chat keeps its context for as long as the signed-in user continues it in the same tab:
-
-- Each question carries the preceding run (`previous_run_id`). The backend rebuilds the conversation from the
-  runs' own journals: the previous turn in full plus up to five earlier turns (question and direct answer), so a
-  third or tenth question still sees the first. It is conversational context only; current facts are re-read or
-  reused from verified receipts inside their own 30-minute limit, so there is no hard chat expiry.
-- A question that asks for no source read (a summary of the chat, a recall, a clarification) is answered from the
-  conversation by the Supervisor's grounded model call, with the same identifier and number verification as the
-  briefing. It never fails the run. Earlier receipts are forwarded, so the next data question can still reuse them.
-- A failed turn does not erase the chat. The client drops its link only when the backend reports the earlier run
-  unusable (HTTP 404 or 409), or on New chat.
-
-### Root-cause analysis
-
-When the question asks for an RCA, the Supervisor does not stop at "cause undetermined". Before the RCA specialist
-runs it reads, once and journaled, the history an RCA needs for exactly the equipment behind the requested
-signal-quality or temperature evidence (else the named or selected equipment; at most eight, the rest reported):
-every signal's 48 h quality history (`query_telemetry` with `aggregation: "quality"`: samples, GOOD/UNCERTAIN/BAD
-counts, first/last BAD and UNCERTAIN times, affected hours, GOOD value range), its inspections, maintenance
-notifications and the spare parts for its equipment type. The receipts are published so the RCA and work-order
-specialists can cite them, the RCA step's equipment selection is pinned to this scope so a draft cannot target
-other equipment, and they feed the briefing as `root_cause_evidence`. They are analysis support (an `audit`-role
-dataset), never an answer table or a substitute for raw telemetry. A source that cannot be read is named in the
-briefing's caveats instead of being treated as empty. A staged draft's reasoning stays visible beside its card;
-only the raw tables and source limitations sit behind the supporting-sources toggle.
-
-The briefing then ranks competing causes per equipment (instrument or sensor, communication or ingestion,
-operating conditions, equipment condition, insufficient evidence) with a High/Medium/Low likelihood, the evidence
-for and against, and what would confirm it, reading the pattern (one signal versus several, persistent versus
-intermittent, still active versus stopped, GOOD values stable versus erratic, existing inspections and notifications,
-open work) and whether a replacement part is in stock. Causes are always labelled probable, never confirmed; every
-identifier and decimal is still checked against the supplied data, and no thresholds or numeric confidence are
-invented.
-
-### Grounded briefing (reasoning, justification, recommendations)
-
-After the specialists finish and the evidence is verified, the Supervisor writes one briefing from the
-retrieved datasets, the open work per equipment, specialist notes and any staged draft: a direct answer,
-the findings, the reasoning from data to conclusion, recommended actions (create a work order, already
-covered by open work, monitor, no action, needs clarification) and real caveats. It uses the model
-deployment named by `AZURE_AI_MODEL_DEPLOYMENT_NAME` (`gpt-5.6-sol`) with strict structured output.
-
-The briefing is advice, never a source of facts, and is enforced in code:
-
-- Every equipment, signal and work-order identifier and every decimal it states must appear in the data it
-  was given. A violation triggers one corrective retry; a second failure drops the briefing.
-- A work-order recommendation for equipment that already has open work must explain why that work does not
-  cover it; an "already covered" recommendation must cite the covering work order.
-- If the model is unavailable or the briefing cannot be verified, the answer falls back to the verified
-  tables with an explicit limitation. A briefing failure never fails or alters certified evidence.
-- No work order exists until a human approves a staged draft; production writes are unchanged.
-
-Questions that ask the system to decide which work or which equipment needs action are recognised by
-concept (an identify/decide cue, an advisory modal and a work or maintenance term in the same clause),
-not by phrase. They automatically add the condition evidence (signal quality and temperature unless the
-question narrows it) and the open-work cover. A draft is staged only when one is asked for; when no
-equipment is named the work-order specialist chooses the target from the verified evidence.
-
-### Supervisor routing and visible crew identities
-
-The **Supervisor is the hosted orchestrator** (`hydro-orchestrator`), a deterministic control plane that
-compiles the evidence contract, dispatches specialists in order, verifies their receipts, writes the grounded
-briefing and presents the answer. It is **not** a Foundry prompt agent: the former `hydro-supervisor-agent`
-planner was removed. The five specialists below are the only persistent Foundry prompt agents.
-Routing is derived by code from the question, so it is reproducible; each step's reason is a short
-capability explanation, not private model reasoning.
-
-| Visible name and role | Foundry agent | Routing rule and source |
-|---|---|---|
-| Supervisor | hosted `hydro-orchestrator` (no prompt agent) | Compiles the contract, dispatches bounded specialists, verifies evidence, writes the briefing. Only the orchestrator delegates. |
-| Gauge - Q&A | `hydro-qa-agent` | Ordinary factual questions about telemetry, assets, SQL work/inspections/parts. Uses direct tools, not the Data Agent. |
-| Fixer - Work Orders | `hydro-work-order-agent` | Explicit requests to prepare, propose, draft or create new work. Resolves identity, checks existing work, stages editable proposals. No model-accessible SQL write. |
-| Sleuth - Root Cause | `hydro-rca-agent` | Investigations and diagnosis using direct evidence; separates facts, hypotheses, confidence and gaps. |
-| Sparky - Fabric IQ | `hydro-fabric-iq-agent` | Explicit published Data Agent requests and the three scoped BAD-quality workflows below, through one verified connection. It is not the default for all Fabric-hosted data, and it does not execute ontology-native chat queries. |
-| Weather | `hydro-weather-agent` | Forecasts, observations and rainfall context through the read-only `hydrolakehouse` connector, plus asset identity and visualization. Keeps vendors/issues separate; no work-order or delivery tools. |
-
-Fabric IQ exposes exactly one `fabric_iq_preview` tool labelled
-`fabriciq-data-agent`. The deployment verifies that this connection targets the
-published Data Agent bound to the verified generation-2 ontology. Direct
-ontology-native chat execution is intentionally unsupported and is never simulated
-through the Data Agent. Ontology-v2 publication, the app's operator-bound native
-graph, and their independent readiness checks remain separate platform capabilities.
-
-Precedence and boundaries:
-
-The following three operator prompts use a single shared, request-scoped Data Agent
-read instead of a duplicate fleet-wide Gauge read (case, whitespace and punctuation
-are normalized; other prompts retain their existing routes):
-
-| Prompt | Specialist sequence |
-|---|---|
-| Which turbines had BAD telemetry quality today, and what work is already open for these? | Sparky |
-| Same complete question, followed by: Based on this data, tell me which WOs need to be created and help me with the drafts. | Sparky -> Fixer |
-| Same complete question, followed by: Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts. | Sparky -> Sleuth -> Fixer |
-
-For these three prompts, **had BAD** means any BAD sample between midnight UTC and
-the run's supplied UTC as-of time, not only a latest sample that is still BAD.
-The Data Agent returns a bounded JSON bundle with affected signals, open work and
-explicit coverage counts/flags. IDs, sample counts, timestamps, open-work membership
-and reported completeness are validated before downstream use. Missing, malformed
-or incomplete native output fails explicitly; it does not trigger a hidden direct
-retrieval fallback. Successful native execution still does **not** attest SQL or
-combined-source provenance. Fixer must check fresh complete operational SQL coverage
-and verified identity before staging any editable, human-approved draft. BAD quality
-does not prove a physical fault or a confirmed root cause. Sleuth retains bounded
-targeted evidence enrichment; weather is not invoked unless requested.
-
-These are implementation contracts, not a claim that an updated hosted version or
-the weather agent has been published or passed live acceptance.
-
-- HOT/BAD plus *existing* open work is one Q&A task, not new-work authorization.
-  Outside the three scoped workflows above, HOT uses latest raw temperature readings; BAD selects latest per signal before
-  literal quality filtering. Canonical snapshot tools join all equipment-level open
-  work and identify exact same-signal matches. `today` means midnight UTC to query time;
-  no readings in the requested window is not proof of healthy equipment.
-- Reading orders with status Draft remains read-only. Explicit new-work requests use
-  human approval even from the Data Agent/Battle entry point. Battle runs those requests
-  sequentially and labels that both sides use Foundry rather than claiming two
-  independent creation engines.
-- An explicit compound investigation can run RCA -> Supervisor -> Work Orders ->
-  Supervisor -> Q&A -> Supervisor. Relevant prior specialist results are passed to
-  later specialists. This is not direct peer-to-peer A2A.
-- Missing optional draft fields use editable defaults (Medium priority unless specified);
-  unresolved/ambiguous asset identity still requires clarification.
-- At most four distinct delegations per turn, six response rounds per Chief/Sparky
-  invocation, and eight for direct specialists including reads and final acknowledgement.
-  Repeated identical delegations fail. Local rejected JSON/KQL can be corrected only
-  within that budget and only when nothing executed. Source/network/runtime failures
-  propagate; no hidden fallback, uncertain write replay, or fabricated success.
-- Completion checks require actual specialist runs for recognized explicit investigation/
-  diagnosis, work-order or inspection-draft requests, and final independent verification
-  after draft review. Missing steps return corrective guidance within the same budget;
-  they are not accepted as a completed workflow merely because Q&A wrote matching prose.
-  These checks supplement model routing, not guarantee interpretation of every phrasing.
-  A conditional Work Order review can conclude that no draft is justified.
-- SQL creation requires the card's explicit approval; rejection never writes.
-  Approval validation, duplicate-submission prevention and uncertain-write handling
-  are code controls, not an agent's judgment.
-  Pending drafts from an unsuccessful overall workflow are withdrawn with an application
-  receipt, not mislabeled as a human rejection or left awaiting an invisible approval.
-- One conversation-level crew retains actual handoffs until New chat. Current-turn
-  status is separate from previous failures; receipts retain actual Foundry IDs.
-  The character order is Supervisor, Q&A, Work Orders, Root Cause, Fabric IQ.
-
-Potential future specialists, **not provisioned by this change**: Evidence Verification
-(deterministic freshness/identity/coverage checks plus evidence critique), Maintenance
-Planning (outage windows, dependencies and skills), and Parts & Readiness (stock and
-work prerequisites). Authorization and approvals must remain code-enforced.
-
-### Voice input removed
-
-Browser dictation (Web Speech API) was removed from normal chat and Battle: it depends on a browser-vendor speech
-service that is unreliable across browsers and networks, and a tenant speech-to-text model is not provisioned.
-Questions are typed. If voice returns, build it on a deployed Azure speech or transcription model with an
-authenticated backend endpoint rather than on the browser API.
-
-### Presentation acceptance
-Local validation for the subsequent correction passed 53 focused agent/presentation/
-consent/voice tests, 29 existing query/protocol tests, typecheck, lint and production
-build with the eager JavaScript below the 900 KB budget. An isolated synthetic browser
-fixture verified distinct names/roles/colours, retained history with healthy current
-status after a rejected draft, rounded table display with raw CSV preserved, contextual
-suggestions, and no horizontal overflow at 390 pixels. Mock speech verified editable
-transcript insertion, no automatic send, cancellation, permission errors and unsupported
-browser messaging. **Mock speech is not a real microphone/service acceptance test.**
-Hosted acceptance of these changes remains pending; the earlier compound native
-Data Agent BAD/HOT failure remains recorded above.
-
-Version 1.0.724 (`e0ad6fb`) completed canonical deployment with backend/CORS checks
-and all 39 redirect URIs preserved. Live ordinary-language BAD-today succeeded in
-36.4 seconds using the canonical snapshot and correct complete work matching. HOT
-over six hours succeeded in 31.2 seconds using the temperature snapshot, but the
-requested chart did not render because the model returned labelled, unfenced CSV.
-The first compound acceptance prompt also failed: Q&A performed the whole task in
-prose without RCA/Work Order delegation or a real draft card. These are application
-acceptance failures despite the green deployment.
-
-Subsequent fixes normalize only structurally valid labelled CSV, add an explicit
-read-completion clock for direct telemetry freshness, scope specialists to their
-assigned task, and enforce the completion checks above. New chat also clears input
-and voice notices. Maximize/Restore for chat and Battle reuses the existing expanded-
-view hook, preserves messages/input, keeps the composer visible and restores with
-Escape. Local browser checks passed at 1200 and 390 pixels, including no horizontal
-overflow. These later fixes require redeployment and live regression acceptance.
-
-Version 1.0.725 (`c6d4a2a`) passed canonical deployment and live HOT regression:
-five chart bars from the requested five rows, read-completion freshness, and an
-operational Maximize/Restore control. The first compound scenario ran the actual
-Q&A -> RCA -> Work Orders -> Q&A sequence in 2m59s and produced an editable T002
-card, which was rejected without a write. Its final narrative nevertheless omitted
-three returned orders on the other two affected turbines.
-
-The ontology-context scenario timed out at the client response deadline. Application
-Insights confirmed that the delegated Ontology request incorrectly included downstream
-telemetry, investigation and drafting, rather than only instance context. The backlog
-scenario independently returned ten SQL orders and invoked all four specialists, but
-its Work Order result was only a prose draft, and a final short acknowledgement replaced
-the requested table/chart. Those scenarios are not accepted.
-
-Follow-up changes preserve omitted canonical-snapshot orders in a clearly labeled
-application-generated evidence table, narrow Fabric IQ delegation scope, give the
-Supervisor remaining-work reminders after each handoff, and require a consolidated
-final answer. Work Orders must either stage a real approval card or call the read-only
-`complete_work_order_review` function with a validated no-draft/clarification reason;
-prose alone cannot complete review. Timeouts retain the 180-second bound and report
-the responsible agent explicitly, without automatic retries. Automatic crew detail
-focus follows current-turn execution/failure rather than an old draft. These follow-up
-changes require fresh hosted acceptance; prior successes do not certify them.
-
-Version 1.0.726 (`c8edfe4`) includes those follow-up changes. A live scenario-one
-rerun completed Q&A -> RCA -> Work Orders -> Q&A in 3m27s with an actual editable
-card and all four returned work-order numbers preserved. The test card was rejected.
-An earlier attempt failed with missing AppBackend CORS headers; later read-only
-preflight/POST checks and SQL queries succeeded, but do not prove that intermittent
-failure is permanently resolved. The remaining complex scenarios are still pending.
-
-Subsequent approval hardening separates sign-in/validation from SQL creation and
-bounds each phase at 90 seconds. A validation timeout cannot subsequently start a
-write, including after a fresh approval attempt. A write timeout has an uncertain
-outcome and cannot be replayed; a later successful acknowledgement updates the
-shared card with the returned SQL number and status. A late failure remains
-uncertain. Check existing work before requesting another draft. These changes cannot
-retroactively repair callbacks in an older loaded bundle. Hyphenated `work-order`
-requests and generated draft suggestions now use the same human-approval routing.
-Local regression tests cover these transitions; hosted acceptance is still required.
-
-During the October 7 performance investigation, browser navigation TTFB was 21.7s,
-the main script took 21.8s, and even sub-2KB scripts took approximately 21s.
-Eventhouse returned HTTP 429 throttling. After the operator reported scaling the
-capacity, one uncached HTML request completed in 1.46s with HTTP 200 at 21:13:19 UTC.
-This is an initial hosting-latency improvement, not a cold-start, SQL, telemetry or
-agent-runtime acceptance result. Rebaseline those paths before attributing remaining
-latency to application code; large agent contexts and answer/layout defects remain
-separate outstanding work.
-
-### First five complex orchestration acceptance scenarios
-
-The scope is now **ten multi-turn scenarios**. See [the acceptance matrix](AGENT-ACCEPTANCE.md#ten-multi-turn-acceptance-flows)
-for follow-up turns, scenarios 6-10, and actual status. The original five prompts remain below.
-
-These prompts are test inputs, not evidence that the scenarios have passed. Record
-observed routes and results separately. Every arrow below returns through Chief
-(Supervisor); there is no direct specialist-to-specialist transport. Each turn uses
-at most four delegations. A prerequisite failure must remain visible rather than
-forcing the remaining agents to invent a successful sequence.
-
-1. **Health triage, investigation, draft and verification**
-
-   > Which turbines have latest signal quality BAD today (UTC), and what work is
-   > already open on each? Select the turbine with the most BAD signals, breaking
-   > ties by equipment ID. Investigate it using available telemetry, inspections and
-   > existing work, separating facts from hypotheses. Prepare an editable inspection
-   > draft only for an evidence-backed gap not already covered by open work. Finally,
-   > independently check the selected equipment/signal identity and existing-work
-   > coverage, and summarize any changes needed to the draft. Show a findings table
-   > and distinguish stale readings from current conditions. Do not save a work order.
-
-   Expected capabilities: Gauge -> Sleuth -> Fixer -> Gauge. Assert latest-before-
-   quality filtering, complete open work, explicit coverage/gaps, and no SQL mutation.
-   No matching signals or no uncovered work is a valid no-draft outcome.
-
-2. **Ontology context to maintenance recommendation**
-
-   > Ask the published Fabric Data Agent to resolve T005's equipment identity,
-   > facility and available relationships; return actual rows, not just schema.
-   > Using those verified IDs, inspect its latest raw telemetry within the
-   > last six hours and all open SQL work. Investigate any supported concerns and
-   > prepare an editable inspection draft only if a specific uncovered issue warrants
-   > one. Show the Data Agent context, evidence timestamps, work coverage and uncertainty
-   > in separate sections. Do not create a SQL record.
-
-   Expected capabilities: Sparky (Data Agent) -> Gauge -> Sleuth -> Fixer. Assert the
-   Data Agent tool actually executed, downstream IDs match returned rows, schema-only
-   output is not accepted, and stale telemetry is disclosed.
-
-3. **Data Agent backlog to evidence-backed follow-up**
-
-   > Ask the published Fabric Data Agent for every open operational SQL work order,
-   > including equipment ID, order number, title, priority and status. Verify that
-   > inventory against direct SQL reads, without treating SQL as a work category.
-   > Choose the equipment with the most open orders, breaking ties by equipment ID,
-   > and investigate whether its recent telemetry and inspections justify additional
-   > work. Prepare an editable follow-up draft only for a demonstrated coverage gap;
-   > otherwise explain why no new order is justified. Include a backlog table and
-   > orders-per-equipment chart. Do not save anything.
-
-   Expected capabilities: Sparky (Data Agent) -> Gauge -> Sleuth -> Fixer. Assert
-   matching IDs/counts/status filters, explicit discrepancies, no duplicate-work
-   claim without evidence, and chart totals equal the returned work inventory.
-
-4. **Conflicting BAD/HOT answers across sources**
-
-   > Ask the published Fabric Data Agent which turbines have latest signal quality
-   > BAD today (UTC), the five hottest turbines from latest raw temperature readings
-   > today, and all open work on those turbines. Independently verify both sets using
-   > direct telemetry snapshots and SQL work records. Investigate any disagreement:
-   > distinguish signal quality from temperature, same-signal from equipment-level
-   > work, averaging from latest raw readings, and stale from current data. Return
-   > a reconciliation table showing source claims, verified evidence and unresolved
-   > differences. Do not silently prefer an answer or propose new work.
-
-   Expected capabilities: Sparky (Data Agent) -> Gauge -> Sleuth. Assert true
-   independent source receipts, exact top-five membership, complete BAD set and
-   work relations. An unresolved inconsistency must be reported, not voted away.
-
-5. **Conversation continuity with a new requested sequence**
-
-   > Ask the published Fabric Data Agent for all facility instances and every open
-   > operational SQL work order by equipment. Reconcile those claims with direct facility, equipment
-   > and work-order records, then show a facility-level
-   > backlog table and chart. Preserve unmatched IDs and source limitations instead
-   > of guessing relationships. This turn is read-only.
-
-   Expected first-turn capabilities: Sparky (Data Agent) -> Gauge. Then send:
-
-   > Now investigate T005 using the latest available telemetry within six hours and
-   > recorded inspections. Prepare one editable Low-priority inspection draft titled
-   > "Acceptance review - T005 - DO NOT DISPATCH", clearly distinguishing verified
-   > observations from unknowns. After preparing it, verify the asset identity and
-   > existing-work overlap again. Keep the previous source-comparison flow visible.
-   > I will review the card; do not save a SQL record.
-
-   Expected follow-up capabilities: Sleuth -> Fixer -> Gauge. Assert earlier receipts
-   remain visible in one crew board, the new sequence returns through Chief, the
-   explicit title/priority survive, and rejecting the card leaves SQL unchanged.
-
-Across all five, inspect real response IDs, parent/call relationships and returned
-receipts; never infer agent execution from friendly character animation. Verify
-requested source preservation, evidence passed to later specialists, table/chart
-consistency, errors and no automatic approval. Explicit route-sequence tests complement,
-not replace, ordinary-language routing tests such as "running bad today".
-
-## Ontology v2 prerequisite and capability boundaries
-
-The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
-An existing v1 item is rejected, not converted by an app redeploy. Provision a fresh workspace or
-an unused `env_suffix` through the RTI setup workflow, then resolve the new ontology and dependent
-sources. REST `/v1` URLs and environment suffixes such as `V9` are not ontology generations.
-
-Core ontology, SQL/GraphQL, dashboard, weather, and app-hosting completion do not establish agent
-readiness. Agent provisioning is always attempted; there are no agent mode or skip flags. Data
-Agent provisioning verifies v2 source identity/readback. Operations Agent provisioning retains
-the ontology-backed playbook/actions, Teams, and email-alert setup. The separate
-Eventhouse-Knowledge agent is retired, not provisioned; NB10 verifies its identity and absence
-before clearing its settings, preserving shared telemetry and alert dependencies. Real failures
-propagate through RTI_009/010/011 and setup. Latest live attempts verified source
-publication and stopped-agent configuration, not complete capability readiness: the ontology MCP
-question failed with an unsupported API version even though its envelope said `isError: false`.
-NB09 records only that exact temporary product response as `known_product_limitation`; publication
-remains `published`. This is not healthy ontology runtime evidence. External product issues are not
-claimed resolved.
-NB09 `data_agent_publication_status=published` and NB10 `configured` record source/configuration
-outcomes, not runtime execution. A successful bounded facility-record smoke check sets Data Agent
-deployment `ready` and runtime `verified`; unrelated failed or inconclusive checks propagate through
-NB09/setup. NB11's SQL source is configured independently of ontology runtime readiness and
-preserves NB09's status.
-NB10 leaves the agent stopped; `configured` verifies readback, not execution or delivery.
-See the [ontology and agent policy](../README.md#ontology-generations-and-optional-agents).
-The deployment orchestrator's `SUCCESS` verifies deployment/backend checks and hosting
-availability, which may be an identity-matched Fabric private-hosting sign-in gate rather than
-the application shell. It does not verify interactive authenticated application acceptance,
-agent execution, alert delivery, or native graph readiness.
-
-The last completed canonical deployment reported `SUCCESS` at 16:06 UTC at the existing
-`https://icy-twist-acc301b27a-swedencentral.webapp.fabricapps.net` host, with backend/SQL checks and
-all 32 existing SPA redirects preserved. The protected-hosting gate passed; the separate browser
-authentication popup prevented interactive app acceptance. Subsequent native/API/model checks
-passed independently, while full five-entity graph projection still returned HTTP 400.
-See the [latest V3 acceptance record](../docs/knowledge-graph.md#latest-v3-acceptance-september-30-2026).
-
-A final configuration refresh attempted at 17:27 UTC on September 30 stopped during SPA discovery
-while waiting for Azure CLI browser sign-in. With the operator unavailable, that attempt was
-cancelled before Rayfin state, build, or deployment changes. The 16:06 deployment remains in place;
-the separately applied notebook updates and their verified failure-path result remain live.
-Resume the repository's canonical deployment command after signing in with the requested tenant
-account; do not replace deployment state or work around authentication using copied token caches.
-
-For these corrections, use bounded notebook-definition updates, not another full `PreferRemote`
-Git import: an earlier full import removed generated resources, subsequently restored through setup.
-This acceptance record does not authorize a new import, reset, deployment, or alert send.
-
-### Native graph materialization
-
-Graph sources require keys and Delta/mirrored bindings. No published ontology-owned
-projection/materialization REST endpoint is established. Use **Manage graph → select eligible
-entities and relationships → Continue → Materialize** in the selected ontology. NB06 now preserves
-that selection and reads only authoritative graph ownership; it does not rewrite GraphModel scope,
-submit refresh jobs, or claim graph runtime verification. Missing materialization is a separate
-portal prerequisite, not an ontology-binding failure. Ontology-backed Data Agent execution does not
-universally require a materialized graph; this app's native canvas/tree/scopes do.
-
-**Historical product behavior (2026-09-30):** the portal-authored full five-entity projection failed with HTTP 400
-`ModelValidationError` / `InvalidPropertyType`, reporting `INVALID` for the TimeSeries properties
-`event_time`, `value`, and `quality`. Selecting the native **facilities, systems, equipment, and
-instruments** subgraph plus its **three hierarchy relationships** in Manage graph successfully
-materialized **111 nodes / 108 edges**. Keep the original **five-entity / four-relationship ontology
-and its TimeSeries properties intact**. Current Microsoft guidance additionally excludes
-multiple-backing-table entities from eligibility. Do not strip the telemetry stitch, force all
-types into a graph definition, or fabricate GraphQL/STID topology to bypass eligibility.
-
-Before building the app, the canonical deployment orchestrator resolves the selected generation-2
-ontology's authoritative downstream `CascadeDelete` relation to its same-workspace `GraphIndex`,
-verifies the corresponding GraphModel item, and generates `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`
-with `workspaceId`, `ontologyId`, and `graphModelId`. This is lineage discovery, not inference by
-name, sole-graph presence, or sampled structure. If authoritative lineage is unavailable, an
-operator may supply the same verified JSON fallback. In `.env`, single-quote the complete value:
-
-```dotenv
-RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<workspace-guid>","ontologyId":"<ontology-guid>","graphModelId":"<managed-graph-guid>"}'
-```
-
-Keep those outer single quotes when adding alias maps: an unquoted `#` starts a dotenv comment,
-including inside JSON double quotes, and can truncate exact ontology names containing `#`.
-
-Use the repository's **`npm run env`** producer, not bare `rayfin env`, for frontend exports.
-Rayfin 1.36's environment writer escapes JSON quotes/backslashes but its reader does not undo
-them; repeated CLI rewrites otherwise corrupt the binding. The repository producer validates
-the binding and workspace, reverses only that bounded known encoding, and writes canonical
-single-quoted JSON in the primary source plus a freshly generated Vite `.env.local`. JSON Unicode
-escapes preserve alias punctuation, including `#`, apostrophes, and `$`, through dotenv/Vite.
-`prebuild`/`predev` run this producer; the canonical orchestrator also runs it after each deployment
-command, including failures, because Rayfin can rewrite configuration after the build.
-Do not repair generated `.env.local` by hand or relax the browser's strict JSON parser.
-The outer quotes are removed by dotenv and are not part of the JSON.
-Optional `nodeTypes` and
-`edgeTypes` maps resolve `getQueryableGraphType` aliases to exact ontology type names or IDs when
-projected labels differ. Do not guess a namespace-label delimiter. Public REST metadata does not
-expose the ownership association; graph names, sole-graph discovery, and structural similarity
-are not substitutes for an operator-confirmed binding through the selected ontology.
-
-The app validates live numeric generation `2`, TMDL, graph metadata, queryable types/endpoints, and
-native responses using GET `graphModels/{id}/getQueryableGraphType?beta=true` and POST
-`graphModels/{id}/executeQuery?beta=true` under the workspace REST path. It follows opaque string
-`result.nextPage` continuations and rejects warnings/errors, truncation, malformed/dangling results,
-or more than 2,000 nodes/4,000 edges. Verified native results are the only canvas/tree/scope
-topology source; KQL/SQL can enrich actual native entities. Missing or failed native reads
-produce an unavailable state, never an Ontology-bound STID replacement graph.
-See [the graph contract and acceptance checks](../docs/knowledge-graph.md).
-
-## Agent one-shot deployment
-
-GitHub Copilot and other same-machine agents must run the repository orchestrator from the repository
-root instead of assembling the numbered commands below:
-
-```powershell
-python Raw/workspace-reset/deploy_fabric_app.py `
-  --tenant <tenant-guid-or-domain> `
-  --workspace <workspace-guid-or-name> `
-  --push-config
-```
-
-Use `--client-id <spa-app-guid>` only when SPA discovery is ambiguous. The script owns environment
-validation, Node 24, Rayfin state reuse/provisioning, static deployment, SPA setup, redirect
-preservation, permission/consent checks, hosted-page availability verification, and generated-origin
-persistence. Interactive authenticated application acceptance remains a separate browser check.
-The remaining numbered sections document those phases for operators and troubleshooting.
-
-The repository locks the Rayfin CLI and SDK release set to **1.36.0**. The current Fabric
-static-hosting service rejects the older 1.33.2 CLI with a runtime-settings HTTP 400 requiring
-at least 1.35.0-alpha.1413. Updating only the CLI is insufficient: its static-hosting access-control
-preflight also requires a compatible auth SDK, provider, client, and core package.
-Use the locked repository dependency through the orchestrator, not an older globally installed CLI.
-
-The orchestrator supplies a tenant-scoped Azure CLI Fabric token to each Rayfin child process
-through the CLI's supported `RAYFIN_TOKEN` mechanism. It does not persist that token in environment
-files or depend on Rayfin's separate MSAL cache, which can report a signed-in account while its
-token is expired or unavailable after an SDK upgrade. Token acquisition is repeated before each
-deployment command; Azure CLI sign-in and Conditional Access requirements still apply.
-
-> [!IMPORTANT]
-> **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
-> deployer's deterministic default display name for discovery/creation, not an Entra platform
-> requirement. Override it with `HYDRO_SPA_DISPLAY_NAME`, or provide the SPA client ID directly.
-> Runtime code uses only the dynamically resolved `RAYFIN_PUBLIC_AAD_CLIENT_ID`.
-> The local deployer and `npm run setup-live-auth` attempt to create/configure it, but they cannot
-> bypass tenant policy or directory roles. Deployment now stops before changing Rayfin state when
-> no usable SPA client ID is available; it never publishes a bundle with broken browser sign-in.
-> Use
-> [No admin rights? Hand this to your Entra admin](#no-admin-rights-hand-this-to-your-entra-admin):
-> an **Application Administrator / Cloud Application Administrator** creates the app and adds its
-> SPA redirects and delegated permissions, and the same role grants tenant-wide admin consent
-> (none of these scopes is directory-privileged, so Global Administrator is not required).
-> Register the deployed
-> `*.webapp.fabricapps.net` origin recorded in `rayfin/rayfin.yml` `allowedRedirectUris`.
-
-## Which scenario am I in?
-
-Find your row — it tells you exactly what to run. A workspace always belongs to one tenant, so
-“new tenant” means its workspaces are new to you as well. The only two things that change between
-hosting scenarios are **whether the SPA app registration already exists** (app regs are tenant‑scoped)
-and **whether the orchestrator must back up and rotate Rayfin's local state** (when the target changes). Separately,
-every target needs its own ontology-managed graph and matching explicit binding for graph features.
-
-| Your situation | SPA app registration | Local Rayfin state | Do this |
-|---|---|---|---|
-| **First‑ever deploy — new tenant, new workspace** | The orchestrator discovers or creates it; an admin may still be required — [§App SPA](#b-app-spa-created-once-then-automated) | fresh (nothing to rotate) | Run the **agent one-shot deployment** above. |
-| **Existing tenant, new / different workspace or capacity region** | **Reuse** the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID` — don't recreate | The orchestrator backs up and rotates target-specific state | Run the **agent one-shot deployment** above; add `--client-id` only if discovery is ambiguous. |
-| **Different tenant** (move the whole app elsewhere) | Create or discover a SPA in that tenant; never reuse a cross-tenant registration | The orchestrator backs up and rotates target-specific state | Run the **agent one-shot deployment** above against the new tenant/workspace. |
-| **Same tenant, same workspace — iterating on code** | already set up | reused automatically | Run the **agent one-shot deployment** above. It deploys, reapplies live auth, and preserves existing redirects. |
-
-> **Agents:** the canonical automated runbook is
-> [`.github/prompts/deploy-fresh-tenant.prompt.md`](../.github/prompts/deploy-fresh-tenant.prompt.md).
-> The golden rule everywhere: **SPA redirect URIs, delegated permissions, and admin consent are done
-> by `npm run setup-live-auth` first. Use the documented portal fallback only for actions the
-> operator lacks directory rights to perform.**
-
-## Prerequisites
-
-- **Node.js/npm/npx** on PATH. Commands run under Node 24 (the app pins `>=24 <25`);
-  the local **Deploy app** action downloads Node 24 through npx and restores all locked packages.
-- A **Fabric workspace** on a usable capacity, with permission to deploy.
-- A current **Azure CLI** (`az`) for tenant discovery and the one‑time live‑auth step (Step 8).
-  Microsoft Entra [CAE claim challenges](https://learn.microsoft.com/entra/identity-platform/app-resilience-continuous-access-evaluation)
-  require clients to bypass rejected cached tokens. The orchestrator always starts with the user's
-  current Azure CLI session; it does not reuse a saved deployment login. Only if Entra returns a CAE
-  challenge does it sign in under `%TEMP%\fabric-demo-azure-cli\<tenant>`, preserving any previous
-  recovery directory under a timestamped `.stale-*` name. It never logs out, clears, or changes the
-  user's normal `%USERPROFILE%\.azure` cache or another tenant's directory.
-  If a clean login is rejected during pre-deployment checks, deployment stops before Rayfin state
-  changes. Final Entra checks use the same bounded recovery after deployment; persistent rejection
-  then fails validation with guidance to upgrade the CLI or review Conditional Access. See Microsoft's
-  [Azure CLI sign-in guidance](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
-  Successful CLI sign-in alone does not prove Microsoft Graph access; verify the existing
-  SPA before continuing. A resource-specific CAE recovery must use the actual resource
-  claims challenge, not fabricated claims or weaker tenant policies. A tenant-only login
-  can leave a placeholder default account whose ID is the tenant ID, not an Azure
-  subscription. Refresh subscription discovery and select the existing Foundry subscription,
-  or use the already-supported `HYDRO_AZURE_SUBSCRIPTION_ID` selection. Verify its tenant
-  and Enabled state; never create a different project to work around that placeholder.
-- **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
-- **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
-- **Email alerts:** the Outlook email activity needs a mailbox-backed OAuth2 connection, not a notebook service-principal connection. RTI_010 retains Operations Agent, playbook/actions, Teams, and `Pipe_SendEmailAlert` provisioning against v2. Create the mailbox connection and configure destinations as described in the [root README](../README.md); verify actual delivery separately.
-
-## Identities and permissions
-
-This solution uses **two separate Entra identities** — they are not interchangeable, and each is created and configured differently.
-
-| | **Notebook SPN** (provisioning) | **App SPA** (runtime sign-in) |
-|---|---|---|
-| Entra app type | Confidential client — **has a secret** | Public client / **single-page app — no secret** |
-| Auth mode | **App-only** (client credentials) | **Delegated** (the signed-in user's token) |
-| Used by | `Pipe_Setup` → `RTI_001` / `RTI_011` notebooks | The browser app → Eventhouse, Lakehouse connector, Fabric REST, Foundry Agent Service |
-| Secret storage | **Azure Key Vault** (3 secrets) | none — no secret is ever stored |
-| Who provisions it | Platform/security admin, **before** Step 1 | Canonical orchestrator discovers/reuses or attempts creation; live-auth setup configures it |
-| Recorded in repo | KV secret **names** in `Pipe_Setup` params (not values) | `RAYFIN_PUBLIC_AAD_CLIENT_ID` in `rayfin/.env` |
-
-### A. Notebook SPN (pre-provision first)
-
-The pipeline only asks for **Key Vault coordinates** (vault URI + three secret *names*), so the SPN and its secrets must already exist. One-time, by an admin who can register apps and manage the vault:
-
-1. **Register an Entra app** (or reuse one) and create a **client secret**.
-2. Store three secrets in the vault — e.g. `tenantid`, `clientid`, `clientsecret` (values = the SPN's tenant id, application/client id, and client secret).
-3. Grant the SPN **Key Vault Secrets User** (Get) on those secrets, **Contributor** on the Fabric workspace, and add it to the **"Service principals can use Fabric APIs"** allowed group. Full list + private-endpoint note: [root README → Prerequisites](../README.md).
-4. Enter the vault URI + the three secret **names** into the `Pipe_Setup` parameters (Step 1). Notebooks read the secret *values* at run time via `notebookutils.credentials.getSecret` — **no secret enters the repo**.
-
-### B. App SPA (created once, then automated)
-
-The browser app signs the **user** in through a delegated SPA registration (no secret).
-The canonical deployment orchestrator discovers and reuses the tenant SPA, or attempts
-creation when none exists. Registration creation can require an administrator if tenant
-self-service registration is disabled. Supply `--client-id` only to select a specific
-registration; the orchestrator verifies it in the target tenant before publication.
-
-The orchestrator invokes `setup-live-auth` to configure SPA redirects and bundle the
-required delegated permissions and consent checks. The full application currently uses
-**three API resources / eight scopes**, not a separate grant for each agent. Existing
-grants are preserved; obsolete inference permission is no longer requested by runtime
-or required by deployment. Setup uses targeted grants for these declared requirements,
-not blanket app-wide consent that could also grant unrelated historical permissions.
-Only perform manual actions that the script explicitly reports it cannot perform.
-
-#### Why the enterprise application / service principal is required
-
-The SPA has two related Entra objects with different jobs:
-
-| Object | Purpose | Configuration stored there |
-|---|---|---|
-| **App registration (application object)** | Defines the browser application's identity and OAuth contract | Application (client) ID, single-tenant audience, SPA redirect URIs, and requested delegated API permissions |
-| **Enterprise application (service principal)** | Tenant-local instance of that application | Tenant-wide or per-user delegated consent grants linking this client to the Azure Data Explorer and Power BI/Fabric resource service principals |
-
-The browser authenticates as the signed-in **user**, not as an app-only daemon. The SPA has no
-secret and the service principal gets no Fabric workspace role. It is required because Microsoft
-Graph stores `oauth2PermissionGrants` against the client service principal. The live-auth
-setup ensures this tenant instance exists before granting consent; do not create a second
-SPA to work around a missing enterprise application.
-
-The complete live-auth contract is:
-
-- **SPA redirect URIs on the app registration:** every URI already registered in Entra, plus the
-  current `https://<host>.webapp.fabricapps.net` deployment origin and `http://localhost:5173` for
-  local development. Existing Entra redirects are never removed. Historical origins found only in
-  local `rayfin.yml` configuration are not recreated.
-- **Requested delegated permissions on the app registration:** Azure Data Explorer
-  `user_impersonation`; Power BI Service/Microsoft Fabric `GraphQLApi.Execute.All`,
-  `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`, `DataAgent.Execute.All`,
-  and `Fabric.Embed`; Microsoft Foundry Agent Service `user_impersonation`.
-  `DataAgent.Execute.All` is requested for direct Data Agent execution, not ordinary
-  Fabric source-definition verification. `Fabric.Embed` supports the embedded RT dashboard.
-  Foundry Agent Service is a different token audience from the former model-inference API:
-  the logged-in user's identity is still used, but an inference grant cannot authorize it.
-- **Consent on the enterprise application/service principal:** tenant-wide `AllPrincipals`
-  admin consent is the enterprise target. If tenant policy allows user consent, a per-user
-  `Principal` grant works only for that consenting user.
-- **Separate user/cluster controls:** grant each signed-in user KQL Database Viewer on the
-  Eventhouse and allow each deployed hosting origin in Eventhouse CORS. These are not permissions
-  granted to the SPA service principal.
-
-> **Configured does not mean consented.** The API permissions page can list all eight delegated
-> scopes while runtime tokens still cannot contain them. The app registration's list only declares
-> what the SPA may request. Consent is a separate `oauth2PermissionGrant` on the enterprise
-> application. In Entra, the **Status** column must show **Granted for &lt;tenant&gt;** for tenant-wide
-> readiness. A blank Status means consent is missing; a disabled **Grant admin consent** button means
-> the signed-in administrator lacks a consent-granting directory role. Per-user consent may exist for
-> someone else and still fail verification for the deployment operator or other users.
-
-**If the tenant blocks the script** (missing role or restricted consent), it prints the exact action and continues — complete these in the Entra portal on that app registration:
-
-1. **Authentication → Add a platform → Single-page application** → preserve every existing redirect and add the current hosting origin from `rayfin/rayfin.yml` (`allowedRedirectUris`) **and** `http://localhost:5173`. Do not remove existing redirects. *Fixes AADSTS50011.* Needs **Application Administrator** on the app.
-2. **API permissions → Add a permission → APIs my organization uses** → add these **Delegated** scopes:
-   - **Azure Data Explorer** → `user_impersonation` — Eventhouse telemetry (resource app id `2746ea77-4702-4b45-80ca-3c97e680e8b7`).
-   - **Power BI Service** (resource app id `00000009-0000-0000-c000-000000000000`) → `GraphQLApi.Execute.All` (STID Lakehouse GraphQL), `Workspace.Read.All` (workspace item discovery), **`Item.Read.All`** (read the Eventhouse query URI — **required for live telemetry**; without it the app reports “No Eventhouse found”), and `Item.Execute.All` (run notebooks/pipelines from the app).
-     Also `DataAgent.Execute.All` (direct Data Agent execution) and `Fabric.Embed`
-     (embedded Real-Time Dashboard).
-   - **Microsoft Foundry Agent Service** (resource app id `18a66f5f-dbdf-4c17-9dd7-1634712a9cbe`)
-     → `user_impersonation` (persistent Supervisor and specialist agents).
-
-   *Fixes AADSTS650057.*
-3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* An authorized consent administrator is required. Where tenant policy permits user consent, a user's own grants can satisfy that user's runtime requirements instead. The orchestrator verifies effective tenant-plus-current-user coverage; that does not certify consent for other users.
-
-`setup-live-auth` normally grants **all** of the above automatically (tenant‑wide, `AllPrincipals`),
-so no in-app consent popup should appear after setup. If Entra serves edge-cached configuration for
-a minute or two, a one-time **Accept** prompt is harmless. Do these steps by hand only for the exact
-grant the script prints it could not make.
-
-Two per-cluster grants stay manual either way: give the signed-in user **KQL Database Viewer** on the Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.
-
-#### No admin rights? Hand this to your Entra admin
-
-If you can't register apps or grant consent, none of the above blocks you — a **directory admin does it once**, then the whole rest of the deploy is yours (no admin needed again unless the app registration must change). Generate the exact, copy‑pasteable list first:
-
-```powershell
-npm run setup-live-auth:dry   # writes nothing — prints every URI/scope/consent it WOULD apply
-```
-
-Send your admin this checklist (the dry run prints the concrete values for each `<…>`):
-
-| # | Action | On | Role the admin needs |
-|---|---|---|---|
-| 1 | **Create** the SPA app registration (single‑tenant, no secret), ensure its **enterprise application/service principal** exists (`az ad sp create --id <spa-client-id>`), and give you the **Application (client) ID** | Entra ID → App registrations / Enterprise applications | **Application Administrator** (or self‑service app registration enabled) |
-| 2 | **Authentication → Single‑page application** → preserve every existing redirect and add the current origin from `rayfin/rayfin.yml` `allowedRedirectUris` **+** `http://localhost:5173` | that app | **Application Administrator** on the app (or make you an **Owner** — then you can do 2 yourself) |
-| 3 | **API permissions** → add the delegated scopes from the list above (ADX `user_impersonation`; Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` + `Item.Read.All` + `Item.Execute.All`) | that app | **Application Administrator** on the app |
-| 4 | **Grant admin consent** for the directory | that app | **Application Administrator / Cloud Application Administrator** |
-
-Fastest split of duties: ask the admin to do **1 and 4** and make you an **Owner** of the app — then you run `npm run setup-live-auth` yourself and it applies **2 and 3** (redirect URIs + permissions) with no further admin involvement. If the admin does all four by hand, you never run `setup-live-auth`; just make sure the hosting origins in step 2 match `rayfin/rayfin.yml` after each deploy that changes the hostname. If admin consent (step 4) is impossible but **user consent is allowed** in the tenant, skip it — each signer is prompted to consent on their first sign‑in instead.
-
-## 1. Build the RTI Fabric environment (in Fabric)
-
-Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and
-run it. This creates the Lakehouse, Eventhouse, v2 ontology, and dashboard, and attempts Data Agent
-and the ontology-backed Operations Agent deployment without mode or skip flags. NB10 also retires
-the exact obsolete Eventhouse-Knowledge agent/settings without deleting shared dependencies.
-Real failures fail setup; NB09
-alone reports the exact documented temporary unsupported-Ontology-v2 product response without
-claiming runtime readiness. It does **not**
-seed the operational SQL DB — that happens in Step 7. No STID API is provisioned.
-
-> **Operations Agent provisioning includes playbook/actions, Teams, and email-alert wiring.**
-> Configure the run-as identity, Teams destination, and Outlook OAuth2 connection as described in
-> the root README. Check `ops_agent_deployment_status` and its reason, then separately verify real
-> execution and delivery. No mode permits a generation-1 ontology fallback.
-
-## 2. Clone and install
-
-```powershell
-git clone https://github.com/dibakardharchoudhury/FabricIQAppsDEMO.git
-cd FabricIQAppsDEMO/HydroOperationsApp
-npm ci
-```
-
-`npm ci` installs the exact versions in `package-lock.json`, including the repository-local Rayfin
-CLI — don't install Rayfin globally. The local **Deploy app** action runs this automatically when
-`node_modules` is missing, invalid, or does not match the current lockfile. Otherwise it reuses the
-verified dependency tree, avoiding a clean reinstall on every deployment. This manual command is
-only for direct CLI development/deployment.
-
-## 3. Configure
-
-```powershell
-Copy-Item rayfin/.env.example rayfin/.env
-```
-
-Fill the four **required** values in `rayfin/.env` (no secrets belong here):
-
-```ini
-FABRIC_WORKSPACE_NAME=<Fabric workspace display name>
-RAYFIN_PUBLIC_WORKSPACE_ID=<Fabric workspace GUID>
-RAYFIN_PUBLIC_AAD_CLIENT_ID=<Entra SPA app (client) id>
-RAYFIN_PUBLIC_TENANT_ID=<Entra tenant id>
-```
-
-Validate them before provisioning or deploying. The same check runs automatically before every
-development server and production build, including deployments started by the local app or Copilot:
-
-```powershell
-npm run validate-env
-```
-
-Most artifact ids/URIs are **discovered at runtime** by workspace display name; the
-`AUTO-DISCOVERED FALLBACKS` only need values if you want to pin something. Never edit `.env.local`
-(the build writes `VITE_RAYFIN_*` into it automatically).
-
-The canonical orchestrator refreshes these public data pointers from **the selected workspace's
-metadata before every build**, including when it reuses a healthy AppBackend. It never carries
-the template's V6 data names or a previous workspace's KQL/GraphQL endpoints into a V3 deployment.
-It updates only the source `rayfin/.env`; Rayfin remains responsible for generated `.env.local`
-and deployment state. Metadata-resolution failures stop before source writes or state rotation.
-
-- **Telemetry:** use a configured Eventhouse name only when it is found in the same configured
-  tenant/workspace; otherwise require a unique `RTI_Demo_Eventhouse` or suffix-derived name such
-  as `RTI_Demo_Eventhouse_V<n>` / `RTI_Demo_Eventhouse_VJOA_2`.
-  An ontology-managed Eventhouse is not a fallback. KQL database selection verifies the live
-  `properties.parentEventhouseItemId`, then uses that database's `displayName` and
-  `queryServiceUri`—not a same-named database belonging to another Eventhouse. Multiple eligible
-  databases require a unique configured `RAYFIN_PUBLIC_KQL_DATABASE` name within that parent.
-- **Lakehouse connector:** resolve the target Lakehouse's live SQL analytics endpoint for
-  `hydrolakehouse`; SPA STID and weather reads do not depend on a GraphQL API or RTI_011.
-- **No independent STID API:** hosted agents and the SPA use the same read-only
-  `hydrolakehouse` connector for assets and weather. Retired STID GraphQL overrides are removed
-  during target configuration; no item is discovered or created. AppBackend GraphQL and its
-  delegated Power BI token exchange remain necessary for operational SQL data.
-- Pipeline/notebook, Lakehouse, and dashboard pointers are similarly target-scoped. Missing
-  optional artifacts clear old IDs; unverified Lakehouse SQL endpoint overrides are cleared.
-  Ambiguous eligible names fail closed rather than selecting the first workspace item.
-- The orchestrator generates `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from the selected generation-2
-  ontology's authoritative Fabric item lineage when exactly one same-workspace materialized
-  GraphModel is related. Multiple lineage matches fail closed. A supplied binding remains an
-  operator-verified fallback when lineage is unavailable; its workspace and referenced
-  Ontology/GraphModel identities must match. The orchestrator never selects a graph by name,
-  sole-graph presence, or sampled structure and never materializes or changes the graph.
-
-### Supervisor-led Hydro Intelligence
-
-Both layouts use the Foundry Hosted Agent for ordinary chat. Its Microsoft Agent Framework
-runtime coordinates the persistent Chief, Gauge, Sleuth, Fixer and Sparky prompt agents.
-Optional Battle comparisons use the same Hosted Agent boundary with an explicit Data Agent
-source request for the Data Agent pane. Direct Data Agent support remains in the classic app
-surface, but Hydro Intelligence and Battle have no browser coordinator fallback. Missing
-Hosted Agent configuration is an error.
-
-The canonical orchestrator provisions and verifies agents using
-`HYDRO_FOUNDRY_PROJECT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>`.
-It exports the verified project endpoint, Hosted Agent Invocations endpoint, runtime version,
-immutable image digest and source digest for **Administration → Agent runtime settings**.
-The browser may select the verified project and enable Battle, but cannot edit specialist
-prompts, tools, tables or source catalogs. Model selection and specialist capabilities belong
-to provisioning (`HYDRO_FOUNDRY_MODEL`), not browser configuration.
-
-**The Foundry resource MUST live in the same Entra tenant as the Fabric workspace.** The app's MSAL
-authority is pinned to `RAYFIN_PUBLIC_TENANT_ID`, so a resource in any other tenant rejects the
-token with 401 no matter what RBAC you assign — Azure evaluates RBAC in the resource's *own* home
-tenant. Check with `az account list --all` before creating it; a personal or corp subscription is
-easy to pick by accident. Put it in the workspace capacity's region too (Sweden Central here).
-
-The user needs **Foundry User** access to the project in addition to the delegated
-`https://ai.azure.com/user_impersonation` scope. `setup-live-auth`, called by the orchestrator,
-bundles delegated permissions and consent. The obsolete Cognitive Services inference scope is
-no longer required. Existing grants are not revoked automatically. Fabric IQ source-definition
-verification uses read scopes; only direct Data Agent execution requests `DataAgent.Execute.All`.
-
-The canonical deployer validates Hosted Agent access and reapplies AppBackend CORS/runtime
-configuration. Do not add a browser CORS workaround. Keep the Foundry resource on **public
-network access**: a private endpoint or a "selected networks" firewall cuts the browser off.
-
-No key is ever placed in the browser. Because the tools run as the signed-in user, the copilot
-cannot read anything that user could not read in Fabric.
-
-## 4. Sign in to Rayfin
-
-The orchestrator uses tenant-scoped Azure CLI authentication and supplies fresh Fabric
-tokens to its Rayfin child processes. Follow its sign-in prompt. Do not clear a working
-Rayfin session or assemble a separate login/logout sequence.
-
-## 5. Provision the backend and SQL schema
-
-The orchestrator creates or reuses the target AppBackend, applies the repository SQL
-schema, and configures runtime/auth/data services. Reuse never means skipping backend
-runtime/CORS and database readiness checks.
-
-## 6. Deploy the app
-
-Use the one-shot command at the top of this guide, or the local **Deploy app** button.
-The orchestrator internally chooses static publication when its saved AppBackend still exists
-in the selected workspace. It provisions a fresh or changed target, and updates the
-backend after every static deployment, even when the generated hosting origin was already
-registered. This reapplies persisted runtime/CORS settings and the database configuration after a
-managed-service restart.
-
-The one-shot orchestrator does not report `SUCCESS` from the hosted HTML page alone. It also checks
-that the generated API URL contains the workspace's current capacity, workspace, and AppBackend
-ids, then sends browser-equivalent CORS preflights to both `/graphql` and
-`/api/auth/v1/token`, a minimal GraphQL POST, and a deliberately incomplete token POST. Transient
-backend warm-up and token HTTP 5xx responses are retried with bounded backoff; missing
-`Access-Control-Allow-Origin`, required headers, GraphQL readiness, or persistent token 5xx remains
-a deployment failure.
-
-### Protected hosting availability versus application acceptance
-
-Rayfin 1.36 protected static hosting can return **HTTP 401 JSON** to a generic `Accept: */*`
-request while returning **HTTP 200 HTML** to `Accept: text/html`. That HTML can be Fabric's
-**Sign in to continue** private-hosting gate, not the Hydro Operations application bundle.
-The orchestrator requests HTML without following redirects and accepts only an identifiable
-Hydro Operations production app shell or the recognized Fabric gate. For a gate, its bootstrap
-must point to the official Fabric broker and match the deployment's tenant, workspace, and
-validated AppBackend ID. A bare 401, redirect, arbitrary HTML, malformed gate, or mismatched
-identity still fails verification.
-
-The output distinguishes `HOSTING_VERIFICATION=protected-sign-in-gate` from
-`HOSTING_VERIFICATION=app-shell`, and prints `INTERACTIVE_APP_ACCEPTANCE=not-performed`.
-The gate result verifies guarded hosting availability; **the application bundle/UI was not
-loaded**. Even the app-shell result does not establish JavaScript execution or authenticated
-UI behavior. The final `SUCCESS` reports deployment checks, not completed browser acceptance.
-
-Preserve the CLI-generated `services.staticHosting.assetAccess: protected` setting. Do not
-make hosting public, hand-edit generated state/redirects, or enable external Entra exchange to
-make a probe pass. An Azure CLI Fabric bearer token is not a substitute for the hosting browser
-sign-in flow. For interactive acceptance, open the deployed URL, complete Fabric sign-in with an
-authorized account, then verify that Hydro Operations loads and its required authenticated
-features work. Record that acceptance separately from the orchestrator's read-only hosting probe.
-
-The orchestrator records the generated **hosting URL** and runs the idempotent `setup-live-auth`
-workflow. It preserves every existing Entra SPA redirect registration and adds only the current
-hosting origin plus `localhost:5173`; never remove existing registrations or recreate historical
-origins merely because they remain in local configuration. Do not hand-edit `rayfin/rayfin.yml`
-`allowedRedirectUris` or run a separate `npm run up` to configure redirects. Manual portal changes
-are permitted only for the exact prerequisite action the script reports it lacks rights to perform.
-After successful deployment checks, a fresh app still needs operational seeding through Step 7.
-An existing verified published Data Agent SQL source avoids an unnecessary NB11 bootstrap;
-otherwise deployment runs the non-seeding source extension and verifies its published readback.
-Lakehouse connector reads do not depend on that step;
-hosting success does not establish native graph readiness.
-
-## 7. Seed demo data (RTI_011)
-
-`RTI_011` is the authoritative additive seeder. Its insert-only MERGEs add missing
-demo records to the five independent operational tables without resetting existing
-records. Fresh setup runs it before app deployment; the hosted action is an
-explicit data-management rerun, not infrastructure or Foundry setup.
-
-1. Open the deployed app and sign in (avatar button).
-2. Open Administration and click **"Seed demo data"**.
-
-It runs `RTI_011` in your workspace, which preserves existing operational records and always adds SQL to the live Data
-Agent, preserving existing sources and custom configuration and verifying exact draft and published
-SQL-source readback. Missing agents and extension failures fail the notebook even if SQL
-writes already succeeded. Successful configuration does not certify agent runtime. RTI_011 does
-not require or reinterpret NB09's ontology runtime status; the bounded NB09 smoke check does not
-attest execution provenance or SQL/combined-source readiness. The revised NB09 live limitation
-path was validated once with full multi-source
-preservation; neither NB11 nor full setup was executed in that bounded run. See the
-[authorized failure-path evidence](../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
-Both the hosted crew and SPA read STID and weather through `hydrolakehouse`.
-Sync the revised NB11 into Fabric before rerunning it: its historical item name remains unchanged,
-but it no longer creates or binds an independent GraphQL API. Retire an existing `Hydro_STID_API`
-only after the connector-backed deployment and authenticated agent reads have been verified.
-
-> **Fallback (no RTI_011):** if `RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME` is blank, the app self‑seeds
-> demo rows only when a table is empty. For direct SQL, run
-> [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql) (`-v ActorOid=<your-oid>`) and
-> verify with [`sql/validate-seed.sql`](sql/validate-seed.sql).
-
-## 8. Switch on live auth (once per fresh deploy)
-
-The browser uses delegated Entra access for Eventhouse (KQL), the Rayfin Lakehouse connector and
-the independent hosted crew sources. The canonical deployer runs live-auth setup automatically;
-the following commands document its operator-owned phase, not an alternative agent deploy flow:
-
-```powershell
-az login                  # as an owner / Application Administrator
-npm run setup-live-auth   # or setup-live-auth:dry to preview
-```
-
-`scripts/setup-live-auth.mjs` is idempotent: (1) reads the current hosting origin from `rayfin/rayfin.yml`
-(`allowedRedirectUris`), preserves every SPA redirect already in Entra, and adds only that current
-origin plus `localhost:5173` as **SPA redirect URIs** on the Entra
-app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation` and the
-**Power BI Service / Microsoft Fabric** scopes `GraphQLApi.Execute.All`, `Workspace.Read.All`,
-**`Item.Read.All`** (needed for live telemetry — the Eventhouse query URI), and `Item.Execute.All`,
-plus `DataAgent.Execute.All`, `Fabric.Embed`, and **Microsoft Foundry Agent Service**
-`user_impersonation`, then attempts bundled tenant-wide admin consent (fixes **AADSTS650057 / 65001**).
-Verified consent avoids incremental permission prompts for those scopes; sign-in/MFA or tenant
-policy challenges can still occur. The app uses silent acquisition first, not forced consent.
-
-Where the signed‑in identity lacks a role, the script **prints the exact manual action and continues** —
-complete those on the app registration in the Entra portal (see [Identities and permissions → App SPA](#b-app-spa-created-once-then-automated)).
-
-Two things stay manual (per user/cluster): grant the signed‑in user **KQL Database Viewer** on the
-Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.
-
-## 9. Start the telemetry stream
-
-Run **`02_Pipe_Stream`** in Fabric (or click **"Start stream"** in the app) to push an OPC UA burst
-into the Eventhouse. Live gauges populate once telemetry lands and Step 8 auth is in place.
-
-## Redeploying to a different tenant, workspace, or region
-
-Run the same one-shot command with the new tenant and workspace, or change those fields
-in the local deployment web app and choose **Deploy app**.
-
-- The orchestrator compares the saved endpoint with the workspace's current capacity.
-  It preserves state in a unique temporary backup and rotates only `rayfin/.env`,
-  `rayfin/.env.local` and `rayfin/.deployments.json` when target changes require it.
-  Never delete state or copy an old generated `pbidedicated.windows.net` endpoint.
-- A same-tenant move reuses the verified tenant SPA. A different tenant requires a
-  registration verified in that tenant; discovery/creation may require an administrator.
-  Do not preemptively create a replacement application.
-- Node 24, dependency restore, backend/schema/runtime, public source pointers, app
-  publication, redirect preservation and live-auth setup remain orchestrator-owned.
-- Stop on a printed prerequisite failure. Require `SUCCESS` and `DEPLOYED_APP_URL`,
-  then run authenticated browser acceptance in the new target. Do not treat a
-  protected hosting gate as an executed application.
-
-### Feature & region gating (Fabric App Items preview)
-
-Rayfin's backend is a **Fabric App Item** (preview). Creating it can fail with:
-
-```text
-Fabric API error: 403 Forbidden — The feature is not available
-```
-
-Work through these in order:
-
-1. **Tenant setting** — Admin portal → **Tenant settings → Microsoft Fabric → "Enable Fabric App
-   Items (preview)"** must be **On**. Verify it via the admin API (setting name `AppBackendTenant`):
-
-   ```powershell
-   $tok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
-   (Invoke-RestMethod -Uri "https://api.fabric.microsoft.com/v1/admin/tenantsettings" -Headers @{Authorization="Bearer $tok"}).tenantSettings |
-     Where-Object settingName -eq 'AppBackendTenant' | Select-Object settingName,title,enabled
-   ```
-
-2. **Propagation** — after enabling, allow **~15 minutes** for the setting to take effect before
-   retrying. A create call issued too soon still sees the feature as disabled and returns `403`.
-3. **Region** — the preview is **not offered in every region**. If it keeps returning `403` while the
-   tenant setting reads `enabled = True`, host the workspace on a capacity in a **supported region**
-   (this solution has deployed successfully on **Sweden Central**; **North Europe** was rejected as
-   "feature not available"). List capacities + regions, activate one in a supported region, then
-   reassign the workspace (portal → **Workspace settings → License/Capacity**) and re-run `rayfin up`:
-
-   ```powershell
-   $tok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
-   (Invoke-RestMethod -Uri "https://api.fabric.microsoft.com/v1/capacities" -Headers @{Authorization="Bearer $tok"}).value |
-     Select-Object displayName,sku,region,state | Sort-Object region | Format-Table -AutoSize
-   ```
-
-## Update the app version
-
-The version shown in the Hydro Operations UI comes from `package.json`.
-
-From the `HydroOperationsApp` folder, run:
-
-```powershell
-npm version 1.0.2 --no-git-tag-version
-```
+Every module emits `DEPLOY_TIMINGS=`; the UI renders module timing receipts.
+Measure service time instead of promising an instant deploy. October 25 FEATURE:
+energy **19m54s**, Foundry **3m29s**, final app **9m41s**. This is not proof of a
+faster final publication than the earlier **9m32s** combined run.
+Detailed receipts and honest runtime limits are in the
+[FEATURE deployment record](../docs/ontology-test-review.md).
+
+## Deploying the merged feature branch
+
+PR #19 (energy) and #20 (Weather) are included in `feat/dibakar`; their open PRs
+target `main`. Use a pushed checkout/branch containing those changes.
+Selecting a branch is not source provisioning, provider authentication or
+deployment. FEATURE's previously observed Weather provider HTTP 401 and dedicated
+map-chat prerequisite are not resolved by publishing the website.
+
+## Optional isolated feature workspace without Fabric Git
+
+The existing `FABRIC_FEATURE_CONFIG` route remains for deliberate isolated
+bootstrap use, not normal website updates. See the
+[feature bootstrap reference](../Raw/workspace-reset/README.md).
+Do not create a new profile or import/reset a populated workspace to enable energy.
 
 ## Troubleshooting
 
-| Problem | Fix |
-| --- | --- |
-| **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**, or script it via [Raw/workspace-reset](../Raw/workspace-reset/README.md)) or re‑run `RTI_001`, then retry. |
-| **"No GraphQL API found"** / STID panels empty | Deploy the current connector-backed app and revised notebooks. STID uses `hydrolakehouse`, not a GraphQL item or a seeding prerequisite; verify the selected Lakehouse identity and delegated connector permissions. Do not recreate `Hydro_STID_API`. |
-| Live signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live‑auth must be in place. |
-| **Static deploy `401 Unauthorized`** | Rayfin's cached Fabric token is stale/expired. An operator can refresh it with `npx rayfin login --select`; agents rerun the one-shot orchestrator, which owns login recovery and state reuse. |
-| **Consent popup during operational seeding** | The canonical final app stage runs idempotent live-auth setup and verifies required permissions/consent. If blocked, follow its precise administrator handoff. Do not assume configured permission rows prove consent or approve an unexpected scope request blindly. |
-| **Connect telemetry → "No Eventhouse found in the workspace"** (STID/GraphQL works) | **Root cause (proven): an OAuth scope gap, not RBAC.** Discovery reads the Eventhouse's `queryServiceUri` via `GET /v1/workspaces/{ws}/eventhouses/{id}`, which needs **`Item.Read.All`** (or `Eventhouse.Read.All`). Without it the call returns **403 InsufficientScopes** and the app reports "No Eventhouse found" — even for a workspace admin (admin RBAC ≠ token scope). `List Items` (used to find STID's GraphQL) only needs `Workspace.Read.All`, which is why STID works but telemetry doesn't. **Fix:** the app now requests `Item.Read.All` (`src/services/fabric.ts` `FABRIC_SCOPES`) and `setup-live-auth` pre‑grants it. Agents rerun the one-shot orchestrator, then hard-refresh (Ctrl+F5). If telemetry connects but shows no data, ensure the signed-in user has **KQL Database Viewer** on the Eventhouse and the app origin is in the Eventhouse **CORS** allow-list. |
-| Sign‑in fails with **AADSTS** | Ensure your deployed hosting URL is in `rayfin/rayfin.yml` (`allowedRedirectUris`), then run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
-| Local **Deploy app** says the identity is missing from the MSAL token cache | The deployer opens `az login --tenant <selected-tenant>` and retries the Fabric token once automatically. Complete the browser sign-in; it does not switch the configured tenant or rotate Rayfin state. |
-| Verification says scopes are configured but consent is missing | On **App registrations → Hydro Operations Fabric Client → API permissions**, inspect **Status**, not just the permission rows. It must say **Granted for &lt;tenant&gt;**. Use **Grant admin consent for &lt;tenant&gt;** with a consent-granting admin role, or allow the intended user to consent in-app if tenant policy permits. |
-| KQL reachable but "no live readings" | F12 → Console: `HTTP 401` = re‑connect for the cluster scope; `HTTP 403` = grant **KQL Database Viewer**; network error with no status = **CORS** not allowing the app origin. |
-| Operational writes fail with **Internal server error** | An unbounded `@text()` column maps to `NVARCHAR(MAX)`, which some ops reject. Bound it in `rayfin/data/schema.ts` and re‑run `npm run rayfin:db`. |
-| Deployed into the wrong workspace | `npm run up` reads `FABRIC_WORKSPACE_NAME` from `rayfin/.env` — fix it and re‑run. |
-| **`rayfin up` → 404 "The provided workspace was not found"** | Stale `active` pointer in `rayfin/.deployments.json` from a previous tenant — delete it (and `.env.local`), then re‑run. See [Redeploying to a different tenant, workspace, or region](#redeploying-to-a-different-tenant-workspace-or-region). |
-| **`rayfin up` → 403 "The feature is not available"** | **Fabric App Items (preview)** not enabled/propagated, or the capacity's region doesn't support it. Enable tenant setting `AppBackendTenant`, wait ~15 min, else move the workspace to a supported‑region capacity (e.g. **Sweden Central**). See [Feature & region gating](#feature--region-gating-fabric-app-items-preview). |
-| **`npx … -c "npx rayfin …"` → npm EUSAGE** | Don't nest `npx`. Call `rayfin` / `npm run …` **directly** inside the `-c` string. |
-| `rayfin up` can't find `rayfin.yml` (wrong cwd) | The `-c` shell starts at an unspecified cwd — put the path in the string: `-c "cd /d <abs>\HydroOperationsApp && rayfin up …"`. |
+- **Permission/consent/private endpoint failure:** give the exact prerequisite
+  output to its resource owner; do not widen roles, open a private vault or weaken
+  Conditional Access. Complete the normal resource-specific sign-in challenge.
+- **Stale agents/source identities:** run Foundry setup, then app publication;
+  never skip verification or silently switch projects.
+- **Fabric preview/region unavailable or paused capacity:** fix the assigned
+  target's prerequisite; repeated app builds will not fix it.
+- **Graph ineligible/slow:** inspect native graph scope and upstream query timing;
+  do not fabricate topology from SQL/STID or repeatedly rematerialize a healthy graph.
+- **Energy/Weather provider failure:** fix credentials/connectivity and refresh
+  that source only; do not rerun core setup.
+- **Browser sign-in pop-up blocked:** allow the normal sign-in flow and retry;
+  do not bypass hosting access control.
 
-## Rotate deployment state
-
-Never delete deployment state. When switching targets, move only `rayfin/.env`,
-`rayfin/.env.local`, and `rayfin/.deployments.json` into a uniquely named temporary backup. The
-one-shot orchestrator performs this rotation, preserves every existing Entra SPA redirect, and adds
-only the current generated hosting origin.
-
-> Switching **tenant/workspace/region** (not just rebuilding)? Follow
-> [Redeploying to a different tenant, workspace, or region](#redeploying-to-a-different-tenant-workspace-or-region)
-> — it covers resetting the `active` deployment pointer, re‑registering the SPA in the new tenant, and
-> the non‑interactive `rayfin up --workspace-id <guid> --yes` command.
+Architecture and specialist behavior: [app README](README.md),
+[Foundry guide](../docs/foundry-deployment-and-multi-agent-setup.md),
+[agent acceptance](AGENT-ACCEPTANCE.md). Historical measurements belong in the
+[deployment record](../docs/ontology-test-review.md), not the operator checklist.

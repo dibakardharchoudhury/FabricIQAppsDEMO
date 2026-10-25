@@ -8,14 +8,14 @@ Subsequent deployments and authenticated acceptance are tracked in the
 [live FEATURE verification record](../docs/ontology-test-review.md#latest-canonical-deployment-and-bounded-runtime-acceptance).
 The legacy `Hydro_STID_API` was removed after authenticated hosted Lakehouse/SQL
 source reads, with all 40 other Fabric items preserved. Post-deletion SPA connector
-reads also passed. The [deployment record](../HydroOperationsApp/DEPLOY.md#current-feature-connector-retirement-october-24-2026)
+reads also passed. The [deployment record](../docs/ontology-test-review.md)
 separately records model HTTP 429 failures, incomplete native Data Agent coverage,
 stale telemetry and the still-unaccepted compound business workflows.
 
 ## Scoped Data Agent quality/work workflows
 
 The three BAD-quality-today prompts documented in the
-[routing contract](../HydroOperationsApp/DEPLOY.md#supervisor-routing-and-visible-crew-identities)
+[routing contract](../HydroOperationsApp/AGENT-ACCEPTANCE.md#complete-routing-rules)
 use one Sparky step against the verified ontology-connected Data Agent, followed only by the
 requested RCA and/or work-order specialists. Native evidence is preserved across
 handoffs, including when no RCA ran or RCA cited a native table instead of a

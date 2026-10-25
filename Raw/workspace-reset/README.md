@@ -1,5 +1,8 @@
 # Workspace reset — automated Git sync (alternative to the manual portal steps)
 
+**Deploying the project? Start with the [short deployment guide](../../HydroOperationsApp/DEPLOY.md).**
+This file is the detailed CLI/reference material, not a second required checklist.
+
 Populate (or wipe-and-repopulate) a Microsoft Fabric workspace from this GitHub repo
 **without clicking through the Fabric portal**. These tools drive the same Fabric
 Git-integration APIs the portal uses, so the result is identical to a manual sync —
@@ -88,7 +91,7 @@ provisioning. Blank overrides use verified discovery, never another tenant's sav
 
 For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
 checkout and explicitly select **Branch = `feat/dibakar`** when using Git sync or
-**Initialize everything**; those branch fields default to `main`. **Deploy app**
+**Initialize everything**; those branch fields prefill from the current local checkout. **Deploy app**
 verifies prepared Foundry specialists, including Weather, without creating or
 publishing agents. It does not update Fabric notebook source or run Weather
 ingestion. **Set up energy sources** prepares PR #19 without a hidden feature
