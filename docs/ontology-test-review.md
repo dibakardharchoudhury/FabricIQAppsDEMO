@@ -717,3 +717,48 @@ discovery, so a completed cutover no longer imposes that migration prerequisite
 on routine deployment. This is not proof that the platform-managed child can
 be deleted or that it is used only for authentication. Direct read-only TDS
 catalog inspection from this machine timed out; no schema or row was changed.
+
+### SQL lifecycle correction applied to FEATURE
+
+Feature commit `2c6c864` integrates independent SQL provisioning into both NB01
+variants and NB11 seeding/publication into the setup DAG. Fresh workspaces use
+`RTI_Demo_SQLDatabase_<env_suffix>` in the demo folder. NB11 runs after the
+Data Agent, Operations Agent, and Weather setup activities; fresh setup does
+not require an AppBackend database or an explicit legacy migration source.
+Seed MERGEs insert missing demo records without updating matched records.
+The transaction verifies preservation of existing IDs and known operational
+fields and minimum populations in all five operational tables before commit.
+The app seed action and deployer resolve the saved SQL identity rather than
+hardcoding the old display name. Related deployment and architecture docs
+were updated.
+
+Fabric rejected an in-place SQL rename with
+`SQLDatabaseDisplayNameCannotBeChanged`. Therefore FEATURE retains
+`HydroOperationalStore` and item ID
+`7972fa8c-e2cd-4c9a-bdd6-053b37293f19`; correcting its existing name requires
+an explicitly approved replacement/copy/rebind/retirement migration. No third
+database was created and neither existing database was deleted. Folder-list
+readback confirms the independent database and its analytics endpoint are
+both in `RTI_DEMO_V11` (`92053cc6-8a9d-42b2-ad73-b3cbbb8fabf0`).
+The AppBackend-managed child remains retained, not the active operational target.
+
+The two NB01 variants, NB11, and setup orchestrator were published to their
+existing FEATURE items with dependency metadata and unknown parts preserved
+and executable-source readback verified. Runtime 2.0 NB11 job
+`5ca2f136-dd90-4a66-a025-388e93e88302` completed from
+09:19:54 to 09:25:38 UTC on October 25 (5 minutes 44 seconds), with
+`seed_demo_data=True`, `provision_shared_store=True`, and no legacy copy.
+Its successful path includes the transactional preservation/population checks.
+The exact count/hash receipt was not independently retrieved; do not present
+the earlier 75-record migration receipt as a new before/after measurement.
+Post-run readback verified the published Data Agent SQL source and source-backed
+v2 ontology. This does not certify SQL/combined-source agent answers.
+
+Validation was limited to 69 focused Python tests, app environment validation
+and typecheck, notebook mirror checks, and whitespace checks; all passed.
+The canonical app deployment then stopped at SPA discovery because fresh
+Microsoft sign-in was required, before Rayfin deployment changes. There is
+no new app deployment success receipt: the prior live app remains, and the
+updated app source is pushed but not redeployed. Weather provider authentication
+and the previously recorded runtime-acceptance limits remain unresolved.
+The protected V3 workspace was not modified.
