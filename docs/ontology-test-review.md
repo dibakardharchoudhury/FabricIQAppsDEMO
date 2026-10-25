@@ -909,3 +909,59 @@ Official references:
 - [New ontology TMDL definition, including rule parts and the complete rule example](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition)
 - [Ontology graph purpose, optional materialization, and eligibility limitations](https://learn.microsoft.com/en-us/fabric/iq/ontology/how-to-use-ontology-graph)
 - [Natural-language business rules and linked concepts](https://learn.microsoft.com/en-us/fabric/iq/ontology/how-to-use-rules)
+
+## October 25: staged energy, Foundry and final app publication
+
+Source `8c65c37` was published to FEATURE using the canonical deployment engine.
+PR #19's map was previously unavailable because the normal deployment disabled
+its visibility flag and FEATURE had no energy artifacts. Both prerequisites are
+now prepared; same-target app publication preserves the enabled flag.
+
+The local launcher now separates **energy sources**, **Foundry agents**, and
+**final app publication**. The full workflow orders Git/core setup, selected
+energy setup, Foundry setup, then app publication. The final stage performs
+read-only prepared-agent verification rather than provisioning Foundry through
+the app. See the [deployment guide](../HydroOperationsApp/DEPLOY.md#independent-local-modules-app-publication-last).
+
+| Measured module | UTC start / finish, October 25 | Seconds |
+|---|---|---:|
+| Energy source setup and serving readback | 11:10:35 / 11:30:29 | 1193.922 |
+| Standalone Foundry setup, launched from the local UI | 11:33:10 / 11:36:39 | 208.812 |
+| Final app-only publication and readiness checks | 11:36:51 / 11:46:32 | 581.125 |
+
+Final publication sections:
+
+| Section | Seconds |
+|---|---:|
+| Tenant/workspace/capacity checks | 16.984 |
+| SPA discovery and redirect preservation | 17.391 |
+| Configuration, read-only Foundry and energy verification | 109.219 |
+| Rayfin authentication | 1.672 |
+| Static build/publication, existing backend reused | 168.125 |
+| Runtime/SQL/connector reapplication and redirect configuration | 112.500 |
+| Browser sign-in setup, permissions and consent | 91.359 |
+| Hosting, endpoint and CORS readiness | 63.875 |
+
+- Energy serving readback verified all **12 source layers**, **9 reservoir
+  polygons**, and **75 asset-message links**. No core setup or SQL seed rerun was
+  needed.
+- Foundry reused the existing project and Hosted image `src-247959b77642fffb`.
+  QA `2`, RCA `2`, WorkOrder `3`, FabricIQ `2` and Weather `1` were verified.
+  No new project or Hosted version was created.
+- Final app publication verified prepared agents without republishing them,
+  retained all **40** registered SPA redirects, applied both Lakehouse and
+  independent operational-SQL connectors, and passed browser-equivalent
+  preflights/POST readiness. It emitted `SUCCESS` and `DEPLOYED_APP_URL`.
+- App URL: <https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
+  The interactive browser session had expired, and its sign-in pop-up was
+  blocked. Authenticated map rendering/navigation and connector data execution
+  were **not** accepted; source readback and protected hosting do not prove them.
+- Dedicated Map Data Agent chat remains a separate prerequisite. Weather's
+  previously observed provider HTTP 401 is not resolved by app publication.
+  Agent inference, operational writes and alert delivery are not certified here.
+- This split removes cold ingestion and agent provisioning from routine app
+  publication; it does not promise a shorter Fabric build. The measured final
+  stage was 581.125 seconds versus the earlier 572.094-second combined run,
+  with additional energy readback now required.
+- V3 was not changed. The healthy native graph was not rematerialized. Earlier
+  notebook producer changes were not published by this app-only stage.
