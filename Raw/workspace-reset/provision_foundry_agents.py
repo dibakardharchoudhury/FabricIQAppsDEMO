@@ -69,7 +69,7 @@ def verify_published_identity(definition: dict, workspace: str, ontology: str) -
 
 
 def read_data_agent_definition(deploy, workspace: str, agent_id: str, headers: dict, *, collection="dataAgents") -> dict:
-    if collection not in ("dataAgents", "ontologies"):
+    if collection not in ("dataAgents", "ontologies", "items"):
         raise ValueError("Unsupported Fabric definition collection.")
     response = request_with_read_retry(
         "POST", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/{collection}/{agent_id}/getDefinition",

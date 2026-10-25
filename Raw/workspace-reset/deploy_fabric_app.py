@@ -1848,6 +1848,120 @@ def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydro
             raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
 
 
+def operational_graphql_rebind_plan(parts, workspace_id, archived_ids, target_id):
+    from copy import deepcopy
+    from operational_store_support import OPERATIONAL_COLUMNS
+
+    matches = [part for part in parts if part["path"] == "graphql-definition.json"]
+    if len(matches) != 1 or len({part["path"] for part in parts}) != len(parts):
+        raise DeployError("Operational GraphQL reconciliation requires one unambiguous definition.")
+    original = json.loads(base64.b64decode(matches[0]["payload"]))
+    detached = deepcopy(original)
+    sources = detached.get("datasources")
+    if not isinstance(sources, list):
+        raise DeployError("GraphQL definition has no explicit data-source list.")
+    moved = []
+    metadata = None
+    for source in list(sources):
+        if source.get("sourceItemId") not in archived_ids:
+            continue
+        if source.get("sourceWorkspaceId") != workspace_id or source.get("sourceType") != "SqlDbNative":
+            raise DeployError("Archived GraphQL SQL source has a conflicting workspace or source type.")
+        objects = source.get("objects")
+        if not isinstance(objects, list):
+            raise DeployError("Archived GraphQL SQL source has no explicit object list.")
+        managed = [node for node in objects if node.get("sourceObjectType") == "Table"
+                   and node.get("sourceObject") in {f"[dbo].[{table}]" for table in OPERATIONAL_COLUMNS}]
+        if not managed:
+            continue
+        candidate = {key: value for key, value in source.items() if key != "objects"}
+        candidate["sourceItemId"] = target_id
+        if metadata is not None and metadata != candidate:
+            raise DeployError("Archived GraphQL SQL sources have conflicting custom metadata.")
+        metadata = candidate
+        moved.extend(managed)
+        source["objects"] = [node for node in objects if node not in managed]
+        if not source["objects"]:
+            sources.remove(source)
+    if metadata is None:
+        return None
+    rebound = deepcopy(detached)
+    targets = [source for source in rebound["datasources"] if source.get("sourceItemId") == target_id]
+    if len(targets) > 1:
+        raise DeployError("GraphQL definition contains duplicate replacement SQL sources.")
+    target = targets[0] if targets else {**metadata, "objects": []}
+    if target.get("sourceWorkspaceId") != workspace_id or target.get("sourceType") != "SqlDbNative":
+        raise DeployError("GraphQL replacement SQL source has a conflicting identity.")
+    for key, value in metadata.items():
+        if key in target and target[key] != value:
+            raise DeployError("GraphQL replacement would overwrite custom source metadata.")
+        target[key] = value
+    by_type = {node["graphqlType"]: node for node in target["objects"]}
+    for node in moved:
+        existing = by_type.get(node["graphqlType"])
+        if existing is not None and existing != node:
+            raise DeployError("GraphQL replacement would overwrite a custom operational object.")
+        if existing is None:
+            target["objects"].append(node)
+            by_type[node["graphqlType"]] = node
+    if not targets:
+        rebound["datasources"].append(target)
+    def encode(body):
+        return [{**part, "payload": base64.b64encode(json.dumps(body).encode()).decode()}
+                if part["path"] == "graphql-definition.json" else part for part in parts]
+    return encode(detached), encode(rebound)
+
+
+def reconcile_archived_operational_graphql(workspace_id, tenant) -> None:
+    from operational_store_support import OPERATIONAL_ARCHIVE_PREFIX, OPERATIONAL_STORE_DESCRIPTION
+    from provision_foundry_agents import read_data_agent_definition
+    from sync_workspace_from_git import FABRIC_BASE, Fabric
+
+    values, _ = current_rayfin_target()
+    target_id = _public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")
+    headers = fabric_headers(tenant)
+    items = _workspace_artifacts(workspace_id, headers)
+    target = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{target_id}", headers)
+    if target.get("id") != target_id or target.get("description") != OPERATIONAL_STORE_DESCRIPTION:
+        raise DeployError("GraphQL source reconciliation requires the verified active operational SQL item.")
+    archived_ids = {item["id"] for item in items if item["type"] == "SQLDatabase"
+                    and item.get("description") == OPERATIONAL_ARCHIVE_PREFIX + target_id + "."}
+    if not archived_ids:
+        raise DeployError("Duplicate GraphQL nodes have no explicitly archived operational SQL replacement.")
+    fabric = Fabric(tenant)
+    changed = 0
+    def contents(parts):
+        return {part["path"]: json.loads(base64.b64decode(part["payload"]))
+                if part["path"].endswith(".json") or part["path"] == ".platform"
+                else base64.b64decode(part["payload"]) for part in parts}
+    for item in items:
+        if item["type"] != "GraphQLApi":
+            continue
+        before = read_data_agent_definition(
+            sys.modules[__name__], workspace_id, item["id"], headers, collection="items")["definition"]["parts"]
+        plan = operational_graphql_rebind_plan(before, workspace_id, archived_ids, target_id)
+        if plan is None:
+            continue
+        backup = Path(tempfile.mkdtemp(prefix="fabric-operational-graphql-")) / f"{item['id']}.json"
+        backup.write_text(json.dumps({"definition": {"parts": before}}), encoding="utf-8")
+        print(f"Rebinding archived operational GraphQL source {item['id']}; backup: {backup}", flush=True)
+        for parts in plan:
+            response = fabric.request(
+                "POST", f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item['id']}/updateDefinition",
+                json={"definition": {"parts": parts}},
+            )
+            response.raise_for_status()
+            fabric.poll_lro(response)
+            actual = read_data_agent_definition(
+                sys.modules[__name__], workspace_id, item["id"], headers, collection="items")["definition"]["parts"]
+            if contents(actual) != contents(parts):
+                raise DeployError("Operational GraphQL source replacement failed exact preservation readback.")
+        changed += 1
+    if not changed:
+        raise DeployError("Duplicate GraphQL nodes were not caused by the verified archived operational sources.")
+    print(f"Verified operational SQL source replacement in {changed} GraphQL definition(s).", flush=True)
+
+
 def current_git_push_target() -> tuple[str, str]:
     """Return a non-main branch and its matching origin upstream."""
     branch = run_capture(command_argv("git", "branch", "--show-current"), cwd=REPO_ROOT)
@@ -2485,7 +2599,17 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     operational_output = run_rayfin_deployment(
         rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
     )
-    validate_lakehouse_connector_apply(operational_output, "hydrooperations")
+    try:
+        validate_lakehouse_connector_apply(operational_output, "hydrooperations")
+    except DeployError:
+        if "Cannot add or update source as duplicate node detected in GraphQL schema" not in operational_output:
+            raise
+        print("Fabric retained the archived SQL attachment; reconciling its verified replacement.", flush=True)
+        reconcile_archived_operational_graphql(workspace_id, args.tenant)
+        operational_output = run_rayfin_deployment(
+            rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
+        )
+        validate_lakehouse_connector_apply(operational_output, "hydrooperations")
 
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:

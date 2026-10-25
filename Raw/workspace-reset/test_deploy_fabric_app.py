@@ -2191,6 +2191,79 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             write.assert_not_called()
 
 
+class OperationalGraphQLRebindTests(unittest.TestCase):
+    def parts(self, workspace="workspace", target_objects=None):
+        source = {"sourceItemId": "archived", "sourceWorkspaceId": workspace, "sourceType": "SqlDbNative",
+                  "custom": {"keep": True}, "objects": [
+                      {"sourceObject": "[dbo].[WorkOrders]", "sourceObjectType": "Table",
+                       "graphqlType": "WorkOrder", "fieldMappings": {"id": "customId"}},
+                      {"sourceObject": "[dbo].[CustomTable]", "sourceObjectType": "Table",
+                       "graphqlType": "CustomTable"},
+                  ]}
+        body = {"datasources": [source], "customRoot": True}
+        if target_objects is not None:
+            body["datasources"].append({**source, "sourceItemId": "target", "objects": target_objects})
+        return [{"path": "graphql-definition.json", "payloadType": "InlineBase64",
+                 "payload": base64.b64encode(json.dumps(body).encode()).decode()},
+                {"path": "unknown.bin", "payload": "AAEC", "payloadType": "InlineBase64"}]
+
+    def test_removes_old_nodes_before_rebinding_and_preserves_custom_content(self):
+        before = self.parts()
+        detached, rebound = DEPLOY.operational_graphql_rebind_plan(before, "workspace", {"archived"}, "target")
+        first = json.loads(base64.b64decode(detached[0]["payload"]))
+        final = json.loads(base64.b64decode(rebound[0]["payload"]))
+        self.assertEqual([node["graphqlType"] for node in first["datasources"][0]["objects"]], ["CustomTable"])
+        self.assertEqual(final["datasources"][0], first["datasources"][0])
+        self.assertEqual(final["datasources"][1]["sourceItemId"], "target")
+        self.assertEqual(final["datasources"][1]["custom"], {"keep": True})
+        self.assertEqual(final["datasources"][1]["objects"][0]["fieldMappings"], {"id": "customId"})
+        self.assertTrue(final["customRoot"])
+        self.assertEqual(detached[1], before[1])
+        self.assertEqual(rebound[1], before[1])
+        self.assertIsNone(DEPLOY.operational_graphql_rebind_plan(rebound, "workspace", {"archived"}, "target"))
+
+    def test_foreign_workspace_and_conflicting_existing_projection_are_rejected(self):
+        with self.assertRaisesRegex(DEPLOY.DeployError, "conflicting workspace"):
+            DEPLOY.operational_graphql_rebind_plan(self.parts("foreign"), "workspace", {"archived"}, "target")
+        conflicting = [{"sourceObject": "[dbo].[WorkOrders]", "sourceObjectType": "Table",
+                        "graphqlType": "WorkOrder", "fieldMappings": {"id": "different"}}]
+        with self.assertRaisesRegex(DEPLOY.DeployError, "custom operational object"):
+            DEPLOY.operational_graphql_rebind_plan(self.parts(target_objects=conflicting),
+                                                  "workspace", {"archived"}, "target")
+
+    def test_unrelated_sources_are_not_changed(self):
+        self.assertIsNone(DEPLOY.operational_graphql_rebind_plan(self.parts(), "workspace", {"other"}, "target"))
+
+    def test_reconciliation_uses_core_item_definitions_and_verifies_both_steps(self):
+        from operational_store_support import OPERATIONAL_ARCHIVE_PREFIX, OPERATIONAL_STORE_DESCRIPTION
+        before = self.parts()
+        plan = DEPLOY.operational_graphql_rebind_plan(before, "workspace", {"archived"}, "target")
+        fabric = Mock()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}), \
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                    {"RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "target"}, None)), \
+                patch.object(DEPLOY, "fabric_headers", return_value={}), \
+                patch.object(DEPLOY, "_workspace_artifacts", return_value=[
+                    {"type": "SQLDatabase", "id": "archived",
+                     "description": OPERATIONAL_ARCHIVE_PREFIX + "target."},
+                    {"type": "GraphQLApi", "id": "graphql"},
+                ]), patch.object(DEPLOY, "fabric_get", return_value={
+                    "id": "target", "description": OPERATIONAL_STORE_DESCRIPTION,
+                }), patch.object(DEPLOY.tempfile, "mkdtemp", return_value=directory), \
+                patch("sync_workspace_from_git.Fabric", return_value=fabric), \
+                patch("provision_foundry_agents.read_data_agent_definition", side_effect=[
+                    {"definition": {"parts": parts}} for parts in (before, *plan)
+                ]) as read:
+            DEPLOY.reconcile_archived_operational_graphql("workspace", "tenant")
+        self.assertEqual(fabric.request.call_count, 2)
+        for index, call in enumerate(fabric.request.call_args_list):
+            self.assertTrue(call.args[1].endswith("/items/graphql/updateDefinition"))
+            self.assertEqual(call.kwargs["json"], {"definition": {"parts": plan[index]}})
+        self.assertEqual(read.call_count, 3)
+        self.assertTrue(all(call.kwargs["collection"] == "items" for call in read.call_args_list))
+
+
 class ProtectedHostingTests(unittest.TestCase):
     hosting_url = "https://fast.webapp.fabricapps.net"
 

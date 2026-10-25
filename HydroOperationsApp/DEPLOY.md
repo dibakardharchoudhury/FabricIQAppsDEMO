@@ -206,6 +206,13 @@ the [deployment record](../docs/ontology-test-review.md). AppBackend's retained
 child database/GraphQL item is platform-managed; removing it is not a safe
 operational-store cleanup.
 
+If Fabric retains the archived SQL attachment and reports its exact duplicate-node
+schema error, the engine reconciles the GraphQL definitions referencing that
+explicit archive: remove only the five operational object exposures, then reattach
+their unchanged projections to the verified replacement. Both steps require exact
+readback; custom objects, other sources and unknown definition parts are preserved.
+This does not delete a database or change native ontology graph topology.
+
 ## Redeploying to a different tenant, workspace, or region
 
 Prepare the new target, then run the same engine/modules. A new workspace needs
