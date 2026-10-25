@@ -71,6 +71,16 @@ use **Initialize everything** when Git sync and data setup are actually needed. 
 overrides and explicitly billable first-time provisioning are under **Advanced / first-time
 Foundry setup**. Blank overrides use verified discovery, never another tenant's saved target.
 
+For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
+checkout and explicitly select **Branch = `feat/dibakar`** when using Git sync or
+**Initialize everything**; those branch fields default to `main`. **Deploy app**
+deploys the app and Foundry specialists, including Weather, but does not update
+Fabric notebook source or run Weather ingestion. PR #19's map remains gated by
+the target-specific feature profile; a plain deployment without it sets the map
+flag to false. See the
+[feature-branch deployment matrix and remaining prerequisites](../../HydroOperationsApp/DEPLOY.md#deploying-the-merged-feature-branch)
+before treating either workflow as complete end-to-end readiness.
+
 Every app deployment now records its eight section durations, including the failed section
 if it stops. The local progress panel shows the final timing table; `DEPLOY_TIMINGS=` in the
 log is the machine-readable receipt. Full-workflow Git sync and setup-pipeline time are

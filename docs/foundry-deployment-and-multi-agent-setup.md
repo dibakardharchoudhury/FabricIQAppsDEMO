@@ -44,6 +44,14 @@ records the read-only comparison and proposed FEATURE acceptance gates.
 
 ## Start a deployment
 
+Use the [merged feature-branch deployment matrix](../HydroOperationsApp/DEPLOY.md#deploying-the-merged-feature-branch)
+for PR #19/#20. The local launcher must run from the updated `feat/dibakar`
+checkout; Fabric Git sync must separately select that branch instead of the
+form's `main` default. **Deploy app** includes the separate Weather specialist,
+not an immediate Weather ingestion run or an automatic energy-map opt-in.
+Weather source publication/provider authentication, the map feature profile,
+and manual native graph materialization remain separate prerequisites.
+
 **One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
 The Foundry extensions are installed for you. The Foundry project and supporting resources can be created
 by the deploy when you tick **Create/reuse a target-specific Foundry project when none is selected** and supply
@@ -72,7 +80,7 @@ Operator ─► SPA (Fabric-hosted) ─ signed-in user's delegated tokens ─►
                                hydro-qa-agent   hydro-rca-agent   hydro-work-order-agent   hydro-fabric-iq-agent   hydro-weather-agent
                                   (Gauge)          (Sleuth)            (Fixer)                 (Sparky)              (Weather)
         Specialist tool calls are executed by the hosted runtime (Node source bridge) under the user's tokens:
-        Asset + Weather Lakehouse connector · Eventhouse KQL · AppBackend SQL · published Data Agent connection
+        Asset + Weather Lakehouse connector · Eventhouse KQL · hydrooperations shared-SQL connector · published Data Agent connection
 ```
 
 | Component | Foundry name | Kind | Defined in | Deployed by |

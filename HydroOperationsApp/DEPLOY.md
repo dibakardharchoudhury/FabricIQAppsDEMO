@@ -8,6 +8,45 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## Deploying the merged feature branch
+
+PR #20 (Weather, merge `ccca826`) and PR #19 (energy map, merge `66179c4`)
+are included in `feat/dibakar`. Their GitHub PRs still target `main`; their open
+status does not mean the feature branch lacks the changes.
+
+Start the local launcher from an updated **`feat/dibakar` checkout**. An already
+running launcher from another checkout does not switch code when you change the
+GitHub branch field. The app/agents use the launcher's local repository, whereas
+Fabric Git synchronization imports the remote branch selected in the form.
+
+| Target/action | What runs | Important limit |
+|---|---|---|
+| Fresh workspace: **Initialize everything** | GitHub sync, `01_Pipe_Setup`, then the canonical app/Foundry deployer | Explicitly set **Branch = `feat/dibakar`**; the form defaults to `main`. Setup/tenant prerequisites must be satisfied. |
+| Prepared workspace: **Deploy app** | App deployment, connector/runtime configuration, all five prompt specialists including `hydro-weather-agent`, and the Hosted coordinator | Does **not** publish changed Fabric notebook definitions or rerun source ingestion. |
+| Weather setup/refresh | Setup creates the Weather schema and enables its schedule; `03_Pipe_Weather` runs Aurora, UKMet, then serving calculations | The full initializer does not immediately execute these three ingestion notebooks. Use **Connect weather** in the deployed app, or wait for the enabled schedule, with valid provider credentials. |
+| Energy-map feature from PR #19 | The target-specific `FABRIC_FEATURE_CONFIG` profile enables provisioning and the app feature with `enable_energy_map: true` | Checking out the branch is not the opt-in. Without that profile, the current deployer sets the energy-map app flag to false, including on an existing target. |
+
+Reuse the approved, target-matching feature profile and its retained state for a
+workspace originally bootstrapped that way. Do not create a replacement bootstrap
+profile or run a full `PreferRemote` Git import against a populated workspace just
+to turn on the map or update Weather code. A full import can remove generated
+workspace items. Existing-workspace notebook upgrades require bounded definition
+publication with dependency preservation and readback; FEATURE's Weather source
+publication was separately verified on October 25.
+
+**Deployment is not blanket end-to-end runtime certification.** At the latest
+FEATURE check, Weather ingestion still failed with provider HTTP 401. The
+configured provider subscription/key must be corrected securely before a
+successful refresh can be claimed. Key Vault's local diagnostic HTTP 403 was
+`ForbiddenByConnection` because public network access is disabled, not proof of
+missing RBAC; use an authorized private connection rather than opening the vault.
+Native ontology graph materialization still requires the selected ontology's
+portal **Manage graph** flow and a verified graph binding. Agent execution,
+freshness, SQL writes and alert delivery require their own acceptance evidence.
+
+See the [current FEATURE source/runtime record](../docs/ontology-test-review.md#october-25-follow-up-weather-source-drift-and-sql-lifecycle)
+and [Foundry agent deployment guide](../docs/foundry-deployment-and-multi-agent-setup.md).
+
 ## Faster deployment and a simpler operator path
 
 ### Independent operational SQL lifecycle
