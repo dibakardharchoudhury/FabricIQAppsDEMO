@@ -58,7 +58,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
   const currentEvents = currentEventIds ? displayedEvents.filter(event => currentEventIds.includes(event.id)) : displayedEvents
   const status = pending && !currentEvents.length ? 'queued' : executionStatus(currentEvents)
   const focused = selected ?? automaticCrewRole(currentEvents) ?? events[0].role
-  const invoked = new Set(events.map(event => event.role)).size
+  const participants = new Set(events.map(event => event.role)).size
   const focusedEvents = displayedEvents.filter(event => event.role === focused)
   const trace = focusedEvents.flatMap(event => event.trace ?? []).sort((a, b) => a.timestamp - b.timestamp)
   const start = Math.min(...events.map(event => event.timestamp))
@@ -117,7 +117,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
     {recentActivity.length > 0 && <ol className="crew-live-feed" aria-label="Recent execution activity">
       {recentActivity.map(entry => <li key={entry.id} className={entry.failed ? 'failed' : ''}>
         <span className={`crew-feed-icon${entry.activity === 'tool-start' ? ' tool-start' : ''}`} aria-hidden="true">{entry.failed ? '!' : entry.activity === 'delegation-return' ? '\u2190' : '\u2192'}</span>
-        <span><strong>{crewTitle(entry.role)}</strong> {entry.label}<small>{entry.source === 'foundry' ? 'Foundry event' : 'Browser coordination / tool'}</small></span>
+        <span><strong>{crewTitle(entry.role)}</strong> {entry.label}<small>{entry.source === 'foundry' ? 'Foundry event' : 'Application workflow / tool'}</small></span>
         <time>+{((entry.timestamp - start) / 1000).toFixed(1)}s</time>
       </li>)}
     </ol>}
@@ -126,13 +126,13 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
       <span><strong>{crewTitle(focused)}</strong> · {latest?.detail ?? 'Standing by; not invoked for this request.'}</span>
     </div>
     <div className="crew-controls">
-      <span>{invoked} agents invoked · packets = recorded handoffs</span>
+      <span>{participants} workflow participants · packets = recorded handoffs</span>
       <button type="button" onClick={() => setPaused(value => !value)} aria-pressed={paused}>{paused ? 'Resume animations' : 'Pause animations'}</button>
     </div>
     {approvals.length > 0 && <p className="crew-review-status" role="status">Human review (application): {approvals.filter(state => state === 'created').length} created, {approvals.filter(state => state === 'rejected').length} rejected, {approvals.filter(state => state === 'pending').length} awaiting decision.{reviewStatus === 'error' && ' A draft expired or a SQL write outcome is uncertain. Check existing work before retrying.'}{approvals.includes('validating') && ' Checking identity and existing work; no SQL write yet.'}{approvals.includes('saving') && ' Writing the approved SQL draft; do not submit again.'}</p>}
     {!compact && <details className="crew-diagnostics">
       <summary>Execution receipts <span>{trace.length} events for {jobOf(focused) || AGENT_DISPLAY_NAMES[focused]}</span></summary>
-      <p>Foundry stream events and browser-executed tools are labeled separately. These are execution records, not private reasoning or an Application Insights span export.</p>
+      <p>Foundry events and application workflow/tools are labeled separately. Supervisor is the deterministic Agent Framework control plane, not another prompt agent. These are execution records, not private reasoning or an Application Insights span export.</p>
       {insightsLink && <a className="crew-insights-link" href={insightsLink} target="_blank" rel="noreferrer">Open linked Application Insights <ExternalLink size={12} /></a>}
       {traceQuery && <details className="crew-query"><summary>Find these responses in Foundry telemetry</summary><p>Use this query in the linked Application Insights Logs. No matching rows means trace ingestion is unverified, not that execution succeeded or failed.</p><pre><code>{traceQuery}</code></pre></details>}
       {focusedEvents.map(event => <div className="crew-identities" key={event.id}>

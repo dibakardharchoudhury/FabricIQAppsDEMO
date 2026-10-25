@@ -125,6 +125,28 @@ test('the container session id (only) is reused within a tab and engine, and rep
   }
 })
 
+test('new chat clears follow-up context without discarding the warmed container', async () => {
+  const calls: Array<{ url: URL; body: Record<string, unknown> }> = []
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (input, init) => {
+    const body = JSON.parse(String(init?.body))
+    calls.push({ url: new URL(String(input)), body })
+    return response(body.operation === 'run' ? reply() : { detail: 'Invalid invocation body.' }, body.operation === 'run' ? 200 : 422)
+  })
+  await client.warm()
+  await client.run({ question: 'First chat.' })
+  await client.run({ question: 'Follow up.' })
+  assert.equal((calls[2].body.chat as Record<string, unknown>).previous_run_id, 'run-1')
+  client.clearConversation()
+  await client.warm()
+  await client.run({ question: 'Independent new chat.' })
+  assert.equal(calls.length, 4)
+  assert.equal(new Set(calls.map(call => call.url.searchParams.get('agent_session_id'))).size, 1)
+  assert.equal((calls[3].body.chat as Record<string, unknown>).previous_run_id, undefined)
+  client.reset()
+  await client.run({ question: 'Changed deployment context.' })
+  assert.notEqual(calls[3].url.searchParams.get('agent_session_id'), calls[4].url.searchParams.get('agent_session_id'))
+})
+
 test('streaming transport paints only backend execution events and returns the certified final answer', async () => {
   const snapshots: Array<Array<{ id: string; status: string }>> = []
   let body: Record<string, unknown> | undefined
@@ -280,6 +302,20 @@ const card = () => ({ id: 'draft-1', run_id: 'run-1', source, equipment_id: 'equ
   priority: 'Medium', work_read_at: new Date().toISOString(), expires_at: new Date(Date.now() + 60000).toISOString() })
 const cardReply = () => ({ ...reply(), proposals: [card()], proposal_digests: { 'draft-1': 'b'.repeat(64) } })
 
+test('new chat invalidates old approvals and reconciliation even when the container stays warm', async () => {
+  let calls = 0
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => {
+    calls++
+    return response(cardReply())
+  })
+  const proposal = (await client.run({ question: 'Draft for review.' })).proposals[0]
+  client.clearConversation()
+  await assert.rejects(proposal.backend!.decide(true), /reset conversation/)
+  await assert.rejects(proposal.backend!.reconcile(true), /reset conversation/)
+  await assert.rejects(proposal.backend!.decide(false), /reset conversation/)
+  assert.equal(calls, 1)
+})
+
 test('hosted approval serialization strips proposal identity and backend controls', () => {
   const proposal = {
     id: 'draft-1', equipmentId: 'equipment-1', title: 'Inspect signal',
@@ -358,6 +394,7 @@ test('reset cannot change session affinity during credential renewal or a human 
     }))
   const pending = client.decide('run-1', { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: false })
   assert.throws(() => client.reset(), /Wait/)
+  assert.throws(() => client.clearConversation(), /Wait/)
   release!(tokens())
   await pending
   assert.doesNotThrow(() => client.reset())

@@ -127,6 +127,7 @@ export class HostedTransport {
   private readonly streamLivenessMs: number
   private previousRunId: string | undefined
   private interruptedRunId: string | undefined
+  private conversationVersion = 0
   private warmed = false
 
   constructor(
@@ -178,12 +179,17 @@ export class HostedTransport {
     return id
   }
 
-  reset() {
+  clearConversation() {
     if (this.running || this.inFlight) throw new Error('Wait for the hosted request before resetting the conversation.')
-    this.sessionId = this.newSession()
-    this.warmed = false
+    this.conversationVersion++
     this.previousRunId = undefined
     this.interruptedRunId = undefined
+  }
+
+  reset() {
+    this.clearConversation()
+    this.sessionId = this.newSession()
+    this.warmed = false
   }
 
   /** Boots the hosted container for this session before the first question. The backend rejects the empty body
@@ -362,7 +368,7 @@ export class HostedTransport {
       if (!Array.isArray(reply.proposals)) throw new Error('Hosted answer has no typed approval-card collection.')
       const digests = record(reply.proposal_digests)
       const cardIds = new Set<string>()
-      const sessionId = this.sessionId
+      const conversationVersion = this.conversationVersion
       const proposals = reply.proposals.map(value => {
         const draft = record(value)
         if (typeof draft.id !== 'string' || draft.run_id !== runId
@@ -387,7 +393,7 @@ export class HostedTransport {
         if (cardIds.has(proposalId)) throw new Error('Hosted answer repeated an approval-card identity.')
         cardIds.add(proposalId)
         const decide = (approved: boolean, edits: HostedDecision['edits'], reconcile: boolean) => {
-          if (sessionId !== this.sessionId) return Promise.reject(new Error('This approval belongs to a reset conversation. Request a fresh draft.'))
+          if (conversationVersion !== this.conversationVersion) return Promise.reject(new Error('This approval belongs to a reset conversation. Request a fresh draft.'))
           return this.decide(runId, { proposal_id: proposalId, proposal_digest: digest, approved,
             ...(approved ? { edits } : {}) }, reconcile)
         }

@@ -1,5 +1,34 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Current architecture and October 25 bounded review
+
+Supervisor is already a **deterministic Microsoft Agent Framework workflow**, not
+a manager prompt agent. It compiles the request, dispatches the required pinned
+specialists, verifies evidence and presents the result. Dependent QA/RCA/work-order
+steps remain ordered; independent evidence reads can run concurrently. Specialists
+and the optional grounded briefing use models, not the routing controller.
+
+The FEATURE review verified Hosted coordinator **v11**, QA **v2**, RCA **v2**,
+Work Order **v3**, Fabric IQ **v2** and Weather **v1**, including the verified
+generation-2 ontology and new operational SQL source. Exactly three browser
+prompts were run: maintenance analysis succeeded; the native Data Agent's joined
+quality/work bundle remained incomplete and failed closed; Weather/Q&A correctly
+disclosed empty weather sources and skipped the unsupported affected-work check.
+This is not full multi-agent acceptance or delivery/write certification.
+
+The app-side follow-up keeps the warm hosted container on **New chat**, while
+clearing follow-up context and invalidating every previous approval callback.
+Target/source changes still reset the container, and app builds retain separate
+session identities. Crew labels distinguish application workflow/tool activity
+from Foundry events and no longer count the deterministic controller as an
+additional model invocation. These app changes are tested but **not published**:
+tenant Microsoft Graph authorization still returns
+`InteractionRequired / TokenCreatedWithOutdatedPolicies`.
+
+See the [bounded review and exact limitations](../docs/foundry-multi-agent-implementation.md#october-25-bounded-feature-workflow-review)
+and the [deployment guide](../HydroOperationsApp/DEPLOY.md). Keep Foundry setup
+separate from app publication; no framework migration or new project is needed.
+
 ## Current FEATURE connector deployment
 
 The connector-retirement baseline ran SPA **1.0.1036 (`d676b9e`)** and Hosted Agent **v4** in

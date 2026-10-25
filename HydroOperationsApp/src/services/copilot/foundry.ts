@@ -32,7 +32,7 @@ export function requireProjectEndpoint(endpoint: string): string {
 }
 
 export function resetFoundryConversation() {
-  for (const { client } of clients.values()) client.reset()
+  for (const { client } of clients.values()) client.clearConversation()
 }
 
 function hostedClient(engine: 'foundry' | 'data-agent') {

@@ -1,10 +1,99 @@
 # Foundry and multi-agent implementation record
 
-Work period: **October 7-11, 2026**. This is the end-to-end record of the
-implementation, corrections, measured results and unfinished migration, grounded
-in repository commits and the linked acceptance records. It is not a release
-certificate. Earlier runs are retained as historical evidence, not relabelled
-as passes after a later code change.
+This record covers the original **October 7-11, 2026** implementation and later
+dated follow-ups, corrections, measured results and unfinished acceptance, grounded
+in repository commits and linked records. It is not a release certificate.
+Earlier runs remain historical evidence, not passes after a later code change.
+
+## October 25 bounded FEATURE workflow review
+
+**Recommendation: retain the existing Agent Framework workflow.** Supervisor is
+the deterministic hosted control plane, not another LLM manager. The actual
+`WorkflowBuilder` pipeline is request/plan compilation -> bounded specialist
+handoffs -> independent evidence verification -> grounded presentation. QA -> RCA
+-> work-order dependencies are deliberately ordered; independent RCA source
+reads already run concurrently. Version-pinned specialists, typed contracts,
+source/principal isolation, immutable receipts, checkpoints, bounded same-source
+correction and separate human-reviewed writes are retained. Specialists and an
+optional final grounded briefing use models; routing does not add a manager-model
+round trip. Replacing this with a free-form manager/group chat would not fix the
+observed Data Agent output contract or missing Weather ingestion.
+
+This matches Microsoft's distinction between
+[workflow capabilities](https://learn.microsoft.com/en-us/agent-framework/workflows/)
+and [sequential/concurrent/handoff orchestration patterns](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/).
+Agent Framework is already pinned at core `1.19.0` and Foundry integration
+`1.13.1`; no framework, model or dependency upgrade was performed.
+
+### Verified deployment context
+
+The read-only canonical verifier passed for `ws-FabricIQAppsDemoFEATURE`:
+project `ai-project-hydro-foundry-884a839f3132`, active Hosted coordinator **11**,
+QA **2**, RCA **2**, Work Order **3**, Fabric IQ **2**, Weather **1**. The manifest's
+Supervisor contract revision **1** is not the Hosted version or ontology generation.
+The source configuration matches ontology `1a5f7447-81be-4b90-ae00-e27b4aeb27b4`,
+live numeric generation **2**, and operational SQL
+`9b3dfea4-0934-4122-aaa4-1d7f17a183bd`. The active deployment has
+`production_writes_enabled=false`.
+
+Repository-local azd state points to a different project; it was not used for
+inference or deployment. Readback/session inspection used the existing isolated,
+endpoint-keyed FEATURE azd project. No new Foundry project, agents, resources,
+notebook run, ingestion job or capacity change was created by this review.
+
+### Exactly three live browser prompts
+
+| Prompt | Observed time | Result |
+| --- | --- | --- |
+| T005 latest telemetry/open work, RCA using inspections/notifications, read-only recommendation | 1m 17s | QA v2 and RCA v2 completed. Six telemetry rows, two inspection rows and zero matching open-work rows; stale readings and causal limits disclosed; no draft/write. Run `fc0b2bb0-3ec5-4f6a-95b2-51273d4333af`. |
+| BAD-quality-today/open-work question with RCA and editable drafts | 3m 16s | Failed closed after one same-source correction. Sparky/Data Agent returned native artifacts but did not produce the complete joined quality/work bundle. RCA/Fixer did not proceed; no empty-success result, direct-source substitution or write. Run `7e16aabe-9ea2-4a44-abed-04d4c03ed4e8`. |
+| Aurora/UKMet next-24h rainfall comparison and affected-equipment open work | 47.2s | Weather v1 and QA v2 completed missing-data handling: zero locations and forecasts, no affected equipment selected, open-work source explicitly not read. No invented comparison, no draft/write. Run `61d38f5b-234b-45a3-a020-c95dce11a187`. |
+
+Times are the browser's displayed observations, not controlled cold/warm benchmarks.
+Completed answer receipts, the pinned agent manifest and the failed native run's
+logs/raw replies were read back from those same sessions without additional prompts.
+No fourth prompt, broader evaluation suite or action-delivery test was run.
+
+The native failure was **not** missing SQL provisioning or a supervisor routing
+loop. Both saved replies set `telemetry_complete=false` and `work_complete=false`;
+the correction explicitly reported 90 BAD-signal rows, 90 static mappings and
+10 open work orders, but could not emit the required machine-readable joined JSON.
+The raw replies also contain an output-moderation error annotation. These
+artifacts do not independently attest complete source coverage or execution
+provenance. Preserve the failure; do not infer missing arrays or override false
+coverage flags. Native structured-output acceptance remains unresolved.
+
+Weather missing-data handling is not a successful forecast comparison or proof
+that the provider credential/pipeline is repaired. The separately diagnosed
+Weather provider HTTP 401 remains an external prerequisite.
+
+### Narrow app-side optimization, not yet published
+
+- **New chat** now clears the preceding-run context and invalidates old approval
+  and reconciliation callbacks without replacing the warm container session.
+  Configuration/target changes still perform a full session reset; separate app
+  builds and engines retain their existing session scopes. No analytical data or
+  tokens are persisted by this change.
+- Crew output now says **workflow participants**, rather than counting Supervisor
+  as a model invocation, and labels non-Foundry events as application workflow/tool
+  activity rather than claiming backend work runs in the browser.
+- **27 focused transport/trace tests**, TypeScript, changed-file ESLint and
+  environment validation passed. Tests explicitly verify one unchanged container
+  ID/no extra warm-up, no previous-run carry into a new chat, rejection of old
+  approve/reject/reconcile callbacks, in-flight reset guards and full-reset rotation.
+
+No Hosted image change is required for these app-only files. Publication remains
+blocked by the existing tenant Graph
+`InteractionRequired / TokenCreatedWithOutdatedPolicies` challenge, independently
+reconfirmed against the configured SPA. These optimizations are source-verified,
+not measured in the hosted UI yet.
+
+This is **partial runtime acceptance**, not enterprise HA or complete end-to-end
+business acceptance. Session-local filesystem checkpoints do not certify
+cross-worker recovery; the native Data Agent case failed, Weather data was missing,
+and approved writes/Teams/email delivery were intentionally not exercised. Keep
+Foundry setup separate and publish the Fabric app last through the
+[canonical deployment guide](../HydroOperationsApp/DEPLOY.md).
 
 ## October 23 deployment automation and operator-instruction review
 
