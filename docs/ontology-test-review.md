@@ -1076,3 +1076,22 @@ authenticated browser UX, agent inference, approved writes or Teams/email
 delivery. The separately recorded Weather provider HTTP 401, dedicated Map Data
 Agent prerequisite and expanded graph portal-eligibility limits are not resolved
 by this naming cutover.
+
+### October 25: focused Weather follow-up
+
+Read-only verification after the SQL cutover confirmed the assigned capacity
+`0f4dac6b-ad68-483d-8027-3d8bf9655d53` is **Active**. The complete Weather PR #20
+tip `67fd898e` is an ancestor of `feat/dibakar`, and the live
+`Weather_002_fetch_area_weather` executable source matches this checkout.
+PR #20 itself remains open against `main`; that is separate from its incorporation
+into the feature branch.
+
+The latest Weather pipeline job `69b5c2d9-002e-46e9-be46-59197810aa29`
+(11:56:12 / 12:10:54 UTC) failed in that deployed notebook with
+**`Aurora STAC search failed with HTTP 401`**. The preceding 11:40 run failed
+the same way. The existing credential probe identified an invalid subscription
+key using both supported placements. This is a provider-authentication blocker,
+not missing PR deployment, paused capacity, SQL connector configuration or an
+ontology repair. No new ingestion run, credential change or permission/network
+expansion was attempted. The credential owner must verify/replace the configured
+secret through an authorized connection before a bounded pipeline rerun.

@@ -194,24 +194,16 @@ Fresh core setup creates `RTI_Demo_SQLDatabase_<suffix>` in
 owns additive seed/source publication. The app uses the independent
 `hydrooperations` connector, not its retained backend child database.
 
-Existing `HydroOperationalStore` has an immutable legacy display name:
-Fabric rejects rename with `SQLDatabaseDisplayNameCannotBeChanged`.
-It can remain in the setup folder without changing identity. Matching a new name
-requires a controlled replacement, exact verified copy, source/ontology/
-connector/agent rebinding and a retained read-only archive. The setup/deployer
-excludes a managed archive only when its marker identifies the exact available
-active replacement; ambiguous or incomplete cutovers fail. Never silently create
-a duplicate or delete either database. FEATURE's completed naming cutover is in
-the [deployment record](../docs/ontology-test-review.md). AppBackend's retained
-child database/GraphQL item is platform-managed; removing it is not a safe
-operational-store cleanup.
+FEATURE's one-time replacement of the immutable legacy `HydroOperationalStore`
+is complete. Routine deployment automatically
+selects `RTI_Demo_SQLDatabase_V11` and applies its connector; **no manual SQL,
+GraphQL, migration or seeding steps are needed**. The original SQL remains a
+write-blocked archive, and the platform-managed AppBackend child is not used for
+operational data. Do not delete either retained database.
 
-If Fabric retains the archived SQL attachment and reports its exact duplicate-node
-schema error, the engine reconciles the GraphQL definitions referencing that
-explicit archive: remove only the five operational object exposures, then reattach
-their unchanged projections to the verified replacement. Both steps require exact
-readback; custom objects, other sources and unknown definition parts are preserved.
-This does not delete a database or change native ontology graph topology.
+Migration safeguards and the automatic stale-attachment repair are documented
+in the [verified cutover record](../docs/ontology-test-review.md#october-25-canonical-sql-naming-cutover-completed),
+not additional operator steps.
 
 ## Redeploying to a different tenant, workspace, or region
 
@@ -266,6 +258,12 @@ Do not create a new profile or import/reset a populated workspace to enable ener
   Conditional Access. Complete the normal resource-specific sign-in challenge.
 - **Stale agents/source identities:** run Foundry setup, then app publication;
   never skip verification or silently switch projects.
+- **Weather `Aurora STAC search failed with HTTP 401`:** the provider rejected
+  authentication. A merged feed/code fix or app redeploy does not repair the
+  credential. Have the credential owner verify/replace `mai-weather-api-key` in
+  the configured Key Vault through an authorized connection, then run the existing
+  Weather pipeline once. Do not paste secrets into the launcher or keep rerunning
+  ingestion with the rejected key.
 - **Fabric preview/region unavailable or paused capacity:** fix the assigned
   target's prerequisite; repeated app builds will not fix it.
 - **Graph ineligible/slow:** inspect native graph scope and upstream query timing;
