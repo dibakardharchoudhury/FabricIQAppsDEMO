@@ -40,6 +40,18 @@ routine deployment switch, Azure SQL server, or tenant-wide administrator role i
 introduced. The setup SPN needs access to the original SQL database for a cutover;
 normal users require delegated access to the selected shared SQL item.
 
+After verified shared-store/Data Agent cutover, the routine deployer no longer
+requires discovery of the legacy SQL item or runs its migration again. Legacy
+identity verification is retained for an actual NB11 migration/bootstrap.
+The original `hydro-operations-ui` SQL item is identified by the Fabric portal as
+a **child item of a Fabric App**, with a warning against editing its schema.
+The current Rayfin CLI creates AppBackend with only type/name and exposes no
+existing-database replacement option in that creation flow. An independent
+operational store does not imply that this platform child is safely detachable.
+Keep the child and its preserved rows until a supported platform retirement path
+is verified; do not delete it or disable runtime services speculatively. Only
+`HydroOperationalStore` is the app's active operational read/write target.
+
 Additional native graph projection remains a separate **Manage graph → select
 eligible entities/relationships → Continue → Materialize** portal prerequisite.
 Additive ontology publication does not certify those entities as materialized or

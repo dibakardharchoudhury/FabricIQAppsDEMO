@@ -2053,14 +2053,14 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     backend = fabric_get(f"workspaces/{workspace_id}/items/{backend_id}", headers)
     if backend.get("id") != backend_id or backend.get("type") != "AppBackend" or not backend.get("displayName"):
         raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
-    legacy = [item for item in _workspace_artifacts(workspace_id, headers)
-              if item["type"] == "SQLDatabase" and item["displayName"] == backend["displayName"]]
-    if len(legacy) != 1:
-        raise DeployError("The AppBackend's exact legacy SQL item could not be verified.")
     if _published_operational_source_ready(workspace_id, values, OPERATIONAL_STORE_NAME, headers, required=False):
         bind_operational_store_env(workspace_id, headers)
         print("Verified published Data Agent SQL source; no NB11 execution or demo DML needed.", flush=True)
         return
+    legacy = [item for item in _workspace_artifacts(workspace_id, headers)
+              if item["type"] == "SQLDatabase" and item["displayName"] == backend["displayName"]]
+    if len(legacy) != 1:
+        raise DeployError("The AppBackend's exact legacy SQL item could not be verified.")
     from sync_workspace_from_git import (
         Fabric, ensure_spark_runtime, notebook_definition, verify_environment_runtimes,
     )

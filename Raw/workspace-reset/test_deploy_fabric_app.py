@@ -238,6 +238,15 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         self.headers.assert_called_once()
         self.definition_read.assert_not_called()
 
+    def test_existing_published_store_has_no_legacy_sql_dependency(self):
+        self.source_ready = True
+        with patch.object(DEPLOY, "_workspace_artifacts",
+                          side_effect=AssertionError("Legacy SQL must not be required after cutover.")):
+            DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.binding.assert_called_once_with(self.workspace, {})
+        self.post.assert_not_called()
+        self.definition_read.assert_not_called()
+
     def test_native_fabric_source_retains_and_verifies_dependency_metadata(self):
         source = (DEPLOY.SCRIPT_DIR.parent.parent / "Notebooks" /
                   "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py").read_text(encoding="utf-8")

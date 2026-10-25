@@ -31,17 +31,17 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 |---|---|---|
 | **Lakehouse (STID/weather)** | Engineering master data and weather serving tables | Read-only delegated Rayfin `hydrolakehouse` connector (`fabric-sqlanalytics`) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | KQL query |
-| **Rayfin SQL (operational)** | Work orders, notifications, inspections, spare parts, 3D models | Rayfin `data` client (Data API Builder) |
+| **Independent Fabric SQL (`HydroOperationalStore`)** | Work orders, notifications, inspections, spare parts, 3D models | Writable delegated Rayfin `hydrooperations` connector (`fabric-sqldatabase`) |
 | **GeoContext Lakehouse (optional)** | Imported public energy features and source-health snapshots | Bounded Eventhouse queries over `HydroGeoFeatures` / `HydroGeoStatus` Delta external tables |
 
 The stores are **never merged server‑side** — the app queries each independently and joins in the
 browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows its source. Demo
 data is synthetic but each record lives where it would in production (no reference or telemetry rows
-are copied into Rayfin SQL).
+are copied into operational SQL).
 
 Lakehouse STID and Eventhouse telemetry are live-only browser state. The app does not persist either
 source in local storage, removes legacy STID/telemetry browser caches on startup, and clears the
-corresponding UI data when a refresh fails or the source is unavailable. Rayfin SQL remains
+corresponding UI data when a refresh fails or the source is unavailable. Operational SQL remains
 independent and can continue serving operational records while Fabric analytical sources are rebuilt.
 Within the active SPA, the shared data provider and memoized projections reuse STID and telemetry
 across the map, Knowledge Graph, and digital twin. Weather uses a five-minute, source-keyed in-memory
@@ -80,7 +80,7 @@ WebGL dependency. It defaults to the selected turbine and synchronizes that sele
 Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
 **generation-2 Ontology** and an explicitly bound,
 ontology-managed native GraphModel. Native entities and relationships are the topology authority;
-Eventhouse KQL readings and Rayfin SQL records enrich actual native entities as external context.
+Eventhouse KQL readings and operational SQL records enrich actual native entities as external context.
 The explicit graph binding lets startup read the exact Ontology directly—without enumerating the
 workspace. The graph stays in its loading or explicit unavailable state until verified native
 GraphModel entities are returned; STID rows cannot create canvas, tree or scope topology.
@@ -323,10 +323,10 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
               ┌────────────────────────┐
               │  Hydro Operations SPA  │  (React + Leaflet, hosted by Rayfin in Fabric)
               └──────┬─────────┬───────┬┘
-      TMDL/GraphQL │   KQL   │       │  Rayfin data client
+      TMDL/connector│   KQL   │       │  hydrooperations connector
                      ▼         ▼       ▼
       ┌────────────────┐ ┌──────────┐ ┌───────────────────────────┐
-      │Ontology v2 +   │ │Eventhouse│ │  Rayfin SQL (operational) │
+      │Ontology v2 +   │ │Eventhouse│ │  HydroOperationalStore    │
       │Lakehouse rows  │ │OPCUAEvents│ │  WorkOrders, Inspections, │
       └────────────────┘ └──────────┘ │  SpareParts, Asset3DModels│
         built by RTI_001…010          │  MaintenanceNotifications │
@@ -334,7 +334,12 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
 ```
 
 - **Lakehouse + Eventhouse** are produced by the RTI notebooks / `Pipe_Setup` — see the [root README](../README.md).
-- **Rayfin SQL** schema and seed are owned by this app (below).
+- **Independent operational SQL** is created/reused by NB01 and initialized without demo
+  rows. NB11 performs the verified existing-data cutover and Data Agent source extension.
+  The SPA and Hosted Agent use the `hydrooperations` connector, not the root Rayfin data
+  client. The original SQL item is a Fabric App child item, not the active operational
+  store; replacing the operational source does not establish that the platform-managed
+  child can be deleted. See [the SQL lifecycle contract](DEPLOY.md#independent-operational-sql-lifecycle).
 - **Agent provisioning is always attempted; there are no agent mode or skip flags.** RTI_010
   retains the ontology-backed Operations Agent, its playbook/actions, Teams, and
   `Pipe_SendEmailAlert` provisioning against the verified v2 ontology. The retired
@@ -369,10 +374,13 @@ the selected four-entity projection supplies 111 native nodes / 108 edges. Hosti
 at the same `icy-twist` URL with 32 redirects preserved, but the protected gate/authentication popup
 prevented interactive app acceptance. These are API/model/configuration results, not full UI E2E.
 
-## Rayfin SQL data model
+## Independent operational SQL data model
 
-Defined in [`rayfin/data/schema.ts`](rayfin/data/schema.ts) (`@microsoft/rayfin-core` decorators;
-table names are PascalCase‑pluralized). These five entities are the exact set seeded by `RTI_011`.
+The shared-store schema is defined in
+[`operational_store_support.py`](../Raw/workspace-reset/operational_store_support.py).
+These five tables are exposed through the delegated `hydrooperations` connector.
+[`rayfin/data/schema.ts`](rayfin/data/schema.ts) retains the legacy app-owned entity
+definitions; it is not the app's current operational read/write target.
 
 | Entity → Table | Purpose | Joins by |
 |---|---|---|
@@ -389,10 +397,11 @@ STID Lakehouse row, so cross‑store joins always land.
 
 - **STID master data** (3 facilities / 15 turbines / 90 instruments) is seeded into the Lakehouse by
   `RTI_001` when `Pipe_Setup` runs.
-- **Operational data** (12 work orders, 6 notifications, 30 inspections, 12 spare parts, 15 3D models)
-  is upserted into Rayfin SQL by `RTI_011` — via the app's **Seed & provision** button. Its embedded
-  `MERGE` mirrors [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql); the client
-  fallback seed lives in [`src/services/seedData.ts`](src/services/seedData.ts).
+- **Existing operational data** (12 work orders, 6 notifications, 30 inspections, 12 spare parts,
+  15 3D models) was copied into `HydroOperationalStore` with exact field/ID verification.
+  Fresh shared-store initialization and normal app deployment do not insert demo rows.
+  Explicit demo seeding is a separate operator action; the reference SQL is
+  [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql).
 
 ## Local development
 

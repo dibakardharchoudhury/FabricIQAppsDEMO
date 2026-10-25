@@ -684,3 +684,36 @@ FEATURE definition part (18) matched the respective saved baseline exactly.
 Workspace item ID/type/name inventories also matched: V3 45 items, FEATURE 40.
 No notebooks, source refreshes, materialization, SQL DML, agent creation or
 deployment ran as part of this assessment.
+
+## October 25 follow-up: Weather source drift and SQL lifecycle
+
+PR #20's current head, `67fd898`, is the second parent of feature merge `ccca826`.
+It is integrated into the feature branch; the GitHub PR remains open against
+`main`. This is not evidence that the feature merge is missing.
+
+Actual FEATURE definition readback found a separate publication gap:
+`Weather_002_fetch_area_weather` still selected the retired
+`aurora-1p5-zarr-staging` collection, and Weather_003 also differed from the
+feature code. Both existing notebook definitions were updated from the feature
+source without replacing Lakehouse/Environment dependencies or unknown parts.
+Executable-source and dependency readback passed. Weather_001 and Weather_020
+also match the feature executable source. No probe items were created.
+
+The pre-existing pipeline run `4f7f4b17-00f4-43e3-a34f-6a64184a8872`
+(07:08:46-07:24:11 UTC) ended with `Aurora STAC search failed with HTTP 401`,
+including retry `93c18c89-efe6-4066-8bfa-2ba6832665fb`. Source publication does
+not repair a rejected provider credential or prove that an already-started job
+executed the newly published source. The 03:20 scheduled run failed separately
+with `CapacityNotActive`. No duplicate pipeline was launched, and ingestion
+success is not certified. A valid provider credential must be installed securely
+in the configured Key Vault secret `mai-weather-api-key` before another run.
+
+The original `hydro-operations-ui` SQL database is explicitly marked in the
+Fabric portal as a **child item of a Fabric App**, with a schema-edit warning.
+`HydroOperationalStore` remains the independent, active operational source; the
+75-record cutover and legacy write boundary are unchanged. The deployer now
+checks the verified shared-store publication before requiring legacy SQL
+discovery, so a completed cutover no longer imposes that migration prerequisite
+on routine deployment. This is not proof that the platform-managed child can
+be deleted or that it is used only for authentication. Direct read-only TDS
+catalog inspection from this machine timed out; no schema or row was changed.
