@@ -72,7 +72,7 @@ controls Fabric Git import, not local app or agent source.
 
 Global Administrator and subscription Owner are not routine requirements.
 For scoped access without subscription-wide discovery, use the existing project's
-full ARM ID under **Advanced settings**. Fabric and Foundry may use
+full ARM ID in **Existing project name** instead of its display name. Fabric and Foundry may use
 different subscriptions in the same tenant.
 
 ### No admin rights? Hand this to your Entra admin
@@ -180,8 +180,20 @@ image or runtime configuration differs. Each reuse/update is logged, with specia
 - **Reuse a specific project:** enter its name under **Project and model
   choices**. Without a name, setup uses saved settings, the target-named project,
   or the sole available project. Choose a model only for a specific deployment.
-- **Advanced settings:** optional overrides for automatic detection, graph
-  binding and work-order writes; not required for normal setup.
+- **Duplicate project names or scoped access:** paste the full project ARM ID
+  into **Existing project name**. No separate resource-ID field is needed.
+- **Fabric App authentication:** automatic registration discovery/reuse is the
+  default. Select **Use a pre-created app registration** only to choose a specific
+  target-tenant SPA, then enter its Application (client) ID. The choice is shared
+  across Foundry, full workflow and app publication for this tenant/workspace.
+  An explicit selection requires a valid GUID and is verified before deployment;
+  redirect, permission and consent setup remains automated.
+- **Work-order permissions:** a separate application policy control. The default
+  preserves this target's current setting; enabled writes require human approval.
+- **Automatic configuration:** project endpoints, connected registries and ontology
+  graph ownership are resolved internally. The launcher does not accept graph-binding
+  JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
+  overrides remain available through the documented command-line configuration.
 - **New project:** expand **Create a new project**, enter a chat model and
   explicitly approve resource creation.
   Approval resets on reload or target change.

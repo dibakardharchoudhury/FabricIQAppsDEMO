@@ -471,17 +471,14 @@
     <div class="card">
       <div class="card-head"><h2>Deploy Fabric app last</h2></div>
       <p class="hint">Publishes the prepared app and verifies authentication, CORS and connectors. Does not rerun data or agent setup.</p>
+      <div id="deployAuthenticationFields"></div>
       <div class="grid">
-        <label>SPA client id (optional)
-          <input id="deployClientId" type="text" placeholder="Blank: discover the target tenant SPA" /></label>
         <label>Energy-map navigation
           <select id="appEnergyMap">
             <option value="keep">Keep this target's setting</option>
             <option value="enabled">Enable (requires verified energy setup)</option>
             <option value="disabled">Disable</option>
           </select></label>
-        <label>Operator-verified ontology graph binding (JSON, optional)
-          <textarea id="appOntologyGraphBinding" rows="3" placeholder="Blank: authoritative lineage or the verified target configuration."></textarea></label>
       </div>
       <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
@@ -534,6 +531,40 @@ try {
   $("sidebarPreferenceStatus").textContent = `Could not restore sidebar preference: ${error.message}`;
 }
 
+const spaClientIds = ["deployClientId", "foundryClientId", "workflowDeployClientId"];
+
+function renderSpaFields(clientId) {
+  return `<details class="foundry-block">
+    <summary>Fabric App authentication</summary>
+    <p class="hint">Setup automatically reuses or creates an app registration in the target tenant. Select this only to use a specific registration prepared by your administrator.</p>
+    <label class="check"><input id="${clientId}UseExisting" type="checkbox" />
+      <span>Use a pre-created app registration</span></label>
+    <div id="${clientId}Fields" hidden>
+      <label>Application (client) ID
+        <input id="${clientId}" type="text" placeholder="Client ID of the target-tenant SPA registration" disabled /></label>
+      <p id="${clientId}Status" class="phelp" role="status"></p>
+    </div>
+  </details>`;
+}
+
+function spaClientValue(clientId) {
+  return $(clientId + "UseExisting").checked ? $(clientId).value.trim() : "";
+}
+
+function spaClientValid(clientId) {
+  return !$(clientId + "UseExisting").checked ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(spaClientValue(clientId));
+}
+
+function updateSpaChoice(clientId) {
+  const enabled = $(clientId + "UseExisting").checked;
+  $(clientId + "Fields").hidden = !enabled;
+  $(clientId).disabled = !enabled;
+  $(clientId + "Status").textContent = enabled && !spaClientValid(clientId)
+    ? "Enter a valid Application (client) ID (GUID) from the target tenant."
+    : "Setup verifies the registration and manages redirects, permissions and consent.";
+}
+
 function renderFoundryFields(prefix, clientId) {
   return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Use existing resources (recommended).</strong></p>
     <div class="grid">
@@ -574,27 +605,20 @@ function renderFoundryFields(prefix, clientId) {
         <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
       </section>
     </details>
+    ${renderSpaFields(clientId)}
     <details class="foundry-block">
-      <summary>Advanced settings</summary>
-      <p class="hint">Override automatic detection or configure graph binding and work-order writes. Not required for normal setup. Graph binding still requires portal materialization. <a href="/deploy-guide" target="_blank" rel="noopener">Reference</a></p>
-      <div class="grid">
-        <label>Full project resource ID (only for duplicate project names)
-          <input id="${prefix}FoundryProjectResourceId" type="text" placeholder="Automatic: resolved from the project name" /></label>
-        <label>SPA client ID <input id="${clientId}" type="text" placeholder="Automatic: verify the target tenant's SPA" /></label>
-        <label>Project endpoint <input id="${prefix}FoundryEndpoint" type="text" placeholder="Automatic: selected project's endpoint" /></label>
-        <label>Container registry <input id="${prefix}AcrName" type="text" placeholder="Automatic: project's registry connection" /></label>
-        <label>Work-order writes <select id="${prefix}ProductionWrites">
+      <summary>Work-order permissions</summary>
+      <p class="hint">Controls agent write access, not resource discovery. Enabled writes still require human approval.</p>
+      <label>Work-order writes <select id="${prefix}ProductionWrites">
           <option value="">Keep this target's current setting</option>
           <option value="true">Enabled (human approval required)</option>
           <option value="false">Disabled</option>
         </select></label>
-        <label>Verified ontology graph binding (JSON)
-          <textarea id="${prefix}OntologyGraphBinding" rows="3" placeholder="Automatic: authoritative ontology-to-graph lineage. Override only with verified workspaceId, ontologyId and graphModelId."></textarea></label>
-      </div>
     </details>`;
 }
 $("workflowFoundryFields").innerHTML = renderFoundryFields("workflow", "workflowDeployClientId");
 $("deployFoundryFields").innerHTML = renderFoundryFields("deploy", "foundryClientId");
+$("deployAuthenticationFields").innerHTML = renderSpaFields("deployClientId");
 
 async function postJson(url, body) {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -924,10 +948,11 @@ function refresh() {
   $("testBtn").disabled = testing || !testValid();
   $("workflowTestBtn").disabled = testing || !workflowTestValid();
   $("deleteBtn").disabled = !deleteValid();
-  $("deployBtn").disabled = !deployValid();
-  $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy"));
+  for (const clientId of spaClientIds) updateSpaChoice(clientId);
+  $("deployBtn").disabled = !(deployValid() && spaClientValid("deployClientId"));
+  $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy") && spaClientValid("foundryClientId"));
   $("energyBtn").disabled = !deployValid();
-  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow"));
+  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -1003,14 +1028,13 @@ $("deleteBtn").addEventListener("click", async () => {
 function foundryPayload(prefix) {
   const value = (suffix) => $(prefix + suffix).value.trim();
   const creating = $(prefix + "FoundryCreate").checked;
+  const project = creating ? "" : value("FoundryProjectName");
+  const resourceId = /^\/subscriptions\//i.test(project);
   return {
     azureSubscriptionId: value("AzureSubscriptionId"),
-    ontologyGraphBinding: value("OntologyGraphBinding"),
-    foundryEndpoint: creating ? "" : value("FoundryEndpoint"),
-    foundryProjectResourceId: creating ? "" : value("FoundryProjectResourceId"),
-    foundryProjectName: creating ? "" : value("FoundryProjectName"),
+    foundryProjectResourceId: resourceId ? project : "",
+    foundryProjectName: resourceId ? "" : project,
     foundryModel: creating ? value("FoundryNewModel") : value("FoundryModel"),
-    acrName: creating ? "" : value("AcrName"),
     foundryLocation: creating ? value("FoundryLocation") : "",
     foundryModelName: creating ? value("FoundryModelName") : "",
     foundryModelVersion: creating ? value("FoundryModelVersion") : "",
@@ -1043,7 +1067,7 @@ function updateFoundryMode(prefix) {
   for (const suffix of ["FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
     $(prefix + suffix).disabled = !creating;
   }
-  for (const suffix of ["FoundryProjectName", "FoundryProjectResourceId", "FoundryModel", "FoundryEndpoint", "AcrName"]) {
+  for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
     $(prefix + suffix).disabled = creating;
   }
 }
@@ -1063,8 +1087,7 @@ $("deployBtn").addEventListener("click", async () => {
   await runJob("/api/deploy-app", {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
-    clientId: $("deployClientId").value,
-    ontologyGraphBinding: $("appOntologyGraphBinding").value,
+    clientId: spaClientValue("deployClientId"),
     energyMap: $("appEnergyMap").value,
   }, $("deployPanel"), () => refresh());
 });
@@ -1073,7 +1096,7 @@ $("foundryBtn").addEventListener("click", async () => {
   $("foundryBtn").disabled = true;
   await runJob("/api/setup-foundry", {
     tenant: $("tenant").value, workspace: $("workspace").value,
-    clientId: $("foundryClientId").value, ...foundryPayload("deploy"),
+    clientId: spaClientValue("foundryClientId"), ...foundryPayload("deploy"),
   }, $("foundryPanel"), () => refresh());
 });
 
@@ -1097,7 +1120,7 @@ $("workflowBtn").addEventListener("click", async () => {
     pat: $("workflowPat").value,
     pipeline: "01_Pipe_Setup",
     parameters: collectPipelineParams("wf_pp_"),
-    clientId: $("workflowDeployClientId").value,
+    clientId: spaClientValue("workflowDeployClientId"),
     energyMap: "enabled",
     ...foundryPayload("workflow"),
   }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
@@ -1177,9 +1200,9 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryProjectName", "FoundryProjectResourceId", "FoundryModel", "FoundryNewModel", "FoundryEndpoint",
-  "AcrName", "ProductionWrites", "FoundryLocation", "FoundryModelName",
-  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "OntologyGraphBinding",
+  "AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryNewModel",
+  "ProductionWrites", "FoundryLocation", "FoundryModelName",
+  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
 function restoreTargetSettings() {
@@ -1228,16 +1251,23 @@ function restoreFoundrySettings() {
     values = {};
     errorMessage = `Could not restore Foundry settings: ${error.message}`;
   }
+  if (typeof values.FoundryProjectResourceId === "string" && values.FoundryProjectResourceId.trim()) {
+    values.FoundryProjectName = values.FoundryProjectResourceId;
+  }
+  for (const clientId of spaClientIds) {
+    $(clientId).value = typeof values.clientId === "string" ? values.clientId : "";
+    $(clientId + "UseExisting").checked = typeof values.useExistingSpa === "boolean"
+      ? values.useExistingSpa : Boolean($(clientId).value.trim());
+    updateSpaChoice(clientId);
+  }
   for (const prefix of ["deploy", "workflow"]) {
     for (const suffix of foundrySettingSuffixes) {
       $(prefix + suffix).value = typeof values[suffix] === "string" ? values[suffix] : "";
     }
-    $(prefix === "deploy" ? "foundryClientId" : "workflowDeployClientId").value =
-      typeof values.clientId === "string" ? values.clientId : "";
     $(prefix + "FoundryCreate").checked = false;
     $(prefix + "FoundryCreate").dispatchEvent(new Event("change"));
     $(prefix + "FoundryStatus").textContent = errorMessage ||
-      "Saved overrides restored for this target; everything else uses automatic discovery. New resource creation is always off until you opt in.";
+      "Saved choices restored for this target; everything else uses automatic discovery. New resource creation is always off until you opt in.";
   }
 }
 function saveFoundrySettings(prefix) {
@@ -1245,10 +1275,15 @@ function saveFoundrySettings(prefix) {
   const values = {};
   for (const suffix of foundrySettingSuffixes) values[suffix] = $(prefix + suffix).value;
   values.clientId = $(prefix === "deploy" ? "foundryClientId" : "workflowDeployClientId").value;
+  values.useExistingSpa = $(prefix === "deploy" ? "foundryClientIdUseExisting" : "workflowDeployClientIdUseExisting").checked;
   for (const other of ["deploy", "workflow"]) {
     if (other === prefix) continue;
     for (const suffix of foundrySettingSuffixes) $(other + suffix).value = values[suffix];
-    $(other === "deploy" ? "foundryClientId" : "workflowDeployClientId").value = values.clientId;
+  }
+  for (const clientId of spaClientIds) {
+    $(clientId).value = values.clientId;
+    $(clientId + "UseExisting").checked = values.useExistingSpa;
+    updateSpaChoice(clientId);
   }
   try {
     localStorage.setItem(foundryTarget, JSON.stringify(values));
@@ -1480,12 +1515,24 @@ for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("change", () => { loadPipelineParams(); loadSubscriptions(); });
 }
 for (const prefix of ["deploy", "workflow"]) {
-  for (const id of [
-    ...foundrySettingSuffixes.map(suffix => prefix + suffix),
-    prefix === "deploy" ? "foundryClientId" : "workflowDeployClientId",
-  ]) {
+  for (const id of foundrySettingSuffixes.map(suffix => prefix + suffix)) {
     $(id).addEventListener("input", () => { saveFoundrySettings(prefix); refresh(); });
   }
+}
+for (const clientId of spaClientIds) {
+  const save = () => {
+    for (const other of spaClientIds) {
+      if (other !== clientId) {
+        $(other).value = $(clientId).value;
+        $(other + "UseExisting").checked = $(clientId + "UseExisting").checked;
+      }
+      updateSpaChoice(other);
+    }
+    saveFoundrySettings("deploy");
+    refresh();
+  };
+  $(clientId + "UseExisting").addEventListener("change", save);
+  $(clientId).addEventListener("input", save);
 }
 
 $("pipelineBtn").addEventListener("click", async () => {
