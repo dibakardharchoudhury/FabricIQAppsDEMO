@@ -1377,10 +1377,43 @@ for (const prefix of ["deploy", "workflow"]) {
         html = (MODULE_PATH.parent / "static" / "index.html").read_text(encoding="utf-8")
         self.assertIn('class="workflow-phase-groups"', html)
         self.assertIn('title: "GitHub Sync"', html)
-        self.assertIn('title: "Core Setup: Fabric and Weather"', html)
+        self.assertIn('title: "Core Setup: Fabric, Weather and Energy"', html)
+        self.assertNotIn('title: "Core Setup: Energy Sources"', html)
         self.assertIn('title: "Fabric App Deployment"', html)
         self.assertIn('["workflowPanel", "pipelinePanel"].includes(el.id)', html)
         self.assertIn('state === "active" || state === "failed"', html)
+
+    def test_core_progress_combines_parallel_ingestion_and_map_publication(self):
+        html = (MODULE_PATH.parent / "static" / "index.html").read_text(encoding="utf-8")
+        script = """
+const assert = require("node:assert/strict");
+""" + html[html.index("const WORKFLOW_PHASE_GROUPS ="):html.index("// mm:ss,")] + """
+const phases = ["Queued", "Pipeline · Resolving workspace", "Pipeline · Running",
+  "Energy · Checking prerequisites", "Energy · Preparing energy sources",
+  "Energy · Verifying read models", "Foundry · Checking prerequisites", "Done"];
+const render = (phaseIndex, status = "running", failedComponent) =>
+  renderWorkflowPhaseGroups({}, {phases, phaseIndex, status, failedComponent});
+for (const index of [1, 2, 3, 4, 5]) {
+  const rendered = render(index);
+  assert.equal((rendered.match(/data-group="pipeline"/g) || []).length, 1);
+  assert.ok(rendered.includes('data-group="pipeline" data-state="active"'));
+  assert.ok(!rendered.includes('data-group="energy"'));
+  assert.ok(!rendered.includes("Preparing energy sources"));
+}
+assert.ok(render(2).includes("Running Core/Weather + energy notebooks in parallel"));
+assert.ok(render(4).includes("Publishing map read models"));
+assert.ok(render(6).includes('data-group="pipeline" data-state="done"'));
+for (const [index, component] of [[2, "Setup pipeline"], [4, "Energy setup"]]) {
+  assert.ok(render(index, "failed", component).includes('data-group="pipeline" data-state="failed"'));
+}
+assert.ok(render(7, "succeeded").includes('data-group="pipeline" data-state="done"'));
+const coreOnly = renderWorkflowPhaseGroups({}, {phases: phases.slice(0, 6),
+  phaseIndex: 4, status: "running"});
+assert.equal((coreOnly.match(/data-group=/g) || []).length, 1);
+assert.ok(coreOnly.includes("Publishing map read models"));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_full_workflow_builds_existing_commands_in_serial_order(self):
         payload = {

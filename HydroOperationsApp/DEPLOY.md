@@ -108,8 +108,10 @@ and `Geo_001_ingest_energy_context` run in parallel branches of `01_Pipe_Setup`.
 Energy keeps its separate, schema-disabled GeoContext Lakehouse and Spark session:
 it must not inherit Core's operational default Lakehouse. The pipeline waits for
 both branches; either failure stops later steps. The local job then publishes and
-verifies the map read models without running ingestion a second time. Foundry
-remains separate. Sync from GitHub once to import the updated pipeline/notebooks;
+verifies the map read models without running ingestion a second time. The local
+progress display groups both operations under **Core Setup: Fabric, Weather and
+Energy**; publishing map read models is not a second notebook-ingestion stage.
+Foundry remains separate. Sync from GitHub once to import the updated pipeline/notebooks;
 Core refuses the old serial pipeline before starting a long run.
 
 Notebook completion is not agent runtime acceptance. NB09's exact unsupported-v2

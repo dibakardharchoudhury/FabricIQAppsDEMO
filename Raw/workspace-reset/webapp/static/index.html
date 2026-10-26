@@ -698,11 +698,15 @@ document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
 });
 
 const WORKFLOW_PHASE_GROUPS = [
-  { key: "sync", title: "GitHub Sync", prefix: "Sync \u00b7", component: "GitHub sync" },
-  { key: "pipeline", title: "Core Setup: Fabric and Weather", prefix: "Pipeline \u00b7", component: "Setup pipeline" },
-  { key: "energy", title: "Core Setup: Energy Sources", prefix: "Energy \u00b7", component: "Energy setup" },
-  { key: "foundry", title: "Foundry Multi-agent Setup", prefix: "Foundry \u00b7", component: "Foundry multi-agent setup" },
-  { key: "deploy", title: "Fabric App Deployment", prefix: "Deploy \u00b7", component: "Fabric app deploy" },
+  { key: "sync", title: "GitHub Sync", prefixes: ["Sync \u00b7"], components: ["GitHub sync"] },
+  { key: "pipeline", title: "Core Setup: Fabric, Weather and Energy", prefixes: ["Pipeline \u00b7", "Energy \u00b7"], components: ["Setup pipeline", "Energy setup"],
+    phaseLabels: {
+      "Pipeline \u00b7 Running": "Running Core/Weather + energy notebooks in parallel",
+      "Energy \u00b7 Checking prerequisites": "Checking map serving prerequisites",
+      "Energy \u00b7 Preparing energy sources": "Publishing map read models",
+    } },
+  { key: "foundry", title: "Foundry Multi-agent Setup", prefixes: ["Foundry \u00b7"], components: ["Foundry multi-agent setup"] },
+  { key: "deploy", title: "Fabric App Deployment", prefixes: ["Deploy \u00b7"], components: ["Fabric app deploy"] },
 ];
 
 function renderWorkflowPhaseGroups(el, job) {
@@ -710,15 +714,18 @@ function renderWorkflowPhaseGroups(el, job) {
   if (!phases.length) return "";
   const groups = WORKFLOW_PHASE_GROUPS.map((group) => {
     const items = phases
-      .map((label, index) => ({ label, index }))
-      .filter((item) => item.label.startsWith(group.prefix));
+      .map((label, index) => {
+        const prefix = group.prefixes.find((prefix) => label.startsWith(prefix));
+        return { label, index, displayLabel: group.phaseLabels?.[label] || (prefix ? label.slice(prefix.length).trim() : ""), prefix };
+      })
+      .filter((item) => item.prefix);
     if (!items.length) return "";
     const completed = items.filter((item) =>
       job.status === "succeeded" || item.index < (job.phaseIndex || 0)).length;
     const activeItem = items.find((item) =>
       job.status === "running" && item.index === (job.phaseIndex || 0));
     const failed = job.status === "failed" && (
-      job.failedComponent === group.component ||
+      group.components.includes(job.failedComponent) ||
       items.some((item) => item.index === (job.phaseIndex || 0))
     );
     const state = failed ? "failed"
@@ -726,14 +733,14 @@ function renderWorkflowPhaseGroups(el, job) {
       : activeItem ? "active" : "pending";
     const stateLabel = failed ? "Failed"
       : state === "done" ? `Complete \u00b7 ${items.length}/${items.length}`
-      : activeItem ? `${escapeHtml(activeItem.label.slice(group.prefix.length).trim())} \u00b7 ${completed}/${items.length}`
+      : activeItem ? `${escapeHtml(activeItem.displayLabel)} \u00b7 ${completed}/${items.length}`
       : `Waiting \u00b7 ${completed}/${items.length}`;
     const rememberedOpen = el._workflowBucketOpen && el._workflowBucketOpen[group.key];
     const open = state === "active" || state === "failed" || rememberedOpen === true;
     const itemHtml = items.map((item) => {
       const cls = (job.status === "succeeded" || item.index < (job.phaseIndex || 0)) ? "done"
         : (job.status === "running" && item.index === (job.phaseIndex || 0)) ? "active" : "";
-      return `<li class="${cls}">${escapeHtml(item.label.slice(group.prefix.length).trim())}</li>`;
+      return `<li class="${cls}">${escapeHtml(item.displayLabel)}</li>`;
     }).join("");
     return `<details class="workflow-phase-group ${state}" data-group="${group.key}" data-state="${state}"${open ? " open" : ""}>
       <summary class="workflow-phase-summary"><span class="workflow-phase-name">${group.title}</span><span class="workflow-phase-state">${stateLabel}</span></summary>
