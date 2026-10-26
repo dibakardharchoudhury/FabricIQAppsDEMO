@@ -52,6 +52,34 @@ Local production bundling passed in 20.75 seconds (existing chunk/mixed-import
 warnings only). Local tooling uses Node 26; the canonical deployer remains
 responsible for selecting Node 24 for the actual publication.
 
+### First publication and authenticated acceptance
+
+The canonical command completed at `2026-10-26T17:52:49Z` with `SUCCESS` and
+`DEPLOYED_APP_URL=https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+It reused the existing backend and five specialist versions, preserved all 42
+SPA redirects, reapplied runtime/SQL/three connectors, and passed all endpoint
+and browser-CORS checks. Changed shared ontology code required supervisor image
+`src-2825b7c3af4a018a`; hosted version 14 became active. No NB11 or seed DML ran.
+
+Signed-in browser acceptance of build `1.0.1105` / `764188e` confirmed:
+- 186 source-backed instances / 183 declared directed links.
+- Coverage: 9/18 entity types and 8/17 relationship types, visibly disclosed.
+- Three facilities, three systems, 15 equipment, 90 instruments, 12 work orders,
+  30 inspections, 12 spare parts, 15 models and six notifications.
+- JSON payload maps every edge to its declared ontology type/directed endpoints,
+  includes only the verified Core Lakehouse and operational SQL source IDs, has
+  a 64-character contract signature and no GraphModel identity.
+- First authorized graph fetch: 4.58 s application time / 5.05 s UI wait.
+  Forced refresh: 5.20 s. Warm return: 139 ms with zero connector requests,
+  retaining the original source observation timestamp.
+
+First-visit testing exposed separate app-session versus Fabric-read consent.
+The follow-up adds an explicit graph-only `Connect Fabric and retry` action:
+only Workspace.Read.All/Item.Read.All, no telemetry or connector scope; obsolete
+authorization completions are discarded and failed authorization clears graph
+caches. Production build, typecheck, scoped lint and 26 service tests pass.
+The follow-up publication and final browser acceptance remain pending.
+
 ## October 26, 2026: V12 setup failure recovery and live verification
 
 The current request is to verify the real deployment after NB01 rejected the

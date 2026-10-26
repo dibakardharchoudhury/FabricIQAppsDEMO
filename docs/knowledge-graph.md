@@ -41,6 +41,11 @@ ontology contract. Refresh bypasses contract/result caches and invalidates faile
 Switching execution cancels obsolete UI results. Live export is JSON containing the exact ontology,
 complete accepted topology and source/coverage evidence; RDF/OWL native exports remain separate.
 
+The app-host/connector session and direct Fabric ontology-read consent are distinct.
+**Connect Fabric and retry** establishes the latter from an explicit user gesture using only
+`Workspace.Read.All` and `Item.Read.All`; it does not request Eventhouse or connector scopes.
+Automatic/background graph reads never open a consent popup.
+
 For a native cold read or explicit refresh, the app checks GraphModel metadata and queryable schema
 before fetching the ontology definition or executing graph queries. Readiness network checks
 have a shared ten-second deadline, separate from the native query budget. HTTP 204, missing

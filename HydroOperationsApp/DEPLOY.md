@@ -131,6 +131,9 @@ relationships. Materialization is not required for this mode. The page reports
 supported/excluded coverage, source observation times, load duration and
 non-atomic cross-source consistency. It does not append inferred SQL topology.
 Denied, invalid, incomplete and over-budget reads fail closed, not to mock data.
+On a first visit, **Connect Fabric and retry** authorizes only Fabric workspace/item
+read access. The graph does not require connecting telemetry to establish this
+separate ontology-read session.
 
 For the separate **Materialized native graph (GQL)** mode, use Fabric:
 **Manage graph → select eligible entities/relationships → Continue →

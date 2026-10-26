@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import ts from 'typescript'
+import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { applyDataAgentProgress } from '../src/services/dataAgentProgress.ts'
 
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
@@ -379,6 +380,30 @@ test('live graph reads no GraphModel, scopes cache by user and invalidates faile
   denied = false
   assert.equal((await service.queryOntologySourceGraph()).execution, 'source-backed')
   assert.ok(requests.every(url => !url.includes('/graphModels/')))
+})
+
+test('graph authorization requests only Fabric read scopes, without telemetry or connector consent', async () => {
+  const popups = []
+  const account = { tenantId: 'test-tenant', homeAccountId: 'graph-user' }
+  const { service } = graphService(undefined, {}, {
+    '@azure/msal-browser': { PublicClientApplication: class {
+      async initialize() {}
+      async handleRedirectPromise() {}
+      getActiveAccount() { return account }
+      getAllAccounts() { return [account] }
+      setActiveAccount() {}
+      async acquireTokenSilent() { throw new InteractionRequiredAuthError('interaction_required') }
+      async acquireTokenPopup(request) {
+        popups.push(request.scopes)
+        return { accessToken: 'authorized-test-token', account }
+      }
+    } },
+  })
+  await service.connectOntologyAccess()
+  assert.deepEqual(popups, [[
+    'https://api.fabric.microsoft.com/Workspace.Read.All',
+    'https://api.fabric.microsoft.com/Item.Read.All',
+  ]])
 })
 
 test('native failures are propagated and a later read retries instead of returning stale graph data', async () => {

@@ -686,6 +686,14 @@ export async function queryOntologyGraph(force = false): Promise<OntologyGraph |
   return readBoundOntologyGraph(parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId()), force)
 }
 
+export async function connectOntologyAccess(): Promise<void> {
+  ontologySourceGraphCache.clear()
+  ontologyGraphCache.clear()
+  ontologyGraphReadinessCache.clear()
+  ontologyContractCache.clear()
+  if (!await fabricToken(true)) throw new Error('Fabric ontology-read sign-in did not establish access. Retry from the graph connection control.')
+}
+
 export async function queryOntologySourceGraph(force = false): Promise<OntologySourceGraph | null> {
   const connection = ontologySourceConnectionKey()
   const changedUserOrTarget = lastOntologySourceConnection !== connection

@@ -1,7 +1,7 @@
 import type { Core } from 'cytoscape'
 import { Activity, Box, ChevronRight, CircleDot, Database, Download, Focus, GitBranch, Maximize2, Minimize2, Radio, RefreshCw, Scan, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { queryOntologyContract, queryOntologyGraph, queryOntologySourceGraph, type OntologyContract } from '../../services/fabric'
+import { connectOntologyAccess, queryOntologyContract, queryOntologyGraph, queryOntologySourceGraph, type OntologyContract } from '../../services/fabric'
 import type { OntologyInstanceGraph } from '../../services/ontologySourceGraph'
 import { knowledgeGraphExportFileName, serializeNativeKnowledgeGraph, type KnowledgeGraphExportFormat } from '../../services/knowledgeGraphExport'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
@@ -98,7 +98,22 @@ export function KnowledgeGraphPage() {
     }
   }, [execution, userId])
 
-  const refreshAll = () => loadOntologyGraph(true)
+  const refreshAll = async () => {
+    const authorizationVersion = ++graphRefreshVersion.current
+    setGraphLoading(true)
+    try {
+      await connectOntologyAccess()
+      if (authorizationVersion !== graphRefreshVersion.current) return
+      await loadOntologyGraph(true)
+    } catch (error) {
+      if (authorizationVersion !== graphRefreshVersion.current) return
+      setOntologyGraph(null)
+      setGraphQueriedAt(undefined)
+      setGraphError(error instanceof Error ? error.message : 'Fabric graph authorization failed. Connect and retry.')
+      setGraphLoading(false)
+      console.warn('Fabric ontology authorization failed; graph data is unavailable.', error)
+    }
+  }
 
   useEffect(() => {
     let inFlight = false
@@ -256,7 +271,7 @@ export function KnowledgeGraphPage() {
     setExecution(event.target.value === 'native' ? 'native' : 'source-backed')
   }}><option value="source-backed">Live ontology-governed sources</option><option value="native">Materialized native graph (GQL)</option></select></label>
   if (!graph.nodes.length && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1>{executionControl}<p className="v2-empty-copy">{execution === 'source-backed' ? 'Verifying live ontology source identities and reading bounded connector pages in parallel. Only declared relationships are joined.' : 'Checking graph readiness first. Native graph data is queried only after Fabric returns a queryable schema.'}</p></section>
-  if (graph.error || !graph.nodes.length) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1>{executionControl}<p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
+  if (graph.error || !graph.nodes.length) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1>{executionControl}<p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Connect Fabric and retry</button></section>
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
