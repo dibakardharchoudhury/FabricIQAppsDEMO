@@ -14,6 +14,21 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## October 26 operational routing regression contract
+
+The three BAD-quality/open-work questions now require QA, optionally RCA and Work
+Order specialists, with typed signal-quality and work-order evidence. Punctuation,
+case, “for these” versus “for them”, and “Based on this data” must not change the
+selected source. “Had BAD today” requires any matching sample since midnight UTC,
+not a latest-only BAD filter. Counts and matching timestamps must remain distinct
+from the actual latest quality; missing telemetry is not healthy telemetry.
+
+Explicit Data Agent requests or engine selection retain native execution and must
+fail honestly without fallback. Work review must cover all affected verified
+equipment, preserve covering work and no-draft outcomes, avoid inventing physical
+faults from BAD quality, and never execute a write without separate approval.
+Current hosted acceptance of this source repair is pending.
+
 ## October 12 v77 canonical-prompt release
 
 **Current Hosted Agent: v77 from source commit `30ee16e`, image

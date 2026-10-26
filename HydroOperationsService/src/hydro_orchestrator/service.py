@@ -221,6 +221,7 @@ async def follow_up_intent(
         kinds = sorted({kind for receipt in receipts for kind in reusable_kinds(receipt)})
         intent = dict(await bridge.call({
             "action": "chat_intent", "question": chat.question, "carried_kinds": kinds,
+            "native_sources": list(chat.native_sources),
         }))
         reuse = intent.pop("reuse_prior_evidence", False) is True
         normalized = normalized_chat_input(chat, intent)
@@ -228,7 +229,9 @@ async def follow_up_intent(
             carried = select_carried_ids(receipts, set(normalized.required_evidence_kinds))
             if carried:
                 return normalized, carried
-    normalized = normalized_chat_input(chat, await bridge.call({"action": "chat_intent", "question": chat.question}))
+    normalized = normalized_chat_input(chat, await bridge.call({
+        "action": "chat_intent", "question": chat.question, "native_sources": list(chat.native_sources),
+    }))
     return normalized, ()
 
 

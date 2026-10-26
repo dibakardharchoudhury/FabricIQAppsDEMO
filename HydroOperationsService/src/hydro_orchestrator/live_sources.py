@@ -385,6 +385,7 @@ class FabricBackendTools:
             "action": "tool_read", "tool": name, "arguments": arguments, "tokens": tokens,
             "cluster": discovery.cluster, "configuration_digest": request.source.configuration_digest,
             "proposal_priority": request.proposal_priority,
+            "requested_at_utc": request.requested_at.isoformat(),
         }))
         self.require_request(request)
         if result.source != request.source or not request.requested_at <= result.completed_at <= utc_now():

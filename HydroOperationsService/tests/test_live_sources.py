@@ -856,7 +856,7 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         def configured(key):
             identities = {name: str(uuid4()) for name in (
                 "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
-                "database_id", "lakehouse_id", "appbackend_id",
+                "database_id", "lakehouse_id", "appbackend_id", "operational_sql_database_id",
             )}
             return json.dumps({**identities, "api_url": f"https://{'b' * 32}.pbidedicated.windows.net/workload",
                                "publishable_key": key})
@@ -911,6 +911,7 @@ class ContainerPackagingTests(unittest.TestCase):
         "HydroOperationsApp/scripts/local-fabric-sources.mjs",
         "HydroOperationsApp/src/services/kustoResult.ts",
         "HydroOperationsApp/src/services/lakehouseConnector.ts",
+        "HydroOperationsApp/src/services/operationalConnector.ts",
         *(f"HydroOperationsApp/src/services/copilot/{name}.ts" for name in (
             "query", "catalog", "domainContract", "rcaEvidence", "agentDefinitions", "answerPresentation",
             "orchestration",
@@ -1028,7 +1029,7 @@ class ContainerPackagingTests(unittest.TestCase):
             self.assertTrue((packaged / "HydroOperationsApp" / "node_modules" / "typescript").is_dir())
             config = {key: str(uuid4()) for key in (
                 "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
-                "database_id", "lakehouse_id", "appbackend_id",
+                "database_id", "lakehouse_id", "appbackend_id", "operational_sql_database_id",
             )}
             config.update(api_url=f"https://{'a' * 32}.pbidedicated.windows.net/workload",
                           publishable_key="pk-synthetic-packaging-contract")

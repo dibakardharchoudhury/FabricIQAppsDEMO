@@ -1,5 +1,24 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## October 26 operational routing repair (hosted acceptance pending)
+
+Ordinary quality/work questions no longer select the Data Agent by matching three
+exact phrases. Equivalent wording uses typed governed QA evidence followed by
+requested RCA/Work Order specialists. Explicit Data Agent selection remains native
+and fails closed without direct-source substitution.
+
+`query_signal_quality_snapshot` retains the default latest-reading semantics and
+adds explicit `quality_match: any` for “had BAD today”. It preserves recovered
+latest readings separately from matching counts/timestamps, distinguishes absent
+telemetry from good-only signals, and joins verified complete work coverage.
+Hosted snapshot windows use the server-owned request timestamp as their UTC end.
+BAD quality is not a confirmed physical fault; staged work still requires human
+approval and does not execute production writes.
+
+See the [audit findings and limitations](../docs/foundry-multi-agent-implementation.md#october-26-phrase-independent-operational-workflow-repair).
+Earlier native-prompt acceptance contracts below are historical; source validation
+and deployment success are not proof of completed hosted business workflows.
+
 ## Current architecture and October 25 bounded review
 
 Supervisor is already a **deterministic Microsoft Agent Framework workflow**, not

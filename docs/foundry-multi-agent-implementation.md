@@ -5,6 +5,46 @@ dated follow-ups, corrections, measured results and unfinished acceptance, groun
 in repository commits and linked records. It is not a release certificate.
 Earlier runs remain historical evidence, not passes after a later code change.
 
+## October 26 phrase-independent operational workflow repair
+
+The current audit reproduced a routing defect: the exact “Which turbines had BAD
+telemetry quality today ...” wording selected only native Data Agent evidence,
+while replacing “for these” with “for them” selected typed direct evidence.
+Ordinary operational questions now consistently use governed connector/KQL reads
+through QA, followed by only the requested RCA and Work Order specialists.
+Explicit Data Agent selection remains a separate native path, including selection
+from the browser; a native failure must never substitute direct evidence.
+
+The quality snapshot now distinguishes `quality_match: latest` (the unchanged
+current/running-quality default) from `any` (any matching sample in the requested
+window). Any-mode evidence retains counts and first/last matching timestamps,
+the recovered latest reading separately, complete metadata/work coverage, and
+distinct missing-reading/nonmatching-signal populations. Hosted snapshot windows
+end at the server-owned request clock rather than drifting during agent work.
+Work reviews reuse the affected population and must not treat BAD quality as proof
+of a physical fault or create production work without separate human approval.
+
+The architecture itself matches the official
+[WorkflowBuilder guidance](https://learn.microsoft.com/en-us/agent-framework/concepts/workflows/builder-and-execution)
+and [persisted FoundryAgent guidance](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/agent-services/foundry):
+deterministic typed control flow, pinned persisted specialists, service-declared
+tools with local callbacks, bounded corrections, and verified evidence.
+No new project, manager LLM, framework migration, or production-write enablement
+is warranted. Prompt definitions and hosted source remain incrementally deployed.
+
+This source repair is not hosted acceptance yet. Native MCP progress is still
+buffered until the specialist finishes; application heartbeat events must not be
+described as native tool progress. Weather remains separately blocked by provider
+HTTP 401 and the unavailable authorized credential update.
+
+Validation: 256 backend tests passed under the cached Node 24 runtime, including
+isolated container-import/source-configuration checks and native no-fallback tests;
+241 directly coupled application tests passed. Pyright reported zero errors,
+TypeScript and scoped ESLint passed, and environment validation plus the production
+build passed. Packaging checks also exposed and repaired the missing
+`operationalConnector.ts` allowlist entry in the hosted Docker build context.
+These are source/build receipts, not live business-question acceptance.
+
 ## October 26 publication and main-merge readiness
 
 Tenant Graph authorization recovered. The canonical **app-only** command published

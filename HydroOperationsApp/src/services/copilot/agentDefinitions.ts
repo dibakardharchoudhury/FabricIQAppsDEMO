@@ -114,7 +114,6 @@ export function parseHydroQuery(raw: string):
 }
 
 export function requestedNativeSources(question: string): NativeSource[] {
-  if (qualityWorkWorkflow(question)) return ['data-agent']
   const positive = positiveActionClauses(question)
   const action = '\\b(?:use|ask|query|consult|retrieve|read|compare|request|list|resolve)\\b[^.!?;\\n]{0,180}\\b'
   if (new RegExp(`${action}ontology\\b`, 'i').test(positive)) {

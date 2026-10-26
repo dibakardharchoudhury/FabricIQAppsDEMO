@@ -86,41 +86,40 @@ test('every direct tool result carries governed evidence descriptors at the Node
   }])
 })
 
-test('three scoped BAD-quality workflows share one Data Agent read and only requested specialists', () => {
+test('equivalent BAD-quality workflows use typed evidence and only requested specialists', () => {
   const base = 'Which turbines had BAD telemetry quality today, and what work is already open for these?'
   const cases = [
-    [base, []],
-    [`${base} Based on this data, tell me which WOs need to be created and help me with the drafts.`, ['work-order']],
-    [`${base} Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.`, ['rca', 'work-order']],
+    [base, ['qa']],
+    [`${base} Based on this data, tell me which WOs need to be created and help me with the drafts.`, ['qa', 'work-order']],
+    [`${base} Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.`, ['qa', 'rca', 'work-order']],
   ]
   for (const [question, specialists] of cases) {
     const intent = chatIntent(question)
-    assert.deepEqual(intent.native_sources, ['data-agent'])
+    assert.deepEqual(intent.native_sources, [])
     assert.deepEqual(intent.required_specialists, specialists)
-    assert.deepEqual(intent.required_evidence_kinds, ['native_claims'])
+    assert.deepEqual(intent.required_evidence_kinds, ['signal_quality', 'work_orders'])
     const plan = compileOrchestrationPlan(question, intent)
-    assert.deepEqual(plan.steps.map(step => step.specialist), ['fabric-iq', ...specialists])
-    assert.equal(plan.steps.filter(step => step.native_source === 'data-agent').length, 1)
-    assert.match(plan.steps[0].question, /any BAD/i)
-    assert.match(plan.steps[0].question, /midnight UTC/)
-    assert.match(plan.steps[0].question, /requested_at_utc/)
-    assert.match(plan.steps[0].question, /equipment_id/)
-    assert.match(plan.steps[0].question, /Completed.*Cancelled/)
-    assert.match(plan.steps[0].question, /source-native SQL.*associated Lakehouse/)
-    assert.match(plan.steps[0].question, /KQL.*associated Eventhouse/)
-    assert.match(plan.steps[0].question, /Do not invoke ontology traversal/)
-    assert.match(plan.steps[0].question, /Even when no BAD identifiers.*static-mapping count.*open-work count/)
-    assert.match(plan.steps[0].question, /Return only one JSON object, without surrounding prose/)
-    assert.match(plan.steps[0].question, /distinguish no BAD samples from absent or stale telemetry/)
-    assert.deepEqual(plan.answer_contract.requirements.map(item => item.evidence), ['native_claims_population_native'])
-    assert.deepEqual(analyticalEvidencePlan(question, intent.required_evidence_kinds), [])
+    assert.deepEqual(plan.steps.map(step => step.specialist), specialists)
+    assert.equal(plan.steps.filter(step => step.native_source).length, 0)
+    const qualityRead = analyticalEvidencePlan(question, intent.required_evidence_kinds)
+      .find(entry => entry.kind === 'signal_quality')
+    assert.equal(qualityRead.arguments.quality_match, 'any')
+    assert.equal(qualityRead.arguments.lookback, 'today')
+    assert.equal(qualityRead.arguments.quality, 'BAD')
+    assert.deepEqual(chatIntent(question.replace('for these', 'for them').replace('Based on this data, ', '')), intent)
     if (specialists.includes('work-order')) {
       assert.match(plan.steps.at(-1).question, /all affected/i)
       assert.match(plan.steps.at(-1).question, /SQL/)
       assert.match(plan.steps.at(-1).question, /BAD.*not.*physical/i)
     }
   }
-  assert.deepEqual(chatIntent(base.toUpperCase().replaceAll(' ', '  ')).native_sources, ['data-agent'])
+  assert.deepEqual(chatIntent(base.toUpperCase().replaceAll(' ', '  ')).native_sources, [])
+  for (const intent of [chatIntent(`Use the Data Agent. ${base}`), chatIntent(base, [], ['data-agent'])]) {
+    assert.deepEqual(intent.native_sources, ['data-agent'])
+    assert.deepEqual(intent.required_evidence_kinds, ['native_claims'])
+    assert.deepEqual(intent.required_specialists, [])
+    assert.deepEqual(compileOrchestrationPlan(base, intent).steps.map(step => step.specialist), ['fabric-iq'])
+  }
   for (const question of [
     base.replace('today', 'yesterday'),
     base.replace('BAD', 'UNCERTAIN'),

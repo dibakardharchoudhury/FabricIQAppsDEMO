@@ -2217,6 +2217,26 @@ class FoundrySupervisor:
 
         async def query(tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
             arguments = canonical_source_arguments(request, arguments)
+            if tool_name == "query_signal_quality_snapshot" and "signal_quality" in request.required_evidence_kinds:
+                planned = await self.bridge.call({
+                    "action": "analytical_evidence_plan", "question": request.question,
+                    "answer_kinds": ["signal_quality"],
+                })
+                entries = planned.get("entries")
+                if not isinstance(entries, list):
+                    raise SourceFailure("Signal-quality planning omitted its governed entries.")
+                matching = [
+                    entry["arguments"] for entry in entries
+                    if isinstance(entry, dict) and entry.get("tool") == tool_name
+                    and isinstance(entry.get("arguments"), dict)
+                    and entry["arguments"].get("quality") == str(arguments.get("quality", "BAD")).upper()
+                ]
+                if len(matching) != 1:
+                    raise ToolInputError("Use one of the operator-requested quality states in the supplied source plan.")
+                governed_arguments = {**arguments, **matching[0]}
+                if governed_arguments != arguments:
+                    logger.warning("Applied server-owned signal-quality scope and matching semantics before source execution.")
+                arguments = governed_arguments
             normalized_arguments = normalize_filter_conjunctions(arguments)
             if normalized_arguments != arguments:
                 logger.warning(
@@ -3743,7 +3763,10 @@ class FoundrySupervisor:
                 or not request.required_evidence_kinds
                 or not request.permitted_evidence_kinds
             ):
-                intent = await self.bridge.call({"action": "chat_intent", "question": request.question})
+                intent = await self.bridge.call({
+                    "action": "chat_intent", "question": request.question,
+                    "native_sources": list(request.native_sources),
+                })
                 if set(intent) != {
                     "charts_requested", "native_sources", "proposal_priority", "equipment_selection",
                     "required_evidence_kinds", "permitted_evidence_kinds", "required_specialists",
