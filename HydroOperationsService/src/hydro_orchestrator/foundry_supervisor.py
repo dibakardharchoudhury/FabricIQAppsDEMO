@@ -82,6 +82,10 @@ def _is_native_refusal_text(value: str) -> bool:
         "unable to assist with that request",
         "request was blocked by content moderation",
         "response was filtered due to the prompt triggering",
+        "output-moderation",
+        "output_moderation",
+        "outputmoderation",
+        "output moderation",
     ))
 
 
@@ -111,6 +115,20 @@ def _validated_native_result(output: object) -> dict[str, object]:
         payload: object = json.loads(output)
     except json.JSONDecodeError:
         payload = output
+
+    def contains_service_error(value: object) -> bool:
+        if isinstance(value, dict):
+            if value.get("isError") is True or value.get("is_error") is True:
+                return True
+            if value.get("error") not in (None, False, "", {}, []):
+                return True
+            return any(contains_service_error(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_service_error(item) for item in value)
+        return False
+
+    if contains_service_error(payload):
+        raise SourceFailure("Native source failure: the selected source returned an error payload.")
 
     def contains_refusal(value: object) -> bool:
         if isinstance(value, str):

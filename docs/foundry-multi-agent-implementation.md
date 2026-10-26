@@ -142,6 +142,44 @@ zero work orders. No approval/create/save action was taken. Weather still
 requires the valid Aurora credential through authorized private Key Vault
 access. **Do not describe this publication as enterprise-ready or fully fixed.**
 
+### Connector deadline and native-failure follow-up
+
+Further diagnosis used the **actual app-delegated Power BI credential**, without
+printing/storing credentials, replacing browser sign-in with CLI tokens, or
+changing authentication configuration. Its broker exchange succeeded HTTP 200.
+Normal, authorized one-row reads returned HTTP 200 and a real row from **both**
+the Lakehouse and operational SQL connectors, consistently taking **40-43
+seconds**. Introspection was denied with `HC0046`; that policy was not bypassed.
+The published entity read APIs were used instead.
+
+The Node SDK client's default was **30 seconds**, shorter than those observed
+responses. Browser background execution can delay its timers, so browser
+`AbortSignal.timeout(30000)` returning a later successful response is not proof
+that a Node 30-second deadline is sufficient. The hosted read client now
+explicitly uses **60 seconds**, inside the existing **120-second** source RPC
+budget. A mock-clock regression proves the actual SDK request remains live at
+40,000 and 59,999 ms, aborts at exactly 60,000 ms and is not replayed.
+Timeout, HTTP status and GraphQL failures now retain safe `READ_TIMEOUT`,
+`HTTP_<status>` and `GRAPHQL_QUERY_FAILED` codes through fleet aggregation rather
+than collapsing back to `READ_FAILED`; raw provider details are not exposed.
+
+Inspection also found production reconciliation constructing a non-connector
+`RayfinClient` before using `client.connectors.hydrooperations`. It now constructs
+the proper connector client. A real SDK/HTTP-fixture test verifies the connector
+route, exact creation identity and read-only reconciliation without another
+mutation. Mutation timeout/approval/reconciliation safeguards are unchanged.
+
+Native error envelopes (`error`, `isError`, `is_error`) now fail before becoming
+domain evidence; output-moderation wording is recognized as refusal rather than
+a successful native claim. These checks preserve legitimate empty-count answers
+and equipment whose business status is Unavailable. Structured provider errors
+fail immediately without direct fallback; existing bounded same-source refusal
+handling remains. No moderation controls were disabled.
+
+Validation passed **196 Python tests**, **105 Node contracts**, Pyright and
+environment validation. Publication and new signed-browser acceptance of this
+follow-up remain separate, pending gates.
+
 ## October 26 publication and main-merge readiness
 
 Tenant Graph authorization recovered. The canonical **app-only** command published

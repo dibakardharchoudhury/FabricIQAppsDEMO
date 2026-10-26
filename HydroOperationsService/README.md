@@ -15,6 +15,14 @@ messages rather than restarting the agent. Native MCP transport keeps zero SDK
 retries and its separate same-source correction limit. Service timeouts and the
 ten-minute workflow deadline remain enforced; exhausted retries still fail
 explicitly. This does not replay source callbacks, proposals or production writes.
+
+Node connector reads use an explicit 60-second HTTP deadline within the
+120-second source RPC budget: measured authorized connector responses exceeded
+the SDK's previous 30-second default. Failures retain safe timeout/HTTP/GraphQL
+codes through fleet aggregation, never empty-work substitutes. Native error
+envelopes and output-moderation responses cannot become successful domain
+evidence. SQL reconciliation uses the operational connector client; approval,
+mutation timeout and no-replay guards are unchanged.
 No-RCA work-order handoffs preserve verified direct evidence and source
 population/provenance metadata. Keep the pinned deterministic workflow and existing project.
 Historical version/test counts below are not this release's runtime certificate.

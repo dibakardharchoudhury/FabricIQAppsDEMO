@@ -54,6 +54,15 @@ was needed. The current connector failure's underlying cause remains unresolved.
 Full receipts, limitations and the independent weather credential blocker are
 in the [current audit](../docs/foundry-multi-agent-implementation.md#current-publication-and-signed-browser-acceptance-not-passed).
 
+The subsequent connector investigation obtained real rows from both connectors
+using the app's delegated credential in **40-43 seconds**. The Node SDK's
+30-second default was below that observed transit time. The follow-up sets a
+bounded **60-second read timeout**, preserves safe failure codes and corrects
+the production reconciliation client's SQL-connector wiring. Native error and
+output-moderation payloads can no longer qualify as successful domain evidence.
+**196 Python tests**, **105 Node contracts** and Pyright passed; new publication
+and authenticated workflow acceptance are still required.
+
 ## October 12 v77 canonical-prompt release
 
 **Current Hosted Agent: v77 from source commit `30ee16e`, image

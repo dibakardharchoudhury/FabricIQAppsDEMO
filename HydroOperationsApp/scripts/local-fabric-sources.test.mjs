@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, readWork, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
 import { requestsWorkOrderNeedAssessment, refersToPriorData } from '../src/services/copilot/orchestration.ts'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
@@ -61,6 +61,58 @@ const inventoryFetch = assets => appBackendFetch(async (_url, options) => {
   const result = assetResponse(query, assets[key])
   if (assets.errors) return response({ errors: assets.errors })
   return result
+})
+
+test('connector reads allow the measured 40-second transit but abort at their 60-second bound', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let signal, reads = 0
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async (_url, options) => {
+    reads++
+    signal = options.signal
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })
+  }))
+  const failure = assert.rejects(readWork(config, 'T005', tokens.graphql), error => {
+    assert.equal(error.code, 'READ_TIMEOUT')
+    assert.match(error.message, /read failed \(READ_TIMEOUT\)/)
+    return true
+  })
+  await new Promise(setImmediate)
+  assert.ok(signal)
+  t.mock.timers.tick(40_000)
+  await new Promise(setImmediate)
+  assert.equal(signal.aborted, false)
+  t.mock.timers.tick(19_999)
+  await new Promise(setImmediate)
+  assert.equal(signal.aborted, false)
+  t.mock.timers.tick(1)
+  await failure
+  assert.equal(signal.aborted, true)
+  assert.equal(reads, 1)
+})
+
+test('connector error codes preserve HTTP and GraphQL failures without leaking source details', async t => {
+  for (const [status, payload, expected] of [
+    [403, { message: 'sensitive backend detail' }, 'HTTP_403'],
+    [503, { message: 'sensitive backend detail' }, 'HTTP_503'],
+    [200, { errors: [{ message: 'sensitive backend detail' }] }, 'GRAPHQL_QUERY_FAILED'],
+  ]) {
+    t.mock.method(globalThis, 'fetch', appBackendFetch(async () => new Response(JSON.stringify(payload),
+      { status, headers: { 'Content-Type': 'application/json' } })))
+    await assert.rejects(readWork(config, 'T005', tokens.graphql), error => {
+      assert.equal(error.code, expected)
+      assert.doesNotMatch(error.message, /sensitive backend detail/)
+      return true
+    })
+  }
+})
+
+test('fleet failure retains the connector HTTP codes and rejects partial source coverage', async t => {
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async () => new Response('{}', { status: 503 })))
+  await assert.rejects(readFleetSnapshot(config, metadata, false, {}, tokens,
+    async () => response({ Tables: [telemetry()] })),
+  /equipment metadata failed \(HTTP_503\).*instrument metadata failed \(HTTP_503\).*work-order inventory failed \(HTTP_503\).*No partial fleet snapshot/)
 })
 
 test('every direct tool result carries governed evidence descriptors at the Node boundary', () => {
@@ -600,6 +652,27 @@ test('backend drafts freshly verify target and complete work without a SQL write
     async () => { throw new Error('EXCHANGE_NOT_ENABLED') }), /EXCHANGE_NOT_ENABLED/)
   await assert.rejects(stageWorkOrder(config, args, 'Medium', tokens,
     async () => ({ rows: [], read_completed_at: 'not-a-time' })), /complete work-source read/)
+})
+
+test('production reconciliation uses the SQL connector client without issuing another write', async t => {
+  const creationId = '22222222-2222-2222-2222-222222222222'
+  const edits = { title: 'Inspect signal', description: 'Operator-reviewed inspection.', priority: 'High' }
+  const saved = { id: creationId, workOrderNumber: `WO-${creationId}`, equipmentId: 'T2',
+    instrumentId: null, opcuaNodeId: null, ...edits, status: 'Draft', createdByOid: id }
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async (url, options) => {
+    reads++
+    assert.match(url, /\/connectors\/hydrooperations\/graphql$/)
+    const query = JSON.parse(options.body).query
+    assert.doesNotMatch(query, /\bmutation\b/)
+    assert.match(query, new RegExp(creationId))
+    return assetResponse(query, { items: [saved], hasNextPage: false })
+  }))
+  const result = await submitApprovedWorkOrder(config, { equipment_id: 'T2' }, edits, id,
+    creationId, tokens, false)
+  assert.equal(result.reconciled, true)
+  assert.deepEqual(result.record, saved)
+  assert.equal(reads, 1)
 })
 
 test('approved SQL submissions pin identity, check duplicates and reconcile lost acknowledgements without another write', async t => {

@@ -30,6 +30,7 @@ from hydro_orchestrator.foundry_supervisor import (
     canonical_source_arguments,
     _bounded_citation_fragments, _encoded, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
+    _validated_native_result,
     repair_evidence_row_descendant_paths,
     deterministic_fulfillment_route, governed_datasets, requests_new_work_order_proposal,
     requests_unsent_message, selected_equipment_from_evidence,
@@ -1321,6 +1322,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 })]
         elif name == "hydro-fabric-iq-agent":
             native_output = (
+                {"error": {"code": "output_moderation", "message": "Published Data Agent unavailable."}}
+                if self.mode == "native_error_payload"
+                else
                 {"documents": [{
                     "id": "connection-1", "content": "I'm sorry, but I cannot assist with that request.",
                     "title": "hydro-fabric-ontology", "url": "https://example.test/ontology",
@@ -2233,6 +2237,32 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             await owner.run(request)
         self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
         self.assertEqual(self.tools.calls, 0)
+
+    def test_native_moderation_and_error_payloads_are_not_domain_evidence(self):
+        for payload in [
+            "The endpoint was unavailable with an output-moderation error.",
+            {"documents": [{"content": "OutputModeration: no source query completed."}]},
+            {"error": {"code": "output_moderation"}},
+            {"source_identity": [{"isError": True, "message": "Source unavailable."}]},
+            {"native_output": {"is_error": True, "content": "Source unavailable."}},
+        ]:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(SourceFailure, "Native source (refusal|failure)"):
+                    _validated_native_result(json.dumps(payload))
+        self.assertEqual(_validated_native_result(json.dumps({"row_count": 0, "rows": []}))["row_count"], 0)
+        self.assertEqual(_validated_native_result(json.dumps({
+            "rows": [{"equipment_id": "TEST_T005", "status": "Unavailable"}],
+        }))["rows"], [{"equipment_id": "TEST_T005", "status": "Unavailable"}])
+
+    async def test_native_service_error_payload_fails_without_fallback_or_false_completion(self):
+        self.mode = "native_error_payload"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        with self.assertRaisesRegex(SourceFailure, "Native source failure"):
+            await owner.run(request)
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
+        self.assertEqual(self.tools.calls, 0)
+        self.assertFalse(owner.evidence)
 
     def test_ordinary_native_bad_request_is_not_retryable(self):
         response = httpx.Response(400, request=httpx.Request("POST", ENDPOINT))

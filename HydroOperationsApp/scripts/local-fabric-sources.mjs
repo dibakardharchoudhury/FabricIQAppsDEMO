@@ -1052,14 +1052,18 @@ export async function collectWorkOrders(client, equipmentId) {
 
 async function operationalRead(config, token, label, read) {
   const client = new ConnectorsRayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
-    publishableKey: config.publishable_key, authStorage: false,
+    publishableKey: config.publishable_key, authStorage: false, timeout: 60_000,
     connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig } })
   try {
     await signInWithEntraToken(client.auth, { entraToken: token })
     return await read(client)
   } catch (error) {
-    const code = typeof error?.code === 'string' && /^[A-Z_0-9]+$/.test(error.code) ? error.code : 'READ_FAILED'
-    throw new Error(`Rayfin ${label} read failed (${code}). No empty-work fallback or proposal is permitted.`)
+    const code = typeof error?.code === 'string' && /^[A-Z_0-9]+$/.test(error.code) ? error.code
+      : Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? `HTTP_${error.status}`
+        : /^Request timed out after \d+ms$/.test(error?.message ?? '') ? 'READ_TIMEOUT'
+          : error?.message?.startsWith('GraphQL errors:') ? 'GRAPHQL_QUERY_FAILED' : 'READ_FAILED'
+    throw new RayfinClient.errors.SdkError(
+      `Rayfin ${label} read failed (${code}). No empty-work fallback or proposal is permitted.`, code)
   } finally {
     client.auth.destroy()
   }
@@ -1247,8 +1251,9 @@ export async function submitApprovedWorkOrder(config, draft, edits, principalId,
     return { record, reconciled: false, read_completed_at_utc: new Date().toISOString() }
   }
   if (useClient) return execute(await useClient())
-  const client = new RayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
-    publishableKey: config.publishable_key, authStorage: false })
+  const client = new ConnectorsRayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
+    publishableKey: config.publishable_key, authStorage: false,
+    connectors: { hydrooperations: operationalConnectorConfig } })
   try {
     await signInWithEntraToken(client.auth, { entraToken: tokens.graphql })
     return await execute(client)
