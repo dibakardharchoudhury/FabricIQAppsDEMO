@@ -123,7 +123,7 @@ test('every direct tool result carries governed evidence descriptors at the Node
       equipment_id: 'EQUIP_RTI_T005', opcua_node_id: node,
       event_time: new Date().toISOString(), quality: 'BAD',
     }],
-    read_completed_at_utc: new Date().toISOString(),
+    read_completed_at_utc: new Date().toISOString(), truncated: false,
   })
   assert.deepEqual(result._evidence_datasets, [{
     kind: 'signal_quality',
@@ -847,6 +847,43 @@ function fleetData() {
   return { equipment, instruments, telemetryRows, workOrders, inventoryComplete: true,
     workInventoryComplete: true, readStartedAt, readCompletedAt: readStartedAt }
 }
+
+test('wide bounded fleet snapshots preserve every verified signal and affected equipment beyond the model text budget', () => {
+  const data = fleetData()
+  data.equipment = Array.from({ length: 15 }, (_, i) => ({
+    equipment_id: `T${String(i + 1).padStart(3, '0')}`,
+    tag: `Turbine ${i + 1}`, equipment_type_code: 'TURBINE', is_active: true,
+  }))
+  data.instruments = data.equipment.flatMap(asset => Array.from({ length: 6 }, (_, i) => ({
+    equipment_id: asset.equipment_id, instrument_id: `${asset.equipment_id}-I${i}`,
+    opcua_node_id: `ns=2;s=${asset.equipment_id}.signal_${i}`, unit: 'degC', is_active: true,
+  })))
+  data.telemetryRows = data.instruments.map(instrument => ({
+    opcua_node_id: instrument.opcua_node_id, value: 42, quality: 'BAD',
+    event_time: data.readStartedAt, matching_sample_count: 1,
+    first_matching_event_time: data.readStartedAt, matching_event_time: data.readStartedAt,
+    matching_value: 42, matching_quality: 'BAD',
+  }))
+  data.workOrders = data.equipment.map(asset => ({
+    id: `${asset.equipment_id}-work`, workOrderNumber: `WO-${asset.equipment_id}`,
+    equipmentId: asset.equipment_id, status: 'Open', priority: 'High',
+    title: 'Inspect signal quality and instrument wiring. '.repeat(4),
+  }))
+  const shaped = shapeFleetSnapshot(false, {
+    quality: 'BAD', quality_match: 'any', lookback: '30m', equipment_type: 'turbine',
+  }, data)
+  assert.ok(JSON.stringify(shaped.result.rows).length > 40_000)
+  assert.equal(shaped.rowCount, 90)
+  assert.equal(shaped.result.row_count, 90)
+  assert.equal(shaped.result.truncated, false)
+  assert.deepEqual(shaped.result.rows.map(row => row.opcua_node_id),
+    data.instruments.map(instrument => instrument.opcua_node_id))
+  assert.deepEqual([...new Set(shaped.result.rows.map(row => row.equipment_id))],
+    data.equipment.map(asset => asset.equipment_id))
+  assert.equal(shaped.result.population.expected_signal_count, 90)
+  assert.equal(shaped.result.matching_quality_node_count, 90)
+  assert.ok(shaped.result.rows.every(row => row.open_work_orders.length === 1))
+})
 
 test('historical quality accepts Kusto empty-string join absence without confusing missing readings with zero matches', () => {
   const data = fleetData()

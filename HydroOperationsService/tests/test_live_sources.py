@@ -227,12 +227,11 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         result["result"]["row_count"] = 2
         result["result"]["population"]["signals_without_readings"] = ["no-reading"]
         result["result"]["unresolved_nodes"] = ["unmapped"]
-        result["result"]["truncated"] = True
         sources.bridge.call.return_value = result
         evidence = await FabricBackendTools(sources).execute("query_signal_quality_snapshot", {}, request)
         self.assertEqual(evidence.column_units, {})
         self.assertEqual(evidence.resolved_equipment_ids, ("T1", "T2"))
-        self.assertEqual(len(evidence.limitations), 3)
+        self.assertEqual(len(evidence.limitations), 2)
         result["result"]["rows"] = []
         result["result"]["row_count"] = 0
         evidence = await FabricBackendTools(sources).execute("query_turbine_temperature_snapshot",
@@ -251,6 +250,8 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             lambda result: result["population"].update(work_coverage_equipment_ids=[]),
             lambda result: result["population"].update(work_coverage_equipment_ids=["T1", "T1"]),
             lambda result: result.update(row_count=2),
+            lambda result: result.update(truncated=True),
+            lambda result: result.pop("truncated"),
             lambda result: result["rows"][0].update(unit=""),
             lambda result: result["rows"][0].update(value="77.5"),
             lambda result: result["rows"][0].update(value=True),

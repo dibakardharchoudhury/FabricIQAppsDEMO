@@ -850,7 +850,7 @@ ANALYSIS_ID_PATTERN = re.compile(r"\b(?:EQUIP_RTI_[A-Z0-9_]+|FACILITY_RTI_\d+|IN
 ANALYSIS_DECIMAL_PATTERN = re.compile(r"(?<![\w.])-?\d+\.\d+(?!\w|\.\d)")
 ANALYSIS_TIMEOUT_SECONDS = 90.0
 ANALYSIS_ATTEMPTS = 3
-ANALYSIS_MAX_ROWS_PER_TABLE = 80
+ANALYSIS_MAX_ROWS_PER_TABLE = 500
 CLOSED_WORK_STATUSES = frozenset({"completed", "cancelled", "canceled", "closed"})
 
 

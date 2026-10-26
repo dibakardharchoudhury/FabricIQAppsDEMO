@@ -683,7 +683,6 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
     }]
   })
   const selected = temperature ? rankTemperatureRows(rows, args) : rows
-  const { rows: capped, truncated } = truncateForModel(selected)
   const expectedNodes = expectedInstruments.map(instrument => instrument.opcua_node_id)
   return {
     result: {
@@ -703,7 +702,7 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
         work_inventory_complete: data.workInventoryComplete === true,
         work_coverage_equipment_ids: data.workInventoryComplete ? [...new Set(expectedInstruments.map(instrument => instrument.equipment_id))] : [],
       },
-      rows: capped, row_count: capped.length,
+      rows: selected, row_count: selected.length,
       ...(temperature ? {
         latest_raw_temperature_ranked_descending: true, threshold: args.threshold,
         threshold_operator: args.threshold_operator ?? 'gt', requested_limit: args.limit ?? (args.threshold === undefined ? 5 : null),
@@ -714,9 +713,9 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
         ...(anyQuality ? { matching_quality_node_count: matchedNodes.size } : {}),
         latest_quality_node_count: data.telemetryRows.filter(row => String(row.quality).toUpperCase() === qualityFilter).length,
       }),
-      returned_active_equipment_signal_count: rows.length, unresolved_nodes: unresolvedNodes, truncated,
+      returned_active_equipment_signal_count: rows.length, unresolved_nodes: unresolvedNodes, truncated: false,
     },
-    rowCount: capped.length,
+    rowCount: selected.length,
   }
 }
 

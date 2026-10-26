@@ -23,6 +23,11 @@ codes through fleet aggregation, never empty-work substitutes. Native error
 envelopes and output-moderation responses cannot become successful domain
 evidence. SQL reconciliation uses the operational connector client; approval,
 mutation timeout and no-replay guards are unchanged.
+Fleet snapshots retain every selected source row within the existing bounded
+inventory/read and 262,144-byte callback limits; a model text budget must not
+silently shrink immutable evidence. Truncated or unqualified fleet snapshots
+fail closed. Grounded answer context uses the same 500-row bound as certified
+answer tables, rather than clipping a verified fleet to its first 80 signals.
 No-RCA work-order handoffs preserve verified direct evidence and source
 population/provenance metadata. Keep the pinned deterministic workflow and existing project.
 Historical version/test counts below are not this release's runtime certificate.

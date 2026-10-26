@@ -31,7 +31,7 @@ HTTP request, retaining existing function-result messages instead of restarting
 the agent. Native transport retains its separate no-SDK-retry correction bound;
 service/run deadlines and failure propagation remain mandatory.
 
-### Latest signed-browser result: acceptance failed
+### Earlier v19 signed-browser result: acceptance failed
 
 Canonical publication of **`89c7dd4`** succeeded: app **1.0.1115**, coordinator
 **v19**, image `src-ad9a38b9fbbba1da` (ACR `dtg`); all five specialists were
@@ -50,9 +50,9 @@ after **51.2 seconds**, but reported endpoint unavailability/output moderation,
 unverified identity and zero scalar claims. The crew's **Finished** label is
 not proof that the Data Agent returned verified source data. There was no
 silent direct-source fallback. ARM confirmed capacity **Active**; no resume
-was needed. The current connector failure's underlying cause remains unresolved.
+was needed. That connector failure had not yet been resolved at this checkpoint.
 Full receipts, limitations and the independent weather credential blocker are
-in the [current audit](../docs/foundry-multi-agent-implementation.md#current-publication-and-signed-browser-acceptance-not-passed).
+in the [current audit](../docs/foundry-multi-agent-implementation.md#v19-publication-and-signed-browser-acceptance-not-passed).
 
 The subsequent connector investigation obtained real rows from both connectors
 using the app's delegated credential in **40-43 seconds**. The Node SDK's
@@ -60,8 +60,26 @@ using the app's delegated credential in **40-43 seconds**. The Node SDK's
 bounded **60-second read timeout**, preserves safe failure codes and corrects
 the production reconciliation client's SQL-connector wiring. Native error and
 output-moderation payloads can no longer qualify as successful domain evidence.
-**196 Python tests**, **105 Node contracts** and Pyright passed; new publication
-and authenticated workflow acceptance are still required.
+**196 Python tests**, **105 Node contracts** and Pyright passed. Canonical
+publication returned final success at **23:30:34 UTC** with coordinator **v20**
+and signed app **1.0.1117 / `6b7ec1c`**; all specialists and 42 redirects were
+preserved.
+
+### Latest v20 signed-browser result: execution succeeds, coverage acceptance fails
+
+Session `413e72bd-56be-414c-aebb-9c3f573c424d` completed the original compound
+question through Gauge and Fixer in **91 seconds**, with pending draft cards
+and no approved action or production write. The answer exposed only **44**
+verified signal rows, however: a legacy 40,000-character model budget had
+halved the actual source rows. Its partial-coverage warning prevents this
+from being called an enterprise acceptance pass.
+
+The follow-up preserves all bounded fleet evidence, fails closed on truncated
+or unqualified snapshots and aligns operator context with the certified
+500-row table limit instead of clipping it at 80. The
+[full-coverage follow-up](../docs/foundry-multi-agent-implementation.md#complete-source-evidence-follow-up-acceptance-not-yet-passed)
+records the root cause and regressions. New publication and authenticated
+full-coverage, RCA and native-result acceptance are still required.
 
 ## October 12 v77 canonical-prompt release
 

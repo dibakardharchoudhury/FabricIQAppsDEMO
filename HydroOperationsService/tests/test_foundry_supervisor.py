@@ -582,6 +582,47 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.owner.evidence), {"quality-population"})
         self.owner.contract_answer_plan(request)
 
+    def test_analysis_preserves_complete_bounded_fleet_rows_and_source_receipt(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "kind": "signal_quality", "scope": "population", "authority": "direct",
+                "purpose": "verification",
+            }],
+            "views": [{
+                "id": "quality-population", "title": "Signal quality",
+                "kind": "signal_quality", "scope": "population", "presentation": "direct_records_table",
+            }],
+        })
+        rows = [{
+            "equipment_id": f"EQUIP_RTI_T{index // 6 + 1:03}",
+            "opcua_node_id": f"node-{index}", "quality": "BAD", "value": 42.0,
+        } for index in range(90)]
+        receipt = ToolEvidence(
+            id="complete-quality", source=SOURCE, tool="query_signal_quality_snapshot",
+            arguments={}, completed_at=utc_now(), result={"rows": rows, "truncated": False},
+            datasets=(EvidenceDataset(
+                kind="signal_quality", field="rows", authority="direct", scope="population",
+                complete=True, identity_fields=("opcua_node_id",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+        plan = self.owner.contract_answer_plan(self.request)
+        answer = self.owner.answer(self.request, plan, use_projected_summary=True)
+        context = self.owner.analysis_context(self.request, answer)
+        datasets = context["datasets"]
+        assert isinstance(datasets, list)
+        self.assertEqual(len(datasets), 1)
+        dataset = datasets[0]
+        self.assertEqual(dataset["row_count"], 90)
+        self.assertFalse(dataset["rows_truncated"])
+        self.assertEqual(len(dataset["rows"]), 90)
+        self.assertCountEqual(
+            [row["opcua_node_id"] for row in dataset["rows"]],
+            [row["opcua_node_id"] for row in rows],
+        )
+        self.assertEqual(self.owner.evidence[receipt.id].result["rows"], rows)
+
     def test_reconciliation_compiles_direct_and_native_rows_without_inferred_matches(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
             "version": 3,

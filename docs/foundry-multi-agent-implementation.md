@@ -105,7 +105,7 @@ and Pyright passed, including exact retained request messages and one source
 dispatch after a follow-up 429. The additional **83** service/source/authorization
 tests also passed.
 
-### Current publication and signed-browser acceptance: not passed
+### v19 publication and signed-browser acceptance: not passed
 
 The canonical deployment of **`89c7dd4`** returned final
 `SUCCESS`/`DEPLOYED_APP_URL` on October 26 at **22:36:59 UTC**. The signed browser
@@ -177,8 +177,38 @@ fail immediately without direct fallback; existing bounded same-source refusal
 handling remains. No moderation controls were disabled.
 
 Validation passed **196 Python tests**, **105 Node contracts**, Pyright and
-environment validation. Publication and new signed-browser acceptance of this
-follow-up remain separate, pending gates.
+environment validation. The canonical publication then returned final
+`SUCCESS`/`DEPLOYED_APP_URL` at **23:30:34 UTC**: coordinator **v20**, image
+`src-e72ed4907d5e592a` (ACR `dth`), signed app **1.0.1117 / `6b7ec1c`**.
+All five specialists were reused and all **42** redirects preserved.
+
+### Complete source evidence follow-up: acceptance not yet passed
+
+Authenticated session `413e72bd-56be-414c-aebb-9c3f573c424d` completed the original
+BAD-today/open-work/draft question through **Gauge -> Fixer in 91 seconds**.
+Pending draft cards were staged; no create/approval/reject control was used and
+no production write was executed. This is progress, **not an acceptance pass**:
+the answer showed only **44** verified signal rows and correctly warned that it
+could not substantiate all turbines in the staged population.
+
+The shared fleet shaper still applied `truncateForModel` to the actual source
+receipt, repeatedly halving wide rows until JSON fit 40,000 characters. That
+removed source evidence, not merely display text. A separate 80-row operator
+context bound would also omit the tail of a complete 89/90-signal population.
+The repair preserves all selected bounded fleet rows, leaves existing source
+inventory/read and 262,144-byte callback limits in place, and rejects truncated
+or unqualified snapshot attestations instead of certifying them complete.
+Evidence descriptors now honor the source's completeness flag. Grounded answer
+context shares the certified table's 500-row bound. No absent rows are inferred
+or certified and immutable receipt indices remain unchanged.
+
+Regression checks cover a >40,000-character, 90-signal/15-equipment fleet,
+complete operator-context rows with unchanged receipts, and rejection of both
+truncated and missing-completeness snapshots. All **197 Python tests** and
+**107 Node contracts** passed, with zero Pyright diagnostics, TypeScript/Vite
+production build, environment validation and changed-file ESLint.
+Publication and authenticated full-coverage/RCA/native acceptance of this new
+repair remain pending.
 
 ## October 26 publication and main-merge readiness
 
