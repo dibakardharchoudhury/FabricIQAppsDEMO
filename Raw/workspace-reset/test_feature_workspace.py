@@ -179,7 +179,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
         notebook = json.loads((ROOT / "Notebooks/Geo_001_ingest_energy_context.Notebook/.platform").read_text())
         properties = pipeline["properties"]
         self.assertEqual(properties["concurrency"], 1)
-        self.assertEqual(len(properties["activities"]), 2)
+        self.assertEqual(len(properties["activities"]), 1)
         activity = properties["activities"][0]
         self.assertEqual(activity["typeProperties"]["notebookId"], notebook["config"]["logicalId"])
         self.assertEqual(set(properties["parameters"]), {"workspace_id", "env_suffix", "refresh_mode", "force_refresh"})
@@ -187,22 +187,13 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertEqual(activity["typeProperties"]["parameters"][name]["value"]["value"], f"@pipeline().parameters.{name}")
         self.assertEqual(properties["parameters"]["force_refresh"]["defaultValue"], False)
         self.assertEqual(properties["parameters"]["refresh_mode"]["defaultValue"], "all")
-        chat_activity = properties["activities"][1]
-        self.assertEqual(chat_activity["name"], feature.MAP_AGENT_NOTEBOOK)
-        self.assertEqual(chat_activity["dependsOn"], [{
-            "activity": feature.ENERGY_NOTEBOOK, "dependencyConditions": ["Succeeded"],
-        }])
-        for name in ("workspace_id", "env_suffix"):
-            self.assertEqual(chat_activity["typeProperties"]["parameters"][name]["value"]["value"],
-                             f"@pipeline().parameters.{name}")
+        self.assertNotIn(feature.MAP_AGENT_NOTEBOOK, json.dumps(properties["activities"]))
         rebound = feature.rebind_pipeline(
-            pipeline, {notebook["config"]["logicalId"]: "target-notebook",
-                       chat_activity["typeProperties"]["notebookId"]: "target-map-agent-notebook"}, WORKSPACE,
+            pipeline, {notebook["config"]["logicalId"]: "target-notebook"}, WORKSPACE,
             {"workspace_id": WORKSPACE, "env_suffix": "V8"},
         )
         self.assertEqual(rebound["properties"]["activities"][0]["typeProperties"]["workspaceId"], WORKSPACE)
         self.assertEqual(rebound["properties"]["parameters"]["env_suffix"]["defaultValue"], "V8")
-        self.assertEqual(rebound["properties"]["activities"][1]["typeProperties"]["notebookId"], "target-map-agent-notebook")
 
     def test_chat_opt_in_preserves_both_baseline_and_energy_job_digests(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
@@ -238,7 +229,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(feature.FeatureWorkspaceError, "requires energy map"):
                 feature.FeatureConfig.load(path, TENANT, WORKSPACE)
 
-    def test_chat_publisher_runs_alone_only_when_ingestion_is_reused(self):
+    def test_chat_publisher_runs_separately_after_fresh_or_reused_ingestion(self):
         for source_ran in (True, False):
             with (self.subTest(source_ran=source_ran), tempfile.TemporaryDirectory() as directory,
                   patch.object(feature, "FeatureFabric")):
@@ -260,12 +251,11 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 ):
                     workspace._prepare_energy_map()
                 self.assertEqual(bind.call_count, 2)
-                self.assertEqual(run.call_count, 1 if source_ran else 2)
-                if not source_ran:
-                    run.assert_called_with(feature.MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
-                        {"name": "workspace_id", "value": WORKSPACE, "type": "Text"},
-                        {"name": "env_suffix", "value": "V6", "type": "Text"},
-                    ]})
+                self.assertEqual(run.call_count, 2)
+                run.assert_called_with(feature.MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
+                    {"name": "workspace_id", "value": WORKSPACE, "type": "Text"},
+                    {"name": "env_suffix", "value": "V6", "type": "Text"},
+                ]})
                 self.assertEqual(workspace.state["map_agent_id"], "Hydro_Map_Agent_V6")
 
     def test_terminal_chat_publisher_can_retry_without_discarding_other_checkpoints(self):
@@ -311,7 +301,9 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertNotIn("creationPayload", payload)
             self.assertEqual(payload["displayName"], "Hydro_GeoContext_V6")
             place.assert_called_once_with(lakehouse)
+            self.assertEqual(bind.call_count, 1)
             self.assertEqual(bind.call_args.args[1]["default_lakehouse"], SUBSCRIPTION)
+            run.assert_called_once()
             self.assertEqual(run.call_args.args[0], feature.ENERGY_PIPELINE)
             self.assertEqual(run.call_args.args[2]["executionData"]["parameters"]["workspace_id"], WORKSPACE)
             publish.assert_called_once_with(SUBSCRIPTION)

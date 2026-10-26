@@ -40,6 +40,10 @@ The two Foundry forms share remembered non-secret overrides for each target.
 it is never a remembered spending authorization.
 No PAT, token or credential secret value is saved by these forms.
 
+Core energy setup runs source ingestion and serving-model verification only.
+The optional map-chat publisher is a separate, explicitly enabled component;
+an energy refresh must not run an unbound chat notebook or create a chat agent.
+
 **Navigation:** **Full Deploy** is always a separate top-level choice. Expand
 **Deployment Actions** for individual modules and maintenance actions.
 Use **Hide sidebar** to give the form the full content width; **Show sidebar**

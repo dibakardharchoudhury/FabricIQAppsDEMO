@@ -585,17 +585,16 @@ class FeatureWorkspace:
                 )
                 check_response(response, f"Bind {notebook_name}", {200, 202})
                 self.fabric.poll_lro(response)
-        source_ran = self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
+        self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
             "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
             "refresh_mode": "all", "force_refresh": False,
         }}})
         self._publish_energy_read_models(lakehouse["id"])
-        if self.config.enable_map_chat and not source_ran:
+        if self.config.enable_map_chat:
             self._run(MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
                 {"name": "workspace_id", "value": self.config.workspace_id, "type": "Text"},
                 {"name": "env_suffix", "value": self.config.env_suffix, "type": "Text"},
             ]})
-        if self.config.enable_map_chat:
             agent = self._item(f"Hydro_Map_Agent_{self.config.env_suffix}", "DataAgent")
             self.state["map_agent_id"] = agent["id"]
             self._save()

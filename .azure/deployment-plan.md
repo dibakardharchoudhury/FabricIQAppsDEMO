@@ -142,6 +142,30 @@ cells, dependency metadata, parameters and definition parts. The third local
 Core retry is job `78af860a9d3040b3984c8e12c93383f1`, still targeting V12 without
 Git import, reset or deletion. Await its terminal result before final deployment.
 
+### Core completed; energy-only pipeline correction
+
+The third Core pipeline, `9f644475-c3a0-4960-a5c4-0406f88c1e3a`, completed
+successfully, including the previously blocked NB09 and NB11. A fresh delegated
+Data Agent query subsequently executed `COUNT(*)` on V12 SQL `dbo.WorkOrders`
+and returned 12 with a CSV query attachment. The existing SQL item was reused.
+
+The following energy step first encountered a Fabric GET timeout. Retrying only
+energy resolved that network failure and completed Geo_001 ingestion, but the
+Git-managed pipeline then ran optional Geo_002 without a default Lakehouse.
+It failed with `lakehouse workspace: missing/invalid UUID`. This was not an
+ingestion failure or authorization to enable map chat.
+
+The canonical `04_Pipe_EnergyMap` now contains source ingestion only. Explicit
+`enable_map_chat` setup binds and runs the publisher separately after fresh or
+reused ingestion. Ordinary energy setup does not bind/run that optional notebook.
+All 130 focused feature-workspace, map-agent and initializer tests pass,
+including opt-in/opt-out and fresh/reused ingestion coverage.
+The live pipeline was backed up and updated in place, removing only the
+unconditional optional publisher, with verified content and unrelated-part
+readback. No Git reimport, data reset, notebook-source change or new chat agent
+was performed. Energy-only retry `f43aba283d6b4ba18a3b43816b3f19cf` is running
+pipeline instance `e914a0f3-ff53-428f-b60c-3b82e4f116e9`; await its result.
+
 ## Current SQL rollout validation (October 25, 2026)
 
 This section supersedes the historical validation below for the pending SQL
