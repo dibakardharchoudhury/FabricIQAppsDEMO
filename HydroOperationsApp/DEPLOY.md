@@ -25,7 +25,7 @@ Entra or SQL deployment sequence.
 
 | Setting | Normal behavior |
 |---|---|
-| Tenant / workspace | Shared by every module and remembered in this browser. On startup, a blank workspace is restored from local configuration only if the selected tenant has exactly one known saved workspace. Multiple saved workspaces require a choice. Confirm the restored target before running. |
+| Tenant / workspace | Tenant may be remembered. All workspace fields start empty on every page load, even if browser storage or local configuration contains a previous workspace. Enter the workspace yourself; the Core/Full Deploy workspace fields then mirror it. |
 | Repository / branch | Filled from this checkout. |
 | Key Vault URI / Teams destinations | Restored from saved values for this target, or configured defaults. Otherwise ask the resource owner; the app does not invent destinations. |
 | Alert email | Suggests the signed-in user's email when the tenant GUID matches. Confirm or replace it. |
@@ -59,11 +59,9 @@ stay blank rather than borrowing another target's destinations. Existing single-
 configuration and browser-only entries are migrated when saved. File/read/write
 errors are shown in the form; saving preferences never starts a connection test.
 Foundry overrides and sidebar preferences still use browser storage.
-Startup target recovery does not require browser storage: after the tenant is
-known, the app can restore its single saved workspace and then fill both setup
-forms. It does not choose across tenants, overwrite a workspace you entered,
-or restore a workspace while you are editing the target. An unresolved workspace
-shows an explicit sidebar-selection prompt instead of claiming values are prefilled.
+Workspace selection is never restored automatically. Saved Key Vault/Teams values
+remain on disk and load when you enter their tenant/workspace. Until then, setup
+shows a workspace-entry prompt and deployment actions remain disabled.
 
 Core energy setup runs source ingestion and serving-model verification only.
 The optional map-chat publisher is a separate, explicitly enabled component;

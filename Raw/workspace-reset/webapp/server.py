@@ -727,28 +727,10 @@ def _pipeline_configurations(targets: list[dict]) -> list[tuple[dict, str]]:
 def api_pipeline_params():
     """Expose target-specific defaults without authentication or connection jobs."""
     parameters = [dict(spec) for spec in PIPELINE_PARAM_SPEC]
-    restored_target = None
-    restore_status = ""
     try:
         tenant = request.args.get("tenant", "").strip()
         workspace = request.args.get("workspace", "").strip()
         configurations = _pipeline_configurations(_local_pipeline_targets())
-        if request.args.get("restoreTarget") == "1" and not workspace:
-            candidates = []
-            for target, _ in configurations:
-                if not tenant or target["tenant"].strip().casefold() != tenant.casefold():
-                    continue
-                known = _pipeline_workspace_aliases(tenant, target["workspace"])
-                known.update(alias.strip().casefold() for alias in target.get("workspaceAliases", []))
-                if not any(_pipeline_target_matches(candidate, tenant, known) for candidate in candidates):
-                    candidates.append(target)
-            if len(candidates) == 1:
-                workspace = candidates[0]["workspace"]
-                restored_target = {"tenant": tenant, "workspace": workspace}
-            elif candidates:
-                restore_status = "Choose a workspace in the sidebar: this tenant has multiple saved targets."
-            else:
-                restore_status = "Enter a tenant and workspace in the sidebar to load their saved setup values."
         aliases = _pipeline_workspace_aliases(tenant, workspace)
         for target, source in configurations:
             if not _pipeline_target_matches(target, tenant, aliases):
@@ -761,10 +743,7 @@ def api_pipeline_params():
                 spec["source"] = source
     except (OSError, UnicodeError, ValueError) as exc:
         return jsonify(error=f"Could not read pipeline defaults: {exc}"), 400
-    response = jsonify(
-        pipeline="01_Pipe_Setup", parameters=parameters,
-        restoredTarget=restored_target, targetRestoreStatus=restore_status,
-    )
+    response = jsonify(pipeline="01_Pipe_Setup", parameters=parameters)
     response.headers["Cache-Control"] = "no-store"
     return response
 

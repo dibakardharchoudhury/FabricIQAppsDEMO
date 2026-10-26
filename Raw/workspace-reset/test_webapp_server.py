@@ -522,7 +522,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
             self.assertEqual(specs["per_notebook_timeout_secs"]["default"], "")
             self.assertEqual(specs["ops_agent_teams_team_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_team_id"])
 
-    def test_startup_restores_the_only_saved_workspace_for_the_selected_tenant(self):
+    def test_workspace_defaults_require_an_explicit_workspace_even_at_startup(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "defaults.json"
             path.write_text(json.dumps({
@@ -542,7 +542,13 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 })
                 self.assertEqual(response.status_code, 200, response.get_json())
                 data = response.get_json()
-                self.assertEqual(data.get("restoredTarget"), {"tenant": "TENANT.example", "workspace": "Demo"})
+                self.assertIsNone(data.get("restoredTarget"))
+                specs = {spec["name"]: spec for spec in data["parameters"]}
+                self.assertEqual(specs["workspace_id"]["default"], "")
+                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                data = self.client.get("/api/pipeline-params", query_string={
+                    "tenant": "TENANT.example", "workspace": "Demo",
+                }).get_json()
                 specs = {spec["name"]: spec for spec in data["parameters"]}
                 self.assertEqual(specs["env_suffix"]["default"], "V12")
                 for name, value in PIPELINE_PARAMS.items():
@@ -568,7 +574,9 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                     "tenant": "tenant.example", "workspace": "", "restoreTarget": "1",
                 }).get_json()
                 self.assertIsNone(data.get("restoredTarget"))
-                self.assertIn("Choose a workspace", data["targetRestoreStatus"])
+                specs = {spec["name"]: spec for spec in data["parameters"]}
+                self.assertEqual(specs["workspace_id"]["default"], "")
+                self.assertEqual(specs["key_vault_uri"]["default"], "")
                 start.assert_not_called()
                 process.assert_not_called()
 
@@ -603,7 +611,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 self.assertEqual(self.client.post("/api/pipeline-params", json=payload).status_code, 400)
                 self.assertEqual(path.read_text(encoding="utf-8"), "{")
 
-    def test_browser_startup_restores_workspace_before_rendering_saved_values(self):
+    def test_browser_keeps_workspaces_blank_until_explicit_entry(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         function = page[page.index("async function loadPipelineParams("):page.index("function collectPipelineParams(")]
         specs = [
@@ -619,11 +627,10 @@ for (const id of ["tenant","workspace","pipelineFields","workflowPipelineFields"
     prepend(status){fields.set(status.id,status);}});
 }
 const document = {createElement:()=>({setAttribute(){}})};
-let pipelineSpec=[], pipelineLoadSequence=0, pipelineTarget="", pipelineSavedValues={}, targetEdited=false;
-let renderCount=0, remembered=null;
+let pipelineSpec=[], pipelineLoadSequence=0, pipelineTarget="", pipelineSavedValues={};
+let renderCount=0;
 const pipelineTargetKey = () => $("tenant").value.trim() && $("workspace").value.trim()
   ? JSON.stringify([$("tenant").value.trim(),$("workspace").value.trim()]) : "";
-const saveTargetSettings = () => {remembered={tenant:$("tenant").value,workspace:$("workspace").value};};
 const restoreFoundrySettings = () => {};
 const readPipelineSettings = () => ({});
 const renderPipelineFields = prefix => {
@@ -642,19 +649,31 @@ const escapeHtml = String;
 const persistPipelineSettings = () => {throw new Error("Startup must not save invented values");};
 const requests=[];
 const specs = """ + json.dumps(specs) + """;
-const restored = {parameters:specs,restoredTarget:{tenant:"tenant.example",workspace:"Demo"}};
+const saved = {parameters:specs};
+const blank = {parameters:specs.map(spec=>({...spec,default:"",source:undefined}))};
 global.fetch = async url => {
   requests.push(url);
-  assert.equal(new URL(url,"http://localhost").searchParams.get("restoreTarget"),"1");
-  return {ok:true,json:async()=>restored};
+  const query = new URL(url,"http://localhost").searchParams;
+  assert.equal(query.get("workspace"),"");
+  assert.equal(query.has("restoreTarget"),false);
+  return {ok:true,json:async()=>blank};
 };
 """ + function + """
 (async()=>{
   $("tenant").value="tenant.example";
   $("workspace").value="";
-  await loadPipelineParams({restoreTarget:true});
+  await loadPipelineParams();
+  assert.equal($("workspace").value,"");
+  assert.equal($("pp_workspace_id").value,"");
+  assert.equal($("wf_pp_workspace_id").value,"");
+  assert.equal(requests.length,1);
+  $("workspace").value="Demo";
+  global.fetch=async url=>{
+    assert.equal(new URL(url,"http://localhost").searchParams.get("workspace"),"Demo");
+    return {ok:true,json:async()=>saved};
+  };
+  await loadPipelineParams();
   assert.equal($("workspace").value,"Demo");
-  assert.deepEqual(remembered,{tenant:"tenant.example",workspace:"Demo"});
   assert.equal(pipelineTarget,pipelineTargetKey());
   for(const prefix of ["pp_","wf_pp_"]) {
     assert.equal($(prefix+"workspace_id").value,"Demo");
@@ -662,38 +681,34 @@ global.fetch = async url => {
       assert.equal($(prefix+name).value,specs.find(spec=>spec.name===name).default);
     }
   }
-  assert.equal(requests.length,1);
   // A user editing the target during startup must win over the delayed response.
   $("workspace").value="";
   let respond;
   global.fetch=()=>new Promise(resolve=>{respond=resolve;});
   let previousRenders=renderCount;
-  let loading=loadPipelineParams({restoreTarget:true});
+  let loading=loadPipelineParams();
   $("workspace").value="New workspace";
-  targetEdited=true;
-  respond({ok:true,json:async()=>restored});
+  respond({ok:true,json:async()=>saved});
   await loading;
   assert.equal($("workspace").value,"New workspace");
   assert.equal(renderCount,previousRenders);
   // Incomplete targets share an empty storage key, but must not share responses.
   $("workspace").value="";
-  targetEdited=false;
   previousRenders=renderCount;
-  loading=loadPipelineParams({restoreTarget:true});
+  loading=loadPipelineParams();
   $("tenant").value="different-tenant";
-  respond({ok:true,json:async()=>restored});
+  respond({ok:true,json:async()=>saved});
   await loading;
   assert.equal($("workspace").value,"");
   assert.equal(renderCount,previousRenders);
   $("tenant").value="tenant.example";
-  targetEdited=true;
   global.fetch=async url=>{
-    assert.equal(new URL(url,"http://localhost").searchParams.get("restoreTarget"),"0");
-    return {ok:true,json:async()=>({parameters:specs.map(spec=>({...spec,default:"",source:undefined}))})};
+    assert.equal(new URL(url,"http://localhost").searchParams.has("restoreTarget"),false);
+    return {ok:true,json:async()=>blank};
   };
-  await loadPipelineParams({restoreTarget:true});
+  await loadPipelineParams();
   assert.equal($("workspace").value,"");
-  assert.match($("pipelineSettingsStatus").textContent,/Select a tenant and workspace/);
+  assert.match($("pipelineSettingsStatus").textContent,/Enter a workspace/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
@@ -747,11 +762,13 @@ const localStorage = {
 $("tenant").value = " tenant-A ";
 $("workspace").value = " Demo ";
 saveTargetSettings();
+assert.equal(JSON.parse(stored.get("fabric-demo.target.v1")).workspace, undefined);
+stored.set("fabric-demo.target.v1", JSON.stringify({tenant:"tenant-A",workspace:"old-workspace"}));
 $("tenant").value = "";
 $("workspace").value = "";
 restoreTargetSettings();
 assert.equal($("tenant").value, "tenant-A");
-assert.equal($("workspace").value, "Demo");
+assert.equal($("workspace").value, "");
 stored.set("fabric-demo.target.v1", "{");
 $("tenant").value = "";
 $("workspace").value = "";
