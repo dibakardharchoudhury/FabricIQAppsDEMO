@@ -217,10 +217,14 @@ Core setup provisions Lakehouse, Eventhouse, independent operational SQL,
 ontology generation **2**, dashboard, Data Agent and retained Operations Agent
 capabilities. NB11 runs after the agents and Weather schema setup, inserts
 missing operational demo records and publishes the SQL Data Agent source.
-The local **Core setup** action then runs energy-source preparation under the
-same monitored job. **Full Deploy** reuses this exact sequence, so energy runs
-once, not as an additional optional stage. Failure in either part stops later
-work. Foundry setup remains a separate module.
+After NB01 creates and binds the Lakehouses, Core/Weather's `runMultiple` DAG
+and energy ingestion run in parallel branches of `01_Pipe_Setup`. Energy keeps
+its own schema-disabled GeoContext Lakehouse and Spark session, not Core's
+operational default Lakehouse. The pipeline waits for both branches. The local
+job then publishes and verifies map serving without a second ingestion run.
+**Full Deploy** uses this same sequence; either failure stops later work.
+Foundry remains separate. Sync GitHub once to import the changed pipeline and
+notebooks; Core refuses the old serial definition before starting a long run.
 Real setup/publication/readback failures stop the workflow. Only NB09's exact
 `This API version is not supported for the specified Ontology item` response,
 after verified v2 publication, is a known product limitation rather than runtime
@@ -244,6 +248,16 @@ in Advanced settings. Never infer ownership from names, a sole graph or structur
 See [native graph details](../docs/knowledge-graph.md).
 
 ## 5. Prepare energy and Weather sources
+
+Weather setup creates its tables; `03_Pipe_Weather` fetches forecasts and
+computes metrics on its six-hour schedule. Energy's first import now runs
+inside Core. `04_Pipe_EnergyMap` remains for on-demand refreshes; setup does
+not enable an energy schedule. Network/plant snapshots cache for 24 hours;
+reservoir statistics, Statnett and UMM refresh on each eligible run. Use
+`refresh_mode=operational` for changing operational sources, or `all` for
+every source with static-cache reuse. Add a schedule only if unattended
+freshness is required, with a deliberately chosen cadence. Do not overlap
+Core and standalone energy ingestion against the same GeoContext tables.
 
 Energy preparation is included in local **Core setup** and **Full Deploy**.
 For later data-only updates, **Refresh energy sources** imports/prepares only its ingestion artifacts, reuses

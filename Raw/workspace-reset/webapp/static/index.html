@@ -368,7 +368,7 @@
       </aside>
       <div class="workflow-steps">
         <div class="workflow-step"><strong>1. Sync from GitHub</strong>Imports the selected branch into the target Fabric workspace.</div>
-        <div class="workflow-step"><strong>2. Core setup</strong>Runs <code>01_Pipe_Setup</code> for core data and Weather setup, then prepares energy sources.</div>
+        <div class="workflow-step"><strong>2. Core setup</strong>Runs <code>01_Pipe_Setup</code> with Core/Weather and energy ingestion in parallel, then verifies map serving.</div>
         <div class="workflow-step"><strong>3. Set up Foundry agents</strong>Reuses the selected project; converges five specialists and the Hosted coordinator.</div>
         <div class="workflow-step"><strong>4. Deploy Fabric app</strong>Publishes the app last, with read-only agent verification and endpoint/CORS checks.</div>
       </div>
@@ -394,7 +394,7 @@
           <div id="workflowTestPanel"></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
-          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup, Weather and energy sources</strong><span>Complete parameters for Key Vault, agents and alert delivery. Energy-source setup runs automatically after the core pipeline succeeds.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup, Weather and energy sources</strong><span>Complete parameters for Key Vault, agents and alert delivery. Energy ingestion runs alongside Core/Weather; serving is verified after both branches succeed.</span></div></div>
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
@@ -450,7 +450,7 @@
         <h2>Core setup, Weather and energy sources</h2>
       </div>
       <p class="hint">Checks that the target workspace can reach Key Vault, creates and approves a Fabric managed private endpoint when required and permitted, then runs the setup pipeline. The workspace name is resolved to its canonical ID before the notebooks start.</p>
-      <p class="hint">After <code>01_Pipe_Setup</code> completes, energy-source setup runs automatically and verifies its serving layers. Weather schema and schedule setup remain in the core pipeline; provider ingestion still needs valid credentials and its scheduled run. Foundry setup stays separate. A failed core pipeline never starts energy setup.</p>
+      <p class="hint">After NB01 binds the Lakehouses, Core/Weather and energy ingestion run in parallel branches of <code>01_Pipe_Setup</code>. Map serving is published and verified without a second import. Sync GitHub first to import the updated pipeline. Weather provider ingestion retains its separate schedule. Either branch failing stops later steps; Foundry stays separate.</p>
       <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
       <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run core setup</button>
       <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>

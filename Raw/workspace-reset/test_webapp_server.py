@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import contextlib
 import io
 import json
@@ -164,6 +165,7 @@ class WorkspaceActionTests(unittest.TestCase):
         steps = start.call_args.args[0]
         self.assertEqual([step["name"] for step in steps], ["Setup pipeline", "Energy setup"])
         self.assertEqual(steps[1]["argv"][steps[1]["argv"].index("--stage") + 1], "energy")
+        self.assertIn("--energy-read-models-only", steps[1]["argv"])
         self.assertEqual(start.call_args.kwargs["phases"], SERVER.CORE_SETUP_PHASES)
         self.assertLess(steps[0]["phase_offset"], steps[1]["phase_offset"])
         self.assertFalse(any(phase.startswith("Foundry") for phase in SERVER.CORE_SETUP_PHASES))
@@ -897,6 +899,10 @@ assert.equal($("workflowFoundryCreate").checked, false);
         fabric.start_pipeline.assert_not_called()
 
     def test_pipeline_api_worker_and_poll_preserve_required_agent_failure_and_success(self):
+        source = MODULE_PATH.parents[3] / "Orchestrator_Pipelines" / "01_Pipe_Setup.DataPipeline" / "pipeline-content.json"
+        definition = {"definition": {"parts": [{
+            "path": "pipeline-content.json", "payload": base64.b64encode(source.read_bytes()).decode(),
+        }]}}
         for state, energy_code, expected_status, expected_code in (
             ("Completed", 0, "succeeded", 0), ("Failed", 0, "failed", 1),
             ("Completed", 23, "failed", 23),
@@ -908,6 +914,7 @@ assert.equal($("workflowFoundryCreate").checked, false);
                     Mock(status_code=200, json=Mock(return_value={"environment": {"runtimeVersion": "2.0"}})),
                     Mock(status_code=200, json=Mock(return_value={"value": [{"id": "weather"}]})),
                     Mock(status_code=200, json=Mock(return_value={"runtimeVersion": "2.0"})),
+                    Mock(status_code=200, json=Mock(return_value=definition)),
                 ]
                 fabric.find_pipeline.return_value = ("pipeline-id", "01_Pipe_Setup")
                 fabric.start_pipeline.return_value = "https://mock.invalid/job"
@@ -954,6 +961,7 @@ assert.equal($("workflowFoundryCreate").checked, false);
                     self.assertTrue(job["done"])
                     parameters = fabric.start_pipeline.call_args.args[2]
                     self.assertEqual(parameters["workspace_id"], "canonical-workspace")
+                    self.assertTrue(parameters["enable_energy_map"])
                     self.assertNotIn("ontology_data_agent_mode", parameters)
                     self.assertNotIn("ontology_operations_agent_mode", parameters)
                     log = "\n".join(job["lines"])

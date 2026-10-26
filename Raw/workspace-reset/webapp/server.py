@@ -839,7 +839,7 @@ def _pipeline_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
     params["ops_agent_run_as_user"] = str(raw_params.get("ops_agent_run_as_user") or "").strip()
     argv = [
         str(PIPELINE_SCRIPT), "--tenant", tenant, "--workspace", workspace,
-        "--pipeline", pipeline, "--yes",
+        "--pipeline", pipeline, "--yes", "--require-parallel-energy",
     ]
     return argv, {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
 
@@ -858,6 +858,7 @@ def api_run_pipeline():
 def _core_setup_steps(data: dict, *, phase_offset: int = 1) -> list[dict[str, object]]:
     argv, env_extra = _pipeline_invocation(data)
     energy_argv = _deploy_invocation({**data, "energyMap": "enabled"}, stage="energy")
+    energy_argv.insert(1, "--energy-read-models-only")
     return [
         {
             "name": "Setup pipeline", "argv": argv, "env": env_extra,

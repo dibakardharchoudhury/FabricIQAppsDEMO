@@ -103,6 +103,7 @@ from datetime import datetime, timezone
 
 # Shared settings table name (later notebooks read this table instead of redefining common settings).
 settings_table_name = "rti_demo_settings"
+enable_energy_map = True
 
 # THE one environment lever (INJECTED by Pipe_Setup). The workspace folder and every artifact
 # name derive from it in the next cell, AFTER the injected override is applied.
@@ -3116,6 +3117,25 @@ def _workspace_item_id(display_name: str, item_type: str) -> str:
 
 weather_environment_id = _workspace_item_id(weather_environment_name, "Environment")
 
+geo_lakehouse_name = f"Hydro_GeoContext_{env_suffix}"
+geo_lakehouse_id = ""
+if enable_energy_map:
+    geo_lakehouse_id = ensure_lakehouse(
+        workspace_id, geo_lakehouse_name, f"Feature bootstrap {workspace_id}: energy context",
+        access_token, target_folder_id,
+    )
+    if geo_lakehouse_id != _workspace_item_id(geo_lakehouse_name, "Lakehouse"):
+        raise RuntimeError("Energy context Lakehouse identity changed during setup.")
+    geo_response = requests.get(
+        f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items/{geo_lakehouse_id}",
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=60,
+    )
+    if geo_response.status_code != 200:
+        raise RuntimeError(f"Cannot verify energy context ownership: HTTP {geo_response.status_code}.")
+    if geo_response.json().get("description") != f"Feature bootstrap {workspace_id}: energy context":
+        raise RuntimeError("Refusing to ingest into an unowned energy context Lakehouse.")
+    chain_notebooks.append("Geo_001_ingest_energy_context")
+
 
 def _rebind_lakehouse(nb_name: str) -> tuple:
     """Point one notebook at ONLY the current lakehouse, dropping any stale
@@ -3129,6 +3149,13 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             "default_lakehouse_workspace_id": workspace_id,
             "known_lakehouses": [{"id": lakehouse_id}],
         }
+        if nb_name == "Geo_001_ingest_energy_context":
+            deps["lakehouse"] = {
+                "default_lakehouse": geo_lakehouse_id,
+                "default_lakehouse_name": geo_lakehouse_name,
+                "default_lakehouse_workspace_id": workspace_id,
+                "known_lakehouses": [{"id": geo_lakehouse_id}],
+            }
         if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}:
             deps["environment"] = {
                 "environmentId": weather_environment_id,
@@ -3166,8 +3193,8 @@ if binding_failures:
     )
 
 print(
-    f"\nℹ️  All downstream notebooks now reference the lakehouse "
-    f"'{lakehouse_name}' ({lakehouse_id}). They pick this up on their next "
+    f"\nℹ️  Core notebooks reference '{lakehouse_name}' ({lakehouse_id}); "
+    f"energy binding is '{geo_lakehouse_name}' ({geo_lakehouse_id or 'disabled'}). They pick this up on their next "
     "session start."
 )
 

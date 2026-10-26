@@ -29,6 +29,124 @@ def config_dict():
 
 
 class FeatureWorkspaceTests(unittest.TestCase):
+    def test_core_energy_branch_runs_beside_the_shared_session_and_propagates_failures(self):
+        pipeline = json.loads((ROOT / "Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json").read_text())
+        properties = pipeline["properties"]
+        activities = {activity["name"]: activity for activity in properties["activities"]}
+        self.assertEqual(properties["concurrency"], 1)
+        self.assertEqual(set(activities), {
+            "RTI_001_create_lakehouse_SelfContained", "RTI_Orchestrator_Setup", "Energy_map_setup",
+        })
+        expected = [{"activity": "RTI_001_create_lakehouse_SelfContained", "dependencyConditions": ["Succeeded"]}]
+        self.assertEqual(activities["RTI_Orchestrator_Setup"]["dependsOn"], expected)
+        energy = activities["Energy_map_setup"]
+        self.assertEqual(energy["dependsOn"], expected)
+        self.assertEqual(energy["type"], "IfCondition")
+        self.assertEqual(energy["typeProperties"]["expression"]["value"], "@pipeline().parameters.enable_energy_map")
+        children = energy["typeProperties"]["ifTrueActivities"]
+        self.assertEqual(len(children), 1)
+        self.assertEqual(children[0]["name"], feature.ENERGY_NOTEBOOK)
+        self.assertFalse(children[0].get("onInactiveMarkAs"))
+        self.assertNotIn("continueOnError", json.dumps(properties))
+        self.assertEqual(children[0]["typeProperties"]["parameters"]["refresh_mode"]["value"], "all")
+        self.assertFalse(children[0]["typeProperties"]["parameters"]["force_refresh"]["value"])
+        for name in ("workspace_id", "env_suffix"):
+            self.assertEqual(children[0]["typeProperties"]["parameters"][name]["value"]["value"],
+                             f"@pipeline().parameters.{name}")
+        self.assertTrue(properties["parameters"]["enable_energy_map"]["defaultValue"])
+
+    def test_old_live_setup_pipeline_is_rejected_before_starting_a_job(self):
+        from run_pipeline import require_parallel_energy_setup
+
+        pipeline = json.loads((ROOT / "Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json").read_text())
+        def definition():
+            return {"definition": {"parts": [{
+                "path": "pipeline-content.json",
+                "payload": base64.b64encode(json.dumps(pipeline).encode()).decode(),
+            }]}}
+        fabric = Mock()
+        fabric.request.return_value = Mock(status_code=200, json=definition)
+        require_parallel_energy_setup(fabric, WORKSPACE, "setup")
+        fabric.request.assert_called_once_with(
+            "POST", f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items/setup/getDefinition",
+        )
+        pipeline["properties"]["activities"] = pipeline["properties"]["activities"][:2]
+        with self.assertRaisesRegex(SystemExit, "Sync from GitHub"):
+            require_parallel_energy_setup(fabric, WORKSPACE, "setup")
+        fabric.start_pipeline.assert_not_called()
+
+    def test_parallel_pipeline_definition_long_running_read_is_supported(self):
+        import run_pipeline
+
+        pipeline = json.loads((ROOT / "Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json").read_text())
+        operation = f"{feature.FABRIC_BASE}/operations/11111111-2222-3333-4444-555555555555"
+        fabric = Mock()
+        fabric.request.side_effect = [
+            Mock(status_code=202, headers={"Location": operation}),
+            Mock(status_code=200, json=lambda: {"status": "Succeeded"}),
+            Mock(status_code=200, json=lambda: {"definition": {"parts": [{
+                "path": "pipeline-content.json",
+                "payload": base64.b64encode(json.dumps(pipeline).encode()).decode(),
+            }]}}),
+        ]
+        with patch.object(run_pipeline.time, "sleep"):
+            run_pipeline.require_parallel_energy_setup(fabric, WORKSPACE, "setup")
+        self.assertEqual(fabric.request.call_args.args, ("GET", operation + "/result"))
+        fabric.start_pipeline.assert_not_called()
+
+    def test_stage_one_keeps_geo_binding_separate_from_the_run_multiple_root(self):
+        path = ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_rebind_lakehouse")
+        notebooks = Mock()
+        notebooks.notebook.getDefinition.return_value = json.dumps({"metadata": {"dependencies": {
+            "lakehouse": {"default_lakehouse": "stale"},
+        }}})
+        notebooks.notebook.updateDefinition.return_value = True
+        namespace = {
+            "json": json, "notebookutils": notebooks, "lakehouse_id": "operational",
+            "lakehouse_name": "Energy_IQ_LakehouseRTI_TEST", "workspace_id": WORKSPACE,
+            "geo_lakehouse_id": "geo", "geo_lakehouse_name": "Hydro_GeoContext_TEST",
+            "weather_environment_id": "weather-environment", "weather_environment_name": "Weather",
+        }
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
+        for name, expected in ((feature.ENERGY_NOTEBOOK, "geo"), ("RTI_002_Setup_Eventhouse_Only", "operational")):
+            result = namespace["_rebind_lakehouse"](name)
+            self.assertTrue(result[1])
+            definition = json.loads(notebooks.notebook.updateDefinition.call_args.kwargs["content"])
+            binding = definition["metadata"]["dependencies"]["lakehouse"]
+            self.assertEqual(binding["default_lakehouse"], expected)
+            self.assertEqual(binding["known_lakehouses"], [{"id": expected}])
+            self.assertEqual(binding["default_lakehouse_workspace_id"], WORKSPACE)
+
+    def test_core_finish_only_publishes_and_verifies_energy_without_a_second_import(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V11"), ROOT,
+            )
+            lakehouse = {"id": "geo", "description": f"{workspace.marker}: energy context"}
+            with patch.object(workspace, "_item", return_value=lakehouse), \
+                    patch.object(workspace, "ensure_energy_folder") as folder, \
+                    patch.object(workspace, "_run") as run, \
+                    patch.object(workspace, "_publish_energy_read_models") as publish:
+                workspace.publish_energy()
+                folder.assert_called_once_with(lakehouse)
+                publish.assert_called_once_with("geo")
+                run.assert_not_called()
+                publish.side_effect = feature.FeatureWorkspaceError("incomplete sources")
+                with self.assertRaisesRegex(feature.FeatureWorkspaceError, "incomplete sources"):
+                    workspace.publish_energy()
+            self.assertEqual(workspace.state["energy_lakehouse_id"], "geo")
+
+    def test_disabled_feature_has_no_reference_to_missing_energy_notebooks(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json"), ROOT,
+            )
+            setup = next(spec for spec in workspace.specs if spec["name"] == "01_Pipe_Setup")
+            pipeline = json.loads(setup["files"]["pipeline-content.json"])
+            self.assertNotIn(feature.ENERGY_NOTEBOOK, json.dumps(pipeline["properties"]["activities"]))
+
     def test_energy_folder_move_preserves_identity_and_never_runs_ingestion(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             workspace = feature.FeatureWorkspace(
@@ -155,24 +273,29 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertGreater(len(workspace.specs), 20)
             self.assertTrue(all(s["type"] in {"Notebook", "DataPipeline", "Environment"} for s in workspace.specs))
 
-    def test_energy_opt_in_preserves_the_baseline_digest_and_completed_jobs(self):
+    def test_energy_opt_in_invalidates_core_checkpoint_to_run_the_new_parallel_branch(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             path = Path(directory) / "state.json"
             baseline = feature.FeatureWorkspace(feature.FeatureConfig(**config_dict(), state_path=path), ROOT)
             enabled = feature.FeatureWorkspace(
                 feature.FeatureConfig(**config_dict(), state_path=path, enable_energy_map=True), ROOT,
             )
-            self.assertEqual(baseline.source_digest, enabled.source_digest)
+            self.assertNotEqual(baseline.source_digest, enabled.source_digest)
             self.assertEqual(len(enabled.specs), len(baseline.specs) + 2)
             self.assertFalse(feature.ENERGY_ITEMS & {spec["name"] for spec in baseline.specs})
             self.assertTrue(feature.ENERGY_ITEMS <= {spec["name"] for spec in enabled.specs})
             body = {"executionData": {"parameters": {"workspace_id": WORKSPACE}}}
             request_digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
             enabled.state["jobs"][f"setup-id:{baseline.source_digest}:{request_digest}"] = "completed-job-url"
-            enabled.fabric.request.return_value = Mock(status_code=200, json=lambda: {"status": "Completed"})
-            with patch.object(enabled, "_item", return_value={"id": "setup-id"}):
+            enabled.fabric.request.side_effect = [
+                Mock(status_code=202, headers={"Location": "new-job-url"}),
+                Mock(status_code=200, json=lambda: {"status": "Completed"}),
+            ]
+            with patch.object(enabled, "_item", return_value={"id": "setup-id"}), \
+                    patch.object(feature.time, "sleep"):
                 enabled._run("01_Pipe_Setup", "DataPipeline", body)
-            enabled.fabric.request.assert_called_once_with("GET", "completed-job-url")
+            self.assertEqual([call.args[0] for call in enabled.fabric.request.call_args_list], ["POST", "GET"])
+            self.assertEqual(enabled.fabric.request.call_args.args[1], "new-job-url")
 
     def test_energy_pipeline_is_serial_and_forwards_the_notebook_parameters(self):
         pipeline = json.loads((ROOT / "Orchestrator_Pipelines/04_Pipe_EnergyMap.DataPipeline/pipeline-content.json").read_text())

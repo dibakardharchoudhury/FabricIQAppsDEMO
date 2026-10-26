@@ -40,6 +40,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -48,7 +49,7 @@ import time
 from typing import Any
 
 from key_vault_preflight import PreflightError, ensure_key_vault_access
-from sync_workspace_from_git import ensure_spark_runtime, verify_environment_runtimes
+from sync_workspace_from_git import ensure_spark_runtime, verify_environment_runtimes, fabric_operation_url
 
 try:
     import requests
@@ -70,6 +71,40 @@ DEFAULT_PIPELINE = "01_Pipe_Setup"
 # labels it differently across regions.
 PIPELINE_TYPES = {"DataPipeline", "Pipeline"}
 TERMINAL_STATES = {"Completed", "Failed", "Cancelled", "Deduped"}
+
+
+def require_parallel_energy_setup(fab, workspace: str, pipeline: str) -> None:
+    """Fail before a long run if the workspace still has the old serial setup."""
+    response = fab.request("POST", f"{FABRIC_BASE}/workspaces/{workspace}/items/{pipeline}/getDefinition")
+    if response.status_code == 202:
+        operation = fabric_operation_url(response)
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            time.sleep(max(1, int(response.headers.get("Retry-After", "5"))))
+            response = fab.request("GET", operation)
+            if response.status_code != 200 or response.json().get("status") in {"Failed", "Cancelled"}:
+                raise SystemExit("Cannot read Core pipeline definition; no setup was started.")
+            if response.json().get("status") == "Succeeded":
+                response = fab.request("GET", f"{operation}/result")
+                break
+        else:
+            raise SystemExit("Timed out reading Core pipeline definition; no setup was started.")
+    if response.status_code != 200:
+        raise SystemExit(f"Cannot verify Core pipeline: HTTP {response.status_code}; no setup was started.")
+    parts = response.json().get("definition", {}).get("parts", [])
+    matches = [part for part in parts if part.get("path") == "pipeline-content.json"]
+    if len(matches) != 1:
+        raise SystemExit("Core pipeline definition is missing pipeline-content.json; sync GitHub before setup.")
+    content = json.loads(base64.b64decode(matches[0]["payload"], validate=True))
+    activities = {activity["name"]: activity for activity in content["properties"]["activities"]}
+    root = [{"activity": "RTI_001_create_lakehouse_SelfContained", "dependencyConditions": ["Succeeded"]}]
+    energy = activities.get("Energy_map_setup", {})
+    children = energy.get("typeProperties", {}).get("ifTrueActivities", [])
+    if (energy.get("dependsOn") != root
+            or activities.get("RTI_Orchestrator_Setup", {}).get("dependsOn") != root
+            or len(children) != 1 or children[0].get("name") != "Geo_001_ingest_energy_context"):
+        raise SystemExit("Core pipeline does not contain parallel energy setup. Select Sync from GitHub first.")
+    print("Verified parallel Core/Weather and energy setup branches.", flush=True)
 
 
 class Fabric:
@@ -232,6 +267,8 @@ def main() -> int:
     parser.add_argument("--parameters-json", help="Pipeline parameters as a JSON object (name -> value). Alternatively set FABRIC_PIPELINE_PARAMS.")
     parser.add_argument("--no-wait", action="store_true", help="Start the run and exit without waiting for it to finish.")
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
+    parser.add_argument("--require-parallel-energy", action="store_true",
+                        help="Require the updated Core/energy parallel pipeline before starting setup.")
     args = parser.parse_args()
 
     args.tenant = args.tenant or os.environ.get("FABRIC_TENANT")
@@ -266,6 +303,9 @@ def main() -> int:
             return 1
 
     item_id, pipe_name = fab.find_pipeline(ws_id, args.pipeline)
+    if args.require_parallel_energy:
+        require_parallel_energy_setup(fab, ws_id, item_id)
+        parameters["enable_energy_map"] = True
     print(f"Pipeline '{pipe_name}' ({item_id}) in workspace '{ws_name}' ({ws_id}).")
     if parameters:
         print("Parameters:")

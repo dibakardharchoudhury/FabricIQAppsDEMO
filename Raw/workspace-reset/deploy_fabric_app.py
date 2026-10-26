@@ -2464,7 +2464,11 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         timings.stage(2, "Preparing energy sources and verifying serving readback")
         print("Energy: setup - preparing map sources independently of app publication.", flush=True)
         try:
-            energy_workspace(tenant_id, workspace_id).prepare_energy()
+            energy = energy_workspace(tenant_id, workspace_id)
+            if getattr(args, "energy_read_models_only", False):
+                energy.publish_energy()
+            else:
+                energy.prepare_energy()
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
         values, _ = current_rayfin_target()
@@ -2696,6 +2700,8 @@ def parse_args() -> argparse.Namespace:
                         help="Independent local setup module; app verifies existing Foundry without provisioning it.")
     parser.add_argument("--energy-map", choices=("keep", "enabled", "disabled"), default="keep",
                         help="Keep this target's visibility setting, or explicitly enable/disable energy navigation.")
+    parser.add_argument("--energy-read-models-only", action="store_true",
+                        help="With --stage energy, publish/verify Core's completed parallel import without rerunning it.")
     parser.add_argument(
         "--push-config",
         action="store_true",

@@ -250,6 +250,10 @@ class FeatureWorkspace:
             for spec in self.specs if spec["name"] in ENERGY_ITEMS
             for path, data in sorted(spec["files"].items())
         )).hexdigest()
+        if config.enable_energy_map:
+            self.source_digest = hashlib.sha256(
+                (self.source_digest + self.energy_digest).encode()
+            ).hexdigest()
         self.map_agent_digest = hashlib.sha256(b"".join(
             path.encode() + data
             for spec in self.specs if spec["name"] == MAP_AGENT_NOTEBOOK
@@ -289,6 +293,13 @@ class FeatureWorkspace:
                         files[source.relative_to(directory).as_posix()] = source.read_bytes()
                 if name == ENERGY_PIPELINE and not self.config.enable_map_chat:
                     files["pipeline-content.json"] = energy_source_pipeline(files["pipeline-content.json"])
+                if name == "01_Pipe_Setup" and not self.config.enable_energy_map:
+                    pipeline = json.loads(files["pipeline-content.json"])
+                    pipeline["properties"]["activities"] = [
+                        activity for activity in pipeline["properties"]["activities"]
+                        if activity["name"] != "Energy_map_setup"
+                    ]
+                    files["pipeline-content.json"] = (json.dumps(pipeline, indent=2) + "\n").encode()
                 specs.append({
                     "folder": folder, "type": item_type, "name": name, "logical_id": logical_id,
                     "platform": platform, "files": files,
@@ -493,6 +504,7 @@ class FeatureWorkspace:
             "key_vault_client_secret_name": "clientsecret",
             "ops_agent_teams_team_id": "", "ops_agent_teams_channel_id": "",
             "ops_agent_run_as_user": "", "enable_weather_schedule": False,
+            "enable_energy_map": self.config.enable_energy_map,
             "per_notebook_timeout_secs": 3600,
         }
         print("Provisioning Fabric items from this checkout without Git.", flush=True)
@@ -518,7 +530,7 @@ class FeatureWorkspace:
         ):
             self._item(name, item_type)
         if self.config.enable_energy_map:
-            self._prepare_energy_map()
+            self.publish_energy()
 
     def prepare_energy(self) -> None:
         """Prepare only energy artifacts; never rerun core setup, SQL, or Foundry."""
@@ -589,7 +601,10 @@ class FeatureWorkspace:
             "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
             "refresh_mode": "all", "force_refresh": False,
         }}})
-        self._publish_energy_read_models(lakehouse["id"])
+        self._complete_energy_map(lakehouse["id"])
+
+    def _complete_energy_map(self, lakehouse_id: str) -> None:
+        self._publish_energy_read_models(lakehouse_id)
         if self.config.enable_map_chat:
             self._run(MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
                 {"name": "workspace_id", "value": self.config.workspace_id, "type": "Text"},
@@ -622,6 +637,16 @@ class FeatureWorkspace:
     def verify_energy(self) -> None:
         lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
         self._publish_energy_read_models(lakehouse["id"], publish=False)
+
+    def publish_energy(self) -> None:
+        """Finish Core's parallel import without starting another ingestion job."""
+        lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
+        if lakehouse.get("description") != f"{self.marker}: energy context":
+            raise FeatureWorkspaceError("Refusing to publish an unowned energy context Lakehouse.")
+        self.ensure_energy_folder(lakehouse)
+        self.state["energy_lakehouse_id"] = lakehouse["id"]
+        self._save()
+        self._complete_energy_map(lakehouse["id"])
 
     def _publish_energy_read_models(self, lakehouse_id: str, *, publish: bool = True) -> None:
         database = f"RTI_Demo_Eventhouse_{self.config.env_suffix}"

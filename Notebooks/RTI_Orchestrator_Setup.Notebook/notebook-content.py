@@ -19,7 +19,7 @@
 
 # # RTI Demo – Setup Orchestrator (Stage 2 of 2)
 # 
-# **Stage 1** (`RTI_001_create_lakehouse_shortcut`) runs first as its own pipeline activity: it
+# **Stage 1** (`RTI_001_create_lakehouse_SelfContained`) runs first as its own pipeline activity: it
 # creates the Lakehouse and independent operational SQL in the demo folder, writes
 # `rti_demo_settings`, and rebinds every child notebook's default
 # lakehouse. **Stage 2 is this notebook**, launched by `Pipe_Setup` only after Stage 1 succeeds.
@@ -32,6 +32,9 @@
 #   branches run in parallel per the DAG.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
+# - **Energy ingestion (Geo_001)** runs alongside this DAG as a separate pipeline branch,
+#   bound to its own schema-disabled GeoContext Lakehouse. It must not inherit this
+#   session's operational default Lakehouse. The pipeline waits for both branches.
 #
 # **Ontology v2 only:** NB04 creates explicit TMDL database/model/default namespace;
 # NB04–NB06 require live integer `properties.generation == 2`. Existing v1 is

@@ -112,6 +112,26 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
 
 
 class FoundryGraphPrerequisiteTests(unittest.TestCase):
+    def test_core_energy_finalize_does_not_start_a_second_ingestion(self):
+        for publish_only in (True, False):
+            with self.subTest(publish_only=publish_only), \
+                    patch.object(DEPLOY, "prefer_tenant_scoped_azure_cli_config"), \
+                    patch.object(DEPLOY, "ensure_azure_tenant", return_value="tenant"), \
+                    patch.object(DEPLOY, "resolve_workspace", return_value=("workspace", "Demo", "capacity")), \
+                    patch.object(DEPLOY, "energy_workspace") as energy, \
+                    patch.object(DEPLOY, "current_rayfin_target", return_value=({}, None)):
+                args = argparse.Namespace(
+                    push_config=False, tenant="tenant", workspace="workspace", stage="energy",
+                    energy_map="enabled", energy_read_models_only=publish_only,
+                )
+                DEPLOY._deploy(args, Mock())
+                if publish_only:
+                    energy.return_value.publish_energy.assert_called_once_with()
+                    energy.return_value.prepare_energy.assert_not_called()
+                else:
+                    energy.return_value.prepare_energy.assert_called_once_with()
+                    energy.return_value.publish_energy.assert_not_called()
+
     def test_missing_graph_binding_stops_before_loading_foundry_provisioning(self):
         for binding in ("", "''", '""'):
             with (
