@@ -33,7 +33,7 @@ const mcpDependencies = {
   '@modelcontextprotocol/sdk/client/streamableHttp.js': { StreamableHTTPClientTransport: class {} },
 }
 
-function graphService(onRequest = async () => undefined) {
+function graphService(onRequest = async () => undefined, envOverrides = {}) {
   const requests = []
   const dependencies = {
     ...serviceDependencies,
@@ -56,6 +56,7 @@ function graphService(onRequest = async () => undefined) {
       VITE_RAYFIN_AAD_CLIENT_ID: 'test-client', VITE_RAYFIN_TENANT_ID: 'test-tenant',
       VITE_RAYFIN_WORKSPACE_ID: workspaceId,
       VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING: JSON.stringify({ workspaceId, ontologyId, graphModelId }),
+      ...envOverrides,
     }, async (url, init) => {
       requests.push(String(url))
       const override = await onRequest(String(url), init)
@@ -188,6 +189,60 @@ test('weather uses the deployed connector, coalesces reads and invalidates faile
   assert.equal(requests.length, 15)
 })
 
+test('unmaterialized graph fails before ontology definition loading or native execution', async () => {
+  const { service, requests } = graphService(async url =>
+    url.includes('/getQueryableGraphType') ? new Response(null, { status: 204 }) : undefined)
+  await assert.rejects(service.queryOntologyGraph(), /204 No Content/)
+  assert.equal(requests.filter(url => url.includes('/getQueryableGraphType')).length, 1)
+  assert.equal(requests.filter(url => url.includes('/ontologies/') || url.endsWith('/items') || url.includes('/executeQuery')).length, 0)
+})
+
+test('missing graph binding fails without discovery, definition reads or graph execution', async () => {
+  const { service, requests } = graphService(undefined, { VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING: '' })
+  await assert.rejects(service.queryOntologyGraph(), /Materialize|binding/)
+  assert.deepEqual(requests, [])
+})
+
+test('failed graph readiness is not cached and materialization can be retried immediately', async () => {
+  let ready = false
+  const { service, requests } = graphService(async url =>
+    !ready && url.includes('/getQueryableGraphType') ? new Response(null, { status: 204 }) : undefined)
+  await assert.rejects(service.queryOntologyGraph(), /204 No Content/)
+  assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 0)
+  ready = true
+  assert.equal((await service.queryOntologyGraph()).nodes.length, 1)
+  assert.equal(requests.filter(url => url.includes('/getQueryableGraphType')).length, 2)
+})
+
+test('readiness failure on refresh cannot reuse an earlier native graph or read its ontology definition', async () => {
+  let ready = true
+  const { service, requests } = graphService(async url =>
+    !ready && url.includes('/getQueryableGraphType') ? new Response(null, { status: 204 }) : undefined)
+  await service.queryOntologyGraph()
+  const previousReads = requests.length
+  ready = false
+  await assert.rejects(service.queryOntologyGraph(true), /204 No Content/)
+  await assert.rejects(service.queryOntologyGraph(), /204 No Content/)
+  assert.ok(requests.slice(previousReads).every(url => url.includes('/graphModels/') && !url.includes('/executeQuery')))
+  ready = true
+  await service.queryOntologyGraph()
+  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2, 'Recovery must query again, not restore stale cached topology')
+})
+
+test('invalid or inaccessible graph readiness fails before ontology definition loading', async () => {
+  for (const response of [
+    new Response('denied', { status: 403 }),
+    new Response('missing', { status: 404 }),
+    Response.json({ nodeTypes: [], edgeTypes: [] }),
+    Response.json({ nodeTypes: [{}] }),
+  ]) {
+    const { service, requests } = graphService(async url =>
+      url.includes('/getQueryableGraphType') ? response : undefined)
+    await assert.rejects(service.queryOntologyGraph())
+    assert.ok(requests.every(url => url.includes('/graphModels/') && !url.includes('/executeQuery')))
+  }
+})
+
 test('graph loading reuses one definition and coalesces concurrent native requests', async () => {
   const { service, requests } = graphService()
   const graphs = await Promise.all([service.queryOntologyGraph(), service.queryOntologyGraph()])
@@ -195,6 +250,8 @@ test('graph loading reuses one definition and coalesces concurrent native reques
   assert.deepEqual(graphs[0], graphs[1])
   assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
   assert.equal(requests.filter(url => url.endsWith('/items')).length, 0, 'Explicit graph lineage must bypass workspace discovery')
+  assert.ok(requests.findIndex(url => url.includes('/getQueryableGraphType')) < requests.findIndex(url => url.endsWith('/getDefinition')),
+    'Readiness must be verified before reading the ontology definition')
   assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 1)
   const coldRequests = requests.length
   await service.queryOntologyGraph()

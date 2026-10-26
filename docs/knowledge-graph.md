@@ -7,6 +7,29 @@ navigable operational context. It is designed for an operator who starts with a 
 and needs to move quickly between the affected facility, system, equipment, instruments, current
 readings, inspections, notifications, work orders, and 3D model.
 
+## Ontology context versus native graph execution
+
+Fabric's ontology is a semantic/context layer, not a general-purpose instance-data query
+engine. Graph materialization is optional in Fabric: consumers can use ontology definitions
+and bindings while querying the owning sources.
+[Microsoft's ontology overview](https://learn.microsoft.com/fabric/iq/ontology/overview#optional-graph-execution).
+
+This application's current Knowledge Graph canvas specifically renders native GraphModel
+instances. Its materialization requirement is an application-mode choice, not a requirement
+for every ontology consumer. A definition-only view could show entity types and relationship
+types without materialization. A source-backed operational view could resolve actual instances
+through the ontology's bindings and source connectors, but would need explicit identity,
+relationship, pagination, authorization and provenance handling. Neither alternative is
+silently substituted for the current native canvas.
+
+For a cold read or explicit refresh, the app checks GraphModel metadata and queryable schema
+before fetching the ontology definition or executing graph queries. Readiness network checks
+have a shared ten-second deadline, separate from the native query budget. HTTP 204, missing
+or empty schemas, and access failures stop that path without querying graph data. A failed
+readiness refresh invalidates cached topology; negative readiness results are not cached,
+so materialization can be retried immediately. Successful readiness and graph results retain
+the existing five-minute in-memory caching; an explicit refresh rechecks live readiness.
+
 ## Fluid 2D presentation
 
 The graph opens in the performant 2D analysis view. Directed arrowheads preserve the native
@@ -96,6 +119,13 @@ ineligible under the documented limitation. Preserve that stitch for telemetry e
 for a focused initial graph; use the portal's Ineligible tooltip for each additional type.
 Do not assume all operational SQL or weather entities are eligible merely because the ontology
 can query them. Large historical facts need not be materialized for every ontology/agent question.
+
+On October 26, 2026, the configured V12 GraphModel returned metadata HTTP 200 but queryable
+schema HTTP 204. Running the readiness gate against those live endpoints failed explicitly
+in 2.752 seconds, with no ontology-definition read or native graph execution. This checks
+the fast-failure path under the deployment identity, not signed-in SPA acceptance or a
+successful graph query. The earlier populated-graph observations below do not establish
+that the current V12 projection is materialized.
 
 The earlier native graph read measured on FEATURE on October 25 returned 201 nodes / 198 edges, no isolated
 nodes, and three components of 67 nodes each (one per facility). These are legitimate independent

@@ -44,7 +44,12 @@ export function parseGraphBinding(value: string | undefined, workspaceId: string
   }
 }
 
-type GraphReader = (url: string, init?: RequestInit) => Promise<Response>
+export type GraphReader = (url: string, init?: RequestInit) => Promise<Response>
+export type OntologyGraphReadiness = Pick<OntologyGraphBinding, 'workspaceId' | 'ontologyId' | 'graphModelId'> & {
+  displayName: string
+  schema: unknown
+}
+export const GRAPH_READINESS_TIMEOUT_MS = 10_000
 
 // Retain both overflow sentinels before enforcing the per-kind visualization budgets.
 export const NATIVE_GRAPH_QUERY = `MATCH (n)
@@ -107,10 +112,52 @@ export async function executeGraphRows(
   throw new Error('Ontology graph query exceeded its continuation limit. Retry after graph refresh completes.')
 }
 
-export function resolveGraphSchema(schema: unknown, ontology: OntologyContract, binding: OntologyGraphBinding) {
+function requireQueryableSchema(schema: unknown): { nodeTypes: unknown[]; edgeTypes: unknown[] } {
   if (!isRecord(schema) || !Array.isArray(schema.nodeTypes) || !Array.isArray(schema.edgeTypes) || !schema.nodeTypes.length) {
     throw new Error('The configured ontology graph has no queryable node schema. Materialize and refresh it in Fabric before querying.')
   }
+  return { nodeTypes: schema.nodeTypes, edgeTypes: schema.edgeTypes }
+}
+
+export async function readOntologyGraphReadiness(
+  binding: OntologyGraphBinding,
+  request: GraphReader,
+): Promise<OntologyGraphReadiness> {
+  const base = `https://api.fabric.microsoft.com/v1/workspaces/${encodeURIComponent(binding.workspaceId)}/graphModels/${encodeURIComponent(binding.graphModelId)}`
+  const timeout = AbortSignal.timeout(GRAPH_READINESS_TIMEOUT_MS)
+  const controller = new AbortController()
+  const signal = AbortSignal.any([timeout, controller.signal])
+  try {
+    const [metadata, schema] = await Promise.all([
+      request(base, { signal }).then(response => jsonResponse(response, 'GraphModel metadata')),
+      request(`${base}/getQueryableGraphType?beta=true`, { signal }).then(response => {
+        if (response.status === 204) {
+          throw new Error('The graph is not materialized or is not ready for queries (204 No Content). Resolve ineligible entities in Fabric, materialize and refresh the selected ontology graph, then retry. No native graph query was started.')
+        }
+        return jsonResponse(response, 'Queryable graph schema')
+      }),
+    ])
+    if (!isRecord(metadata) || typeof metadata.id !== 'string' || metadata.id.toLowerCase() !== binding.graphModelId.toLowerCase()
+      || metadata.type !== 'GraphModel' || typeof metadata.displayName !== 'string') {
+      throw new Error('GraphModel metadata does not match the explicitly configured graph identity.')
+    }
+    requireQueryableSchema(schema)
+    return {
+      workspaceId: binding.workspaceId, ontologyId: binding.ontologyId, graphModelId: binding.graphModelId,
+      displayName: metadata.displayName, schema,
+    }
+  } catch (error) {
+    if (timeout.aborted) {
+      throw new Error('Graph readiness check timed out after 10 seconds. Check Fabric access and graph materialization, then retry. No native graph query was started.', { cause: error })
+    }
+    throw error
+  } finally {
+    controller.abort()
+  }
+}
+
+export function resolveGraphSchema(schema: unknown, ontology: OntologyContract, binding: OntologyGraphBinding) {
+  const queryable = requireQueryableSchema(schema)
   const readType = (value: unknown) => {
     if (!isRecord(value) || typeof value.alias !== 'string' || !value.alias
       || !Array.isArray(value.labels) || !value.labels.length || !value.labels.every(label => typeof label === 'string' && label)) {
@@ -128,13 +175,13 @@ export function resolveGraphSchema(schema: unknown, ontology: OntologyContract, 
     }
     return candidates[0]
   }
-  const nodes = schema.nodeTypes.map(value => {
+  const nodes = queryable.nodeTypes.map(value => {
     const type = readType(value)
     return { ...type, entity: resolve(type.alias, type.labels, binding.nodeTypes, ontology.entityTypes, 'node') }
   })
   const aliases = new Map(nodes.map(type => [type.alias, type.entity]))
   if (aliases.size !== nodes.length) throw new Error('Queryable graph schema contains duplicate node aliases.')
-  const edges = schema.edgeTypes.map(value => {
+  const edges = queryable.edgeTypes.map(value => {
     const type = readType(value)
     const relationship = resolve(type.alias, type.labels, binding.edgeTypes, ontology.relationshipTypes, 'edge')
     const source = type.value.sourceNodeType
@@ -159,19 +206,18 @@ export async function queryBoundOntologyGraph(
   binding: OntologyGraphBinding,
   ontology: OntologyContract,
   request: GraphReader,
+  readiness?: OntologyGraphReadiness,
 ): Promise<OntologyGraph> {
   requireV2Generation(ontology.generation)
   if (binding.ontologyId.toLowerCase() !== ontology.id.toLowerCase()) throw new Error('Graph binding does not match the live ontology contract.')
   const base = `https://api.fabric.microsoft.com/v1/workspaces/${encodeURIComponent(binding.workspaceId)}/graphModels/${encodeURIComponent(binding.graphModelId)}`
-  const [metadata, queryableSchema] = await Promise.all([
-    request(base).then(response => jsonResponse(response, 'GraphModel metadata')),
-    request(`${base}/getQueryableGraphType?beta=true`).then(response => jsonResponse(response, 'Queryable graph schema')),
-  ])
-  if (!isRecord(metadata) || typeof metadata.id !== 'string' || metadata.id.toLowerCase() !== binding.graphModelId.toLowerCase()
-    || metadata.type !== 'GraphModel' || typeof metadata.displayName !== 'string') {
-    throw new Error('GraphModel metadata does not match the explicitly configured graph identity.')
+  const ready = readiness ?? await readOntologyGraphReadiness(binding, request)
+  if (ready.workspaceId.toLowerCase() !== binding.workspaceId.toLowerCase()
+    || ready.ontologyId.toLowerCase() !== binding.ontologyId.toLowerCase()
+    || ready.graphModelId.toLowerCase() !== binding.graphModelId.toLowerCase()) {
+    throw new Error('Graph readiness belongs to a different workspace, ontology or graph. Retry readiness verification.')
   }
-  const schema = resolveGraphSchema(queryableSchema, ontology, binding)
+  const schema = resolveGraphSchema(ready.schema, ontology, binding)
   const endpoint = `${base}/executeQuery?beta=true`
   const rows = await executeGraphRows(endpoint, NATIVE_GRAPH_QUERY, request, 6002)
   if (rows.some(row => row.kind !== 'node' && row.kind !== 'edge')) {
@@ -184,7 +230,7 @@ export async function queryBoundOntologyGraph(
   if (nodes.length > 2000 || edges.length > 4000) {
     throw new Error('Ontology graph exceeds the 2000-node / 4000-edge visualization limit. Use a smaller projection; partial topology will not be displayed.')
   }
-  const graph = parseOntologyGraph(binding.graphModelId, metadata.displayName, nodes, edges)
+  const graph = parseOntologyGraph(binding.graphModelId, ready.displayName, nodes, edges)
   for (const node of graph.nodes) {
     const types = schema.nodes.filter(type => type.labels.every(label => node.labels.includes(label)))
     if (types.length !== 1) throw new Error(`Graph node "${node.oid}" has no unambiguous queryable ontology type.`)

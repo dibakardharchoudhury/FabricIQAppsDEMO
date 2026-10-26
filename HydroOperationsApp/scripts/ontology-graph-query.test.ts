@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { OntologyContract } from '../src/services/ontologyContract.ts'
 import { parseOntologyGraph } from '../src/services/ontologyGraph.ts'
-import { executeGraphRows, parseGraphBinding, queryBoundOntologyGraph, resolveGraphSchema } from '../src/services/ontologyGraphQuery.ts'
+import { executeGraphRows, GRAPH_READINESS_TIMEOUT_MS, parseGraphBinding, queryBoundOntologyGraph, readOntologyGraphReadiness, resolveGraphSchema } from '../src/services/ontologyGraphQuery.ts'
 
 const workspaceId = '11111111-1111-1111-1111-111111111111'
 const ontologyId = '22222222-2222-2222-2222-222222222222'
@@ -56,6 +56,54 @@ test('independent graph metadata and schema reads start concurrently', async () 
   })
   assert.equal(graph.nodes.length, 2)
   assert.equal(graph.edges.length, 1)
+})
+
+test('204 readiness fails promptly and cancels a slower metadata read without executing a query', async () => {
+  let metadataCancelled = false
+  const started = Date.now()
+  await assert.rejects(readOntologyGraphReadiness(binding, async (url, init) => {
+    if (url.includes('getQueryableGraphType')) return new Response(null, { status: 204 })
+    assert.ok(!url.includes('executeQuery'))
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        metadataCancelled = true
+        reject(init.signal?.reason)
+      }, { once: true })
+    })
+  }), /not materialized.*204 No Content.*No native graph query was started/)
+  assert.equal(metadataCancelled, true)
+  assert.ok(Date.now() - started < 1000, 'A 204 response must not wait for the pending metadata request')
+})
+
+test('readiness network requests have a ten-second deadline rather than the native query budget', async () => {
+  assert.equal(GRAPH_READINESS_TIMEOUT_MS, 10_000)
+  const signals: AbortSignal[] = []
+  const started = Date.now()
+  // Keep the test alive while AbortSignal.timeout's unreferenced timer is pending.
+  const keepAlive = setTimeout(() => undefined, GRAPH_READINESS_TIMEOUT_MS + 2000)
+  try {
+    await assert.rejects(readOntologyGraphReadiness(binding, async (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        assert.ok(init?.signal)
+        signals.push(init.signal)
+        init.signal.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      })), /readiness check timed out after 10 seconds.*No native graph query was started/)
+    assert.equal(signals.length, 2)
+    assert.ok(signals.every(signal => signal.aborted))
+    assert.ok(Date.now() - started >= GRAPH_READINESS_TIMEOUT_MS - 50)
+    assert.ok(Date.now() - started < GRAPH_READINESS_TIMEOUT_MS + 2000)
+  } finally {
+    clearTimeout(keepAlive)
+  }
+})
+
+test('prefetched readiness cannot be reused for a different graph identity', async () => {
+  let reads = 0
+  await assert.rejects(queryBoundOntologyGraph(binding, ontology, async () => {
+    reads++
+    throw new Error('A mismatched readiness receipt must not start a graph query')
+  }, { ...binding, graphModelId: ontologyId, displayName: 'Other graph', schema }), /readiness belongs to a different/)
+  assert.equal(reads, 0)
 })
 
 test('native graph requires explicit workspace/ontology/graph binding, never name guessing', () => {

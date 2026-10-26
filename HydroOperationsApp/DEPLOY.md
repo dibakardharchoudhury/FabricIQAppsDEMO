@@ -127,6 +127,13 @@ API response is a documented product limitation, not proof of a working query.
 In Fabric: **Manage graph → select eligible entities/relationships → Continue →
 Materialize**. This is a manual portal prerequisite.
 
+This prerequisite is for the application's current **native GraphModel** canvas; Fabric
+ontologies can also serve definitions and bindings without materializing an instance graph.
+The app does not silently replace native graph results with a schema diagram or source joins.
+When Fabric returns HTTP 204 for the queryable schema, the graph path stops before loading
+the ontology definition or executing queries. Readiness network checks are bounded to ten
+seconds; **Retry graph query** rechecks failed readiness without waiting for a cache expiry.
+
 If setup stops here, materialize the graph, then retry **Foundry agents → Deploy
 app**. Do not reimport Git or rerun Core.
 
