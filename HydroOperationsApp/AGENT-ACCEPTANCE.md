@@ -31,6 +31,29 @@ HTTP request, retaining existing function-result messages instead of restarting
 the agent. Native transport retains its separate no-SDK-retry correction bound;
 service/run deadlines and failure propagation remain mandatory.
 
+### Latest signed-browser result: acceptance failed
+
+Canonical publication of **`89c7dd4`** succeeded: app **1.0.1115**, coordinator
+**v19**, image `src-ad9a38b9fbbba1da` (ACR `dtg`); all five specialists were
+reused. Local checks passed **111** supervisor and **83** boundary tests plus
+Pyright. Those checks do **not** make this a live workflow pass.
+
+In authenticated session `6e8dd994-227e-4f40-943d-34d1dd791551`, the original
+compound question failed in Gauge after **69 seconds** because equipment,
+instrument and work-order connector reads failed (`READ_FAILED`). A single
+equipment-inventory request independently failed after **61 seconds** and a
+bounded diagnostic repeat after **63 seconds**. There is no certified draft,
+write, RCA or successful handoff from those runs.
+
+An explicit native-only identity/source request selected Sparky and returned
+after **51.2 seconds**, but reported endpoint unavailability/output moderation,
+unverified identity and zero scalar claims. The crew's **Finished** label is
+not proof that the Data Agent returned verified source data. There was no
+silent direct-source fallback. ARM confirmed capacity **Active**; no resume
+was needed. The current connector failure's underlying cause remains unresolved.
+Full receipts, limitations and the independent weather credential blocker are
+in the [current audit](../docs/foundry-multi-agent-implementation.md#current-publication-and-signed-browser-acceptance-not-passed).
+
 ## October 12 v77 canonical-prompt release
 
 **Current Hosted Agent: v77 from source commit `30ee16e`, image

@@ -102,8 +102,45 @@ same-source correction limit. This follows Microsoft's
 on provider retry headers and bounded backoff. Persistent errors still propagate;
 no quota, project or model deployment was changed. All **111** supervisor tests
 and Pyright passed, including exact retained request messages and one source
-dispatch after a follow-up 429. This policy's live acceptance remains pending
-publication.
+dispatch after a follow-up 429. The additional **83** service/source/authorization
+tests also passed.
+
+### Current publication and signed-browser acceptance: not passed
+
+The canonical deployment of **`89c7dd4`** returned final
+`SUCCESS`/`DEPLOYED_APP_URL` on October 26 at **22:36:59 UTC**. The signed browser
+verified app **1.0.1115 / `89c7dd4`**. Coordinator **v19** is active on
+`src-ad9a38b9fbbba1da` (ACR `dtg`). All five specialists were reused unchanged,
+all three connectors were reapplied, and all **42** existing redirects were
+preserved. Neither the project/model nor quota/capacity size was changed.
+
+Authenticated session `6e8dd994-227e-4f40-943d-34d1dd791551` produced these results:
+
+| Request | Observed outcome | Acceptance |
+| --- | --- | --- |
+| Original BAD-today/open-work/draft question | **69 seconds**; run `750f5b18-ec8e-4ddd-992a-82e54cd0b0a6` failed in Gauge with equipment metadata, instrument metadata and work-order inventory `READ_FAILED`; no partial fleet snapshot was accepted. | **Fail**; no handoff, RCA, draft or write certified. |
+| Direct equipment inventory only | **61 seconds**; run `4107e374-ed74-468b-90eb-bf58428dac95` failed with `Rayfin Lakehouse asset connector read failed (READ_FAILED)`. A later bounded diagnostic repeat also failed in **63 seconds**. | **Fail**; isolates a connector read problem independently of compound planning. |
+| Explicit published Data Agent identity/configured-source request, without direct tools | **51.2 seconds**; Supervisor selected Sparky alone. The answer reported the native endpoint unavailable with an output-moderation error, no verified identity/source details and zero scalar claims. | **Not a source-success pass**. The crew displayed Finished, but the answer itself disclaimed verification. Native-only routing was preserved; there was no direct fallback. |
+
+These are real failures, not evidence that the SDK retry policy passed live
+multi-agent acceptance. The source failures prevented the planned QA -> RCA ->
+Work Order acceptance; repeatedly submitting it would not certify anything.
+Source reads must recover before that acceptance is attempted again.
+
+The browser initially had 31-second aborted connector requests, then successful
+Lakehouse transport responses taking roughly **42-45 seconds** before STID
+connected. These timings are diagnostic observations, not proof of the hosted
+read failure's underlying cause. The current sanitized `READ_FAILED` does not
+distinguish timeout, GraphQL rejection and other transport failures; that cause
+remains unresolved. A separate Azure CLI identity's broker exchange returned
+401 and is **not comparable authenticated browser acceptance**.
+
+ARM independently confirmed `fabcapswc` **Active / Succeeded** during this
+investigation. No capacity resume was necessary. The maintenance panel's
+sign-in/empty placeholders likewise are not proof that operational SQL contains
+zero work orders. No approval/create/save action was taken. Weather still
+requires the valid Aurora credential through authorized private Key Vault
+access. **Do not describe this publication as enterprise-ready or fully fixed.**
 
 ## October 26 publication and main-merge readiness
 
