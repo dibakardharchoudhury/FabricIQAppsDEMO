@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -107,7 +108,180 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertNotIn("Module timings", page)
         self.assertNotIn('aria-label="Deployment timings"', page)
         self.assertIn('class="elapsed" title="Elapsed time"', page)
-        self.assertIn('escapeHtml((job.lines || []).join("\\n")', page)
+
+    def test_live_output_scroll_selection_and_keyboard_during_streaming(self):
+        """Exercise the real renderer and layout in an isolated headless browser, never the app/server."""
+        candidates = [
+            os.environ.get("FABRIC_UI_TEST_BROWSER"),
+            shutil.which("chrome"), shutil.which("chromium"), shutil.which("msedge"),
+            str(Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe"),
+            str(Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
+        ]
+        browser = next((candidate for candidate in candidates if candidate and Path(candidate).is_file()), None)
+        if not browser:
+            self.skipTest("Chromium browser missing; set FABRIC_UI_TEST_BROWSER to run real scrolling tests")
+        profile = Path(__file__).parent / f".ui-scroll-regression-{uuid.uuid4().hex}"
+        profile.mkdir()
+        script = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const {spawn} = require("node:child_process");
+const [browserPath, profile, htmlPath] = process.argv.slice(1);
+const browser = spawn(browserPath, [
+  "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+  "--remote-debugging-port=0", "--remote-allow-origins=*", "--user-data-dir="+profile, "about:blank",
+], {stdio:["ignore", "ignore", "pipe"]});
+const watchdog = setTimeout(() => browser.kill(), 30000);
+let socket;
+let nextId = 0;
+const pending = new Map();
+async function call(method, params = {}) {
+  const id = ++nextId;
+  return new Promise((resolve, reject) => {
+    pending.set(id, {resolve, reject});
+    socket.send(JSON.stringify({id, method, params}));
+  });
+}
+async function evaluate(expression) {
+  const result = await call("Runtime.evaluate", {expression, returnByValue:true, awaitPromise:true});
+  if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+  return result.result.value;
+}
+(async () => {
+  try {
+    const endpoint = await new Promise((resolve, reject) => {
+      let stderr = "";
+      browser.stderr.on("data", data => {
+        stderr = (stderr + data).slice(-16000);
+        const match = stderr.match(/DevTools listening on (ws:\/\/[^\s]+)/);
+        if (match) resolve(match[1]);
+      });
+      browser.on("error", reject);
+      browser.on("exit", code => reject(new Error("Browser exited: "+code+" "+stderr)));
+    });
+    const targets = await (await fetch("http://"+new URL(endpoint).host+"/json/list")).json();
+    socket = new WebSocket(targets.find(target => target.type === "page").webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {socket.onopen=resolve; socket.onerror=reject;});
+    socket.onmessage = event => {
+      const message = JSON.parse(event.data);
+      const request = pending.get(message.id);
+      if (!request) return;
+      pending.delete(message.id);
+      if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+      else request.resolve(message.result);
+    };
+    await call("Page.enable");
+    await call("Page.bringToFront");
+    await call("Emulation.setFocusEmulationEnabled", {enabled:true});
+    await call("Emulation.setDeviceMetricsOverride", {width:1000, height:900, deviceScaleFactor:1, mobile:false});
+    const html = fs.readFileSync(htmlPath, "utf8");
+    const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+    const renderer = html.slice(html.indexOf("function renderPanel("), html.indexOf("let subscriptionLoad"));
+    const helpers = html.slice(html.indexOf("const WORKFLOW_PHASE_GROUPS"), html.indexOf("// Starts a job"));
+    await evaluate(`document.head.innerHTML = ${JSON.stringify("<style>"+style+"</style>")};
+      document.body.innerHTML = '<div id="deployPanel"></div><div id="energyPanel"></div><div id="workflowPanel"></div>';
+      ${helpers}\n${renderer}
+      var panel = document.getElementById("deployPanel");
+      var job = {status:"running", phases:["Start","Deploy"], phaseIndex:0,
+        lines:Array.from({length:160}, (_,i) => "Output line "+i+" <safe & literal>")};
+      renderPanel(panel, job);
+      var out = panel.querySelector(".output");
+      var original = out;
+      var originalText = out.firstChild;
+      var bottom = () => out.scrollHeight-out.clientHeight-out.scrollTop < 2;
+      var update = () => {job.lines.push("Streamed "+job.lines.length); renderPanel(panel,job);};
+      var check = (condition, message) => {if (!condition) throw new Error(message);};
+      check(bottom(), "Initial output should follow tail");
+      check(out.clientHeight <= 340 && out.scrollHeight > out.clientHeight, "Log must be bounded");
+      for (var i=0;i<20;i++) {update(); check(bottom(), "Streaming should follow tail");}
+      out.scrollTop=400;
+      for (var i=0;i<20;i++) {
+        var scrollBefore=out.scrollTop;
+        update();
+        check(out===panel.querySelector(".output"), "Scroll surface replaced");
+        check(Math.abs(out.scrollTop-scrollBefore)<1, "Manual scroll reset by streaming: "+scrollBefore+" -> "+out.scrollTop);
+        out.scrollTop+=30;
+        check(out.scrollTop>scrollBefore, "Cannot scroll downward while streaming");
+      }
+      var range=document.createRange();
+      range.setStart(originalText,20); range.setEnd(originalText,35);
+      getSelection().addRange(range);
+      var selected=getSelection().toString();
+      for (var i=0;i<10;i++) {
+        update();
+        check(getSelection().toString()===selected, "Selection lost during append");
+        check(getSelection().anchorNode===originalText, "Selected text node replaced");
+      }
+      out.scrollTop=out.scrollHeight;
+      var selectedTop=out.scrollTop;
+      update();
+      check(out.scrollTop===selectedTop && !bottom(), "Selection at tail should pause following");
+      getSelection().removeAllRanges();
+      out.scrollTop=out.scrollHeight-out.clientHeight-20;
+      update();
+      check(bottom(), "Near-bottom should resume following");
+      out.scrollTop=100;
+      panel.querySelector("button").click();
+      check(bottom(), "Jump to latest failed");
+      for (var i=0;i<10;i++) {update();check(bottom(), "Jump must resume following");}
+      check(out.textContent.includes("<safe & literal>") && !out.querySelector("safe"), "Log must remain literal text");
+      renderPanel(panel,job);
+      check(out.firstChild===originalText, "Clock-only refresh replaced text");
+      var other=document.getElementById("energyPanel");
+      renderPanel(other,{status:"running",lines:["Other module"]});
+      check(other.querySelector(".output")!==out, "Module output must remain independent");
+      var workflow=document.getElementById("workflowPanel");
+      renderPanel(workflow,{status:"running",phases:["Sync · Start","Pipeline · Setup"],phaseIndex:0,lines:["Workflow"]});
+      check(workflow.querySelector(".workflow-phase-group"), "Workflow module groups lost");
+      out.scrollTop=200;
+      out.focus();
+      check(document.activeElement===out, "Output must accept keyboard focus");
+    `);
+    await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const before = await evaluate("out.scrollTop");
+    await evaluate("var streamedUpdates=0; var stream=setInterval(() => {update();streamedUpdates++;},40)");
+    await call("Input.dispatchKeyEvent", {type:"rawKeyDown", key:"PageDown", code:"PageDown", windowsVirtualKeyCode:34});
+    await call("Input.dispatchKeyEvent", {type:"keyUp", key:"PageDown", code:"PageDown", windowsVirtualKeyCode:34});
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.ok(await evaluate("out.scrollTop") > before, "PageDown should scroll the focused log: "+JSON.stringify(
+      await evaluate("({top:out.scrollTop,focused:document.activeElement===out,documentFocus:document.hasFocus()})")));
+    const keyboardTop = await evaluate("out.scrollTop");
+    await evaluate("for(var i=0;i<10;i++) update()");
+    assert.equal(await evaluate("out.scrollTop"), keyboardTop, "Streaming resets keyboard scroll");
+    const position = await evaluate("(() => {const r=out.getBoundingClientRect();return {x:r.x+30,y:r.y+30};})()");
+    await call("Input.dispatchMouseEvent", {type:"mouseWheel", ...position, deltaX:0, deltaY:200});
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.ok(await evaluate("out.scrollTop") > keyboardTop, "Wheel should scroll down while streaming");
+    assert.ok(await evaluate("streamedUpdates") >= 5, "Output must update during real keyboard/wheel interaction");
+    await evaluate("clearInterval(stream)");
+    await evaluate(`panel.querySelector("button").focus()`);
+    await call("Input.dispatchKeyEvent", {type:"keyDown", key:"Enter", code:"Enter", windowsVirtualKeyCode:13, text:"\r"});
+    await call("Input.dispatchKeyEvent", {type:"keyUp", key:"Enter", code:"Enter", windowsVirtualKeyCode:13});
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(await evaluate("bottom()"), true, "Keyboard jump should reach latest output");
+    await evaluate(`job.status="failed";job.error="Final failure";job.returncode=1;renderPanel(panel,job);
+      check(out===original && bottom(), "Completion should keep the scroll surface and follow tail");
+      check(out.classList.contains("error") && out.textContent.endsWith("exit code: 1"), "Completion output lost");
+      check(out.textContent.includes("[error] Final failure"), "Error output lost");`);
+    console.log("PASS: streaming, manual/near-tail scroll, selection, wheel, PageDown, keyboard jump, module groups and completion");
+  } finally {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {await call("Browser.close");} catch {}
+      socket.close();
+    }
+    browser.kill();
+    clearTimeout(watchdog);
+  }
+})().catch(error => {console.error(error); process.exitCode=1;});
+"""
+        try:
+            result = subprocess.run(
+                ["node", "-e", script, browser, str(profile.resolve()), str(SERVER.STATIC_DIR / "index.html")],
+                capture_output=True, text=True, timeout=40,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        finally:
+            shutil.rmtree(profile)
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
         starter = "_start_workflow" if endpoint in ("/api/full-workflow", "/api/run-pipeline") else "_start"

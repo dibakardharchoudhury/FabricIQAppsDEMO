@@ -37,6 +37,11 @@ browser storage. PATs and credential values are never saved by these forms.
 Use **Hide sidebar** for more space. Connection tests run only when you click
 **Test connection** in Full Deploy or GitHub Sync.
 
+Live output follows new lines while you are near the bottom. Scroll up or select text
+to read earlier output without refreshes resetting your position. Use **Jump to latest**
+to return to the newest output and resume following. The log also supports keyboard scrolling.
+After a local UI update, reload the page when safe; a server restart is not required.
+
 ### Find your Teams team and channel IDs
 
 In Teams, choose the channel's **Get link to channel**:
@@ -157,9 +162,13 @@ multiple writers to one energy snapshot.
 
 ### Persistent Foundry agents
 
-Confirm **Azure subscription**, then run **Set up Foundry agents**. It updates five
-specialists and `hydro-orchestrator`, reusing unchanged images and definitions.
-It does not publish the website.
+Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
+specialists and `hydro-orchestrator` against this checkout and the selected Fabric target.
+An existing project/model may still contain missing or older agents. Setup reuses matching
+connections and specialists, creates versions only for changed/missing agents, builds only
+missing source-fingerprinted images, and republishes the hosted coordinator only when its
+image or runtime configuration differs. Each reuse/update is logged, with specialist
+`current / updated / created` counts. It does not publish the website.
 
 - **Reuse a specific project:** enter its name under **Project and model
   choices**. Without a name, setup uses saved settings, the target-named project,

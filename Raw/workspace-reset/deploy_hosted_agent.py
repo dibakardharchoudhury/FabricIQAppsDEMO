@@ -240,7 +240,6 @@ def ensure_hosted_agent(
 
     ``values`` are the already-verified public deployment values (RAYFIN_PUBLIC_*), unquoted."""
     root = deploy.REPO_ROOT
-    project_dir = azd_project_dir(deploy, endpoint)
     existing = get_agent()
     _kind, _version, _digest, live_environment = hosted_state(existing)
     override = os.environ.get("HYDRO_ACR_NAME", "")
@@ -311,6 +310,7 @@ def ensure_hosted_agent(
         if digest is None:
             raise deploy.DeployError(f"The registry has no {IMAGE_REPOSITORY}:{tag} after the build completed.")
 
+    project_dir = azd_project_dir(deploy, endpoint)
     ensure_azd_ready(deploy, tenant)
     bootstrap = _configure_azd_environment(
         deploy, project_dir=project_dir, project_id=project_id, endpoint=endpoint, tenant=tenant,

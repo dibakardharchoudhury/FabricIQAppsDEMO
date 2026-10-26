@@ -1,9 +1,11 @@
 import base64
+import copy
 import hashlib
 import importlib.util
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 import unittest
 import uuid
@@ -23,6 +25,128 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
             "type": "ontology", "workspaceId": workspace, "artifactId": ontology,
         }).encode()).decode(),
     }]}}
+
+
+class IncrementalProvisionTests(unittest.TestCase):
+    def run_provision(self, *, drift=None, missing=None, broken_readback=False, denied=False):
+        deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
+        endpoint = values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]
+        ontology = json.loads(values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"])["ontologyId"]
+        project_id = f"/subscriptions/{tenant}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/hydro/projects/hydro"
+        selection = module.FoundrySelection(tenant, project_id, endpoint, "model")
+        expected = {
+            f"hydro-{role}-agent": {"kind": "prompt", "model": "model", "instructions": role, "tools": []}
+            for role in ("qa", "rca", "work-order", "fabric-iq", "weather")
+        }
+        live = {
+            name: {"version": "7", "definition": {**copy.deepcopy(spec), "server_default": None}}
+            for name, spec in expected.items()
+        }
+        if missing:
+            del live[missing]
+        if drift in ("model", "instructions", "tools"):
+            live["hydro-qa-agent"]["definition"][drift] = ["old-tool"] if drift == "tools" else "old"
+        connections = {}
+        for name, target in (
+            ("hydro-fabric-iq", f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{workspace}/dataagents/data-agent/agent"),
+            ("hydro-fabric-ontology", f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/{ontology}/ontologyEndpoint"),
+        ):
+            connections[name] = {
+                "category": "RemoteTool", "authType": "UserEntraToken", "target": target,
+                "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False,
+            }
+        if drift == "connection":
+            connections["hydro-fabric-iq"]["target"] = "https://old.example/agent"
+        insights = {"name": "monitor", "properties": {
+            "category": "AppInsights",
+            "target": f"/subscriptions/{tenant}/resourceGroups/rg/providers/microsoft.insights/components/monitor",
+        }}
+        deploy.FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
+        deploy._workspace_artifacts.return_value = [
+            {"id": "data-agent", "type": "DataAgent", "displayName": "RTI_Demo_Agent_test"},
+        ]
+        deploy.node24_script.return_value = ["node", "export"]
+        deploy.run_capture.side_effect = lambda argv, **kwargs: json.dumps(expected) if argv == ["node", "export"] else "token"
+        deploy._rebind_public_env.side_effect = lambda content, updates: content
+        hosted_module = Mock(source_fingerprint=Mock(return_value="code"))
+        hosted_module.ensure_hosted_agent.return_value = hosted
+
+        def response(method, url, **kwargs):
+            if url == f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview":
+                body = {"value": [
+                    {"name": name, "properties": copy.deepcopy(properties)} for name, properties in connections.items()
+                ] + [insights]}
+            elif "/connections/" in url:
+                name = url.split("/connections/", 1)[1].split("?")[0]
+                if method == "PUT":
+                    connections[name] = kwargs["json"]["properties"]
+                body = {"properties": connections[name]}
+            elif "/agents/" in url:
+                name = url.split("/agents/", 1)[1].split("/")[0].split("?")[0]
+                if denied:
+                    return Mock(status_code=403, ok=False, text="access denied")
+                if method == "POST":
+                    if not broken_readback:
+                        live[name] = {"version": "8", "definition": kwargs["json"]["definition"]}
+                    body = {}
+                elif name not in live:
+                    return Mock(status_code=404, ok=False)
+                else:
+                    body = {"versions": {"latest": copy.deepcopy(live[name])}}
+            elif f"/ontologies/{ontology}" in url:
+                body = {"properties": {"generation": 2}}
+            elif "/kqlDatabases/" in url:
+                body = {"properties": {"queryServiceUri": "https://kusto.example.fabric.microsoft.com"}}
+            else:
+                raise AssertionError((method, url))
+            return Mock(status_code=200, ok=True, json=lambda: body)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(module, "resolve_project", return_value=selection) as resolve, \
+                patch.object(module, "_load_sibling", return_value=hosted_module), \
+                patch.object(module, "read_data_agent_definition", return_value=definition(workspace=workspace, ontology=ontology)), \
+                patch.object(module, "request_with_read_retry", side_effect=response) as request:
+            deploy.RAYFIN_DIR = Path(directory)
+            (deploy.RAYFIN_DIR / ".env").write_text("", encoding="utf-8")
+            module.provision(deploy, tenant, workspace)
+            resolve.assert_called_once_with(deploy, tenant, workspace, allow_create=True)
+            hosted_module.ensure_hosted_agent.assert_called_once()
+        return request.call_args_list
+
+    def test_current_agents_with_server_defaults_and_connections_are_read_only(self):
+        calls = self.run_provision()
+        self.assertTrue(all(entry.args[0] == "GET" for entry in calls))
+        agent_reads = [entry for entry in calls if "/agents/" in entry.args[1]]
+        self.assertEqual(len(agent_reads), 5)
+        self.assertFalse(any("/deployments" in entry.args[1] for entry in calls))
+
+    def test_only_a_changed_specialist_gets_a_new_version(self):
+        for drift in ("model", "instructions", "tools"):
+            with self.subTest(drift=drift):
+                calls = self.run_provision(drift=drift)
+                writes = [entry for entry in calls if entry.args[0] != "GET"]
+                self.assertEqual(len(writes), 1)
+                self.assertEqual(writes[0].args[0], "POST")
+                self.assertIn("/agents/hydro-qa-agent/versions?", writes[0].args[1])
+
+    def test_only_a_missing_agent_is_created(self):
+        calls = self.run_provision(missing="hydro-weather-agent")
+        writes = [entry for entry in calls if entry.args[0] != "GET"]
+        self.assertEqual(len(writes), 1)
+        self.assertIn("/agents/hydro-weather-agent/versions?", writes[0].args[1])
+
+    def test_only_a_drifted_connection_is_updated(self):
+        calls = self.run_provision(drift="connection")
+        writes = [entry for entry in calls if entry.args[0] != "GET"]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0].args[0], "PUT")
+        self.assertIn("/connections/hydro-fabric-iq?", writes[0].args[1])
+
+    def test_denied_reads_and_failed_readback_do_not_report_success(self):
+        with self.assertRaisesRegex(RuntimeError, "Cannot read Foundry agent"):
+            self.run_provision(denied=True)
+        with self.assertRaisesRegex(RuntimeError, "definition readback failed"):
+            self.run_provision(drift="instructions", broken_readback=True)
 
 
 class PreparedFoundryTests(unittest.TestCase):
@@ -84,9 +208,14 @@ class PreparedFoundryTests(unittest.TestCase):
                 patch.object(module, "read_model_selection", return_value="chat"):
             with self.assertRaisesRegex(RuntimeError, "Available projects:[\\s\\S]*first-project[\\s\\S]*second-project"):
                 module.resolve_project(deploy, "tenant", "workspace")
+            deploy.run_capture.reset_mock()
             with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "second-project"}):
                 selected = module.resolve_project(deploy, "tenant", "workspace")
                 self.assertEqual(selected.project_id, base + "second-project")
+                reads = [entry.args[0] for entry in deploy.run_capture.call_args_list
+                         if entry.args[0][:2] == ["resource", "show"]]
+                self.assertEqual(len(reads), 1)
+                self.assertIn(base + "second-project", reads[0])
             with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "missing"}):
                 with self.assertRaisesRegex(RuntimeError, "no replacement was created"):
                     module.resolve_project(deploy, "tenant", "workspace")
@@ -113,6 +242,34 @@ class PreparedFoundryTests(unittest.TestCase):
                 module.read_model_selection(deploy, "tenant", project_id, "")
             request.assert_called_once()
         deploy.run_stream.assert_not_called()
+
+    def test_explicit_model_is_verified_directly_without_listing_other_deployments(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.run_capture.return_value = "access"
+        project_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/project"
+        ready = {"name": "chosen-chat", "properties": {
+            "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
+            "capabilities": {"chatCompletion": "true"},
+        }}
+        with patch.object(module, "request_with_read_retry", return_value=Mock(
+            ok=True, json=lambda: ready,
+        )) as request:
+            self.assertEqual(module.read_model_selection(deploy, "tenant", project_id, "chosen-chat"), "chosen-chat")
+            request.assert_called_once()
+            self.assertEqual(request.call_args.args[:2], (
+                "GET", "https://management.azure.com" + project_id.rsplit("/projects/", 1)[0]
+                + "/deployments/chosen-chat?api-version=2025-06-01",
+            ))
+            ready["name"] = "unrelated-chat"
+            with self.assertRaisesRegex(RuntimeError, "enter one ready chat model"):
+                module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
+            request.reset_mock()
+            request.return_value.ok = False
+            request.return_value.status_code = 404
+            with self.assertRaisesRegex(RuntimeError, "HTTP 404"):
+                module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
+            request.assert_called_once()
 
     def prepared(self):
         deploy = Mock()
@@ -239,7 +396,7 @@ class PublishedIdentityTests(unittest.TestCase):
         subscription = "11111111-2222-3333-4444-555555555555"
         project_id = f"/subscriptions/{subscription}/resourceGroups/hydro/providers/Microsoft.CognitiveServices/accounts/hydro/projects/demo"
         endpoint = "https://hydro.services.ai.azure.com/api/projects/demo"
-        for explicit in (False, True, "different-prepared-project"):
+        for explicit in (False, True, "different-prepared-project", "matching-name"):
             with self.subTest(explicit=explicit):
                 deploy = Mock()
                 deploy.DeployError = RuntimeError
@@ -250,7 +407,7 @@ class PublishedIdentityTests(unittest.TestCase):
                     "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project_id,
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,
-                } if not explicit else {
+                } if not explicit or explicit == "matching-name" else {
                     "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project_id + "-previous",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint + "-previous",
@@ -261,8 +418,9 @@ class PublishedIdentityTests(unittest.TestCase):
                     raise RuntimeError("direct project verified; stop before provisioning")
                 deploy.run_capture.side_effect = capture
                 with patch.dict(os.environ, {
-                    "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": project_id if explicit else "",
+                    "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": project_id if explicit and explicit != "matching-name" else "",
                     "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "", "HYDRO_AZURE_SUBSCRIPTION_ID": "",
+                    "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "demo" if explicit == "matching-name" else "",
                 }), patch.object(module, "resolve_subscription", return_value=subscription) as resolve, \
                         patch.object(module, "_load_sibling"):
                     with self.assertRaisesRegex(RuntimeError, "direct project verified"):

@@ -307,7 +307,10 @@ class ConvergenceTests(unittest.TestCase):
 
     def test_a_current_agent_costs_one_registry_lookup_and_changes_nothing(self):
         fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        self.assertEqual(run(fake, [agent()]), agent())
+        with patch.object(hosted, "azd_project_dir") as project_dir:
+            self.assertEqual(run(fake, [agent()]), agent())
+        project_dir.assert_not_called()
+        self.assertEqual(len(fake.commands("az", "acr", "repository")), 1)
         self.assertEqual(fake.commands("az", "acr", "build"), [])
         self.assertEqual(fake.commands("azd"), [])
 

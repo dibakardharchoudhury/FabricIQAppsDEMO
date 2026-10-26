@@ -114,7 +114,10 @@
   /* output + progress */
   .output { margin:1.25rem 0 0; background:rgba(3,8,20,.78); border:1px solid var(--border); border-radius:12px; padding:.9rem 1rem;
     font-family:"Cascadia Code",ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.78rem; line-height:1.55;
-    white-space:pre-wrap; word-break:break-word; max-height:340px; overflow:auto; }
+    white-space:pre-wrap; word-break:break-word; max-height:340px; overflow:auto; overflow-anchor:none; }
+  .output:focus-visible { outline:2px solid var(--primary2); outline-offset:3px; }
+  .output-controls { display:flex; align-items:center; flex-wrap:wrap; gap:.7rem; margin-top:.5rem; font-size:.75rem; color:var(--muted); }
+  .output-controls button { padding:.35rem .65rem; font-size:.75rem; }
   .output.muted { color:var(--muted); } .output.running { color:#fcd34d; border-color:rgba(251,191,36,.35); }
   .output.ok { border-color:rgba(52,211,153,.45); } .output.error { border-color:rgba(251,113,133,.5); color:#fecaca; }
   .output.warn { border-color:rgba(251,191,36,.4); color:#fde68a; }
@@ -626,27 +629,62 @@ function renderPanel(el, job) {
   const tail = (job.status !== "running" && job.returncode !== null && job.returncode !== undefined)
     ? "\n\nexit code: " + job.returncode : "";
   const err = job.error ? "\n[error] " + job.error : "";
-  // Keep the log pinned to the newest line unless the user has scrolled up.
-  const prevOut = el.querySelector(".output");
-  const stick = !prevOut || (prevOut.scrollHeight - prevOut.scrollTop - prevOut.clientHeight < 40);
-  el.innerHTML =
-    `<div class="progress">
-       <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
-       <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
-       ${phaseProgress}
-       <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
-     </div>`;
-  el.querySelectorAll(".workflow-phase-group").forEach((group) => {
-    group.addEventListener("toggle", () => {
-      if (group.dataset.state === "active" || group.dataset.state === "failed") return;
-      el._workflowBucketOpen = el._workflowBucketOpen || {};
-      el._workflowBucketOpen[group.dataset.group] = group.open;
-    });
-  });
-  if (stick) {
+  // Keep the actual scroll surface and its text nodes alive across polls/clock ticks.
+  // Replacing the panel would reset a reader's scroll, selection and scrollbar drag.
+  if (!el.querySelector(".progress-summary")) {
+    el.innerHTML = `<div class="progress">
+      <div class="progress-summary"></div>
+      <pre id="${el.id}Output" class="output" tabindex="0" role="region" aria-label="Live deployment output"></pre>
+      <div class="output-controls"><button type="button" class="ghost" aria-controls="${el.id}Output">Jump to latest</button><span></span></div>
+    </div>`;
     const out = el.querySelector(".output");
-    if (out) out.scrollTop = out.scrollHeight;
+    const nearBottom = () => out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+    const selectionInOutput = () => {
+      const selection = window.getSelection();
+      return selection && !selection.isCollapsed
+        && (out.contains(selection.anchorNode) || out.contains(selection.focusNode));
+    };
+    out._following = () => nearBottom() && !selectionInOutput();
+    out._updateFollowStatus = () => {
+      const text = selectionInOutput() ? "Selection pauses following"
+        : nearBottom() ? "Following latest output" : "Scroll paused · jump to resume";
+      const status = el.querySelector(".output-controls span");
+      if (status.textContent !== text) status.textContent = text;
+    };
+    out.addEventListener("scroll", out._updateFollowStatus);
+    el.querySelector(".output-controls button").addEventListener("click", () => {
+      out.scrollTop = out.scrollHeight;
+      out._updateFollowStatus();
+    });
   }
+  const out = el.querySelector(".output");
+  const stick = out._following();
+  const summary = el.querySelector(".progress-summary");
+  const summaryHtml =
+    `<div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
+       <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
+       ${phaseProgress}`;
+  if (summary._html !== summaryHtml) {
+    summary.innerHTML = summaryHtml;
+    summary._html = summaryHtml;
+    summary.querySelectorAll(".workflow-phase-group").forEach((group) => {
+      group.addEventListener("toggle", () => {
+        if (group.dataset.state === "active" || group.dataset.state === "failed") return;
+        el._workflowBucketOpen = el._workflowBucketOpen || {};
+        el._workflowBucketOpen[group.dataset.group] = group.open;
+      });
+    });
+  }
+  const text = ((job.lines || []).join("\n") || "\u2026") + err + tail;
+  const previous = out._text || "";
+  if (text !== previous) {
+    if (text.startsWith(previous)) out.appendChild(document.createTextNode(text.slice(previous.length)));
+    else out.textContent = text;
+    out._text = text;
+  }
+  out.className = `output ${statusCls}`;
+  if (stick) out.scrollTop = out.scrollHeight;
+  out._updateFollowStatus();
 }
 
 let subscriptionLoad = null;
