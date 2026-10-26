@@ -1,79 +1,25 @@
 # Foundry deployment and multi-agent setup
 
-How the Hydro multi-agent setup fits together, and how to deploy all of its Foundry parts with **one
-action**: the local deploy app or one command. Both run the same engine,
-[`deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py).
-
-The current FEATURE target is Foundry project
-`ai-project-hydro-foundry-884a839f3132`: `hydro-orchestrator:10` and the separate
-`hydro-weather-agent:1` are deployed there. Do not confuse this target-specific
-project with an older repository-local azd environment or another workspace's
-agents. Hosted source reads have verified the Lakehouse connector replacement and
-the obsolete FEATURE `Hydro_STID_API` has been removed. See the
-[current deployment and runtime acceptance record](ontology-test-review.md#latest-canonical-deployment-and-authenticated-acceptance-hosted-agent-10)
-for the verified workflows and remaining source/product prerequisites; publication is
-not full business runtime acceptance.
+**Operator steps:** [deployment guide](../HydroOperationsApp/DEPLOY.md).
+This page covers agent architecture and configuration.
+Both UI and CLI use [`deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py).
 
 ### Finding Weather in Foundry
 
-Open the [FEATURE project in Azure portal](https://portal.azure.com/#@ad340c84-1886-4202-a483-2da2cb9168eb/resource/subscriptions/dac16501-5c35-4c91-aff0-11af8de17f2e/resourceGroups/rg-hydro-foundry-884a839f3132/providers/Microsoft.CognitiveServices/accounts/ai-account-yz6usfcwfov5q/projects/ai-project-hydro-foundry-884a839f3132/overview),
-then use Foundry and select **`ai-project-hydro-foundry-884a839f3132` -> Agents**.
-Its account is `ai-account-yz6usfcwfov5q`, in resource group
-`rg-hydro-foundry-884a839f3132`. The separate Weather prompt agent is
-**`hydro-weather-agent`, version 1**.
-
-[Open the deployed Weather agent directly in Foundry](https://ai.azure.com/nextgen/r/2sFlAVw1TJGv8BGvjeF_Lg,rg-hydro-foundry-884a839f3132,,ai-account-yz6usfcwfov5q,ai-project-hydro-foundry-884a839f3132/build/agents/hydro-weather-agent/build?tid=ad340c84-1886-4202-a483-2da2cb9168eb).
-Read-only API and portal checks on October 24 at 23:24 UTC confirmed the agent
-is enabled, version 1, and displayed as **Agent running**. Its model is
-`gpt-5.6-sol` and its governed function tool is `hydro_query`.
-
-Weather is a prompt specialist executed through the hosted coordinator and its
-authorized Lakehouse bridge, not another standalone hosted service. A Foundry
-Playground-only conversation does not certify connector execution or forecast
-freshness. The authenticated app's Weather route completed, but forecast serving
-tables remain empty because scheduled Aurora ingestion fails with HTTP 401.
-
-The older `foundryfabriciqappsdemo` project is a different deployment. Its
-orchestrator version 140 and specialist versions 16/21/25/20 match the older
-screenshots; that project does not contain Weather. Do not redeploy into another
-workspace's project to make its agent list match FEATURE. Publication in the
-correct project does not certify weather ingestion or a successful inference.
-
-The [Ontology_Test and operational-store review](ontology-test-review.md)
-records the read-only comparison and proposed FEATURE acceptance gates.
+Open the project's **Agents → hydro-weather-agent**. It is a prompt specialist
+behind `hydro-orchestrator`, not a separate hosted service. Playground responses
+do not prove source freshness or connector execution.
+[Target-specific deployment and acceptance evidence](ontology-test-review.md#latest-canonical-deployment-and-authenticated-acceptance-hosted-agent-10).
 
 ## Start a deployment
 
-Use the [merged feature-branch deployment matrix](../HydroOperationsApp/DEPLOY.md#deploying-the-merged-feature-branch)
-for PR #19/#20. The local launcher must run from the updated `feat/dibakar`
-checkout; Fabric Git sync prefills the checkout's branch and repository. Confirm
-that branch is pushed before importing it. **Set up Foundry agents** owns the five specialists,
-including Weather, and the Hosted coordinator. **Deploy app** is the final,
-read-only agent-verification and SPA-publication module, not agent provisioning.
-Weather source publication/provider authentication, energy-source setup,
-and manual native graph materialization remain separate prerequisites.
+1. Start the local app from the intended pushed checkout.
+2. Complete Core setup and manually materialize its ontology graph.
+3. Confirm the subscription; run **Set up Foundry agents**.
+4. Run **Deploy app**; require `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
 
-**One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
-The Foundry extensions are installed for you. The Foundry project and supporting resources can be created
-by the deploy when you tick **Create/reuse a target-specific Foundry project when none is selected** and supply
-the model settings available in your subscription/region. No original demo tenant or workspace is required.
-
-| | Local deploy app | Command line |
-|---|---|---|
-| 1 | Double-click [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) | |
-| 2 | Pick tenant + workspace, subscription and Foundry/model settings. Opt into target-specific project creation when needed | Target-specific env vars, Section 6 |
-| 3 | Press **Set up Foundry agents** | The same engine with `--stage foundry` prepares/verifies agents, without publishing the website |
-| 4 | Press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --stage app --push-config` |
-| 5 | Wait for `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it | same |
-
-Once the prerequisites below are satisfied, the independent Foundry module owns
-the project (only if you opted in), connections, five prompt agents, Hosted image
-build/publication and readback. Final app publication then verifies those prepared
-definitions, code/source fingerprints and active immutable runtime, without
-provisioning. Missing/stale setup stops publication. The original command without
-`--stage` retains combined behavior; **Initialize everything** runs the modules
-serially with selected energy setup before Foundry and the app last. Pick the
-target deliberately; no project is created simply to update the website.
+Existing resources are reused. New-project creation requires a chat model name
+and explicit billing approval. Website-only updates need **Deploy app** only.
 
 ## 1. The multi-agent setup
 
@@ -137,8 +83,9 @@ The separate setup stage (also used by combined CLI deployment;
 
 | Step | Behaviour | Skipped when |
 |---|---|---|
-| 0. Backend identity | If the target has no AppBackend yet, creates it first (without static hosting) so the Hosted Agent can be configured against its identity | The target already has one |
-| 1. Foundry project | Verifies the selected subscription belongs to the Fabric tenant. Uses an explicitly selected or same-target saved project; otherwise discovers one, or **if you opted in** provisions a target-specific project with `Azure-Samples/azd-ai-starter-basic`: resource group, account/project, specified model, connected registry/monitoring and Log Analytics. Unrelated projects are not reused when creation is selected. Waits for role propagation | A project is selected, or you did not opt in |
+| Preflight | Verifies tenant/subscription and resolves project/model before backend creation; validates catalog defaults for an approved new project | never |
+| 0. Backend identity | Creates a missing AppBackend without static hosting | Target already has one |
+| 1. Foundry project | Reuses the verified project, or creates target-named resources using `Azure-Samples/azd-ai-starter-basic` with explicit billing approval | Existing project |
 | 2. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
 | 3. Connections | Writes `hydro-fabric-iq` and `hydro-fabric-ontology` and reads them back | never |
 | 4. Prompt agents | Exports the five definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
@@ -220,42 +167,24 @@ Consequences:
 
 ## 4. Local deploy app, step by step
 
-1. Launch [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) (`python launch.py` on any OS).
-   It installs missing Python packages, signs in to Azure and opens `http://127.0.0.1:5000`.
-2. Choose the tenant and workspace. Add a **SPA client id** only if discovery is ambiguous or you were given one.
-3. **Set up Foundry agents** tab (or its section in **Full workflow**), *Foundry* block:
+| Path | Input |
+|---|---|
+| Reuse resources | Confirm Azure subscription |
+| Resolve ambiguity | Existing project name/model under **Project and model choices** |
+| Create resources (billable) | Chat model name + explicit approval |
 
-   | Field | Use it when |
-   |---|---|
-   | Azure subscription ID | Select a subscription explicitly; blank uses the active one, which must be enabled and in the selected Fabric tenant |
-   | Operator-verified ontology graph binding | Supply JSON after portal materialization if authoritative lineage is unavailable; never edit generated `.env` files |
-   | Existing project name | Only when saved selection, the target's convention-named project, and sole-project discovery cannot select unambiguously; full ARM ID/endpoint overrides are under troubleshooting |
-   | Model deployment | Existing project: select its deployment, reuse the same-target saved selection, or discover exactly one ready deployment advertising chatCompletion capability. Required when creating |
-   | Container registry | Select a live project connection when several exist; arbitrary or stale registry names are rejected |
-   | Work-order writes | You want to enable or disable the human-approved write (default: keep the current setting) |
-   | **Create/reuse a target-specific Foundry project when none is selected** | Provision a dedicated project rather than reuse an unrelated project. This **creates billable Azure resources** |
-   | Region for the new project | Only when creating; default is the Fabric capacity's region |
-   | Model catalog name | Only when creating; blank uses the deployment name, otherwise separates catalog identity from a custom deployment name |
-   | Model version / SKU / capacity | Normally automatic from the regional catalog; expand **Model deployment settings** only to override or resolve a missing default. Catalog availability does not guarantee quota |
+Names, region and model defaults are automatic. Version/SKU/capacity overrides are
+under **Model deployment settings**; ARM ID, endpoint, registry, SPA, graph and
+write-policy overrides are under **Troubleshooting**. See [environment variables](#6-settings)
+below for resolution rules.
 
-   Values are validated by the local server and passed to the deployer as environment variables; nothing secret is
-   collected. Blank text fields fall back to the launch environment, then target-scoped discovery where supported.
-   The creation checkbox explicitly overrides an inherited `HYDRO_FOUNDRY_CREATE`; unchecked cannot opt into billing.
-   Both forms normally show only the subscription. Creating a project adds only the chat model name
-   and explicit billing approval. The project/model preflight runs before AppBackend creation.
-   Same-target Foundry hints survive AppBackend state rotation; historical backend URLs do not.
-4. Fresh data environment: use **Full workflow** (GitHub sync, setup, selected energy, Foundry, final app), or run those modules first.
-   An ordinary update needs none of that. The workflow does not materialize the native graph: on a fresh target,
-   complete the selected ontology's **Manage graph → select eligible entities/relationships → Continue → Materialize**
-   flow and resolve the explicit graph binding before app deployment can succeed. If Full workflow stops at this
-   prerequisite after setup, complete it and resume **Set up Foundry agents**, then **Deploy app**, not another reset/sync.
-5. Press **Set up Foundry agents**. Project creation/image builds belong here
-   (90-minute job limit). Wait for `FOUNDRY_SETUP_SUCCESS`; configuration is verified,
-   not business execution. Then press **Deploy app** (30-minute job limit).
-   The local UI does not require GitHub write permission or pass `--push-config`.
-   Repository owners can commit the generated hosting-origin configuration;
-   agents using the canonical CLI retain `--push-config`.
-6. Finish when final publication prints `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
+On a fresh workspace, run **Full Deploy**. If it stops for graph materialization,
+complete the portal action and resume Foundry, then app deployment; do not reset
+or reimport Git. `FOUNDRY_SETUP_SUCCESS` verifies configuration, not business
+execution. Final publication requires `SUCCESS` and `DEPLOYED_APP_URL`.
+
+The UI does not require GitHub write access. CLI `--push-config` requires a clean,
+pushed non-main branch. Job limits: Foundry 90 minutes; app publication 30 minutes.
 
 ## 5. Command line
 
@@ -372,65 +301,40 @@ environment on a machine that has none.
 
 ## Appendix A: manual operator setup (without the local web app)
 
-Manual setup means an operator performs the prerequisite portal/access steps and invokes the **same deployment
-engine**, not a second sequence of Rayfin/Entra/Foundry commands.
+Use the same engine, not a hand-built Rayfin/Entra deployment sequence.
 
-1. **Select the target.** Sign in to the intended Azure tenant, select its subscription, record the Fabric workspace,
-   and check capacity availability. Complete Section 3's tool and permission checklist. If needed, sign in to azd
-   interactively before starting. Do not substitute a service-principal token for the user's runtime tokens.
-2. **Prepare Fabric data.** For a new environment, import/sync the repository items and run `01_Pipe_Setup` with the
-   [setup prerequisites and parameters](../Raw/workspace-reset/README.md#prerequisites), including Key Vault,
-   Teams and alert-recipient configuration. Always provision the Data Agent and the ontology-backed Operations Agent; do not
-   skip agent branches. For an existing target, do not reset or recreate it for a routine deployment.
-3. **Verify Fabric agents.** Check NB09's published source identity and runtime result (Appendix B).
-   NB10 configures the ontology-backed Operations Agent stopped; inspect its playbook/actions, Teams and email wiring separately.
-   It retires only the exact obsolete Eventhouse-Knowledge agent/settings after identity and deletion checks.
-   NB11 must retain and publish the operational SQL source. Notebook completion alone proves no delivery.
-4. **Materialize the native graph.** In the selected ontology use **Manage graph → select eligible
-   entities/relationships → Continue → Materialize**. Resolve `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from
-   authoritative lineage, or provide the documented operator-verified fallback using
-   [the graph binding procedure](knowledge-graph.md). If lineage is unavailable, pass the operator-verified JSON
-   through `HYDRO_ONTOLOGY_GRAPH_BINDING` (or the local form); do not edit generated state. Do not infer ownership
-   by name or graph count.
-5. **Select Foundry.** For an existing project, verify model, registry and monitoring connections, then set its endpoint
-   if discovery is ambiguous. For a new project, explicitly opt into billable resource creation:
-   ```powershell
-   $env:HYDRO_AZURE_SUBSCRIPTION_ID = "<subscription-guid-in-the-target-tenant>"
-   $env:HYDRO_FOUNDRY_CREATE = "true" # Only when creation is intended.
-   $env:HYDRO_FOUNDRY_MODEL = "<deployment-name>"
-   $env:HYDRO_FOUNDRY_MODEL_NAME = "<compatible-openai-chat-model-catalog-name>"
-   $env:HYDRO_FOUNDRY_MODEL_VERSION = "<available-model-version>"
-   $env:HYDRO_FOUNDRY_MODEL_SKU = "<available-deployment-sku>"
-   $env:HYDRO_FOUNDRY_MODEL_CAPACITY = "<positive-capacity-within-quota>"
-   # Optional: $env:HYDRO_FOUNDRY_LOCATION = "<supported-azure-region>"
-   # Only if authoritative graph lineage is unavailable, after portal verification:
-   # $env:HYDRO_ONTOLOGY_GRAPH_BINDING = '{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'
-   ```
-   For an existing project instead:
-   ```powershell
-   $env:HYDRO_AZURE_SUBSCRIPTION_ID = "<subscription-guid-in-the-target-tenant>"
-   $env:HYDRO_FOUNDRY_CREATE = "false"
-   $env:HYDRO_FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
-   $env:HYDRO_FOUNDRY_MODEL = "<existing-compatible-chat-deployment-name>"
-   ```
-   These are alternatives. If a specified endpoint cannot be found, stop and verify tenant/subscription/endpoint;
-   do not use project creation to work around missing access.
-   Clear environment overrides from a previous target before switching; never copy its generated URLs, GUIDs or
-   registry settings. The canonical engine resolves tenant domains to GUIDs, validates the subscription's tenant,
-   discovers Fabric items in the selected workspace and derives the AppBackend endpoint from its current capacity.
-6. **Deploy from the repository root:**
-   ```powershell
-   python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config
-   ```
-   Add `--client-id <guid>` only when supplied or discovery is ambiguous. The engine owns connection/agent
-   definitions, image build, azd state, SPA permissions/consent, redirects, runtime/CORS and backend checks.
-   Stop on any printed administrator prerequisite; only perform the exact action it delegates to an administrator.
-   Do not hand-edit generated state or manually reconstruct the publish sequence.
-7. **Accept separately.** Require `SUCCESS` and `DEPLOYED_APP_URL`, normal browser sign-in, then run the
-   [ten-prompt matrix](../HydroOperationsApp/AGENT-TEST-PROMPTS.md) on the deployed build. Confirm specialist
-   invocations and source receipts, Fabric IQ retrieval, and explicit human approval/readback of a test work order
-   only when writes are intentionally enabled. Test Operations Agent execution and Teams/email delivery separately.
-   Record pending or failed gates rather than calling hosting success end-to-end acceptance.
+1. Sign in to the target tenant; complete [access prerequisites](#3-one-time-checklist).
+2. For a new workspace, import Git and run Core setup with Key Vault, Teams and
+   email parameters. Do not reset an existing deployment for a website update.
+3. Materialize the ontology graph using the [portal procedure](knowledge-graph.md).
+4. Confirm the subscription and reuse existing Foundry resources. For ambiguity,
+   set `HYDRO_FOUNDRY_EXISTING_PROJECT_NAME`; see [other overrides](#6-settings).
+
+Only for explicitly approved **new billable resources**:
+
+```powershell
+$env:HYDRO_AZURE_SUBSCRIPTION_ID = "<target-subscription-guid>"
+$env:HYDRO_FOUNDRY_CREATE = "true"
+$env:HYDRO_FOUNDRY_MODEL = "<approved-chat-model-name>"
+```
+
+Version, regional Standard and capacity use catalog defaults. Clear previous-target
+overrides before switching; never copy generated endpoints or deployment state.
+Missing access is not permission to create a replacement.
+
+From the repository root:
+
+```powershell
+python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config
+```
+
+Add `--client-id <guid>` only when supplied or discovery is ambiguous. Stop on
+administrator prerequisites; do not hand-edit generated state.
+
+Require `SUCCESS` and `DEPLOYED_APP_URL`, then run the
+[acceptance prompts](../HydroOperationsApp/AGENT-TEST-PROMPTS.md). Verify agent/source
+receipts, approved writes, Operations Agent execution and Teams/email delivery
+separately; notebook or hosting success is not end-to-end acceptance.
 
 ## Appendix B: Fabric-side agents
 

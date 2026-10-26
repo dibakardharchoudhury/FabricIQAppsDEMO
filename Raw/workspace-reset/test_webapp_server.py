@@ -710,16 +710,20 @@ global.fetch = async url => {
         code = page[page.index("function renderPipelineFields("):page.index("function updatePipelineDefaultsSummary(")]
         script = """
 const assert=require("node:assert/strict");
-const pipelineSpec = """ + json.dumps([specs["ops_agent_teams_team_id"], specs["ops_agent_teams_channel_id"]]) + """;
-const requiredPipelineFields=pipelineSpec.map(spec=>spec.name);
+const pipelineSpec = """ + json.dumps(list(specs.values())) + """;
+const requiredPipelineFields=["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id","alert_email_to"];
 const escapeHtml=value=>String(value).replaceAll("&","&amp;").replaceAll('"',"&quot;");
 """ + code + """
 for(const prefix of ["pp_","wf_pp_"]){
   const html=renderPipelineFields(prefix);
-  assert.equal(html.split("How to find this ID (Microsoft Learn)").length-1,2);
+  assert.equal(html.split(">Find ID</a>").length-1,2);
   assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
-  assert.ok(html.includes("Required before Core setup:"));
-  assert.ok(html.includes("existing Azure Key Vault"));
+  const visible=html.split("<details")[0];
+  assert.ok(visible.includes("Required:"));
+  assert.ok(visible.includes("existing Key Vault"));
+  assert.ok(visible.includes("notebook read access"));
+  assert.ok(visible.replace(/<[^>]*>/g," ").trim().split(/\\s+/).length <= 100);
+  assert.ok(!visible.includes("defaultsSummary"));
   assert.ok(html.includes("tenant ID, client ID and client secret"));
   assert.ok(html.includes("does not create the vault or its secrets"));
   assert.ok(html.includes("<summary>Key Vault secret names and notebook settings</summary>"));
@@ -1237,6 +1241,7 @@ console.log(JSON.stringify([
             self.assertEqual(normal_fields.count('type="text"'), 1)
             self.assertNotIn("FoundryCreate", normal_fields)
             self.assertIn("Use existing resources (recommended)", normal_fields)
+            self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", normal_fields).split()), 40)
             self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
             self.assertIn(f'<details id="{prefix}FoundryNewProjectOptions" class="foundry-block">', form)
             self.assertIn("Troubleshooting overrides (normally leave closed)", form)
@@ -1248,6 +1253,17 @@ console.log(JSON.stringify([
         self.assertNotIn("Advanced: secret names", page)
         handler = page[page.index('$("deployBtn").addEventListener'):page.index('$("workflowBtn").addEventListener')]
         self.assertNotIn("workflow", handler)
+
+    def test_ui_help_stays_brief_without_removing_warnings(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        for paragraph in re.findall(r'<p class="hint">(.*?)</p>', page, re.DOTALL):
+            self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", paragraph).split()), 45, paragraph)
+        for spec in SERVER.PIPELINE_PARAM_SPEC:
+            self.assertLessEqual(len(spec["help"].split()), 12, spec["name"])
+        self.assertIn("billable Azure resources", page)
+        self.assertIn("Deletes every workspace item.", page)
+        self.assertIn("materialize the ontology graph first", page)
+        self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
 
     def test_foundry_creation_requires_only_model_and_valid_optional_capacity(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -1527,8 +1543,7 @@ for (const prefix of ["deploy", "workflow"]) {
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="workflowBtn"', page)
         self.assertIn('"/api/full-workflow"', page)
-        self.assertIn("Each step starts only after the previous step succeeds", page)
-        self.assertIn("later changes", page)
+        self.assertIn("Runs each step in order; stops on failure.", page)
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="deploymentActions"'))
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="tabDelete"'))
 
@@ -1550,7 +1565,8 @@ for (const prefix of ["deploy", "workflow"]) {
             "workflowFoundryFields",
         ):
             self.assertIn(f'id="{field_id}"', workflow_pane)
-        self.assertIn("Set your tenant and workspace on the left", workflow_pane)
+        self.assertIn('id="tenant"', page)
+        self.assertIn('id="workspace"', page)
         self.assertNotIn("Configure all required fields in the other tabs", workflow_pane)
         self.assertIn('renderPipelineFields("wf_pp_")', page)
         self.assertIn('renderFoundryFields("workflow", "workflowDeployClientId")', page)
@@ -1577,10 +1593,12 @@ for (const prefix of ["deploy", "workflow"]) {
 
     def test_deploy_page_explains_portable_backend_readiness_contract(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        self.assertIn("Workspace or capacity changes are detected automatically", page)
-        self.assertIn("CORS preflights and POST probes", page)
-        self.assertIn("/graphql", page)
-        self.assertIn("/api/auth/v1/token", page)
+        self.assertIn("verifies authentication, CORS and connectors", page)
+        self.assertIn('href="/deploy-guide"', page)
+        guide = (SERVER.REPO_ROOT / "HydroOperationsApp" / "DEPLOY.md").read_text(encoding="utf-8")
+        self.assertIn("preflights and POST", guide)
+        self.assertIn("/graphql", guide)
+        self.assertIn("/api/auth/v1/token", guide)
 
     def test_cancel_all_jobs_terminates_only_running_jobs(self):
         running = SERVER.Job(["Queued", "Done"])
