@@ -15,6 +15,7 @@ export type OntologyGraphEdge = {
 }
 
 export type OntologyGraph = {
+  execution?: 'native'
   ontologyId?: string
   graphModelId: string
   graphModelName: string

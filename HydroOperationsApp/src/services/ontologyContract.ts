@@ -32,6 +32,8 @@ export type OntologyRelationshipType = {
   targetKeys: string[]
   backingRelationship?: string
   compatibilityUnsupported?: boolean
+  sourceCardinality?: 'one' | 'many'
+  targetCardinality?: 'one' | 'many'
 }
 
 export type OntologyContract = {
@@ -41,6 +43,28 @@ export type OntologyContract = {
   relationshipTypes: OntologyRelationshipType[]
   generation: 2
   warnings?: string[]
+  sourceBindings?: OntologySourceProjection[]
+}
+
+export type OntologySourceBinding = {
+  entityTypeId: string
+  logicalTable: string
+  workspaceId: string
+  itemId: string
+  itemKind?: string
+  schema?: string
+  table: string
+  columns: Record<string, string>
+  properties: Record<string, string>
+  keyProperty: string
+  keyColumn: string
+  omittedProperties: string[]
+}
+
+export type OntologySourceProjection = {
+  entityTypeId: string
+  binding?: OntologySourceBinding
+  unsupportedReason?: string
 }
 
 export type DefinitionPart = { path: string; payload?: string; payloadType?: string }

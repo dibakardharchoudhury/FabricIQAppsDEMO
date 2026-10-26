@@ -1,6 +1,7 @@
 import { initEmbeddedAuth, ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric'
 import { ConnectorsRayfinClient } from '@microsoft/rayfin-client'
-import { lakehouseConnectorConfig, type LakehouseConnectors } from './lakehouseConnector'
+import { lakehouseConnectorConfig, type LakehouseConnectors, type LakehousePage } from './lakehouseConnector'
+import type { OntologySourceReader } from './ontologySourceGraph'
 import { operationalConnectorConfig, type OperationalConnectors } from './operationalConnector'
 import { geoConnectorConfig, type GeoConnectors } from './geoConnector'
 import {
@@ -124,6 +125,47 @@ export function lakehouseConnectionKey(): string {
 export function connectedLakehouse() {
   lakehouseConnectionKey()
   return isRayfinSignedIn() ? client!.connectors.hydrolakehouse : undefined
+}
+
+export function ontologySourceConnectionKey(): string {
+  const sqlId = import.meta.env.VITE_RAYFIN_OPERATIONAL_SQL_DATABASE_ID as string | undefined
+  if (!sqlId) throw new Error('Operational SQL connector identity is not configured. Run the canonical app deployer.')
+  if (!isRayfinSignedIn()) throw new Error('Sign in to Fabric before reading the ontology-governed live graph.')
+  return JSON.stringify([lakehouseConnectionKey(), sqlId])
+}
+
+export function ontologySourceReaders(): OntologySourceReader[] {
+  ontologySourceConnectionKey()
+  const lakehouse = client!.connectors.hydrolakehouse
+  const operations = client!.connectors.hydrooperations
+  const lake = lakehouseConnectorConfig.entities
+  const sql = operationalConnectorConfig.entities
+  const reader = <T extends object>(
+    itemKind: OntologySourceReader['itemKind'], table: string, columns: readonly string[],
+    read: (cursor?: string) => Promise<LakehousePage<T>>,
+  ): OntologySourceReader => ({
+    workspaceId: workspaceId!,
+    itemId: (itemKind === 'Lakehouse' ? import.meta.env.VITE_RAYFIN_LAKEHOUSE_ID : import.meta.env.VITE_RAYFIN_OPERATIONAL_SQL_DATABASE_ID) as string,
+    itemKind, schema: 'dbo', table, columns,
+    read: async cursor => {
+      const page = await read(cursor)
+      return { ...page, items: page.items.map(row => Object.fromEntries(Object.entries(row))) }
+    },
+  })
+  return [
+    reader('Lakehouse', 'silver_facilities', lake.SilverFacilities, cursor => lakehouse.SilverFacilities.select([...lake.SilverFacilities]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'silver_systems', lake.SilverSystems, cursor => lakehouse.SilverSystems.select([...lake.SilverSystems]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'silver_equipment', lake.SilverEquipment, cursor => lakehouse.SilverEquipment.select([...lake.SilverEquipment]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'silver_instruments', lake.SilverInstruments, cursor => lakehouse.SilverInstruments.select([...lake.SilverInstruments]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_locations', lake.WeatherLocations, cursor => lakehouse.WeatherLocations.select([...lake.WeatherLocations]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_areas', lake.WeatherAreas, cursor => lakehouse.WeatherAreas.select([...lake.WeatherAreas]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_variables', lake.WeatherVariables, cursor => lakehouse.WeatherVariables.select([...lake.WeatherVariables]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'WorkOrders', sql.WorkOrder, cursor => operations.WorkOrder.select([...sql.WorkOrder]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'Inspections', sql.Inspection, cursor => operations.Inspection.select([...sql.Inspection]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'SpareParts', sql.SparePart, cursor => operations.SparePart.select([...sql.SparePart]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'Asset3DModels', sql.Asset3DModel, cursor => operations.Asset3DModel.select([...sql.Asset3DModel]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'MaintenanceNotifications', sql.MaintenanceNotification, cursor => operations.MaintenanceNotification.select([...sql.MaintenanceNotification]).first(200).after(cursor).executePaginated()),
+  ]
 }
 
 export function connectedGeo() {

@@ -8,6 +8,7 @@ import { createOntologyCache, OntologyCacheInvalidatedError } from './ontologyCa
 import { parseOntologyContract, type OntologyContract } from './ontologyContract'
 import { waitForDefinitionResult } from './ontologyDefinition'
 import type { OntologyGraph } from './ontologyGraph'
+import { readOntologySourceGraph, type OntologySourceGraph } from './ontologySourceGraph'
 import { parseGraphBinding, queryBoundOntologyGraph, readOntologyGraphReadiness, type GraphReader, type OntologyGraphReadiness } from './ontologyGraphQuery'
 import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
@@ -16,7 +17,7 @@ import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
-import { connectedLakehouse, lakehouseConnectionKey, signInToRayfin } from './rayfin'
+import { connectedLakehouse, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin } from './rayfin'
 import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
   requireLakehouseNumber, requireLakehouseText } from './lakehouseConnector'
 
@@ -305,6 +306,8 @@ export function clearWorkspaceConfigCache() {
   invalidateDataAgentMcpSession()
   dataAgentMcpTool = undefined
   dataAgentUserQuestions = []
+  ontologySourceGraphCache.clear()
+  lastOntologySourceConnection = undefined
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -572,6 +575,8 @@ const ONTOLOGY_CONTRACT_TTL_MS = 15 * 60_000
 const ontologyContractCache = createOntologyCache<OntologyContract>(ONTOLOGY_CONTRACT_TTL_MS)
 const ontologyGraphCache = createOntologyCache<OntologyGraph>(5 * 60_000)
 const ontologyGraphReadinessCache = createOntologyCache<OntologyGraphReadiness>(5 * 60_000)
+const ontologySourceGraphCache = createOntologyCache<OntologySourceGraph>(30_000)
+let lastOntologySourceConnection: string | undefined
 const configuredGraphBindingValue = import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined
 
 async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Promise<T>): Promise<T> {
@@ -679,6 +684,20 @@ async function readBoundOntologyGraph(binding: ReturnType<typeof parseGraphBindi
 
 export async function queryOntologyGraph(force = false): Promise<OntologyGraph | null> {
   return readBoundOntologyGraph(parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId()), force)
+}
+
+export async function queryOntologySourceGraph(force = false): Promise<OntologySourceGraph | null> {
+  const connection = ontologySourceConnectionKey()
+  const changedUserOrTarget = lastOntologySourceConnection !== connection
+  if (force || changedUserOrTarget) ontologySourceGraphCache.clear()
+  lastOntologySourceConnection = connection
+  const ontology = await queryOntologyContract(force || changedUserOrTarget)
+  if (!ontology) throw new Error('No verified Ontology is selected for the live graph.')
+  return ontologySourceGraphCache.read(JSON.stringify([connection, ontology]), force, async () => {
+    const graph = await readOntologySourceGraph(ontology, ontologySourceReaders())
+    if (ontologySourceConnectionKey() !== connection) throw new Error('The signed-in user or connector target changed while reading the graph. Refresh to query the current identity.')
+    return graph
+  })
 }
 
 export type StidData = {

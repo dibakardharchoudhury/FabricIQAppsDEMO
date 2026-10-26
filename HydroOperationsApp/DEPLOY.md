@@ -122,14 +122,20 @@ Core refuses the old serial pipeline before starting a long run.
 Notebook completion is not agent runtime acceptance. NB09's exact unsupported-v2
 API response is a documented product limitation, not proof of a working query.
 
-## 4. Materialize the selected ontology graph
+## 4. Choose Knowledge Graph execution
 
-In Fabric: **Manage graph → select eligible entities/relationships → Continue →
-Materialize**. This is a manual portal prerequisite.
+The app defaults to **Live ontology-governed sources**. It verifies the live
+ontology's workspace/item/table/property/key bindings against the existing
+Rayfin Lakehouse and independent SQL connectors, then joins only declared
+relationships. Materialization is not required for this mode. The page reports
+supported/excluded coverage, source observation times, load duration and
+non-atomic cross-source consistency. It does not append inferred SQL topology.
+Denied, invalid, incomplete and over-budget reads fail closed, not to mock data.
 
-This prerequisite is for the application's current **native GraphModel** canvas; Fabric
-ontologies can also serve definitions and bindings without materializing an instance graph.
-The app does not silently replace native graph results with a schema diagram or source joins.
+For the separate **Materialized native graph (GQL)** mode, use Fabric:
+**Manage graph → select eligible entities/relationships → Continue →
+Materialize**. This remains a manual portal prerequisite for native execution.
+The app never silently switches modes or treats source-backed instances as a GraphModel.
 When Fabric returns HTTP 204 for the queryable schema, the graph path stops before loading
 the ontology definition or executing queries. Readiness network checks are bounded to ten
 seconds; **Retry graph query** rechecks failed readiness without waiting for a cache expiry.
@@ -299,7 +305,7 @@ publication does not configure provider authentication or ingest data.
 |---|---|
 | Permission, consent or private endpoint | Give the exact error to the resource owner; do not weaken access controls |
 | Stale agent/source configuration | Foundry setup, then app deployment |
-| Graph not materialized | Complete the portal action, then retry the stopped module |
+| Native graph not materialized | Use the explicitly labelled live-source mode, or complete the portal action for native GQL; never fabricate graph ownership |
 | Weather provider HTTP 401 | Credential owner checks `mai-weather-api-key` in Key Vault; rerun Weather only |
 | Energy/Weather source failure | Fix that source's credentials/connectivity, then refresh it |
 | Paused capacity or unsupported region | Fix the target prerequisite, not the app build |

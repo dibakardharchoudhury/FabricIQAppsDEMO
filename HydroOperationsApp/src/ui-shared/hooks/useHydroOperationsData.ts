@@ -1,7 +1,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
-  queryLatestTelemetry, queryOntologyContract, queryOntologyGraph, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
+  queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
   runWeatherNotebooks,
   refreshEnergyMap, resumeEnergyMapRefresh,
   startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
@@ -108,7 +108,6 @@ function useHydroOperationsDataController() {
   const [ontologyError, setOntologyError] = useState<string>()
   const [ontologyLoading, setOntologyLoading] = useState(false)
   const ontologyRefreshVersion = useRef(0)
-  const prefetchedOntologyRef = useRef<string | undefined>(undefined)
   const [stidSyncedAt, setStidSyncedAt] = useState<number>()
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>([])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
@@ -198,15 +197,6 @@ function useHydroOperationsDataController() {
     }
     return data
   }, [applyStid, clearStid, refreshOntology])
-
-  useEffect(() => {
-    if (!ontology) { prefetchedOntologyRef.current = undefined; return }
-    if (prefetchedOntologyRef.current === ontology.id) return
-    prefetchedOntologyRef.current = ontology.id
-    void queryOntologyGraph().catch(error => {
-      console.warn('Native graph prefetch failed; opening Knowledge Graph will retry the verified source.', error)
-    })
-  }, [ontology])
 
   const loadOperationalData = useCallback(async () => {
     const [loadedOrders, loadedModels, loadedInspections, loadedParts, loadedNotifications] = await Promise.allSettled([

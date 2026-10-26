@@ -11,12 +11,14 @@ const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
   'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',
   'dataAgentConversation', 'dataAgentVisualizations', 'entraTokens', 'copilot/answerPresentation',
-  'lakehouseConnector',
+  'lakehouseConnector', 'ontologySourceGraph',
 ].map(async name => [`./${name}`, await import(`../src/services/${name}.ts`)])))
 serviceDependencies['./rayfin'] = {
   connectedLakehouse: () => undefined,
   lakehouseConnectionKey: () => `${workspaceId}:lakehouse:sql-endpoint:appbackend`,
   signInToRayfin: async () => undefined,
+  ontologySourceConnectionKey: () => `${workspaceId}:user:connector-target`,
+  ontologySourceReaders: () => [],
 }
 const serviceCode = ts.transpileModule(source.replaceAll('import.meta.env', 'testEnv'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -33,7 +35,7 @@ const mcpDependencies = {
   '@modelcontextprotocol/sdk/client/streamableHttp.js': { StreamableHTTPClientTransport: class {} },
 }
 
-function graphService(onRequest = async () => undefined, envOverrides = {}) {
+function graphService(onRequest = async () => undefined, envOverrides = {}, dependencyOverrides = {}) {
   const requests = []
   const dependencies = {
     ...serviceDependencies,
@@ -46,6 +48,7 @@ function graphService(onRequest = async () => undefined, envOverrides = {}) {
       getAllAccounts() { return [{ tenantId: 'test-tenant' }] }
       async acquireTokenSilent() { return { accessToken: 'test-token' } }
     } },
+    ...dependencyOverrides,
   }
   const exports = {}
   new Function('require', 'exports', 'testEnv', 'fetch', 'location', serviceCode)(
@@ -308,7 +311,7 @@ test('manual refresh verifies the current ontology definition and performs one n
   assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
 })
 
-test('a prefetched native graph is reused immediately when the graph page opens', async () => {
+test('native graph cache is reusable but no native execution is prefetched on unrelated tabs', async () => {
   const { service, requests } = graphService()
   await service.queryOntologyContract()
   await service.queryOntologyGraph()
@@ -316,7 +319,66 @@ test('a prefetched native graph is reused immediately when the graph page opens'
   const graph = await service.queryOntologyGraph()
   assert.equal(graph.nodes.length, 1)
   assert.equal(requests.length, warmedRequests)
-  assert.match(hydroDataHookSource, /void queryOntologyGraph\(\)\.catch/)
+  assert.doesNotMatch(hydroDataHookSource, /void queryOntologyGraph\(\)\.catch/)
+})
+
+test('live graph reads no GraphModel, scopes cache by user and invalidates failed refreshes', async () => {
+  let user = 'one'
+  let reads = 0
+  let denied = false
+  const sourceItem = '55555555-5555-4555-8555-555555555555'
+  const part = (path, text) => ({ path, payloadType: 'InlineBase64', payload: Buffer.from(text).toString('base64') })
+  const liveDefinition = { definition: { parts: [
+    part('entities/facilities.tmdl', `entity facilities
+    backingTable: facilities
+    keyProperty: facility_id
+    property facility_id
+        dataType: string
+        backingConfiguration
+            valueColumn: facilities.facility_id`),
+    part('tables/facilities.tmdl', `table facilities
+    column facility_id
+        sourceColumn: facility_id
+    partition facilities = entity
+        mode: directLake
+        source
+            entityName: silver_facilities
+            expressionSource: BoundSource`),
+    part('expressions.tmdl', `expression BoundSource =
+    let
+        Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/${workspaceId}/${sourceItem}", [HierarchicalNavigation=true])
+    in
+        Source`),
+  ] } }
+  const { service, requests } = graphService(async url =>
+    url.endsWith('/getDefinition') ? Response.json(liveDefinition) : undefined, {}, {
+    './rayfin': {
+      ...serviceDependencies['./rayfin'],
+      ontologySourceConnectionKey: () => `${workspaceId}:${sourceItem}:${user}`,
+      ontologySourceReaders: () => [{
+        workspaceId, itemId: sourceItem, itemKind: 'Lakehouse', schema: 'dbo',
+        table: 'silver_facilities', columns: ['facility_id'],
+        read: async () => {
+          reads++
+          if (denied) throw new Error('403 connector denied')
+          return { items: [{ facility_id: `F-${user}` }], hasNextPage: false }
+        },
+      }],
+    },
+  })
+  const first = await service.queryOntologySourceGraph()
+  assert.equal(first.nodes[0].properties.facility_id, 'F-one')
+  assert.equal((await service.queryOntologySourceGraph()), first)
+  assert.equal(reads, 1)
+  user = 'two'
+  assert.equal((await service.queryOntologySourceGraph()).nodes[0].properties.facility_id, 'F-two')
+  assert.equal(reads, 2)
+  denied = true
+  await assert.rejects(service.queryOntologySourceGraph(true), /403 connector denied/)
+  await assert.rejects(service.queryOntologySourceGraph(), /403 connector denied/)
+  denied = false
+  assert.equal((await service.queryOntologySourceGraph()).execution, 'source-backed')
+  assert.ok(requests.every(url => !url.includes('/graphModels/')))
 })
 
 test('native failures are propagated and a later read retries instead of returning stale graph data', async () => {

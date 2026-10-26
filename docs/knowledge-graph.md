@@ -14,15 +14,34 @@ engine. Graph materialization is optional in Fabric: consumers can use ontology 
 and bindings while querying the owning sources.
 [Microsoft's ontology overview](https://learn.microsoft.com/fabric/iq/ontology/overview#optional-graph-execution).
 
-This application's current Knowledge Graph canvas specifically renders native GraphModel
-instances. Its materialization requirement is an application-mode choice, not a requirement
-for every ontology consumer. A definition-only view could show entity types and relationship
-types without materialization. A source-backed operational view could resolve actual instances
-through the ontology's bindings and source connectors, but would need explicit identity,
-relationship, pagination, authorization and provenance handling. Neither alternative is
-silently substituted for the current native canvas.
+The **Graph execution** selector exposes two separate modes:
 
-For a cold read or explicit refresh, the app checks GraphModel metadata and queryable schema
+- **Live ontology-governed sources** (default) reads real instances through the existing signed-in
+  Rayfin Lakehouse and independent SQL connectors. It verifies the selected generation-2 ontology,
+  exact OneLake workspace/item identities, partition table/schema, scalar property/key mappings and
+  declared physical relationships. It does not execute arbitrary M or infer edges from familiar
+  foreign-key names. It has no GraphModel identity and is not native materialization.
+- **Materialized native graph (GQL)** retains the verified ontology-owned GraphModel reader.
+  Missing materialization fails this mode; it never silently switches to source-backed execution.
+
+Live mode shows entity/relationship coverage, excluded-binding reasons, counts and observation
+times. Unsupported entities/properties are disclosed, not fabricated. Connectors must expose a
+complete scalar projection and a physical scalar identity. Rules, complex/time-series properties
+and unsupported additional-table projections are not executed. Eventhouse readings remain
+separately timestamped contextual enrichment, not invented ontology edges.
+
+Source reads run at most four tables concurrently, with bounded pages, a 20-second read deadline,
+2,000 nodes, 4,000 edges and an 8 MiB topology payload. Duplicate/invalid identities, unresolved
+references, denied reads, non-advancing cursors and overflow fail closed. Sources are not an atomic
+cross-store snapshot. Authorization is the signed-in Rayfin session plus each connector's configured
+source credentials; this does not establish per-user SQL impersonation or an RLS certification.
+
+Successful live results are cached only in memory for 30 seconds, scoped by user, target and full
+ontology contract. Refresh bypasses contract/result caches and invalidates failed refreshes.
+Switching execution cancels obsolete UI results. Live export is JSON containing the exact ontology,
+complete accepted topology and source/coverage evidence; RDF/OWL native exports remain separate.
+
+For a native cold read or explicit refresh, the app checks GraphModel metadata and queryable schema
 before fetching the ontology definition or executing graph queries. Readiness network checks
 have a shared ten-second deadline, separate from the native query budget. HTTP 204, missing
 or empty schemas, and access failures stop that path without querying graph data. A failed
@@ -32,7 +51,7 @@ the existing five-minute in-memory caching; an explicit refresh rechecks live re
 
 ## Fluid 2D presentation
 
-The graph opens in the performant 2D analysis view. Directed arrowheads preserve the native
+The graph opens in the performant 2D analysis view. Directed arrowheads preserve the declared
 Ontology relationship orientation, while animated cyan/status-colored dashes show current
 telemetry moving from a reading-bearing instrument through equipment, system, and facility
 relationships. Maintenance and other SQL overlays are never treated as telemetry paths.
@@ -100,8 +119,9 @@ signal_master -> instruments -> equipment -> systems -> facilities
 ```
 
 **This project requires Ontology v2.** Existing generation-1 items are rejected, not consumed through
-a legacy parser or used as agent sources. Graph materialization is required for canvas, tree and
-scopes; missing native topology is not replaced with Ontology-bound STID entities.
+a legacy parser or used as agent sources. Graph materialization is required only for native
+execution. The explicit live-source mode builds its accepted projection from verified ontology
+bindings; it does not use a guessed STID hierarchy as a fallback.
 
 Fabric does not establish a published ontology-owned REST materialization endpoint.
 **Manage graph → select eligible entities and relationships → Continue → Materialize** is a portal
@@ -195,22 +215,24 @@ proves ownership. Live contract/type validation checks consistency, not ownershi
 
 ## Application implementation
 
-The SPA uses the live Fabric IQ Ontology v2 definition for semantic metadata and its explicitly
-bound native GraphModel for topology:
+The SPA uses the live Fabric IQ Ontology v2 definition for both execution modes. Live mode resolves
+verified connector rows and exact declared joins; native mode uses its explicitly bound GraphModel:
 
 ```mermaid
 flowchart LR
    DEF["Fabric IQ Ontology v2\nTMDL semantic contract"]
    GM["Ontology-managed GraphModel"]
+   SRC["Verified Rayfin bound-source projections"]
     EH["Eventhouse OPCUAEvents"]
     SQL["Rayfin SQL operational records"]
    GQL["Native Graph REST\nGQL queries"]
     KQL["KQL latest readings"]
-   BUILD["buildKnowledgeGraph()\nverified native topology + external enrichment"]
+   BUILD["buildKnowledgeGraph()\nexplicit governed execution + telemetry enrichment"]
     CY["Cytoscape canvas"]
 
    DEF -->|"getDefinition"| BUILD
    GM --> GQL --> BUILD
+   DEF -->|"verified source bindings and joins"| SRC --> BUILD
     EH --> KQL --> BUILD
     SQL --> BUILD
     BUILD --> CY
@@ -220,10 +242,10 @@ flowchart LR
 Physical TOM relationships in `relationships.tmdl` are not semantic ontology edges.
 `queryOntologyGraph()` verifies live numeric generation `2`, the live TMDL contract, configured
 GraphModel metadata, queryable aliases, node/edge types, and relationship endpoints before accepting
-native GQL results. `buildKnowledgeGraph()` requires native topology before any canvas, tree or
-scope nodes can be presented. Pending reads show a loading state; failed or empty reads show an
-explicit unavailable state. STID rows, declared binding keys and physical foreign keys never
-create replacement topology. KQL/SQL enrich only actual native entities.
+native GQL results. `queryOntologySourceGraph()` instead requires verified physical source
+bindings and builds only explicitly supported entity/relationship projections. Pending reads show
+a loading state; failed or empty reads show an explicit unavailable state. No topology is substituted
+between modes. Live mode does not append the historical hardcoded SQL overlay relationships.
 
 Relative to `/v1/workspaces/{workspaceId}/`, native reads use
 `GET graphModels/{id}/getQueryableGraphType?beta=true` and
@@ -233,11 +255,9 @@ warnings, truncation, malformed responses, dangling edges, or limits exceeding *
 4,000 edges** fail closed; a partial result is never presented as a complete graph.
 
 For page-load performance, Cytoscape is route-lazy and
-single-flight requests prevent duplicate calls. Once the shared provider has a
-verified ontology contract, it starts one non-blocking native graph prefetch,
-independent of STID connectivity. Opening the graph reuses that request/result
-rather than starting the cold read at navigation. A failed prefetch is logged;
-opening the page retries and displays any source error, never a fabricated graph.
+single-flight requests prevent duplicate calls. Native graph execution is no longer prefetched
+from unrelated tabs; the selected mode runs when the graph opens. Cached results within that mode's
+lifetime are reused, never substituted across modes.
 Discovery's parsed ontology contract is reused, avoiding a second definition
 download on first graph load. The contract TTL is 15 minutes; native topology has
 a five-minute in-memory TTL matching its visible-page poll. Manual Refresh
@@ -256,10 +276,12 @@ visual node and retains both entities in the inspector provenance. This removes 
 without changing the governed v2 semantic contract. Unbound and non-one-to-one signals remain explicit nodes.
 The v2 adaptation retains the existing page layout, controls, friendly inspector labels, and
 one-to-one signal presentation. Native identity validation and errors do not introduce new panels.
-Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
+In native mode only, Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
 `instrumentId`, or `opcuaNodeId` as explicit external overlays attached to the corresponding
 native equipment. GraphQL/STID reads are not dependencies or topology substitutes for the
-canvas, tree or scopes; missing native edges are never filled in from foreign keys.
+native canvas, tree or scopes; missing native edges are never filled in from foreign keys.
+Live mode reads operational entities through their ontology bindings and renders only relationships
+declared in the ontology, rather than these external overlays.
 
 The application does not execute GraphModel queries without an explicit, validated v2 graph binding.
 REST `/v1` does not mean Ontology generation 1.
@@ -296,6 +318,7 @@ Maintenance.
 | Source | Graph content | Stable join |
 | --- | --- | --- |
 | Ontology-managed native GraphModel + live v2 TMDL | Native entities and governed relationships, validated against the contract | Native identities and resolved ontology type aliases |
+| Verified ontology bindings + Rayfin connectors | Live supported entity projection and exact declared relationships | Physically backed scalar ontology keys and declared physical join columns |
 | Fabric Eventhouse | Latest and historical telemetry enrichment | `opcua_node_id` |
 | Rayfin SQL | Work orders, notifications, inspections, 3D models | `equipmentId`, `instrumentId`, `opcuaNodeId` |
 
@@ -323,15 +346,20 @@ or operational record, source timestamp, quality, and provenance.
 1. Discover the configured/versioned Ontology item, require generation 2, and read its live definition.
 2. Parse entity types, properties, relationship types, bindings, and contextualizations into a
    versioned semantic contract.
-3. Require the operator's explicit ontology-managed GraphModel binding; never infer ownership.
-4. Validate live graph metadata, queryable types/endpoints, and complete native query responses.
-5. Preserve native entity and relationship provenance, including exact ontology type mappings.
-6. Enrich actual native entities with KQL and explicit `hydro-operations` SQL overlays.
-7. Fail closed on missing prerequisites or invalid/incomplete native results; never substitute STID.
+3. Select an explicit execution mode; never infer GraphModel ownership or silently switch modes.
+4. For live sources, verify item/table/property/key bindings and supported declared joins before reads.
+   For native execution, validate graph metadata, queryable types/endpoints and complete responses.
+5. Preserve execution-specific identities, ontology type mappings and provenance; disclose coverage.
+6. Enrich loaded measurement points with separately observed KQL readings. Historical SQL overlays
+   remain native-only; live topology uses declared ontology relationships exclusively.
+7. Fail closed on denied, invalid, incomplete or over-budget reads; never substitute guessed STID.
 
 This reuses the deployed v2 contract without silently substituting an unrelated graph or a v1 ontology.
 
 ## RDF and OWL export
+
+In live-source mode the toolbar exports JSON with the ontology, topology, coverage and source
+observations. It never assigns GraphModel URNs to source-backed instances.
 
 The Knowledge Graph toolbar exports a successfully verified native graph as either **OWL 2 in
 Turtle** (`.owl.ttl`) or **RDF 1.1 in Turtle** (`.rdf.ttl`). Fabric's portal also exports the

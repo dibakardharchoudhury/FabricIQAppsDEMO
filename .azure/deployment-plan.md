@@ -1,6 +1,56 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Knowledge Graph live-source publication
+
+Target: existing FEATURE workspace `c7da7c28-0dee-4f45-bc9e-5628bb882732`,
+tenant `ad340c84-1886-4202-a483-2da2cb9168eb`. Existing Python AZCLI/Fabric
+orchestrator recipe; no new infrastructure, container image, role assignment,
+Entra registration or graph resource is planned.
+
+All validation checks pass (current publication checklist):
+- [x] Load the approved existing target and canonical deployment recipe.
+- [x] Core CLI/auth validation: enabled subscription and expected tenant.
+- [x] Core build validation: environment validation, TypeScript and production build.
+- [x] Core behavioral validation: governed source graph and native/discovery regressions.
+- [x] Core target preflight: verified the existing workspace capacity assignment and source item identities.
+- [x] Docker build: not applicable; existing Fabric static-app recipe, no new container.
+- [x] Static role review: existing signed-in connectors, read-only graph operations,
+      no added permission, principal or role scope.
+- [x] Policy review: no ARM/IaC resource, SKU, region, tag, network or RBAC changes.
+      ARM validation/what-if does not apply to this existing Fabric app publication.
+
+### Section 7: Validation Proof (Knowledge Graph)
+
+Production compilation/bundling passed after `npm run validate-env`.
+100 graph/ontology tests and 25 discovery/service regressions pass. The new source
+graph has separate provenance, verifies physical item/table/column bindings,
+joins only declared ontology relationships, bounds reads and rejects incomplete
+results. User/target cache isolation and failed-refresh invalidation are tested.
+A 2,000-node/1,999-edge source assembly/presentation fixture completed in 44 ms
+on this machine, below its 1,000 ms regression threshold; this is not a hosted
+or network latency measurement. Native source eligibility is still blocked
+for FEATURE and is not represented as repaired or materialized.
+
+Live read-only Fabric preflight confirmed workspace `ws-FabricIQAppsDemoFEATURE`
+on capacity `0f4dac6b-ad68-483d-8027-3d8bf9655d53`, Core Lakehouse
+`cdda0e9f-3fc2-48c1-a14e-179bd5140464`, operational SQL
+`dc020068-3b9f-42b5-9437-3599f97aee4f` and ontology
+`21ea4b9c-b41b-4da2-b5a1-cfee2c700987`. Parsing the safely restored real
+18-entity definition verified its primary physical source/key mappings;
+unsupported connector projections remain visibly excluded.
+
+Publication must use only the repository deployment orchestrator with
+`--push-config`. Hosted acceptance and final deployment markers remain pending.
+
+Commands: `npm --prefix HydroOperationsApp run validate-env`,
+`npm --prefix HydroOperationsApp run build`, `npm --prefix HydroOperationsApp run
+test:knowledge-graph`, `node --import tsx --test scripts\workspace-discovery.test.mjs`
+from the app directory, and scoped `npx eslint` over changed TypeScript/tests.
+Local production bundling passed in 20.75 seconds (existing chunk/mixed-import
+warnings only). Local tooling uses Node 26; the canonical deployer remains
+responsible for selecting Node 24 for the actual publication.
 
 ## October 26, 2026: V12 setup failure recovery and live verification
 
