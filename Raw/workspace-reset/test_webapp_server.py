@@ -1218,7 +1218,7 @@ assert.equal($("workflowFoundryCreate").checked, false);
         for step in steps[:3]:
             self.assertNotIn("HYDRO_FOUNDRY_CREATE", step["env"] or {})
 
-    def test_both_deploy_forms_collect_foundry_settings_and_warn_about_cost(self):
+    def test_both_deploy_forms_explain_reuse_and_confirm_resource_creation(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         renderer = page[page.index("function renderFoundryFields("):page.index('$("workflowFoundryFields").innerHTML')]
         script = renderer + """
@@ -1244,10 +1244,16 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", normal_fields).split()), 40)
             self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
             self.assertIn(f'<details id="{prefix}FoundryNewProjectOptions" class="foundry-block">', form)
-            self.assertIn("Troubleshooting overrides (normally leave closed)", form)
+            self.assertIn("<summary>Advanced settings</summary>", form)
+            self.assertIn("Enter the existing project name to reuse it.", form)
+            self.assertIn("Without a name, setup uses a saved, target-named or sole available project.", form)
+            self.assertNotIn("usage charges", form)
+            self.assertIn(">Create a new project</summary>", form)
+            self.assertNotIn("Leave blank unless", form)
+            self.assertNotIn("billable", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
             self.assertEqual(len(identifiers), len(set(identifiers)))
-        self.assertIn("billable Azure resources", page)
+        self.assertIn("I approve creating Azure resources", page)
         self.assertNotIn('placeholder="gpt-5.6-sol"', page)
         self.assertNotIn("Advanced / first-time", page)
         self.assertNotIn("Advanced: secret names", page)
@@ -1260,7 +1266,7 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", paragraph).split()), 45, paragraph)
         for spec in SERVER.PIPELINE_PARAM_SPEC:
             self.assertLessEqual(len(spec["help"].split()), 12, spec["name"])
-        self.assertIn("billable Azure resources", page)
+        self.assertIn("I approve creating Azure resources", page)
         self.assertIn("Deletes every workspace item.", page)
         self.assertIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
@@ -1335,7 +1341,9 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal($(prefix+"FoundryNewProjectOptions").open, true);
   assert.equal($(prefix+"FoundryNewModel").disabled, false);
   assert.equal($(prefix+"FoundryProjectResourceId").disabled, true);
-  assert.match($(prefix+"FoundryModeSummary").textContent, /billable/);
+  assert.match($(prefix+"FoundryModeSummary").textContent, /Create new resources/);
+  assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "New project selected");
+  assert.ok(!$(prefix+"FoundryModeSummary").textContent.includes("billable"));
   $(prefix+"FoundryNewModel").value = "approved-new-model";
   $(prefix+"FoundryModelVersion").value = "approved-version";
   $(prefix+"FoundryModelSku").value = "approved-sku";
@@ -1350,6 +1358,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(creating.acrName, "");
   $(prefix+"FoundryCreate").checked = false;
   updateFoundryMode(prefix);
+  assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "Create a new project");
   const reused = foundryPayload(prefix);
   assert.equal(reused.createFoundry, false);
   assert.equal(reused.foundryModel, "existing-model");

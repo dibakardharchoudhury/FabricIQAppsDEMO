@@ -19,7 +19,7 @@ do not prove source freshness or connector execution.
 4. Run **Deploy app**; require `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
 
 Existing resources are reused. New-project creation requires a chat model name
-and explicit billing approval. Website-only updates need **Deploy app** only.
+and explicit resource-creation approval. Website-only updates need **Deploy app** only.
 
 ## 1. The multi-agent setup
 
@@ -85,7 +85,7 @@ The separate setup stage (also used by combined CLI deployment;
 |---|---|---|
 | Preflight | Verifies tenant/subscription and resolves project/model before backend creation; validates catalog defaults for an approved new project | never |
 | 0. Backend identity | Creates a missing AppBackend without static hosting | Target already has one |
-| 1. Foundry project | Reuses the verified project, or creates target-named resources using `Azure-Samples/azd-ai-starter-basic` with explicit billing approval | Existing project |
+| 1. Foundry project | Reuses the verified project, or creates target-named resources using `Azure-Samples/azd-ai-starter-basic` with explicit resource-creation approval | Existing project |
 | 2. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
 | 3. Connections | Writes `hydro-fabric-iq` and `hydro-fabric-ontology` and reads them back | never |
 | 4. Prompt agents | Exports the five definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
@@ -100,7 +100,7 @@ Consequences:
 
 - **Code changes deploy themselves.** The fingerprint covers the Python service, the Node bridge and the TypeScript
   files copied into the image. A change anywhere there triggers one build and one new Hosted Agent version on the next
-  Foundry setup; an unchanged tree costs a single registry lookup. Final app
+  Foundry setup; an unchanged tree requires a single registry lookup. Final app
   publication never builds or publishes the image.
 - **Build context is exact and temporary.** The deployer stages only that fingerprinted Dockerfile/COPY manifest
   before invoking ACR, preserving relative paths and verifying its image tag. The CLI never packages the entire
@@ -155,7 +155,7 @@ Consequences:
   linked Application Insights resource, and an Azure
   Container Registry connected to the project as a `ContainerRegistry` connection.
   There is no hardcoded model/version/SKU/capacity. For new projects, supply a chat model name
-  and explicitly approve billing. The live regional catalog supplies a unique default version,
+  and explicitly approve resource creation. The live regional catalog supplies a unique default version,
   regional Standard SKU and minimum allowed or default capacity. Overrides remain available;
   missing reliable defaults require an explicit choice. Azure provisioning rejects unavailable
   models, regions or quota. No silent model, region or global/provisioned SKU substitution is attempted.
@@ -170,12 +170,13 @@ Consequences:
 | Path | Input |
 |---|---|
 | Reuse resources | Confirm Azure subscription |
-| Resolve ambiguity | Existing project name/model under **Project and model choices** |
-| Create resources (billable) | Chat model name + explicit approval |
+| Reuse a specific project/model | Enter its name under **Project and model choices**; otherwise use saved or automatic selection |
+| Create a new project | Chat model name + explicit resource-creation approval |
 
 Names, region and model defaults are automatic. Version/SKU/capacity overrides are
 under **Model deployment settings**; ARM ID, endpoint, registry, SPA, graph and
-write-policy overrides are under **Troubleshooting**. See [environment variables](#6-settings)
+write-policy overrides are under **Advanced settings**, which is not required for
+normal setup. See [environment variables](#6-settings)
 below for resolution rules.
 
 On a fresh workspace, run **Full Deploy**. If it stops for graph materialization,
@@ -222,7 +223,7 @@ current target configuration. Do not bypass the engine with a hand-published ima
 | `HYDRO_FOUNDRY_MODEL` | Model deployment for the agents | Same-target saved selection, else exactly one ready chat-capable deployment; required when creating |
 | `HYDRO_ACR_NAME` | Registry to build in | The project's only `ContainerRegistry` connection |
 | `HYDRO_PRODUCTION_WRITES_ENABLED` | Allow the human-approved work-order write | Preserved from the live agent; `false` for a new one |
-| `HYDRO_FOUNDRY_CREATE` | `true` creates/reuses a target-specific project when no endpoint is selected (billable) | off |
+| `HYDRO_FOUNDRY_CREATE` | `true` creates/reuses a target-specific project when no endpoint is selected | off |
 | `HYDRO_FOUNDRY_LOCATION` | Azure region of the new project | The Fabric capacity's region |
 | `HYDRO_FOUNDRY_PROJECT_NAME` | Optional explicit azd environment name for creation | `hydro-foundry-<hash of tenant, subscription and workspace>`; keep an override unique per target |
 | `HYDRO_FOUNDRY_MODEL_NAME` | Catalog model name when creating a custom-named deployment | The operator-supplied deployment name |
@@ -294,7 +295,7 @@ the previously recorded read-only checks:
 creation), the fresh-target AppBackend bootstrap (`rayfin up --exclude-services staticHosting`), and creating the azd
 environment on a machine that has none.
 
-- Creating a project provisions billable resources. This tool does not remove them; any cleanup is a separate,
+- Creating a project provisions Azure resources. This tool does not remove them; any cleanup is a separate,
   explicitly approved operation after checking ownership and dependencies.
 - `az acr build` needs network access to the registry; private-only registries need a different build route.
 - Hosting readiness is not agent execution readiness; interactive acceptance remains a separate check.
@@ -310,7 +311,7 @@ Use the same engine, not a hand-built Rayfin/Entra deployment sequence.
 4. Confirm the subscription and reuse existing Foundry resources. For ambiguity,
    set `HYDRO_FOUNDRY_EXISTING_PROJECT_NAME`; see [other overrides](#6-settings).
 
-Only for explicitly approved **new billable resources**:
+Only for explicitly approved **new resources**:
 
 ```powershell
 $env:HYDRO_AZURE_SUBSCRIPTION_ID = "<target-subscription-guid>"

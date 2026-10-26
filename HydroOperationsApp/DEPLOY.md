@@ -26,7 +26,7 @@ If a step fails, fix the reported prerequisite and retry that module.
 | Alert email | Signed-in user's email when the tenant matches; confirm the recipient |
 | Azure subscription | Active or sole subscription in the target tenant; otherwise choose |
 | Existing Foundry project / model | Saved selection, target-named project, or unambiguous discovery |
-| New Foundry project | Chat model name + explicit billing approval |
+| New Foundry project | Chat model name + explicit resource-creation approval |
 
 Core/Full Deploy values autosave on this machine in gitignored
 [`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json).
@@ -67,7 +67,7 @@ controls Fabric Git import, not local app or agent source.
 
 Global Administrator and subscription Owner are not routine requirements.
 For scoped access without subscription-wide discovery, use the existing project's
-full ARM ID under **Troubleshooting overrides**. Fabric and Foundry may use
+full ARM ID under **Advanced settings**. Fabric and Foundry may use
 different subscriptions in the same tenant.
 
 ### No admin rights? Hand this to your Entra admin
@@ -159,9 +159,13 @@ Confirm **Azure subscription**, then run **Set up Foundry agents**. It updates f
 specialists and `hydro-orchestrator`, reusing unchanged images and definitions.
 It does not publish the website.
 
-- **Ambiguous selection:** enter an existing project name under **Project and
-  model choices**. ARM IDs/endpoints are troubleshooting overrides.
-- **New project:** enter a chat model and explicitly approve billable creation.
+- **Reuse a specific project:** enter its name under **Project and model
+  choices**. Without a name, setup uses saved settings, the target-named project,
+  or the sole available project. Choose a model only for a specific deployment.
+- **Advanced settings:** optional overrides for automatic detection, graph
+  binding and work-order writes; not required for normal setup.
+- **New project:** expand **Create a new project**, enter a chat model and
+  explicitly approve resource creation.
   Approval resets on reload or target change.
 - **Defaults:** target-hashed resource names, capacity region, catalog default
   version, regional Standard SKU and minimum/default capacity. No automatic

@@ -541,18 +541,18 @@ function renderFoundryFields(prefix, clientId) {
     <p id="${prefix}FoundryStatus" class="phelp" role="status">Project and model are verified during setup.</p>
     <details id="${prefix}FoundryOverrides" class="foundry-block">
       <summary>Project and model choices</summary>
-      <p class="hint">Leave blank unless setup asks you to choose.</p>
+      <p class="hint">Enter the existing project name to reuse it. Without a name, setup uses a saved, target-named or sole available project. Select a model only when you want a specific deployment.</p>
       <div class="grid">
         <label>Existing project name
-          <input id="${prefix}FoundryProjectName" type="text" placeholder="Automatic: saved, target-named or only project" /></label>
+          <input id="${prefix}FoundryProjectName" type="text" placeholder="Name of the project to reuse" /></label>
         <label>Existing model deployment
           <input id="${prefix}FoundryModel" type="text" placeholder="Automatic: saved model or the only ready chat deployment" /></label>
       </div>
     </details>
     <details id="${prefix}FoundryNewProjectOptions" class="foundry-block">
-      <summary id="${prefix}FoundryNewProjectSummary">Create a new project instead (billable)</summary>
+      <summary id="${prefix}FoundryNewProjectSummary">Create a new project</summary>
       <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
-        <span>I approve creating billable Azure resources using regional model defaults.</span></label>
+        <span>I approve creating Azure resources using regional model defaults.</span></label>
       <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
         <p class="hint">Enter a chat model. Names, region and model settings are automatic; Azure checks quota.</p>
         <div class="grid">
@@ -572,8 +572,8 @@ function renderFoundryFields(prefix, clientId) {
       </section>
     </details>
     <details class="foundry-block">
-      <summary>Troubleshooting overrides (normally leave closed)</summary>
-      <p class="hint">Existing resources only. Graph overrides still require portal materialization. <a href="/deploy-guide" target="_blank" rel="noopener">Reference</a></p>
+      <summary>Advanced settings</summary>
+      <p class="hint">Override automatic detection or configure graph binding and work-order writes. Not required for normal setup. Graph binding still requires portal materialization. <a href="/deploy-guide" target="_blank" rel="noopener">Reference</a></p>
       <div class="grid">
         <label>Full project resource ID (only for duplicate project names)
           <input id="${prefix}FoundryProjectResourceId" type="text" placeholder="Automatic: resolved from the project name" /></label>
@@ -991,9 +991,9 @@ function updateFoundryMode(prefix) {
   $(prefix + "FoundryCreation").hidden = !creating;
   $(prefix + "FoundryNewProjectOptions").open = creating;
   $(prefix + "FoundryNewProjectSummary").textContent = creating
-    ? "New project selected (billable)" : "Create a new project instead (billable)";
+    ? "New project selected" : "Create a new project";
   $(prefix + "FoundryModeSummary").textContent = creating
-    ? "Create new resources (billable). Names and model defaults are automatic."
+    ? "Create new resources. Names and model defaults are automatic."
     : "Use existing resources (recommended).";
   for (const suffix of ["FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
     $(prefix + suffix).disabled = !creating;
