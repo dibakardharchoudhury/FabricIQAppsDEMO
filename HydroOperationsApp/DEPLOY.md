@@ -25,7 +25,7 @@ Entra or SQL deployment sequence.
 
 | Setting | Normal behavior |
 |---|---|
-| Tenant / workspace | Enter once in the sidebar; shared by every module. |
+| Tenant / workspace | Enter once in the sidebar; shared by every module and remembered in this browser. Confirm the restored target before running. |
 | Repository / branch | Filled from this checkout. |
 | Key Vault URI / Teams destinations | Restored from saved values for this target, or configured defaults. Otherwise ask the resource owner; the app does not invent destinations. |
 | Alert email | Suggests the signed-in user's email when the tenant GUID matches. Confirm or replace it. |
@@ -39,6 +39,19 @@ The two Foundry forms share remembered non-secret overrides for each target.
 **Create new resources is always off again after changing targets or reloading**;
 it is never a remembered spending authorization.
 No PAT, token or credential secret value is saved by these forms.
+
+Core/Full Deploy edits (including Key Vault URI and Teams IDs) are saved
+automatically in the gitignored
+[`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json)
+on this machine, not just in browser storage. Wait for **saved on this machine**
+before closing the page. Reloading or using another browser restores these values.
+Targets remain isolated; clearing a field is also saved. Workspace names and IDs
+share settings only when their relationship is known from the deployment engine's
+resolved local target configuration, then that alias is remembered. Unknown targets
+stay blank rather than borrowing another target's destinations. Existing single-target
+configuration and browser-only entries are migrated when saved. File/read/write
+errors are shown in the form; saving preferences never starts a connection test.
+Foundry overrides and sidebar preferences still use browser storage.
 
 Core energy setup runs source ingestion and serving-model verification only.
 The optional map-chat publisher is a separate, explicitly enabled component;

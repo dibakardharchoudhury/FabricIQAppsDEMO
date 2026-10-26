@@ -34,6 +34,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -53,6 +54,8 @@ DEPLOY_SCRIPT = SCRIPT_DIR / "deploy_fabric_app.py"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PIPELINE_DEFAULTS_FILE = Path(__file__).with_name("pipeline-defaults.local.json")
 REPO_ROOT = SCRIPT_DIR.parent.parent
+RAYFIN_TARGET_FILE = REPO_ROOT / "HydroOperationsApp" / "rayfin" / ".env"
+_pipeline_defaults_lock = threading.RLock()
 
 SYNC_TIMEOUT_S = 1800
 DELETE_TIMEOUT_S = 600
@@ -627,58 +630,171 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
 PIPELINE_PARAM_NAMES = {p["name"] for p in PIPELINE_PARAM_SPEC}
 
 
-@app.get("/api/pipeline-params")
-def api_pipeline_params():
-    """Expose the pipeline's parameter spec so the UI can render labelled fields."""
-    parameters = [dict(spec) for spec in PIPELINE_PARAM_SPEC]
+def _pipeline_values(values: object) -> dict[str, str]:
+    if not isinstance(values, dict):
+        raise ValueError("Pipeline parameters must be a JSON object.")
+    result = {}
+    for spec in PIPELINE_PARAM_SPEC:
+        name = spec["name"]
+        if name == "workspace_id" or name not in values:
+            continue
+        value = values[name]
+        if not isinstance(value, (str, int)) or isinstance(value, bool):
+            raise ValueError(f"Configured {spec['label']} must be a string or integer.")
+        value = str(value).strip()
+        if spec["type"] == "int" and value:
+            try:
+                int(value)
+            except ValueError as exc:
+                raise ValueError(f"Configured {spec['label']} must be a whole number.") from exc
+        result[name] = value
+    return result
+
+
+def _local_pipeline_targets() -> list[dict]:
+    if not PIPELINE_DEFAULTS_FILE.exists():
+        return []
+    local = json.loads(PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+    if not isinstance(local, dict):
+        raise ValueError("Local pipeline defaults must be a JSON object.")
+    targets = local.get("targets") if local.get("version") == 2 else [local]
+    if not isinstance(targets, list):
+        raise ValueError("Local pipeline defaults require a targets list.")
+    result = []
+    for target in targets:
+        if (
+            not isinstance(target, dict)
+            or not isinstance(target.get("tenant"), str) or not target["tenant"].strip()
+            or not isinstance(target.get("workspace"), str) or not target["workspace"].strip()
+            or not isinstance(target.get("parameters"), dict)
+            or not isinstance(target.get("workspaceAliases", []), list)
+            or not all(isinstance(alias, str) and alias.strip() for alias in target.get("workspaceAliases", []))
+            or not isinstance(target.get("saved", False), bool)
+        ):
+            raise ValueError("Local pipeline defaults require tenant, workspace and a parameters object with valid workspace aliases.")
+        result.append({
+            "tenant": target["tenant"].strip(), "workspace": target["workspace"].strip(),
+            "parameters": _pipeline_values(target["parameters"]),
+            "workspaceAliases": target.get("workspaceAliases", []), "saved": target.get("saved", False),
+        })
+    return result
+
+
+def _pipeline_workspace_aliases(tenant: str, workspace: str) -> set[str]:
+    aliases = {workspace.strip().casefold()}
+    if not RAYFIN_TARGET_FILE.exists():
+        return aliases
+    values = {}
+    for line in RAYFIN_TARGET_FILE.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            if key.strip() in {"RAYFIN_PUBLIC_TENANT_ID", "RAYFIN_PUBLIC_WORKSPACE_ID", "FABRIC_WORKSPACE_NAME"}:
+                values[key.strip()] = value.strip().strip("'\"").casefold()
+    # The deployment orchestrator writes these together after resolving the workspace.
+    if values.get("RAYFIN_PUBLIC_TENANT_ID") == tenant.strip().casefold():
+        known = {values.get("RAYFIN_PUBLIC_WORKSPACE_ID", ""), values.get("FABRIC_WORKSPACE_NAME", "")} - {""}
+        if aliases & known:
+            aliases.update(known)
+    return aliases
+
+
+def _pipeline_target_matches(target: dict, tenant: str, aliases: set[str]) -> bool:
+    known = {target["workspace"].strip().casefold()}
+    known.update(alias.strip().casefold() for alias in target.get("workspaceAliases", []))
+    return target["tenant"].strip().casefold() == tenant.strip().casefold() and bool(known & aliases)
+
+
+def _pipeline_configurations(targets: list[dict]) -> list[tuple[dict, str]]:
     configured = os.environ.get("FABRIC_PIPELINE_PARAMS", "").strip()
     tenant = os.environ.get("FABRIC_TENANT", "").strip()
     workspace = os.environ.get("FABRIC_WORKSPACE", "").strip()
-    source = "server configuration"
-    if not configured and PIPELINE_DEFAULTS_FILE.exists():
-        try:
-            local = json.loads(PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            return jsonify(error=f"Could not read local pipeline defaults: {exc}"), 400
-        if (
-            not isinstance(local, dict)
-            or not isinstance(local.get("tenant"), str)
-            or not isinstance(local.get("workspace"), str)
-            or not isinstance(local.get("parameters"), dict)
-        ):
-            return jsonify(error="Local pipeline defaults require tenant, workspace and a parameters object."), 400
-        tenant = local["tenant"].strip()
-        workspace = local["workspace"].strip()
-        configured = json.dumps(local["parameters"])
-        source = "local configuration"
+    configurations = [(target, "local configuration") for target in targets if not target.get("saved")]
     if configured:
         if not tenant or not workspace:
-            return jsonify(error="Pipeline defaults require a tenant and workspace (FABRIC_TENANT and FABRIC_WORKSPACE for environment defaults)."), 400
+            raise ValueError("Pipeline defaults require a tenant and workspace (FABRIC_TENANT and FABRIC_WORKSPACE for environment defaults).")
         try:
             values = json.loads(configured)
-        except json.JSONDecodeError:
-            return jsonify(error="FABRIC_PIPELINE_PARAMS must be a JSON object."), 400
+        except json.JSONDecodeError as exc:
+            raise ValueError("FABRIC_PIPELINE_PARAMS must be a JSON object.") from exc
         if not isinstance(values, dict):
-            return jsonify(error="FABRIC_PIPELINE_PARAMS must be a JSON object."), 400
-        matching_target = (
-            request.args.get("tenant", "").strip().casefold() == tenant.casefold()
-            and request.args.get("workspace", "").strip().casefold() == workspace.casefold()
-        )
-        for spec in parameters:
-            if spec["name"] == "workspace_id" or spec["name"] not in values:
+            raise ValueError("FABRIC_PIPELINE_PARAMS must be a JSON object.")
+        configurations.append(({"tenant": tenant, "workspace": workspace, "parameters": _pipeline_values(values)}, "server configuration"))
+    configurations.extend((target, "saved local settings") for target in targets if target.get("saved"))
+    return configurations
+
+
+@app.get("/api/pipeline-params")
+def api_pipeline_params():
+    """Expose target-specific defaults without authentication or connection jobs."""
+    parameters = [dict(spec) for spec in PIPELINE_PARAM_SPEC]
+    try:
+        tenant = request.args.get("tenant", "")
+        aliases = _pipeline_workspace_aliases(tenant, request.args.get("workspace", ""))
+        for target, source in _pipeline_configurations(_local_pipeline_targets()):
+            if not _pipeline_target_matches(target, tenant, aliases):
                 continue
-            value = values[spec["name"]]
-            if not isinstance(value, (str, int)) or isinstance(value, bool):
-                return jsonify(error=f"Configured {spec['label']} must be a string or integer."), 400
-            if spec["type"] == "int":
-                try:
-                    int(str(value).strip())
-                except ValueError:
-                    return jsonify(error=f"Configured {spec['label']} must be a whole number."), 400
-            if matching_target:
+            for spec in parameters:
+                value = target["parameters"].get(spec["name"])
+                if value is None:
+                    continue
                 spec["default"] = str(value).strip()
                 spec["source"] = source
+    except (OSError, UnicodeError, ValueError) as exc:
+        return jsonify(error=f"Could not read pipeline defaults: {exc}"), 400
     response = jsonify(pipeline="01_Pipe_Setup", parameters=parameters)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/pipeline-params")
+def api_save_pipeline_params():
+    data = request.get_json(silent=True)
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("tenant"), str) or not data["tenant"].strip()
+        or not isinstance(data.get("workspace"), str) or not data["workspace"].strip()
+        or not isinstance(data.get("parameters"), dict)
+        or set(data["parameters"]) - (PIPELINE_PARAM_NAMES - {"workspace_id"})
+    ):
+        return jsonify(error="Saving requires tenant, workspace and only non-secret setup parameters (not workspace_id or PAT)."), 400
+    try:
+        tenant, workspace = data["tenant"].strip(), data["workspace"].strip()
+        incoming = _pipeline_values(data["parameters"])
+        with _pipeline_defaults_lock:
+            targets = _local_pipeline_targets()
+            aliases = _pipeline_workspace_aliases(tenant, workspace)
+            values = {}
+            for target, _ in _pipeline_configurations(targets):
+                if _pipeline_target_matches(target, tenant, aliases):
+                    values.update(target["parameters"])
+                    aliases.update(alias.casefold() for alias in target.get("workspaceAliases", []))
+                    aliases.add(target["workspace"].strip().casefold())
+            values.update(incoming)
+            retained = [target for target in targets if not _pipeline_target_matches(target, tenant, aliases)]
+            retained.append({
+                "tenant": tenant, "workspace": workspace, "workspaceAliases": sorted(aliases),
+                "parameters": values, "saved": True,
+            })
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=PIPELINE_DEFAULTS_FILE.parent,
+                    prefix=".pipeline-defaults-", suffix=".tmp", delete=False,
+                ) as stream:
+                    temporary = Path(stream.name)
+                    json.dump({"version": 2, "targets": retained}, stream, indent=2)
+                    stream.write("\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary.replace(PIPELINE_DEFAULTS_FILE)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+    except (UnicodeError, ValueError) as exc:
+        return jsonify(error=f"Could not save pipeline defaults: {exc}"), 400
+    except OSError as exc:
+        return jsonify(error=f"Could not save pipeline defaults: {exc}"), 500
+    response = jsonify(saved=True)
     response.headers["Cache-Control"] = "no-store"
     return response
 

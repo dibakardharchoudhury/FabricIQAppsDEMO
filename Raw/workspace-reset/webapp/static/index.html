@@ -322,6 +322,7 @@
           <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
         <label class="idfield"><span>Workspace (GUID or name)</span>
           <input id="workspace" type="text" placeholder="ws-… or a display name" /></label>
+        <p id="targetSettingsStatus" class="cardcap" role="status"></p>
       </div>
 
       <nav class="nav" aria-label="Deployment navigation">
@@ -405,7 +406,7 @@
         </section>
       </div>
       <aside class="notice">
-        Tenant and workspace come from the target card. Non-secret setup values are remembered in this browser.
+        Tenant and workspace come from the target card. Non-secret setup values are saved on this machine.
         The GitHub PAT is never saved. Deployment uses <code>deploy_fabric_app.py</code>.
       </aside>
       <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Run Full Deploy</button>
@@ -1145,6 +1146,8 @@ let pipelineIdentity = null;
 let pipelineTarget = "";
 let pipelineLoadSequence = 0;
 let pipelineSavedValues = {};
+let pipelineSaveQueue = Promise.resolve();
+let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
   "AzureSubscriptionId", "FoundryProjectResourceId", "FoundryModel", "FoundryEndpoint",
@@ -1152,6 +1155,31 @@ const foundrySettingSuffixes = [
   "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "OntologyGraphBinding",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
+function restoreTargetSettings() {
+  if ($("tenant").value.trim() || $("workspace").value.trim()) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem("fabric-demo.target.v1") || "null");
+    if (saved === null) return;
+    if (!saved || typeof saved.tenant !== "string" || typeof saved.workspace !== "string") {
+      throw new Error("Invalid saved target");
+    }
+    $("tenant").value = saved.tenant;
+    $("workspace").value = saved.workspace;
+    $("targetSettingsStatus").textContent = "Last target restored in this browser. Confirm before running.";
+  } catch (error) {
+    $("targetSettingsStatus").textContent = `Could not restore the last target: ${error.message}`;
+  }
+}
+function saveTargetSettings() {
+  try {
+    localStorage.setItem("fabric-demo.target.v1", JSON.stringify({
+      tenant: $("tenant").value.trim(), workspace: $("workspace").value.trim(),
+    }));
+    $("targetSettingsStatus").textContent = "Target remembered in this browser.";
+  } catch (error) {
+    $("targetSettingsStatus").textContent = `Could not remember this target: ${error.message}`;
+  }
+}
 function targetSettingsKey(section) {
   const tenant = $("tenant").value.trim().toLowerCase();
   const workspace = $("workspace").value.trim().toLowerCase();
@@ -1239,18 +1267,43 @@ function savePipelineField(name, value) {
     if (field) field.value = value;
   }
   updatePipelineDefaultsSummary();
-  try {
-    const values = {};
-    for (const spec of pipelineSpec) {
-      if (spec.name !== "workspace_id" && typeof pipelineSavedValues[spec.name] === "string") {
-        values[spec.name] = pipelineSavedValues[spec.name];
-      }
+  const values = {};
+  for (const spec of pipelineSpec) {
+    if (spec.name !== "workspace_id" && typeof pipelineSavedValues[spec.name] === "string") {
+      values[spec.name] = pipelineSavedValues[spec.name];
     }
+  }
+  try {
     localStorage.setItem(pipelineTarget, JSON.stringify(values));
-    pipelineSettingsStatus("Non-secret setup values saved for this tenant and workspace in this browser.");
+    pipelineSettingsStatus("Saving non-secret setup values on this machine...");
   } catch (error) {
     pipelineSettingsStatus(`Could not save parameters in this browser: ${error.message}`);
   }
+  persistPipelineSettings({[name]: value});
+}
+function persistPipelineSettings(values) {
+  const target = pipelineTarget;
+  const sequence = ++pipelineSaveSequence;
+  const body = JSON.stringify({
+    tenant: $("tenant").value.trim(), workspace: $("workspace").value.trim(), parameters: values,
+  });
+  // Preserve edit order, including edits made while switching between targets.
+  pipelineSaveQueue = pipelineSaveQueue.then(async () => {
+    try {
+      const response = await fetch("/api/pipeline-params", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body, keepalive: true,
+      });
+      const data = await response.json();
+      if (!response.ok || data.saved !== true) throw new Error(data.error || `HTTP ${response.status}`);
+      if (sequence === pipelineSaveSequence && target === pipelineTargetKey()) {
+        pipelineSettingsStatus("Non-secret setup values saved on this machine for this tenant and workspace, across browser sessions.");
+      }
+    } catch (error) {
+      if (sequence === pipelineSaveSequence && target === pipelineTargetKey()) {
+        pipelineSettingsStatus(`Could not save parameters on this machine: ${error.message}. Changes are not durably saved.`);
+      }
+    }
+  });
 }
 function renderPipelineFields(prefix) {
   const fields = pipelineSpec.map((p) => {
@@ -1314,19 +1367,28 @@ async function loadPipelineParams() {
     status.id = id;
     status.className = "phelp";
     status.setAttribute("role", "status");
-    status.textContent = "Known defaults are prefilled. Entries are remembered per tenant/workspace; confirm alert destinations before running. Unknown values stay blank.";
+    status.textContent = "Known defaults are prefilled. Edits are saved on this machine per tenant/workspace, across browser sessions. Confirm alert destinations before running. Unknown values stay blank.";
     $(container).prepend(status);
   }
   pipelineSavedValues = readPipelineSettings();
+  const migrateBrowserValues = pipelineSpec.some(p =>
+    p.name !== "workspace_id" && p.source !== "saved local settings"
+    && typeof pipelineSavedValues[p.name] === "string");
+  for (const p of pipelineSpec) {
+    if (p.source === "saved local settings") pipelineSavedValues[p.name] = p.default;
+  }
   syncPipelineWorkspace();
   // Re-run validation whenever a pipeline field changes.
   pipelineSpec.forEach((p) => {
     ["pp_", "wf_pp_"].forEach((prefix) => {
       const el = $(prefix + p.name);
       if (el) {
-        if (p.name !== "workspace_id" && typeof pipelineSavedValues[p.name] === "string") {
+        if (p.name !== "workspace_id" && p.source !== "saved local settings"
+            && typeof pipelineSavedValues[p.name] === "string") {
           el.value = pipelineSavedValues[p.name];
-          el.title = "Restored for this tenant and workspace from this browser.";
+          el.title = p.source === "saved local settings"
+            ? "Restored for this tenant and workspace from this machine."
+            : "Restored for this tenant and workspace from this browser.";
         } else if (p.source) {
           el.title = `Prefilled from ${p.source}. Confirm before running.`;
         }
@@ -1336,6 +1398,15 @@ async function loadPipelineParams() {
   });
   suggestPipelineEmail();
   updatePipelineDefaultsSummary();
+  if (migrateBrowserValues) {
+    const values = {};
+    for (const p of pipelineSpec) {
+      if (p.name !== "workspace_id" && typeof pipelineSavedValues[p.name] === "string") {
+        values[p.name] = pipelineSavedValues[p.name];
+      }
+    }
+    persistPipelineSettings(values);
+  }
   loadSubscriptions();
   refresh();
 }
@@ -1358,6 +1429,7 @@ function workflowPipelineValid() {
 $("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });
 for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("input", () => {
+    saveTargetSettings();
     restoreFoundrySettings();
     if (pipelineTarget !== pipelineTargetKey()) {
       pipelineSpec = [];
@@ -1412,6 +1484,7 @@ async function loadWhoAmI() {
       // Prefill the tenant target from the active session when the field is empty.
       if (!$("tenant").value.trim() && d.tenantId) {
         $("tenant").value = d.tenantId;
+        saveTargetSettings();
         loadPipelineParams();
         refresh();
       }
@@ -1478,6 +1551,7 @@ async function signIn() {
 }
 $("signInBtn").addEventListener("click", signIn);
 
+restoreTargetSettings();
 loadWhoAmI();
 loadVersion();
 loadPipelineParams();

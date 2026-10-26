@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import unittest
+import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -439,6 +440,118 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                         self.assertEqual(response.status_code, 400)
                         self.assertTrue(response.get_json()["error"])
 
+    def test_defaults_persist_across_clients_targets_and_verified_workspace_aliases(self):
+        tenant, workspace_id = str(uuid.uuid4()), str(uuid.uuid4())
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "pipeline-defaults.local.json"
+            target_file = Path(directory) / ".env"
+            target_file.write_text(
+                f"RAYFIN_PUBLIC_TENANT_ID={tenant}\n"
+                f"RAYFIN_PUBLIC_WORKSPACE_ID={workspace_id}\nFABRIC_WORKSPACE_NAME=Demo\n",
+                encoding="utf-8",
+            )
+            path.write_text(json.dumps({
+                "tenant": tenant, "workspace": "Demo",
+                "pat": "must-not-persist",
+                "parameters": {**PIPELINE_PARAMS, "pat": "must-not-persist"},
+            }), encoding="utf-8")
+            with (
+                patch.object(SERVER, "PIPELINE_DEFAULTS_FILE", path),
+                patch.object(SERVER, "RAYFIN_TARGET_FILE", target_file),
+                patch.dict(os.environ, {"FABRIC_PIPELINE_PARAMS": ""}),
+                patch.object(SERVER, "_start") as start,
+                patch.object(SERVER.subprocess, "run") as process,
+            ):
+                with patch.object(SERVER, "RAYFIN_TARGET_FILE", Path(directory) / "unresolved.env"):
+                    response = self.client.get("/api/pipeline-params", query_string={"tenant": tenant, "workspace": workspace_id})
+                    specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                    self.assertEqual(specs["key_vault_uri"]["default"], "")
+                response = self.client.get("/api/pipeline-params", query_string={"tenant": tenant, "workspace": workspace_id})
+                specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
+                for target, values in (
+                    ({"tenant": tenant, "workspace": workspace_id}, {"env_suffix": "V21", "key_vault_uri": "https://last.vault.azure.net/"}),
+                    ({"tenant": tenant, "workspace": "Other"}, {"ops_agent_teams_team_id": "other-team"}),
+                    ({"tenant": "other-tenant", "workspace": "Demo"}, {"ops_agent_teams_channel_id": "other-channel"}),
+                ):
+                    response = self.client.post("/api/pipeline-params", json={**target, "parameters": values})
+                    self.assertEqual(response.status_code, 200, response.get_json())
+                self.assertNotIn("must-not-persist", path.read_text(encoding="utf-8"))
+                self.assertEqual(len(json.loads(path.read_text(encoding="utf-8"))["targets"]), 3)
+                # A different browser and later deployment target must still restore the old target.
+                target_file.write_text("FABRIC_WORKSPACE_NAME=Another\n", encoding="utf-8")
+                for workspace in ("DEMO", workspace_id):
+                    response = SERVER.app.test_client().get("/api/pipeline-params", query_string={"tenant": tenant.upper(), "workspace": workspace})
+                    self.assertEqual(response.status_code, 200, response.get_json())
+                    specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                    self.assertEqual(specs["env_suffix"]["default"], "V21")
+                    self.assertEqual(specs["key_vault_uri"]["default"], "https://last.vault.azure.net/")
+                    self.assertEqual(specs["ops_agent_teams_team_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_team_id"])
+                    self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_channel_id"])
+                    self.assertEqual(specs["key_vault_uri"]["source"], "saved local settings")
+                for target in (
+                    {"tenant": "unseen-tenant", "workspace": "Demo"},
+                    {"tenant": "other-tenant", "workspace": workspace_id},
+                    {"tenant": tenant, "workspace": "Unknown"},
+                ):
+                    response = self.client.get("/api/pipeline-params", query_string=target)
+                    specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                    self.assertEqual(specs["key_vault_uri"]["default"], "")
+                    self.assertEqual(specs["ops_agent_teams_team_id"]["default"], "")
+                    self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], "")
+                start.assert_not_called()
+                process.assert_not_called()
+                self.assertEqual(list(Path(directory).glob(".pipeline-defaults-*.tmp")), [])
+
+    def test_saved_defaults_override_environment_but_preserve_deliberate_clears(self):
+        with TemporaryDirectory() as directory, patch.object(
+            SERVER, "PIPELINE_DEFAULTS_FILE", Path(directory) / "defaults.json",
+        ), patch.dict(os.environ, {
+            "FABRIC_TENANT": "tenant.example", "FABRIC_WORKSPACE": "Demo",
+            "FABRIC_PIPELINE_PARAMS": json.dumps(PIPELINE_PARAMS),
+        }):
+            target = {"tenant": "tenant.example", "workspace": "Demo"}
+            response = self.client.post("/api/pipeline-params", json={
+                **target, "parameters": {"key_vault_uri": "", "per_notebook_timeout_secs": ""},
+            })
+            self.assertEqual(response.status_code, 200, response.get_json())
+            response = SERVER.app.test_client().get("/api/pipeline-params", query_string=target)
+            specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+            self.assertEqual(specs["key_vault_uri"]["default"], "")
+            self.assertEqual(specs["per_notebook_timeout_secs"]["default"], "")
+            self.assertEqual(specs["ops_agent_teams_team_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_team_id"])
+
+    def test_defaults_save_rejects_invalid_input_and_reports_atomic_write_failure(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "defaults.json"
+            with patch.object(SERVER, "PIPELINE_DEFAULTS_FILE", path), patch.dict(os.environ, {"FABRIC_PIPELINE_PARAMS": ""}):
+                target = {"tenant": "tenant.example", "workspace": "Demo"}
+                for data in (
+                    [], {}, {**target, "parameters": {"pat": "secret"}},
+                    {**target, "parameters": {"workspace_id": "wrong"}},
+                    {**target, "workspace": "", "parameters": {}},
+                    {**target, "parameters": {"key_vault_uri": False}},
+                    {**target, "parameters": {"per_notebook_timeout_secs": "invalid"}},
+                ):
+                    with self.subTest(data=data):
+                        response = self.client.post("/api/pipeline-params", json=data)
+                        self.assertEqual(response.status_code, 400, response.get_json())
+                        self.assertFalse(path.exists())
+                payload = {**target, "parameters": PIPELINE_PARAMS}
+                self.assertEqual(self.client.post("/api/pipeline-params", json=payload).status_code, 200)
+                previous = path.read_bytes()
+                with patch.object(Path, "replace", side_effect=PermissionError("write blocked")):
+                    response = self.client.post("/api/pipeline-params", json={
+                        **target, "parameters": {"key_vault_uri": "https://new.vault.azure.net/"},
+                    })
+                self.assertEqual(response.status_code, 500)
+                self.assertIn("write blocked", response.get_json()["error"])
+                self.assertEqual(path.read_bytes(), previous)
+                self.assertEqual(list(Path(directory).glob(".pipeline-defaults-*.tmp")), [])
+                path.write_text("{", encoding="utf-8")
+                self.assertEqual(self.client.post("/api/pipeline-params", json=payload).status_code, 400)
+                self.assertEqual(path.read_text(encoding="utf-8"), "{")
+
     def test_teams_fields_link_to_microsoft_id_instructions(self):
         response = self.client.get("/api/pipeline-params")
         specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
@@ -474,7 +587,7 @@ for(const prefix of ["pp_","wf_pp_"]){
 const assert = require("node:assert/strict");
 const fields = new Map();
 const $ = id => fields.get(id);
-for (const id of ["tenant", "workspace", "pp_alert_email_to", "wf_pp_alert_email_to",
+for (const id of ["tenant", "workspace", "targetSettingsStatus", "pp_alert_email_to", "wf_pp_alert_email_to",
   "pp_env_suffix", "wf_pp_env_suffix", "pipelineSettingsStatus", "workflowPipelineSettingsStatus"]) {
   fields.set(id, {value:"", textContent:""});
 }
@@ -486,6 +599,19 @@ const localStorage = {
 """ + functions + """
 $("tenant").value = " tenant-A ";
 $("workspace").value = " Demo ";
+saveTargetSettings();
+$("tenant").value = "";
+$("workspace").value = "";
+restoreTargetSettings();
+assert.equal($("tenant").value, "tenant-A");
+assert.equal($("workspace").value, "Demo");
+stored.set("fabric-demo.target.v1", "{");
+$("tenant").value = "";
+$("workspace").value = "";
+restoreTargetSettings();
+assert.match($("targetSettingsStatus").textContent, /Could not restore the last target/);
+$("tenant").value = "tenant-A";
+$("workspace").value = "Demo";
 pipelineTarget = pipelineTargetKey();
 pipelineSpec = [{name:"env_suffix"}, {name:"alert_email_to"}, {name:"workspace_id"}];
 savePipelineField("env_suffix", "V12");
@@ -545,6 +671,34 @@ $("workspace").value="Demo";
 restoreFoundrySettings();
 assert.equal($("workflowFoundryModel").value, "approved-model");
 assert.equal($("workflowFoundryCreate").checked, false);
+(async () => {
+  await pipelineSaveQueue;
+  const requests = [];
+  global.fetch = async (url, options) => {
+    assert.equal(url, "/api/pipeline-params");
+    assert.equal(options.method, "POST");
+    assert.equal(options.keepalive, true);
+    requests.push(JSON.parse(options.body));
+    return {ok:true,json:async()=>({saved:true})};
+  };
+  pipelineTarget = pipelineTargetKey();
+  savePipelineField("env_suffix", "V24");
+  $("workspace").value = "Other";
+  pipelineTarget = pipelineTargetKey();
+  pipelineSavedValues = {};
+  savePipelineField("env_suffix", "V25");
+  await pipelineSaveQueue;
+  assert.equal(requests[0].workspace, "Demo");
+  assert.equal(requests[0].parameters.env_suffix, "V24");
+  assert.equal(requests[1].workspace, "Other");
+  assert.equal(requests[1].parameters.env_suffix, "V25");
+  assert.equal(requests[1].parameters.workspace_id, undefined);
+  assert.match($("pipelineSettingsStatus").textContent, /saved on this machine/);
+  global.fetch = async () => ({ok:false,json:async()=>({error:"disk full"})});
+  savePipelineField("env_suffix", "V26");
+  await pipelineSaveQueue;
+  assert.match($("pipelineSettingsStatus").textContent, /Could not save.*disk full.*not durably saved/);
+})().catch(error => { console.error(error); process.exitCode = 1; });
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
