@@ -1091,17 +1091,14 @@ def ensure_operational_item(request, workspace, env_suffix, folder_id):
         })
         response.raise_for_status()
         if response.status_code == 202:
-            location = response.headers.get("Location", "")
-            match = re.fullmatch(r"https://api\.fabric\.microsoft\.com/v1/(operations/[0-9a-fA-F-]{36})", location)
-            if not match:
-                raise RuntimeError("SQL creation returned an unexpected operation location.")
+            operation_url = _fabric_operation_url(response, "https://api.fabric.microsoft.com/v1")
             deadline = time.monotonic() + 300
             while time.monotonic() < deadline:
-                operation = request("GET", match[1])
+                operation = request("GET", operation_url)
                 operation.raise_for_status()
                 status = operation.json()["status"]
                 if status == "Succeeded":
-                    response = request("GET", match[1] + "/result")
+                    response = request("GET", _fabric_result_url(operation_url))
                     response.raise_for_status()
                     break
                 if status in ("Failed", "Cancelled"):
@@ -1285,6 +1282,7 @@ def copy_operational_records(source, target, source_id, target_id):
     return receipt
 
 from collections import Counter
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 def _normal_text(text):
     return text.replace("\r\n", "\n").replace("\r", "\n")
@@ -2652,6 +2650,29 @@ def _object_spans(text, kind, depth=None):
         raise RuntimeError(f"Duplicate {kind} object names")
     return result
 
+def _fabric_operation_url(response, api_root):
+    headers = {name.lower(): value for name, value in response.headers.items()}
+    operation_id = headers.get("x-ms-operation-id")
+    if operation_id:
+        if not re.fullmatch(r"[A-Za-z0-9-]+", operation_id):
+            raise RuntimeError("Invalid Fabric operation ID")
+        return api_root.rstrip("/") + "/operations/" + operation_id
+    location = headers.get("operation-location") or headers.get("location")
+    if not location:
+        raise RuntimeError("Fabric LRO has neither an operation ID nor a Location header")
+    url = urljoin(api_root.rstrip("/") + "/", location)
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    trusted = any(host == domain or host.endswith("." + domain)
+                  for domain in ("fabric.microsoft.com", "analysis.windows.net", "api.powerbi.com"))
+    if parsed.scheme != "https" or not trusted or parsed.username or parsed.password or parsed.port not in (None, 443):
+        raise RuntimeError("Fabric LRO Location is not a trusted HTTPS Fabric endpoint")
+    return url
+
+def _fabric_result_url(operation_url):
+    parsed = urlsplit(operation_url)
+    return urlunsplit(parsed._replace(path=parsed.path.rstrip("/") + "/result"))
+
 def _structural_lines(text):
     """An object-scoped readback contract: mappings cannot migrate to siblings."""
     stack = []
@@ -2918,7 +2939,7 @@ print("Lakehouse ID:", lakehouse_id)
 
 def shared_sql_request(method, path, payload=None):
     return requests.request(
-        method, f"https://api.fabric.microsoft.com/v1/{path}",
+        method, path if path.startswith("https://") else f"https://api.fabric.microsoft.com/v1/{path}",
         headers={"Authorization": f"Bearer {get_spn_access_token()}", "Content-Type": "application/json"},
         json=payload, timeout=60,
     )

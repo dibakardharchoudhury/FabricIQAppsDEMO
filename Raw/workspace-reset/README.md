@@ -588,6 +588,17 @@ connection-test job. Only one explicit connection test can run at a time.
 Running sync or Full Deploy still validates Git connectivity as part of the action
 you explicitly start.
 
+If core setup reports **SQL creation returned an unexpected operation location**,
+the SQL database may already have been created even though the notebook failed.
+Do not delete it or increment the environment suffix to work around the failure.
+The setup notebooks now use the shared Fabric long-running-operation handler:
+operation-ID headers, relative URLs and trusted regional URLs are supported,
+and result URLs retain their query parameters. Update the affected notebooks
+before retrying core setup with the **same suffix** so the existing owned database
+is reused and moved into its setup folder. Do not rerun a full Git import just to
+retry this stage. Local regression tests are not a successful live deployment;
+verify the real pipeline and each subsequent stage independently.
+
 The steps run strictly in order under one exclusive job. Each child keeps its
 existing validation, timeout, environment-only secrets, and live output. If a
 step exits unsuccessfully, the combined log identifies the failed component and

@@ -5,6 +5,7 @@ import json
 import re
 import struct
 import time
+from ontology_notebook_support import _fabric_operation_url, _fabric_result_url
 
 OPERATIONAL_STORE_NAME = "HydroOperationalStore"
 OPERATIONAL_STORE_DESCRIPTION = "Hydro shared operational store; lifecycle independent of AppBackend."
@@ -442,17 +443,14 @@ def ensure_operational_item(request, workspace, env_suffix, folder_id):
         })
         response.raise_for_status()
         if response.status_code == 202:
-            location = response.headers.get("Location", "")
-            match = re.fullmatch(r"https://api\.fabric\.microsoft\.com/v1/(operations/[0-9a-fA-F-]{36})", location)
-            if not match:
-                raise RuntimeError("SQL creation returned an unexpected operation location.")
+            operation_url = _fabric_operation_url(response, "https://api.fabric.microsoft.com/v1")
             deadline = time.monotonic() + 300
             while time.monotonic() < deadline:
-                operation = request("GET", match[1])
+                operation = request("GET", operation_url)
                 operation.raise_for_status()
                 status = operation.json()["status"]
                 if status == "Succeeded":
-                    response = request("GET", match[1] + "/result")
+                    response = request("GET", _fabric_result_url(operation_url))
                     response.raise_for_status()
                     break
                 if status in ("Failed", "Cancelled"):

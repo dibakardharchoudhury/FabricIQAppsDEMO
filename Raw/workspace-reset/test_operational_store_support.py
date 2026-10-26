@@ -17,7 +17,8 @@ def part(path, text):
 
 
 class OperationalItemLifecycleTests(unittest.TestCase):
-    def prepare(self, existing=True, owned=True, move_succeeds=True):
+    def prepare(self, existing=True, owned=True, move_succeeds=True,
+                creation_headers=None, operation_statuses=("Succeeded",)):
         self.item = {
             "id": "operational-sql", "workspaceId": "workspace", "type": "SQLDatabase",
             "displayName": support.OPERATIONAL_STORE_NAME, "folderId": None,
@@ -26,6 +27,7 @@ class OperationalItemLifecycleTests(unittest.TestCase):
                            "databaseName": "unchanged-physical-database"},
         }
         self.calls = []
+        statuses = iter(operation_statuses)
         def request(method, path, payload=None):
             self.calls.append((method, path, payload))
             body = self.item
@@ -36,13 +38,16 @@ class OperationalItemLifecycleTests(unittest.TestCase):
                 body = {"value": [copy.deepcopy(self.item)] if self.item["folderId"] == "demo-folder" else []}
             elif method == "POST" and path == "workspaces/workspace/sqlDatabases":
                 self.item.update(payload)
-                status = 201
+                status = 202 if creation_headers is not None else 201
+            elif method == "GET" and "operations/" in path and not path.split("?")[0].endswith("/result"):
+                body = {"status": next(statuses)}
             elif method == "PATCH":
                 self.item.update(payload)
             elif method == "POST" and path.endswith("/move"):
                 if move_succeeds:
                     self.item["folderId"] = payload["targetFolderId"]
-            return Mock(status_code=status, json=lambda: copy.deepcopy(body))
+            return Mock(status_code=status, json=lambda: copy.deepcopy(body),
+                        headers=creation_headers or {}, text=json.dumps(body))
         return request
 
     def test_marked_legacy_item_keeps_its_immutable_name_and_moves_without_recreation(self):
@@ -66,6 +71,88 @@ class OperationalItemLifecycleTests(unittest.TestCase):
             "displayName": "RTI_Demo_SQLDatabase_V12",
             "description": support.OPERATIONAL_STORE_DESCRIPTION}), self.calls)
         self.assertEqual(item["folderId"], "demo-folder")
+
+    def test_async_sql_creation_uses_shared_fabric_operation_url_handling(self):
+        base = "https://api.fabric.microsoft.com/v1"
+        regional = "https://wabi-region-redirect.analysis.windows.net/v1/operations/op?tenant=test"
+        for headers, operation_url in (
+            ({"Location": base + "/operations/0acd697c-1550-43cd-b998-91bfbfbd47c6"},
+             base + "/operations/0acd697c-1550-43cd-b998-91bfbfbd47c6"),
+            ({"Location": base + "/operations/operation-id"}, base + "/operations/operation-id"),
+            ({"location": "/v1/operations/op"}, base + "/operations/op"),
+            ({"Operation-Location": "operations/op"}, base + "/operations/op"),
+            ({"Location": regional}, regional),
+            ({"X-MS-Operation-ID": "operation-id"}, base + "/operations/operation-id"),
+            ({"Location": regional, "x-ms-operation-id": "operation-id"}, base + "/operations/operation-id"),
+        ):
+            with self.subTest(headers=headers), patch.object(support.time, "sleep") as sleep:
+                item = support.ensure_operational_item(
+                    self.prepare(existing=False, creation_headers=headers,
+                                 operation_statuses=("Running", "Succeeded")),
+                    "workspace", env_suffix="V12", folder_id="demo-folder")
+                self.assertEqual(item["folderId"], "demo-folder")
+                self.assertEqual(sum(path == operation_url for _, path, _ in self.calls), 2)
+                result_url = operation_url.replace("?tenant=test", "/result?tenant=test") \
+                    if "?" in operation_url else operation_url + "/result"
+                self.assertIn(("GET", result_url, None), self.calls)
+                sleep.assert_called_once_with(3)
+
+    def test_async_sql_creation_rejects_missing_and_untrusted_operation_urls(self):
+        for headers in (
+            {}, {"Location": "http://api.fabric.microsoft.com/v1/operations/op"},
+            {"Location": "https://fabric.microsoft.com.evil.test/operations/op"},
+            {"Location": "https://user@api.fabric.microsoft.com/v1/operations/op"},
+        ):
+            with self.subTest(headers=headers), self.assertRaises(RuntimeError):
+                support.ensure_operational_item(
+                    self.prepare(existing=False, creation_headers=headers),
+                    "workspace", env_suffix="V12", folder_id="demo-folder")
+            self.assertFalse(any("operations/" in path for _, path, _ in self.calls))
+
+    def test_async_sql_creation_failure_does_not_move_or_report_success(self):
+        for status in ("Failed", "Cancelled"):
+            with self.subTest(status=status), self.assertRaisesRegex(RuntimeError, "SQL creation failed"):
+                support.ensure_operational_item(
+                    self.prepare(existing=False, creation_headers={
+                        "Location": "https://api.fabric.microsoft.com/v1/operations/operation-id"
+                    }, operation_statuses=(status,)),
+                    "workspace", env_suffix="V12", folder_id="demo-folder")
+            self.assertFalse(any(path.endswith("/move") for _, path, _ in self.calls))
+
+    def test_async_sql_creation_timeout_does_not_restart_creation(self):
+        request = self.prepare(existing=False, creation_headers={
+            "Location": "https://api.fabric.microsoft.com/v1/operations/operation-id"
+        })
+        with patch.object(support.time, "monotonic", side_effect=(0, 301)):
+            with self.assertRaisesRegex(RuntimeError, "exceeded five minutes"):
+                support.ensure_operational_item(
+                    request, "workspace", env_suffix="V12", folder_id="demo-folder")
+        self.assertEqual(sum(method == "POST" for method, _, _ in self.calls), 1)
+
+    def test_embedded_sql_request_adapters_preserve_absolute_operation_urls(self):
+        root = Path(__file__).resolve().parents[2]
+        for name in ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut",
+                     "RTI_011_seed_sql_wire_graphql_agent"):
+            with self.subTest(notebook=name):
+                notebook = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
+                tree = ast.parse(notebook.read_text(encoding="utf-8"))
+                function = next(node for node in ast.walk(tree)
+                                if isinstance(node, ast.FunctionDef) and node.name == "shared_sql_request")
+                namespace = {"requests": Mock(), "api_request": Mock(), "access_token": "test-token",
+                             "get_spn_access_token": Mock(return_value="test-token"),
+                             "FABRIC_API_BASE": "https://api.fabric.microsoft.com"}
+                exec(compile(ast.Module(body=[function], type_ignores=[]), str(notebook), "exec"), namespace)
+                client = namespace["api_request"] if name.startswith("RTI_011") else namespace["requests"].request
+                for path, expected in (
+                    ("workspaces/workspace/items", "https://api.fabric.microsoft.com/v1/workspaces/workspace/items"),
+                    ("https://api.fabric.microsoft.com/v1/operations/op", "https://api.fabric.microsoft.com/v1/operations/op"),
+                    ("https://wabi-region-redirect.analysis.windows.net/v1/operations/op/result?tenant=test",
+                     "https://wabi-region-redirect.analysis.windows.net/v1/operations/op/result?tenant=test"),
+                ):
+                    namespace["shared_sql_request"]("GET", path)
+                    self.assertEqual(client.call_args.args[1], expected)
+                self.assertFalse(any(isinstance(node, ast.ImportFrom) and
+                                     node.module == "ontology_notebook_support" for node in ast.walk(tree)))
 
     def test_unrelated_legacy_name_is_not_adopted(self):
         with self.assertRaisesRegex(RuntimeError, "unrelated"):
