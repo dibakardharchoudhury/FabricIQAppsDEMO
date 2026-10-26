@@ -237,6 +237,65 @@ assert.match(elements.sidebarPreferenceStatus.textContent,/Could not save.*block
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_connection_test_only_starts_from_explicit_sync_test_button(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("maybeAutoTest", page)
+        self.assertNotIn("runWorkflowTest", page)
+        self.assertEqual(page.count('runJob("/api/test-connection"'), 1)
+        code = page[
+            page.index('document.querySelectorAll("input").forEach'):
+            page.index('$("syncBtn").addEventListener')
+        ]
+        script = """
+const assert = require("node:assert/strict");
+const fields = new Map();
+let activeSync=false, connTestState=null;
+const $ = id => {
+  if(!fields.has(id)) fields.set(id,{
+    value:id, checked:true, disabled:false, open:false, listeners:{},
+    classList:{contains:()=>activeSync}, focus(){},
+    addEventListener(type,handler){(this.listeners[type]??=[]).push(handler)},
+    dispatchEvent(event){for(const handler of this.listeners[event.type]||[])handler(event)},
+  });
+  return fields.get(id);
+};
+const inputs=["tenant","workspace","repository","branch","directory","pat","reuseConn",
+              "workflowRepository","workflowBranch","workflowDirectory","workflowPat","workflowReuseConn"].map($);
+const document={querySelectorAll:()=>inputs};
+const refresh=()=>{}, setTestResult=()=>{}, testValid=()=>true;
+const connValue=()=>"yes", workflowReuseChecked=()=>$("workflowReuseConn").checked;
+const activateTab=name=>{activeSync=name==="sync"};
+const requests=[];
+let complete;
+const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload});complete=onDone};
+""" + code + """
+(async()=>{
+  for(const field of inputs) {
+    field.dispatchEvent(new Event("input"));
+    field.dispatchEvent(new Event("change"));
+  }
+  assert.equal(requests.length,0,"Edits and reuse toggles started a test");
+  await runTest();
+  assert.equal(requests.length,0,"Hidden Sync pane started a test");
+  $("workflowTestBtn").dispatchEvent(new Event("click"));
+  assert.equal(activeSync,true);
+  assert.equal($("repository").value,$("workflowRepository").value);
+  assert.equal($("pat").value,$("workflowPat").value);
+  assert.equal(requests.length,0,"Opening Sync from Full Deploy started a test");
+  await $("testBtn").listeners.click[0]();
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].url,"/api/test-connection");
+  await $("testBtn").listeners.click[0]();
+  assert.equal(requests.length,1,"Duplicate in-flight test started");
+  complete({returncode:0});
+  activeSync=false;
+  await runTest();
+  assert.equal(requests.length,1,"Test started after leaving Sync");
+})().catch(error=>{console.error(error);process.exitCode=1});
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_launcher_does_not_expose_agent_mode_flags(self):
         response = self.client.get("/api/pipeline-params")
         self.assertEqual(response.status_code, 200)

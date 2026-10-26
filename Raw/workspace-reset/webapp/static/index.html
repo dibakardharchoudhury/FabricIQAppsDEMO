@@ -387,10 +387,8 @@
               <input id="workflowPat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
           </div>
           <div class="testrow">
-            <button id="workflowTestBtn" type="button" class="ghost" disabled>Test connection</button>
-            <span id="workflowConnTestResult" class="testresult"></span>
+            <button id="workflowTestBtn" type="button" class="ghost">Open Sync from GitHub to test</button>
           </div>
-          <div id="workflowTestPanel"></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
           <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup, Weather and energy sources</strong><span>Complete parameters for Key Vault, agents and alert delivery. Energy-source setup runs automatically after the core pipeline succeeds.</span></div></div>
@@ -419,7 +417,7 @@
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
         <h2>Sync workspace from GitHub</h2>
       </div>
-      <p class="hint">Imports every item from a branch, then disconnects the workspace by default. Tick <strong>Reuse existing connection</strong> to auto-find and verify a saved connection for this repo. If a PAT creates a connection, a successful sync retains it for future reuse.</p>
+      <p class="hint">Imports every item from a branch, then disconnects the workspace by default. <strong>Reuse existing connection</strong> finds a saved connection when you run sync. Connection tests run only when you click <strong>Test connection</strong> here, never when loading the app or editing fields. If a PAT creates a connection, a successful sync retains it for future reuse.</p>
       <div class="grid">
         <label>Repository (owner/repo or URL)
           <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
@@ -836,7 +834,6 @@ async function runJob(startUrl, body, panelEl, onDone) {
 // ---- validation + wiring ----
 // Result of the most recent "Test connection" run: null (untested), "ok", or "fail".
 let connTestState = null;
-let workflowConnTestState = null;
 
 function setTestResult(cls, text, elementId = "connTestResult") {
   const el = $(elementId);
@@ -861,14 +858,11 @@ function syncValid() {
 }
 function workflowSyncValid() {
   if (!workflowBaseValid()) return false;
-  if (workflowReuseChecked() && workflowConnTestState !== "fail") return true;
+  if (workflowReuseChecked()) return true;
   return !!$("workflowPat").value.trim();
 }
 function testValid() {
   return baseValid() && (reuseChecked() || $("pat").value.trim());
-}
-function workflowTestValid() {
-  return workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
 }
 function deleteValid() {
   const dry = $("dryRun").checked;
@@ -892,12 +886,10 @@ function refresh() {
   } else {
     $("patNote").textContent = "";
   }
-  const workflowNeedPat = !workflowReuseChecked() || workflowConnTestState === "fail";
+  const workflowNeedPat = !workflowReuseChecked();
   $("workflowPatWrap").style.display = workflowNeedPat ? "flex" : "none";
   $("workflowPat").disabled = false;
-  if (workflowConnTestState === "fail") {
-    $("workflowPatNote").textContent = "\u2014 reuse failed; enter a PAT to create a new connection";
-  } else if (workflowNeedPat) {
+  if (workflowNeedPat) {
     $("workflowPatNote").textContent = "\u2014 needed to create a reusable connection";
   } else {
     $("workflowPatNote").textContent = "";
@@ -907,8 +899,7 @@ function refresh() {
   $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
   $("deleteBtn").className = dry ? "primary" : "destructive";
   $("syncBtn").disabled = !syncValid();
-  $("testBtn").disabled = !testValid();
-  $("workflowTestBtn").disabled = !workflowTestValid();
+  $("testBtn").disabled = testing || !testValid();
   $("deleteBtn").disabled = !deleteValid();
   $("deployBtn").disabled = !deployValid();
   $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy"));
@@ -922,15 +913,10 @@ document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventLis
 // Any change to a connection-affecting field invalidates the previous test result.
 ["repository", "branch", "directory", "tenant", "workspace", "pat"].forEach((id) =>
   $(id).addEventListener("input", () => { connTestState = null; setTestResult("", ""); }));
-["workflowRepository", "workflowBranch", "workflowDirectory", "tenant", "workspace", "workflowPat"].forEach((id) =>
-  $(id).addEventListener("input", () => {
-    workflowConnTestState = null;
-    setTestResult("", "", "workflowConnTestResult");
-  }));
 
 let testing = false;
 async function runTest() {
-  if (testing || !testValid()) return;
+  if (!$("paneSync").classList.contains("active") || testing || !testValid()) return;
   testing = true;
   $("testBtn").disabled = true;
   connTestState = null;
@@ -953,61 +939,24 @@ async function runTest() {
   });
 }
 $("testBtn").addEventListener("click", runTest);
-let workflowTesting = false;
-async function runWorkflowTest() {
-  if (workflowTesting || !workflowTestValid()) return;
-  workflowTesting = true;
-  $("workflowTestBtn").disabled = true;
-  workflowConnTestState = null;
-  setTestResult("running", "Testing\u2026", "workflowConnTestResult");
-  await runJob("/api/test-connection", {
-    tenant: $("tenant").value, workspace: $("workspace").value,
-    repository: $("workflowRepository").value, branch: $("workflowBranch").value,
-    directory: $("workflowDirectory").value, connectionId: workflowConnValue(),
-    pat: $("workflowPat").value,
-  }, $("workflowTestPanel"), (job) => {
-    workflowTesting = false;
-    if (job && job.returncode === 0) {
-      workflowConnTestState = "ok";
-      setTestResult("ok", "\u2713 Connection verified \u2014 it can reach GitHub.", "workflowConnTestResult");
-    } else {
-      workflowConnTestState = "fail";
-      setTestResult("error", "\u2717 Could not connect \u2014 enter a GitHub PAT below and test again.", "workflowConnTestResult");
-      $("workflowPat").focus();
-    }
-    refresh();
-  });
+function openSyncForConnectionTest() {
+  for (const [source, target] of [
+    ["workflowRepository", "repository"], ["workflowBranch", "branch"],
+    ["workflowDirectory", "directory"], ["workflowPat", "pat"],
+  ]) {
+    $(target).value = $(source).value;
+    $(target).dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  $("reuseConn").checked = workflowReuseChecked();
+  $("reuseConn").dispatchEvent(new Event("change", { bubbles: true }));
+  $("deploymentActions").open = true;
+  activateTab("sync");
 }
-$("workflowTestBtn").addEventListener("click", runWorkflowTest);
-// Auto-verify a saved connection once we have enough to test it.
-function maybeAutoTest() {
-  if (reuseChecked() && connTestState === null && !testing && testValid()) runTest();
-}
-// Ticking "Reuse existing connection" auto-verifies the saved connection.
+$("workflowTestBtn").addEventListener("click", openSyncForConnectionTest);
 $("reuseConn").addEventListener("change", () => {
   connTestState = null; setTestResult("", "");
   refresh();
-  if (reuseChecked()) {
-    if (testValid()) runTest();
-    else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026");
-  }
 });
-$("workflowReuseConn").addEventListener("change", () => {
-  workflowConnTestState = null;
-  setTestResult("", "", "workflowConnTestResult");
-  refresh();
-  if (workflowReuseChecked()) {
-    if (workflowTestValid()) runWorkflowTest();
-    else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026", "workflowConnTestResult");
-  }
-});
-// Finishing an edit (blur) on an identity/repo field re-runs the reuse test.
-["tenant", "workspace", "repository", "branch", "directory"].forEach((id) =>
-  $(id).addEventListener("change", maybeAutoTest));
-["tenant", "workspace", "workflowRepository", "workflowBranch", "workflowDirectory"].forEach((id) =>
-  $(id).addEventListener("change", () => {
-    if (workflowReuseChecked() && workflowConnTestState === null && !workflowTesting && workflowTestValid()) runWorkflowTest();
-  }));
 
 $("syncBtn").addEventListener("click", async () => {
   $("syncBtn").disabled = true;
@@ -1453,7 +1402,7 @@ async function loadWhoAmI() {
       if (!$("tenant").value.trim() && d.tenantId) {
         $("tenant").value = d.tenantId;
         loadPipelineParams();
-        refresh(); maybeAutoTest();
+        refresh();
       }
       suggestPipelineEmail();
       refresh();
