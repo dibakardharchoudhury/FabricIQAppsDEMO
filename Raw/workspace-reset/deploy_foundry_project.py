@@ -44,25 +44,105 @@ def environment_name(tenant: str, workspace: str, subscription: str = "") -> str
     ).hexdigest()[:12]
 
 
-def deployments_parameter(model: str) -> str:
+def model_defaults(deploy, *, subscription: str, location: str, model: str) -> dict[str, str]:
+    """Use live regional catalog defaults, never guessed versions or quota."""
+    if not model:
+        raise deploy.DeployError("Enter the model name for the new project. Resource names and model version are automatic.")
+    catalog_name = os.environ.get("HYDRO_FOUNDRY_MODEL_NAME", "").strip() or model
+    version = os.environ.get("HYDRO_FOUNDRY_MODEL_VERSION", "").strip()
+    sku = os.environ.get("HYDRO_FOUNDRY_MODEL_SKU", "").strip()
+    capacity = os.environ.get("HYDRO_FOUNDRY_MODEL_CAPACITY", "").strip()
+    catalog = json.loads(deploy.run_capture(deploy.az(
+        "cognitiveservices", "model", "list", "--subscription", subscription, "--location", location, "-o", "json",
+    )))
+    models = [entry["model"] for entry in catalog if isinstance(entry.get("model"), dict)
+              and entry["model"].get("name") == catalog_name
+              and entry["model"].get("format") == "OpenAI"
+              and entry["model"].get("capabilities", {}).get("chatCompletion") in (True, "true")]
+    models = [entry for entry in models if entry.get("version") == version] if version else [
+        entry for entry in models if entry.get("isDefaultVersion") is True
+    ]
+    if len(models) != 1:
+        raise deploy.DeployError(
+            f"Model '{catalog_name}' has no unique supported chat version in {location}. "
+            "Choose an available model, or set its version under 'Model deployment settings'."
+        )
+    selected = models[0]
+    skus = [entry for entry in selected.get("skus", [])
+            if "finetune" not in str(entry.get("usageName", "")).lower()]
+    if sku:
+        skus = [entry for entry in skus if entry.get("name") == sku]
+    else:
+        # Never silently move inference across regions or reserve provisioned capacity.
+        skus = [entry for entry in skus if entry.get("name") == "Standard"]
+    if len(skus) != 1:
+        choices = ", ".join(str(entry.get("name")) for entry in selected.get("skus", []))
+        raise deploy.DeployError(
+            f"Model '{catalog_name}' requires a deployment type choice in {location}. "
+            f"Under 'Model deployment settings', choose an approved SKU. Available: {choices}. "
+            "Global, data-zone and provisioned deployments are never selected automatically."
+        )
+    limits = skus[0].get("capacity") or {}
+    minimum = limits.get("minimum")
+    if not capacity:
+        allowed = limits.get("allowedValues")
+        if isinstance(allowed, list) and allowed:
+            capacity = str(min(allowed))
+        elif isinstance(minimum, int) and not isinstance(minimum, bool) and minimum > 0:
+            capacity = str(minimum)
+        elif type(limits.get("default")) is int and limits["default"] > 0:
+            capacity = str(limits["default"])
+        else:
+            raise deploy.DeployError(
+                "The model catalog did not report a capacity default. Enter an approved capacity "
+                "under 'Model deployment settings'; quota is verified by Azure during provisioning."
+            )
+    if not re.fullmatch(r"[1-9][0-9]*", capacity):
+        raise deploy.DeployError("Model capacity must be a positive whole number.")
+    units = int(capacity)
+    allowed = limits.get("allowedValues")
+    maximum = limits.get("maximum")
+    step = limits.get("step")
+    if (
+        (isinstance(allowed, list) and allowed and units not in allowed)
+        or (type(minimum) is int and units < minimum)
+        or (type(maximum) is int and units > maximum)
+        or (type(step) is int and step > 0 and (units - (minimum or 0)) % step != 0)
+    ):
+        raise deploy.DeployError("Model capacity is outside the selected deployment type's catalog limits.")
+    print(
+        f"Foundry: new model settings from the {location} catalog: {catalog_name}, version "
+        f"{selected['version']}, SKU {skus[0]['name']}, capacity {capacity}. Azure validates quota during provisioning.",
+        flush=True,
+    )
+    return {
+        "HYDRO_FOUNDRY_MODEL_NAME": catalog_name,
+        "HYDRO_FOUNDRY_MODEL_VERSION": str(selected["version"]),
+        "HYDRO_FOUNDRY_MODEL_SKU": str(skus[0]["name"]),
+        "HYDRO_FOUNDRY_MODEL_CAPACITY": capacity,
+    }
+
+
+def deployments_parameter(model: str, settings: dict[str, str] | None = None) -> str:
     """AI_PROJECT_DEPLOYMENTS for the template.
 
     The template wraps this value in quotes inside its parameters file, so the JSON must arrive with its own quotes
     escaped; unescaped JSON fails with "invalid character 'n' after object key:value pair"."""
+    values = os.environ if settings is None else settings
     required = ("HYDRO_FOUNDRY_MODEL_VERSION", "HYDRO_FOUNDRY_MODEL_SKU", "HYDRO_FOUNDRY_MODEL_CAPACITY")
-    missing = [key for key in required if not os.environ.get(key, "").strip()]
+    missing = [key for key in required if not values.get(key, "").strip()]
     if not model or missing:
         raise ValueError(
             "New Foundry projects require HYDRO_FOUNDRY_MODEL (deployment name), "
             "HYDRO_FOUNDRY_MODEL_VERSION, HYDRO_FOUNDRY_MODEL_SKU and HYDRO_FOUNDRY_MODEL_CAPACITY. "
             "Choose a chat model/version/SKU/capacity available in the selected subscription and region."
         )
-    model_name = os.environ.get("HYDRO_FOUNDRY_MODEL_NAME", "").strip() or model
-    for value in (model, model_name, os.environ["HYDRO_FOUNDRY_MODEL_VERSION"], os.environ["HYDRO_FOUNDRY_MODEL_SKU"]):
+    model_name = values.get("HYDRO_FOUNDRY_MODEL_NAME", "").strip() or model
+    for value in (model, model_name, values["HYDRO_FOUNDRY_MODEL_VERSION"], values["HYDRO_FOUNDRY_MODEL_SKU"]):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value):
             raise ValueError("Foundry model names, version and SKU must be valid identifiers.")
     try:
-        capacity = int(os.environ["HYDRO_FOUNDRY_MODEL_CAPACITY"])
+        capacity = int(values["HYDRO_FOUNDRY_MODEL_CAPACITY"])
     except ValueError as error:
         raise ValueError("HYDRO_FOUNDRY_MODEL_CAPACITY must be a whole number.") from error
     if capacity <= 0:
@@ -70,8 +150,8 @@ def deployments_parameter(model: str) -> str:
     deployments = [{
         "name": model,
         "model": {"name": model_name, "format": "OpenAI",
-                  "version": os.environ["HYDRO_FOUNDRY_MODEL_VERSION"].strip()},
-        "sku": {"name": os.environ["HYDRO_FOUNDRY_MODEL_SKU"].strip(),
+                  "version": values["HYDRO_FOUNDRY_MODEL_VERSION"].strip()},
+        "sku": {"name": values["HYDRO_FOUNDRY_MODEL_SKU"].strip(),
                 "capacity": capacity},
     }]
     return json.dumps(json.dumps(deployments, separators=(",", ":")))[1:-1]
@@ -80,10 +160,11 @@ def deployments_parameter(model: str) -> str:
 def ensure_foundry_project(
     deploy, hosted, *, tenant: str, workspace: str, subscription: str, location: str, model: str, check_access,
     sleep=time.sleep,
+    model_settings: dict[str, str] | None = None,
 ) -> str:
     """Provision a Foundry project and return its endpoint once the signed-in user can create agents in it."""
     try:
-        deployments = deployments_parameter(model)
+        deployments = deployments_parameter(model, model_settings)
     except ValueError as error:
         raise deploy.DeployError(str(error)) from error
     hosted.ensure_azd_ready(deploy, tenant)

@@ -521,6 +521,69 @@ class ProjectCreationTests(unittest.TestCase):
             self.assertFalse(project.enabled())
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "true"}):
             self.assertTrue(project.enabled())
+
+    def test_new_model_defaults_are_catalog_driven_and_do_not_select_global_or_provisioned_skus(self):
+        fake = self.fake()
+        model = {
+            "name": "approved-chat", "format": "OpenAI", "version": "catalog-version",
+            "isDefaultVersion": True, "capabilities": {"chatCompletion": "true"},
+            "skus": [
+                {"name": "Standard", "usageName": "chat", "capacity": {"default": 6, "maximum": 100}},
+                {"name": "Standard", "usageName": "chat-finetune", "capacity": {"default": 10}},
+                {"name": "GlobalStandard", "capacity": {"default": 12}},
+                {"name": "ProvisionedManaged", "capacity": {"minimum": 25}},
+            ],
+        }
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", return_value=json.dumps([{"model": model}])) as capture:
+            settings = project.model_defaults(fake, subscription="sub", location="targetregion", model="approved-chat")
+            self.assertEqual(settings, {
+                "HYDRO_FOUNDRY_MODEL_NAME": "approved-chat", "HYDRO_FOUNDRY_MODEL_VERSION": "catalog-version",
+                "HYDRO_FOUNDRY_MODEL_SKU": "Standard", "HYDRO_FOUNDRY_MODEL_CAPACITY": "6",
+            })
+            argv = capture.call_args.args[0]
+            self.assertEqual(argv[:3], ["az", "cognitiveservices", "model"])
+            self.assertEqual(argv[argv.index("--subscription") + 1], "sub")
+            self.assertEqual(argv[argv.index("--location") + 1], "targetregion")
+            model["skus"] = [{"name": "GlobalStandard", "capacity": {"default": 12}}]
+            capture.return_value = json.dumps([{"model": model}])
+            with self.assertRaisesRegex(fake.DeployError, "deployment type choice"):
+                project.model_defaults(fake, subscription="sub", location="region", model="approved-chat")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_SKU": "GlobalStandard"}):
+                self.assertEqual(project.model_defaults(
+                    fake, subscription="sub", location="region", model="approved-chat",
+                )["HYDRO_FOUNDRY_MODEL_SKU"], "GlobalStandard")
+            with self.assertRaisesRegex(fake.DeployError, "no unique supported chat version"):
+                project.model_defaults(fake, subscription="sub", location="region", model="missing")
+
+    def test_catalog_capacity_constraints_and_nondefault_version_require_valid_selection(self):
+        fake = self.fake()
+        model = {
+            "name": "chat", "format": "OpenAI", "version": "v1", "isDefaultVersion": True,
+            "capabilities": {"chatCompletion": True},
+            "skus": [{"name": "Standard", "capacity": {"minimum": 2, "maximum": 10, "step": 2}}],
+        }
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", return_value=json.dumps([{"model": model}])) as capture:
+            self.assertEqual(project.model_defaults(
+                fake, subscription="sub", location="region", model="chat",
+            )["HYDRO_FOUNDRY_MODEL_CAPACITY"], "2")
+            for capacity in ("0", "3", "12"):
+                with self.subTest(capacity=capacity), patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_CAPACITY": capacity}):
+                    with self.assertRaises(fake.DeployError):
+                        project.model_defaults(fake, subscription="sub", location="region", model="chat")
+            model["isDefaultVersion"] = False
+            capture.return_value = json.dumps([{"model": model}])
+            with self.assertRaisesRegex(fake.DeployError, "no unique supported"):
+                project.model_defaults(fake, subscription="sub", location="region", model="chat")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_VERSION": "v1"}):
+                self.assertEqual(project.model_defaults(
+                    fake, subscription="sub", location="region", model="chat",
+                )["HYDRO_FOUNDRY_MODEL_VERSION"], "v1")
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "yes"}):
             self.assertFalse(project.enabled())
 

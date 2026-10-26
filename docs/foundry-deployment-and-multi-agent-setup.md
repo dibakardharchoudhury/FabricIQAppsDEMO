@@ -207,8 +207,11 @@ Consequences:
 - A compatible ready OpenAI chat model deployment (tool calling and structured output required), **exactly one**
   linked Application Insights resource, and an Azure
   Container Registry connected to the project as a `ContainerRegistry` connection.
-  There is no hardcoded model/version/SKU/capacity. New projects require operator-supplied creation values;
-  Azure provisioning rejects unavailable models, regions or quota. No silent model/region downgrade is attempted.
+  There is no hardcoded model/version/SKU/capacity. For new projects, supply a chat model name
+  and explicitly approve billing. The live regional catalog supplies a unique default version,
+  regional Standard SKU and minimum allowed or default capacity. Overrides remain available;
+  missing reliable defaults require an explicit choice. Azure provisioning rejects unavailable
+  models, regions or quota. No silent model, region or global/provisioned SKU substitution is attempted.
 
 **Always required (not created by this deploy)**
 
@@ -226,18 +229,21 @@ Consequences:
    |---|---|
    | Azure subscription ID | Select a subscription explicitly; blank uses the active one, which must be enabled and in the selected Fabric tenant |
    | Operator-verified ontology graph binding | Supply JSON after portal materialization if authoritative lineage is unavailable; never edit generated `.env` files |
-   | Foundry project endpoint | You have several Foundry projects, or want a specific one |
+   | Existing project name | Only when saved selection, the target's convention-named project, and sole-project discovery cannot select unambiguously; full ARM ID/endpoint overrides are under troubleshooting |
    | Model deployment | Existing project: select its deployment, reuse the same-target saved selection, or discover exactly one ready deployment advertising chatCompletion capability. Required when creating |
    | Container registry | Select a live project connection when several exist; arbitrary or stale registry names are rejected |
    | Work-order writes | You want to enable or disable the human-approved write (default: keep the current setting) |
    | **Create/reuse a target-specific Foundry project when none is selected** | Provision a dedicated project rather than reuse an unrelated project. This **creates billable Azure resources** |
    | Region for the new project | Only when creating; default is the Fabric capacity's region |
    | Model catalog name | Only when creating; blank uses the deployment name, otherwise separates catalog identity from a custom deployment name |
-   | Model version / SKU / capacity | Required when creating; choose available values within your subscription/region quota |
+   | Model version / SKU / capacity | Normally automatic from the regional catalog; expand **Model deployment settings** only to override or resolve a missing default. Catalog availability does not guarantee quota |
 
    Values are validated by the local server and passed to the deployer as environment variables; nothing secret is
    collected. Blank text fields fall back to the launch environment, then target-scoped discovery where supported.
    The creation checkbox explicitly overrides an inherited `HYDRO_FOUNDRY_CREATE`; unchecked cannot opt into billing.
+   Both forms normally show only the subscription. Creating a project adds only the chat model name
+   and explicit billing approval. The project/model preflight runs before AppBackend creation.
+   Same-target Foundry hints survive AppBackend state rotation; historical backend URLs do not.
 4. Fresh data environment: use **Full workflow** (GitHub sync, setup, selected energy, Foundry, final app), or run those modules first.
    An ordinary update needs none of that. The workflow does not materialize the native graph: on a fresh target,
    complete the selected ontology's **Manage graph → select eligible entities/relationships → Continue → Materialize**
@@ -281,6 +287,7 @@ current target configuration. Do not bypass the engine with a hand-published ima
 |---|---|---|
 | `HYDRO_AZURE_SUBSCRIPTION_ID` | Subscription for discovery and creation | Explicit choice, else explicit project ARM ID / same-target prepared subscription, else active CLI subscription; verified enabled in the selected tenant without changing the global CLI account |
 | `HYDRO_FOUNDRY_PROJECT_RESOURCE_ID` | Full existing Foundry project ARM ID | Same-target prepared project ID, if available. Direct identity/endpoint readback avoids subscription-wide project discovery and fails rather than replacing an inaccessible selected project |
+| `HYDRO_FOUNDRY_EXISTING_PROJECT_NAME` | Simple existing project-name override | No override; explicit name takes precedence over saved project hints. Duplicate names require a full ARM ID |
 | `HYDRO_ONTOLOGY_GRAPH_BINDING` | Operator-verified graph JSON passed into target configuration | Authoritative lineage, else same-target saved binding; old workspace bindings are ignored |
 | `HYDRO_FOUNDRY_PROJECT_ENDPOINT` | Foundry project to use | Saved endpoint from the same tenant/workspace/subscription, else unambiguous discovery (or dedicated creation when opted in) |
 | `HYDRO_FOUNDRY_MODEL` | Model deployment for the agents | Same-target saved selection, else exactly one ready chat-capable deployment; required when creating |
@@ -290,14 +297,16 @@ current target configuration. Do not bypass the engine with a hand-published ima
 | `HYDRO_FOUNDRY_LOCATION` | Azure region of the new project | The Fabric capacity's region |
 | `HYDRO_FOUNDRY_PROJECT_NAME` | Optional explicit azd environment name for creation | `hydro-foundry-<hash of tenant, subscription and workspace>`; keep an override unique per target |
 | `HYDRO_FOUNDRY_MODEL_NAME` | Catalog model name when creating a custom-named deployment | The operator-supplied deployment name |
-| `HYDRO_FOUNDRY_MODEL_VERSION` / `_SKU` / `_CAPACITY` | Required model details when creating | None; no demo-environment values are substituted |
+| `HYDRO_FOUNDRY_MODEL_VERSION` / `_SKU` / `_CAPACITY` | Model deployment overrides when creating | Live regional catalog's unique default version, regional Standard and minimum allowed or default capacity. Fail if no reliable default; no demo-environment values are substituted |
 | `HYDRO_STATE_DIR` | Where generated azd projects live | `~/.fabric-demo` |
 | `HYDRO_SPA_DISPLAY_NAME` | SPA discovery/creation name | `Hydro Operations Fabric Client` |
 
-The local app exposes subscription, graph binding, endpoint/model/registry, write policy and all model-creation
-settings in both forms; it does not read secrets.
+The local app shows only subscription for the normal reuse path. Project/model choices,
+troubleshooting and model deployment overrides are collapsed in both forms; it does not read secrets.
 An older deployment without saved subscription identity must rediscover its project; supply the existing endpoint
-if discovery is ambiguous. Do not opt into new project creation as a substitute for selecting an existing deployment.
+or project name if discovery is ambiguous. Discovery prefers the exact target convention
+`ai-project-hydro-foundry-<hash of tenant, subscription and workspace>` over unrelated projects.
+Do not opt into new project creation as a substitute for selecting an existing deployment.
 
 Runtime configuration is generated, never edited by hand. `HYDRO_ORCHESTRATOR_CONFIG` carries `source`,
 `authorization`, `project_endpoint`, `native_binding` and `production_writes_enabled` (`source.generation` must be `2`;

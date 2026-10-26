@@ -1097,6 +1097,15 @@ assert.equal($("workflowFoundryCreate").checked, false);
             "HYDRO_FOUNDRY_MODEL_CAPACITY": "12", "HYDRO_FOUNDRY_CREATE": "false",
         })
 
+    def test_project_name_is_validated_and_forwarded_as_a_simple_existing_resource_choice(self):
+        self.assertEqual(SERVER._deploy_environment({"foundryProjectName": "  my-project_1.0  "}), {
+            "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "my-project_1.0",
+        })
+        self.assertEqual(SERVER._deploy_environment({"foundryProjectName": " "}), {})
+        for invalid in ("not a name", "https://account/project", "-invalid", "a" * 129, "project;run"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Existing Foundry project name"):
+                SERVER._deploy_environment({"foundryProjectName": invalid})
+
     def test_project_resource_id_is_explicit_validated_and_forwarded_only_to_setup(self):
         project_id = (
             "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/demo"
@@ -1232,7 +1241,7 @@ console.log(JSON.stringify([
         handler = page[page.index('$("deployBtn").addEventListener'):page.index('$("workflowBtn").addEventListener')]
         self.assertNotIn("workflow", handler)
 
-    def test_foundry_creation_requires_complete_explicit_model_settings(self):
+    def test_foundry_creation_requires_only_model_and_valid_optional_capacity(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         start = page.index("function foundryValid(")
         function = page[start:page.index('for (const prefix of ["deploy", "workflow"])', start)]
@@ -1247,8 +1256,11 @@ assert.equal(foundryValid("deploy"), true);
 fields.deployFoundryCreate.checked = true;
 assert.equal(foundryValid("deploy"), false);
 assert.match(fields.deployFoundryCreationStatus.textContent, /enter the model/);
-for (const suffix of ["FoundryNewModel", "FoundryModelVersion", "FoundryModelSku"]) fields["deploy"+suffix].value="approved";
-for (const invalid of ["", "0", "-1", "1.5"]) {
+fields.deployFoundryNewModel.value="approved";
+assert.equal(foundryValid("deploy"), true);
+assert.equal(fields.deployFoundryModelVersion.value, "");
+assert.equal(fields.deployFoundryModelSku.value, "");
+for (const invalid of ["0", "-1", "1.5"]) {
   fields.deployFoundryModelCapacity.value=invalid;
   assert.equal(foundryValid("deploy"), false);
 }
@@ -1267,7 +1279,7 @@ const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
 const suffixes = [
-  "AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryProjectResourceId",
+  "AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryProjectName", "FoundryProjectResourceId",
   "FoundryModel", "FoundryNewModel", "AcrName", "FoundryLocation", "FoundryModelName",
   "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "ProductionWrites",
   "FoundryCreate", "FoundryCreation", "FoundryNewProjectOptions", "FoundryNewProjectSummary",
@@ -1286,6 +1298,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(foundryPayload(prefix).foundryModel, "");
   assert.equal(foundryValid(prefix), true);
   $(prefix+"FoundryProjectResourceId").value = "existing-project";
+  $(prefix+"FoundryProjectName").value = "existing-project-name";
   $(prefix+"FoundryModel").value = "existing-model";
   $(prefix+"FoundryEndpoint").value = "existing-endpoint";
   $(prefix+"AcrName").value = "existing-registry";
@@ -1308,6 +1321,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(creating.createFoundry, true);
   assert.equal(creating.foundryModel, "approved-new-model");
   assert.equal(creating.foundryProjectResourceId, "");
+  assert.equal(creating.foundryProjectName, "");
   assert.equal(creating.foundryEndpoint, "");
   assert.equal(creating.acrName, "");
   $(prefix+"FoundryCreate").checked = false;
@@ -1316,6 +1330,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(reused.createFoundry, false);
   assert.equal(reused.foundryModel, "existing-model");
   assert.equal(reused.foundryProjectResourceId, "existing-project");
+  assert.equal(reused.foundryProjectName, "existing-project-name");
   assert.equal(reused.foundryEndpoint, "existing-endpoint");
   assert.equal(reused.acrName, "existing-registry");
   assert.equal(reused.foundryModelVersion, "");

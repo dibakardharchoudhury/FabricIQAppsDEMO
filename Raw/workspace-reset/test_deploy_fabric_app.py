@@ -149,7 +149,29 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
             DEPLOY.provision_foundry_agents("tenant", "workspace")
         backend.assert_called_once_with("tenant", "workspace")
         sources.assert_called_once_with("tenant", "workspace")
-        foundry.provision.assert_called_once_with(DEPLOY, "tenant", "workspace")
+        foundry.resolve_project.assert_called_once_with(DEPLOY, "tenant", "workspace")
+        foundry.provision.assert_called_once_with(
+            DEPLOY, "tenant", "workspace", selection=foundry.resolve_project.return_value,
+        )
+
+    def test_ambiguous_project_stops_before_backend_creation(self):
+        foundry = Mock()
+        foundry.resolve_project.side_effect = DEPLOY.DeployError("Choose one project")
+        with (
+            patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": '{"graphModelId":"graph"}'}, None,
+            )),
+            patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
+            patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
+            patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
+            patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
+            patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Choose one project"):
+                DEPLOY.provision_foundry_agents("tenant", "workspace")
+        backend.assert_not_called()
+        sources.assert_not_called()
+        foundry.provision.assert_not_called()
 
 
 class HostedSourceBootstrapTests(unittest.TestCase):
@@ -1678,6 +1700,44 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.configure_app_feature_flags(env, enable_energy_map=False)
 
             self.assertEqual(env.read_text(encoding="utf-8"), "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false\n")
+
+    def test_backend_rotation_preserves_only_same_workspace_foundry_selection(self):
+        for same_tenant, same_workspace in ((True, True), (False, True), (True, False)):
+            with self.subTest(tenant=same_tenant, workspace=same_workspace), tempfile.TemporaryDirectory() as directory:
+                rayfin = Path(directory) / "rayfin"
+                rayfin.mkdir()
+                old = {
+                    "RAYFIN_PUBLIC_TENANT_ID": "tenant" if same_tenant else "another",
+                    "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace" if same_workspace else "another",
+                    "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": "subscription",
+                    "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": "/subscriptions/subscription/projects/project",
+                    "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://account.services.ai.azure.com/api/projects/project",
+                    "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "chat-model",
+                    "RAYFIN_PUBLIC_ORCHESTRATOR_VERSION": "old-version",
+                    "RAYFIN_PUBLIC_API_URL": "old-capacity-endpoint",
+                }
+                (rayfin / ".env").write_text("\n".join(f"{key}={value}" for key, value in old.items()), encoding="utf-8")
+                (rayfin / ".env.example").write_text(
+                    "FABRIC_WORKSPACE_NAME=<your Fabric workspace display name>\n"
+                    "RAYFIN_PUBLIC_WORKSPACE_ID=<your Fabric workspace GUID>\n"
+                    "RAYFIN_PUBLIC_TENANT_ID=<your Entra tenant id>\n"
+                    "RAYFIN_PUBLIC_AAD_CLIENT_ID=<your Entra SPA app (client) id>\n", encoding="utf-8",
+                )
+                with patch.object(DEPLOY, "RAYFIN_DIR", rayfin), \
+                        patch.object(DEPLOY.tempfile, "gettempdir", return_value=directory), \
+                        patch.object(DEPLOY, "resolve_public_artifact_config", return_value={}):
+                    self.assertFalse(DEPLOY.prepare_rayfin_env("tenant", "workspace", "Demo", "capacity", "client"))
+                restored = (rayfin / ".env").read_text(encoding="utf-8")
+                for key in (
+                    "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
+                    "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+                ):
+                    if same_tenant and same_workspace:
+                        self.assertIn(f"{key}={old[key]}", restored)
+                    else:
+                        self.assertNotIn(key, restored)
+                self.assertNotIn("old-version", restored)
+                self.assertNotIn("old-capacity-endpoint", restored)
 
     def test_routine_env_preparation_preserves_target_energy_flag_unless_explicitly_disabled(self):
         with tempfile.TemporaryDirectory() as directory:

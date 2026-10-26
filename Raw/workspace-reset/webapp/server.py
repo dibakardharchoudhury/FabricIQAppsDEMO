@@ -954,6 +954,11 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         ):
             raise ValueError("Foundry project resource ID must be a full project ARM resource ID.")
         env["HYDRO_FOUNDRY_PROJECT_RESOURCE_ID"] = project_id
+    project_name = text("foundryProjectName")
+    if project_name:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):
+            raise ValueError("Existing Foundry project name may contain only letters, digits, '.', '_' and '-'.")
+        env["HYDRO_FOUNDRY_EXISTING_PROJECT_NAME"] = project_name
     model = text("foundryModel")
     if model:
         if not FOUNDRY_MODEL_RE.fullmatch(model):

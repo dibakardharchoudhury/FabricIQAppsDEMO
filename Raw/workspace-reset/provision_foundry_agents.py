@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from typing import NamedTuple
 import importlib.util
 import json
 import os
@@ -248,9 +249,12 @@ def select_model_deployment(deployments: list[dict], wanted: str) -> str:
             and item.get("properties", {}).get("capabilities", {}).get("chatCompletion") in (True, "true")
         ]
     if len(matches) != 1:
+        names = ", ".join(str(item.get("name")) for item in ready
+                          if item.get("properties", {}).get("capabilities", {}).get("chatCompletion") in (True, "true"))
         raise RuntimeError(
-            "Select one ready Foundry chat model deployment with HYDRO_FOUNDRY_MODEL. "
-            "Automatic selection requires exactly one deployment advertising chatCompletion capability."
+            "Under 'Project and model choices', enter one ready chat model deployment "
+            "(HYDRO_FOUNDRY_MODEL). Automatic selection requires exactly one chat deployment. "
+            f"Ready chat deployments: {names or '(none)' }."
         )
     return matches[0]["name"]
 
@@ -371,7 +375,37 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     print("Prepared Foundry configuration verified; no agents were provisioned or republished.", flush=True)
 
 
-def provision(deploy, tenant: str, workspace: str) -> None:
+class FoundrySelection(NamedTuple):
+    subscription: str
+    project_id: str
+    endpoint: str
+    model: str
+    creation_settings: dict[str, str] | None = None
+
+
+def creation_location(deploy, tenant: str, workspace: str, project_module) -> str:
+    override = os.environ.get("HYDRO_FOUNDRY_LOCATION", "").strip()
+    if override:
+        return project_module.normalize_location(override)
+    headers = deploy.fabric_headers(tenant)
+    capacity_id = str(deploy.fabric_get(f"workspaces/{workspace}", headers).get("capacityId") or "").lower()
+    response = request_with_read_retry("GET", f"{deploy.FABRIC_BASE}/capacities", headers=headers, timeout=60)
+    if not response.ok:
+        raise deploy.DeployError(f"Cannot read the Fabric capacity region: HTTP {response.status_code}.")
+    region = next((
+        str(item.get("region") or "") for item in response.json().get("value", [])
+        if str(item.get("id") or "").lower() == capacity_id
+    ), "")
+    if not region:
+        raise deploy.DeployError("Fabric capacity region is unavailable. Set the region under new-project defaults.")
+    return project_module.normalize_location(region)
+
+
+def resolve_project(
+    deploy, tenant: str, workspace: str, *, allow_create: bool = False,
+    creation_settings: dict[str, str] | None = None,
+) -> FoundrySelection:
+    """Resolve the target before backend mutation; create only in the provisioning pass."""
     values, _ = deploy.current_rayfin_target()
     print("Foundry: project - resolving the Foundry project.", flush=True)
     same_target = (
@@ -398,6 +432,12 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         else ""
     )
     explicit_endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip()
+    project_name = os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
+    if project_name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):
+        raise deploy.DeployError("Existing Foundry project name must contain only letters, digits, '.', '_' or '-'.")
+    if project_name and not explicit_project_id and not explicit_endpoint:
+        saved_project_id = ""
+        saved_endpoint = ""
     endpoint = explicit_endpoint or saved_endpoint
     model = os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip()
     if not model and endpoint and endpoint.rstrip("/") == saved_endpoint.rstrip("/"):
@@ -414,7 +454,8 @@ def provision(deploy, tenant: str, workspace: str) -> None:
                 "resource", "show", "--ids", project["id"], "--api-version", "2025-06-01", "-o", "json",
             )))
             url = detail.get("properties", {}).get("endpoints", {}).get("AI Foundry API", "").rstrip("/")
-            if url and (not wanted or url == wanted.rstrip("/")):
+            if (url and (not wanted or url == wanted.rstrip("/"))
+                    and (not project_name or detail["id"].rsplit("/", 1)[-1].casefold() == project_name.casefold())):
                 found.append((detail["id"], url))
         return found
 
@@ -449,28 +490,34 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             "a different project in place of the selected one."
         )
     project_module = _load_sibling("deploy_foundry_project")
-    if project_module.enabled() and not endpoint:
-        candidates = []
+    if not endpoint and not project_name:
+        from deploy_foundry_project import environment_name
+
+        expected_name = "ai-project-" + environment_name(tenant, workspace, subscription)
+        conventional = [candidate for candidate in candidates
+                        if candidate[0].rsplit("/", 1)[-1].casefold() == expected_name.casefold()]
+        if len(conventional) == 1:
+            candidates = conventional
+            print(f"Foundry: reusing this target's convention-named project {expected_name}.", flush=True)
+        elif project_module.enabled():
+            candidates = []
+    if project_name and not candidates:
+        raise deploy.DeployError(
+            f"Existing Foundry project '{project_name}' was not found in the selected subscription. "
+            "Check the project name under 'Project and model choices'; no replacement was created."
+        )
+    if not candidates and project_module.enabled() and not allow_create:
+        location = creation_location(deploy, tenant, workspace, project_module)
+        settings = project_module.model_defaults(
+            deploy, subscription=subscription, location=location, model=model,
+        )
+        try:
+            project_module.deployments_parameter(model, settings)
+        except ValueError as exc:
+            raise deploy.DeployError(str(exc)) from exc
+        return FoundrySelection(subscription, "", "", model, {**settings, "location": location})
     if not candidates and project_module.enabled():
         hosted_module = _load_sibling("deploy_hosted_agent")
-
-        def target_location() -> str:
-            override = os.environ.get("HYDRO_FOUNDRY_LOCATION", "").strip()
-            if override:
-                return project_module.normalize_location(override)
-            headers = deploy.fabric_headers(tenant)
-            capacity_id = str(deploy.fabric_get(f"workspaces/{workspace}", headers).get("capacityId") or "").lower()
-            response = request_with_read_retry("GET", f"{deploy.FABRIC_BASE}/capacities", headers=headers, timeout=60)
-            region = next((
-                str(item.get("region") or "") for item in (response.json().get("value", []) if response.ok else [])
-                if str(item.get("id") or "").lower() == capacity_id
-            ), "")
-            if not region:
-                raise deploy.DeployError(
-                    "Set HYDRO_FOUNDRY_LOCATION to the Azure region for the new Foundry project; the Fabric "
-                    "capacity region could not be read."
-                )
-            return project_module.normalize_location(region)
 
         def agent_access(project_endpoint: str) -> bool:
             access = deploy.run_capture(deploy.az(
@@ -483,21 +530,71 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             ).status_code == 200
 
         print("Foundry: project - no project selected; provisioning the target-specific project as requested.", flush=True)
+        location = (creation_settings or {}).get("location") or creation_location(deploy, tenant, workspace, project_module)
+        settings = creation_settings or project_module.model_defaults(
+            deploy, subscription=subscription, location=location, model=model,
+        )
         created = project_module.ensure_foundry_project(
             deploy, hosted_module, tenant=tenant, workspace=workspace, subscription=subscription,
-            location=target_location(), model=model, check_access=agent_access,
+            location=location, model=model, check_access=agent_access, model_settings=settings,
         )
         candidates = discover(created)
     if len(candidates) != 1:
+        choices = "\n".join(f"  - {identity.rsplit('/', 1)[-1]} ({identity})" for identity, _ in candidates)
         raise deploy.DeployError(
-            "Select exactly one existing Foundry project with HYDRO_FOUNDRY_PROJECT_ENDPOINT; automatic discovery is ambiguous or unavailable."
-            + ("" if candidates else " To create one instead, enable 'Create/reuse a target-specific Foundry project' "
-               "in the local app (HYDRO_FOUNDRY_CREATE=true).")
+            "Select exactly one existing Foundry project. In the local app, open 'Project and model choices' "
+            "and enter an existing project name (HYDRO_FOUNDRY_EXISTING_PROJECT_NAME). "
+            "Use a full project resource ID only when the name is duplicated."
+            + (f"\nAvailable projects:\n{choices}" if candidates else
+               " No matching project was found. To create one, explicitly approve new project creation.")
         )
     project_id, endpoint = candidates[0]
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".services.ai.azure.com"):
         raise deploy.DeployError("Foundry project metadata returned an invalid endpoint.")
+    model = read_model_selection(deploy, tenant, project_id, model)
+    print(f"Foundry: project and model verified before backend provisioning ({project_id.rsplit('/', 1)[-1]}, {model}).", flush=True)
+    return FoundrySelection(subscription, project_id, endpoint, model)
+
+
+def read_model_selection(deploy, tenant: str, project_id: str, wanted: str) -> str:
+    access = deploy.run_capture(deploy.az(
+        "account", "get-access-token", "--tenant", tenant, "--resource", "https://management.azure.com/",
+        "--query", "accessToken", "-o", "tsv",
+    ))
+    if not access:
+        raise deploy.DeployError("No delegated Azure management token was returned.")
+    account_id = project_id.rsplit("/projects/", 1)[0]
+    path = f"{account_id}/deployments"
+    url = f"https://management.azure.com{path}?api-version=2025-06-01"
+    deployments = []
+    while url:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.netloc != "management.azure.com" or parsed.path != path:
+            raise deploy.DeployError("Unexpected Foundry model pagination URL.")
+        response = request_with_read_retry(
+            "GET", url, headers={"Authorization": f"Bearer {access}"}, timeout=60,
+        )
+        if not response.ok:
+            raise deploy.DeployError(f"Cannot read Foundry model deployments: HTTP {response.status_code}.")
+        page = response.json()
+        deployments.extend(page.get("value", []))
+        url = page.get("nextLink")
+    try:
+        return select_model_deployment(deployments, wanted)
+    except RuntimeError as exc:
+        raise deploy.DeployError(str(exc)) from exc
+
+
+def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelection | None = None) -> None:
+    selection = selection or resolve_project(deploy, tenant, workspace, allow_create=True)
+    if not selection.project_id:
+        # Read-only preflight already resolved the model settings; creation still uses the same target convention.
+        selection = resolve_project(
+            deploy, tenant, workspace, allow_create=True, creation_settings=selection.creation_settings,
+        )
+    subscription, project_id, endpoint, model, _ = selection
+    values, _ = deploy.current_rayfin_target()
 
     def token(resource):
         value = deploy.run_capture(deploy.az("account", "get-access-token", "--tenant", tenant, "--resource", resource, "--query", "accessToken", "-o", "tsv"))

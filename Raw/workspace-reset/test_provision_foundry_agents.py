@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 import unittest
+import uuid
 from unittest.mock import Mock, call, patch
 
 import requests
@@ -25,6 +26,94 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class PreparedFoundryTests(unittest.TestCase):
+    def test_convention_project_is_selected_among_unrelated_projects_without_creation(self):
+        from deploy_foundry_project import environment_name
+
+        for _ in range(2):
+            tenant, workspace, subscription = [str(uuid.uuid4()) for _ in range(3)]
+            expected = "ai-project-" + environment_name(tenant, workspace, subscription)
+            base = f"/subscriptions/{subscription}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/"
+            projects = [base + "unrelated", base + expected]
+            deploy = Mock()
+            deploy.DeployError = RuntimeError
+            deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+            deploy.current_rayfin_target.return_value = ({}, None)
+            deploy.az.side_effect = lambda *args: list(args)
+            def capture(argv):
+                if argv[:2] == ["resource", "list"]:
+                    return json.dumps([{"id": identity} for identity in projects])
+                if argv[:2] == ["resource", "show"]:
+                    identity = argv[argv.index("--ids") + 1]
+                    return json.dumps({"id": identity, "properties": {
+                        "endpoints": {"AI Foundry API": f"https://account.services.ai.azure.com/api/projects/{identity.rsplit('/', 1)[-1]}"},
+                    }})
+                raise AssertionError(argv)
+            deploy.run_capture.side_effect = capture
+            with patch.dict(os.environ, {
+                "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": "", "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "",
+                "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "", "HYDRO_FOUNDRY_CREATE": "",
+                "HYDRO_FOUNDRY_PROJECT_NAME": "", "HYDRO_FOUNDRY_MODEL": "",
+            }), patch.object(module, "resolve_subscription", return_value=subscription), \
+                    patch.object(module, "read_model_selection", return_value="ready-chat") as model:
+                selection = module.resolve_project(deploy, tenant, workspace)
+            self.assertEqual(selection.project_id, base + expected)
+            self.assertEqual(selection.model, "ready-chat")
+            model.assert_called_once_with(deploy, tenant, base + expected, "")
+            deploy.run_stream.assert_not_called()
+
+    def test_ambiguous_project_lists_simple_names_and_accepts_an_explicit_name(self):
+        subscription = str(uuid.uuid4())
+        base = f"/subscriptions/{subscription}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/"
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({}, None)
+        deploy.az.side_effect = lambda *args: list(args)
+        def capture(argv):
+            if argv[:2] == ["resource", "list"]:
+                return json.dumps([{"id": base + name} for name in ("first-project", "second-project")])
+            identity = argv[argv.index("--ids") + 1]
+            return json.dumps({"id": identity, "properties": {"endpoints": {
+                "AI Foundry API": "https://account.services.ai.azure.com/api/projects/" + identity.rsplit("/", 1)[-1],
+            }}})
+        deploy.run_capture.side_effect = capture
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": "", "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "",
+            "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "", "HYDRO_FOUNDRY_CREATE": "",
+        }), patch.object(module, "resolve_subscription", return_value=subscription), \
+                patch.object(module, "read_model_selection", return_value="chat"):
+            with self.assertRaisesRegex(RuntimeError, "Available projects:[\\s\\S]*first-project[\\s\\S]*second-project"):
+                module.resolve_project(deploy, "tenant", "workspace")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "second-project"}):
+                selected = module.resolve_project(deploy, "tenant", "workspace")
+                self.assertEqual(selected.project_id, base + "second-project")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "missing"}):
+                with self.assertRaisesRegex(RuntimeError, "no replacement was created"):
+                    module.resolve_project(deploy, "tenant", "workspace")
+        deploy.run_stream.assert_not_called()
+
+    def test_model_preflight_is_read_only_and_rejects_untrusted_pagination(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.run_capture.return_value = "access"
+        project_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/project"
+        ready = {"name": "chosen-chat", "properties": {
+            "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
+            "capabilities": {"chatCompletion": "true"},
+        }}
+        with patch.object(module, "request_with_read_retry", return_value=Mock(
+            ok=True, json=lambda: {"value": [ready]},
+        )) as request:
+            self.assertEqual(module.read_model_selection(deploy, "tenant", project_id, ""), "chosen-chat")
+            self.assertEqual(request.call_args.args[0], "GET")
+        with patch.object(module, "request_with_read_retry", return_value=Mock(
+            ok=True, json=lambda: {"value": [], "nextLink": "https://untrusted.test/token"},
+        )) as request:
+            with self.assertRaisesRegex(RuntimeError, "pagination"):
+                module.read_model_selection(deploy, "tenant", project_id, "")
+            request.assert_called_once()
+        deploy.run_stream.assert_not_called()
+
     def prepared(self):
         deploy = Mock()
         deploy.DeployError = RuntimeError

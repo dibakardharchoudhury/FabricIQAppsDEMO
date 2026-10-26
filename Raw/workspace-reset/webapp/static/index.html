@@ -551,19 +551,20 @@ try {
 }
 
 function renderFoundryFields(prefix, clientId) {
-  return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Use existing resources (recommended).</strong> We find this target's project, model and supporting resources when you run setup.</p>
+  return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Use existing resources (recommended).</strong> Confirm the subscription, then run setup. Saved or convention-named resources are reused.</p>
     <div class="grid">
       <label>Azure subscription
         <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
     </div>
     <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
-    <p id="${prefix}FoundryStatus" class="phelp" role="status">Confirm the subscription, then run setup. Project and model are automatic unless setup asks you to choose.</p>
+    <p id="${prefix}FoundryStatus" class="phelp" role="status">Project and model are checked before creating the backend. If more than one project matches, setup lists their names.</p>
+    <p class="phelp"><strong>Automatic naming:</strong> new resources use a stable <code>hydro-foundry-&lt;target hash&gt;</code> environment scoped to the tenant, subscription and workspace. Account, project, registry and monitoring names come from the deployment template; the coordinator is <code>hydro-orchestrator</code>. You do not need to name each resource.</p>
     <details id="${prefix}FoundryOverrides" class="foundry-block">
-      <summary>Choose a specific project or model (optional)</summary>
-      <p class="hint">Only needed if automatic discovery finds more than one suitable resource. Existing-project choices are ignored when creating a new project.</p>
+      <summary>Project and model choices</summary>
+      <p class="hint">Usually leave blank. If setup lists several projects, enter the project name here, not a URL or resource ID. Existing-project choices are ignored when creating a new project.</p>
       <div class="grid">
-        <label>Existing project resource ID
-          <input id="${prefix}FoundryProjectResourceId" type="text" placeholder="Automatic: saved project or the only accessible project" /></label>
+        <label>Existing project name
+          <input id="${prefix}FoundryProjectName" type="text" placeholder="Automatic: saved, target-named or only project" /></label>
         <label>Existing model deployment
           <input id="${prefix}FoundryModel" type="text" placeholder="Automatic: saved model or the only ready chat deployment" /></label>
       </div>
@@ -572,17 +573,17 @@ function renderFoundryFields(prefix, clientId) {
       <summary id="${prefix}FoundryNewProjectSummary">Create a new project instead (billable)</summary>
       <p class="hint">Only use this if you do not have a suitable project. Opening this section does not authorize creation.</p>
       <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
-        <span>I approve creating a new Foundry project and billable Azure resources.</span></label>
+        <span>I approve creating billable Azure resources with the regional model catalog defaults shown in the setup log.</span></label>
       <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
-        <p class="hint">Use model settings approved for this subscription's quota. Region follows the Fabric capacity; model catalog name follows the deployment name unless changed below. Availability is checked during setup.</p>
+        <p class="hint">Only the approved chat model name is needed. Resource names and region are automatic. Version comes from the live regional catalog; deployment type defaults to regional Standard; capacity uses the catalog minimum or default. Azure checks quota during provisioning. If regional Standard is unavailable, setup asks you to choose a deployment type; global and provisioned types are never chosen automatically.</p>
         <div class="grid">
-          <label>New model deployment name <input id="${prefix}FoundryNewModel" type="text" placeholder="Your approved model deployment name" disabled /></label>
-          <label>Model version <input id="${prefix}FoundryModelVersion" type="text" placeholder="Approved model version" disabled /></label>
-          <label>Deployment SKU <input id="${prefix}FoundryModelSku" type="text" placeholder="Approved deployment SKU" disabled /></label>
-          <label>Model capacity <input id="${prefix}FoundryModelCapacity" type="number" min="1" step="1" placeholder="Approved capacity within your quota" disabled /></label>
+          <label>Chat model name <input id="${prefix}FoundryNewModel" type="text" placeholder="Model approved for your subscription" disabled /></label>
         </div>
-        <details class="foundry-block"><summary>Change new-project defaults (optional)</summary>
+        <details class="foundry-block"><summary>Model deployment settings</summary>
           <div class="grid">
+            <label>Model version <input id="${prefix}FoundryModelVersion" type="text" placeholder="Automatic: catalog default version" disabled /></label>
+            <label>Deployment type (SKU) <input id="${prefix}FoundryModelSku" type="text" placeholder="Automatic: regional Standard" disabled /></label>
+            <label>Model capacity <input id="${prefix}FoundryModelCapacity" type="number" min="1" step="1" placeholder="Automatic: catalog minimum or default" disabled /></label>
             <label>Region <input id="${prefix}FoundryLocation" type="text" placeholder="Automatic: Fabric capacity region" disabled /></label>
             <label>Model catalog name <input id="${prefix}FoundryModelName" type="text" placeholder="Automatic: new deployment name" disabled /></label>
           </div>
@@ -594,6 +595,8 @@ function renderFoundryFields(prefix, clientId) {
       <summary>Troubleshooting overrides (normally leave closed)</summary>
       <p class="hint">Not needed for normal setup. Supporting resources are discovered automatically and work-order write permissions stay unchanged. Endpoint and registry overrides apply to existing resources only. Requires Azure Developer CLI (<code>azd</code>). Graph lineage overrides cannot replace manual graph materialization.</p>
       <div class="grid">
+        <label>Full project resource ID (only for duplicate project names)
+          <input id="${prefix}FoundryProjectResourceId" type="text" placeholder="Automatic: resolved from the project name" /></label>
         <label>SPA client ID <input id="${clientId}" type="text" placeholder="Automatic: verify the target tenant's SPA" /></label>
         <label>Project endpoint <input id="${prefix}FoundryEndpoint" type="text" placeholder="Automatic: selected project's endpoint" /></label>
         <label>Container registry <input id="${prefix}AcrName" type="text" placeholder="Automatic: project's registry connection" /></label>
@@ -980,6 +983,7 @@ function foundryPayload(prefix) {
     ontologyGraphBinding: value("OntologyGraphBinding"),
     foundryEndpoint: creating ? "" : value("FoundryEndpoint"),
     foundryProjectResourceId: creating ? "" : value("FoundryProjectResourceId"),
+    foundryProjectName: creating ? "" : value("FoundryProjectName"),
     foundryModel: creating ? value("FoundryNewModel") : value("FoundryModel"),
     acrName: creating ? "" : value("AcrName"),
     foundryLocation: creating ? value("FoundryLocation") : "",
@@ -993,13 +997,13 @@ function foundryPayload(prefix) {
 }
 function foundryValid(prefix) {
   if (!$(prefix + "FoundryCreate").checked) return true;
-  const required = ["FoundryNewModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"];
+  const required = ["FoundryNewModel"];
   const missing = required.filter(suffix => !$(prefix + suffix).value.trim());
   const capacity = $(prefix + "FoundryModelCapacity").value.trim();
-  const valid = !missing.length && /^[1-9][0-9]*$/.test(capacity);
+  const valid = !missing.length && (!capacity || /^[1-9][0-9]*$/.test(capacity));
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Creation is enabled with these model settings. Azure validates availability and quota during provisioning."
-    : "To create a project, enter the model deployment name, version, SKU and a positive whole-number capacity.";
+    ? "Model selected. Version, regional Standard deployment type and capacity are resolved from the live catalog before backend creation. Azure validates quota during provisioning."
+    : "To create a project, enter the model name. If overriding capacity, use a positive whole number.";
   return valid;
 }
 function updateFoundryMode(prefix) {
@@ -1009,12 +1013,12 @@ function updateFoundryMode(prefix) {
   $(prefix + "FoundryNewProjectSummary").textContent = creating
     ? "New project selected (billable)" : "Create a new project instead (billable)";
   $(prefix + "FoundryModeSummary").textContent = creating
-    ? "Create new resources (billable). Complete the approved model settings below before running."
-    : "Use existing resources (recommended). Project, model and supporting resources are found automatically when you run setup.";
+    ? "Create new resources (billable). Enter the approved model name; resource names and model defaults are automatic."
+    : "Use existing resources (recommended). Saved or target-named project and model are checked before backend creation.";
   for (const suffix of ["FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
     $(prefix + suffix).disabled = !creating;
   }
-  for (const suffix of ["FoundryProjectResourceId", "FoundryModel", "FoundryEndpoint", "AcrName"]) {
+  for (const suffix of ["FoundryProjectName", "FoundryProjectResourceId", "FoundryModel", "FoundryEndpoint", "AcrName"]) {
     $(prefix + suffix).disabled = creating;
   }
 }
@@ -1148,7 +1152,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryProjectResourceId", "FoundryModel", "FoundryNewModel", "FoundryEndpoint",
+  "AzureSubscriptionId", "FoundryProjectName", "FoundryProjectResourceId", "FoundryModel", "FoundryNewModel", "FoundryEndpoint",
   "AcrName", "ProductionWrites", "FoundryLocation", "FoundryModelName",
   "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "OntologyGraphBinding",
 ];

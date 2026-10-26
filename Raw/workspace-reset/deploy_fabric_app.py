@@ -1560,6 +1560,18 @@ def prepare_rayfin_env(
     enable_energy_map: bool | None = None,
 ) -> bool:
     values, deployment = current_rayfin_target()
+    same_workspace = (
+        _public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
+        and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace_id.casefold()
+    )
+    foundry_settings = {
+        key: _public_config_value(values, key)
+        for key in (
+            "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+        )
+        if same_workspace and _public_config_value(values, key)
+    }
     if enable_energy_map is None:
         same_scope = (
             _public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
@@ -1622,7 +1634,9 @@ def prepare_rayfin_env(
         if placeholder not in template:
             raise DeployError(f"Expected placeholder {placeholder!r} is missing from rayfin/.env.example.")
         template = template.replace(placeholder, value)
-    (RAYFIN_DIR / ".env").write_text(_rebind_public_env(template, public_artifacts), encoding="utf-8", newline="\n")
+    (RAYFIN_DIR / ".env").write_text(
+        _rebind_public_env(template, {**public_artifacts, **foundry_settings}), encoding="utf-8", newline="\n",
+    )
     configure_app_feature_flags(RAYFIN_DIR / ".env", enable_energy_map=enable_energy_map)
     print("Generated fresh rayfin/.env for the target workspace.", flush=True)
     return False
@@ -2386,8 +2400,6 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
             "Ineligible entities or a zero-node materialization do not satisfy this prerequisite. "
             "Stopped before AppBackend or Foundry provisioning."
         )
-    ensure_appbackend_identity(tenant, workspace_id)
-    ensure_hosted_source_prerequisites(tenant, workspace_id)
     foundry_spec = importlib.util.spec_from_file_location(
         "provision_foundry_agents", SCRIPT_DIR / "provision_foundry_agents.py"
     )
@@ -2395,7 +2407,10 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
         raise DeployError("Foundry provisioning module is unavailable.")
     foundry = importlib.util.module_from_spec(foundry_spec)
     foundry_spec.loader.exec_module(foundry)
-    foundry.provision(sys.modules[__name__], tenant, workspace_id)
+    selection = foundry.resolve_project(sys.modules[__name__], tenant, workspace_id)
+    ensure_appbackend_identity(tenant, workspace_id)
+    ensure_hosted_source_prerequisites(tenant, workspace_id)
+    foundry.provision(sys.modules[__name__], tenant, workspace_id, selection=selection)
 
 
 def verify_foundry_agents(tenant: str, workspace_id: str) -> None:

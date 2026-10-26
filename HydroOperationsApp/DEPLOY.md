@@ -19,7 +19,7 @@ Entra or SQL deployment sequence.
 | Update an already prepared app | **Deploy app**. Normally no other inputs are needed. |
 | Update agents | **Set up Foundry agents**, then **Deploy app**. |
 | Initialize an empty workspace | **Full Deploy**. Review the source, supply Key Vault URI, Teams team/channel and alert email, then run. Core setup includes Weather and energy sources. Existing Foundry resources are reused by default. |
-| Create Foundry resources for the first time | Expand **Create a new project instead (billable)** and explicitly approve creation. Enter your approved new model deployment name, version, SKU and capacity. |
+| Create Foundry resources for the first time | Expand **Create a new project instead (billable)**, enter a chat model name, and explicitly approve creation using regional catalog defaults. |
 
 ### What you actually need to enter
 
@@ -31,9 +31,9 @@ Entra or SQL deployment sequence.
 | Alert email | Suggests the signed-in user's email when the tenant GUID matches. Confirm or replace it. |
 | Notebook credentials / runtime | An existing Key Vault with the service principal's tenant ID, client ID and client secret is required, with notebook read access. Default secret **names** are `tenantid`, `clientid`, `clientsecret`. Review **Key Vault secret names and notebook settings**; keep those names only if they match the vault. Run-as defaults to the signed-in deploying user and timeout to 3600 seconds. |
 | Azure subscription | Auto-selected only when it matches the target tenant and is the active signed-in subscription or the sole match. Otherwise choose from the loaded list. |
-| Foundry project / model | Reuses saved settings for this target, then verified discovery. Supply the project resource ID or deployment name only when needed. |
+| Foundry project / model | Reuses saved settings for this target, then its convention-named project, then a sole discovered project. Choose an existing project by name or a model deployment only when genuinely ambiguous. |
 | SPA / registry / project endpoint | Automatic discovery; optional overrides are grouped together. |
-| New-project region / model catalog name | Defaults to the Fabric capacity's region / deployment name. Version, SKU and capacity must be approved for your subscription and region; they are not guessed. |
+| New-project region / model catalog name | Defaults to the Fabric capacity's region / entered model name. Version, regional Standard deployment type and capacity come from the live regional catalog; overrides stay collapsed under **Model deployment settings**. |
 
 The two Foundry forms share remembered non-secret overrides for each target.
 The normal Foundry form shows only **Azure subscription**: confirm its automatic
@@ -46,6 +46,23 @@ not sent to provisioning. Switching back restores those choices.
 **Create new resources is always off again after changing targets or reloading**;
 it is never a remembered spending authorization.
 No PAT, token or credential secret value is saved by these forms.
+
+Resource names use the tenant/subscription/workspace naming convention, not a demo
+tenant's values: the environment is `hydro-foundry-<target hash>`, the project is
+`ai-project-<environment>`, and the template derives the resource group, account,
+registry and monitoring names. The coordinator remains `hydro-orchestrator`.
+Replacing a missing or stale AppBackend preserves the same target's verified
+Foundry selection hints. Project and existing-model resolution happen before
+creating an AppBackend or provisioning agents; ambiguity fails early with project
+names instead of asking everyone to enter endpoint URLs.
+
+New-model defaults use a unique catalog default version, regional **Standard**
+(never an automatic global, data-zone or provisioned substitution), and the
+catalog's minimum allowed or default capacity. The selected values are logged.
+If a reliable default is unavailable, setup asks for that specific override.
+Catalog availability does not guarantee subscription quota; Azure can still
+reject provisioning. No new resources are created without the explicit billing
+approval.
 
 Core/Full Deploy edits (including Key Vault URI and Teams IDs) are saved
 automatically in the gitignored
@@ -192,9 +209,9 @@ For an empty workspace, use **Full Deploy**. Supply:
   settings** contains the required SPN secret names. The vault and all three secrets
   must already exist and be readable; setup does not create them. Only changing
   matching default names is unnecessary. Blank run-as means the signed-in deploying user.
-- Existing Foundry settings, or explicit opt-in to new billable resources
-  with a region-supported model/version/SKU/capacity. First-time creation settings
-  appear directly when you opt in; they are not hidden under Advanced.
+- Existing Foundry settings, or explicit opt-in to new billable resources with
+  a chat model name and regional catalog defaults. Additional model deployment
+  settings are collapsed and needed only for an explicit override.
 
 Core setup provisions Lakehouse, Eventhouse, independent operational SQL,
 ontology generation **2**, dashboard, Data Agent and retained Operations Agent
@@ -252,10 +269,12 @@ prepares/verifies connections, QA, RCA, WorkOrder, FabricIQ and Weather speciali
 and the Hosted coordinator. Unchanged images/definitions are reused.
 It does **not** publish the website.
 
-An endpoint alone may require subscription discovery; supplying the project ARM
-ID avoids that discovery. Tenant, subscription, endpoint and live source identity
-are still verified. A missing/inaccessible selected project is a hard failure,
-not permission to create a replacement.
+Normally confirm the subscription and run. For ambiguous existing resources,
+expand **Project and model choices** and enter the project name. Full ARM IDs and
+endpoint URLs are troubleshooting overrides, not normal prerequisites. Tenant,
+subscription, endpoint and live source identity are still verified. A
+missing/inaccessible selected project is a hard failure, not permission to create
+a replacement.
 See [Foundry setup and runtime architecture](../docs/foundry-deployment-and-multi-agent-setup.md).
 
 ## 7. Publish the Fabric app last
