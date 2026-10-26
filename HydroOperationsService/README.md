@@ -21,9 +21,12 @@ clearing follow-up context and invalidating every previous approval callback.
 Target/source changes still reset the container, and app builds retain separate
 session identities. Crew labels distinguish application workflow/tool activity
 from Foundry events and no longer count the deterministic controller as an
-additional model invocation. These app changes are tested but **not published**:
-tenant Microsoft Graph authorization still returns
-`InteractionRequired / TokenCreatedWithOutdatedPolicies`.
+additional model invocation. These app changes were initially blocked by tenant Microsoft Graph authorization.
+The October 26 canonical app-only deployment subsequently published **1.0.1076**
+from **`e899a6a`**, with normal browser build verification, connector/runtime
+readiness checks and all 40 redirects preserved. The native joined-output and
+missing Weather acceptance gates remain unresolved; publication does not make
+them successful.
 
 See the [bounded review and exact limitations](../docs/foundry-multi-agent-implementation.md#october-25-bounded-feature-workflow-review)
 and the [deployment guide](../HydroOperationsApp/DEPLOY.md). Keep Foundry setup

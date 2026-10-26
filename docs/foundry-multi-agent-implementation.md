@@ -5,6 +5,46 @@ dated follow-ups, corrections, measured results and unfinished acceptance, groun
 in repository commits and linked records. It is not a release certificate.
 Earlier runs remain historical evidence, not passes after a later code change.
 
+## October 26 publication and main-merge readiness
+
+Tenant Graph authorization recovered. The canonical **app-only** command published
+FEATURE build **1.0.1076** from **`e899a6a`** and returned `SUCCESS` and
+`DEPLOYED_APP_URL` after **665.625 seconds**. Both source connectors applied;
+AppBackend preflight/POST readiness and preservation of all **40** redirects passed.
+Prepared Foundry definitions were verified read-only, without agent publication.
+Energy read-model checks found **12 source layers, 9 polygons and 75 asset-message
+links**. Normal browser sign-in independently confirmed the deployed build,
+STID connected, 90 stale signals, and a populated native graph with operational
+context. No additional agent prompt or work-order decision was submitted.
+
+The graph used one native query, but this browser's Fabric `executeQuery` request
+took **49.310 seconds**. Warm navigation returned in **213 ms** without another
+query. The earlier 6-8 second observations are not a service-latency guarantee;
+first-load performance is still capacity/service dependent. See the
+[graph evidence](knowledge-graph.md).
+
+The request to merge into `main` is conditional on full end-to-end readiness.
+That condition is **not met**, so neither `main` nor the PR states were changed:
+
+- Exact PR **#19** tip `593b14571d4ff6ed28b37d4c41e05ad38a9451a6` and PR **#20**
+  tip `67fd898e96d84281156986d315d04ec17197a586` are ancestors of the feature
+  branch. Incorporation is verified; runtime success is separate.
+- Both PRs report `REVIEW_REQUIRED` and `BLOCKED`. Main requires one approving
+  review and approval of the most recent reviewable push. No protection bypass
+  or administrative merge was attempted.
+- Fresh Weather history still has no successful recovery: the October 25
+  15:20 UTC run failed with Aurora HTTP 401; the subsequent 21:20 and October 26
+  03:20 scheduled runs failed with `CapacityNotActive`. The assigned capacity is
+  **Active now**, and deployed Weather notebook executable source matches checkout.
+  No known-failing ingestion job was manually repeated.
+- The October 25 native Data Agent joined-output failure and missing forecast
+  acceptance remain unresolved. The existing three-prompt limit is preserved.
+
+Publication has recovered; full functionality, native joined-output acceptance,
+Weather ingestion and required independent PR approval have not. The dated
+October 25 publication-blocked statements below describe history, not the
+current hosting state.
+
 ## October 25 bounded FEATURE workflow review
 
 **Recommendation: retain the existing Agent Framework workflow.** Supervisor is

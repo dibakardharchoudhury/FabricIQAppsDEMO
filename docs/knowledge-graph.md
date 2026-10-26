@@ -116,13 +116,19 @@ selected neighborhood animated; reduced motion disabled animation, and a theme
 switch retained all 500 nodes. Synthetic rendering is not native source execution
 evidence, and the 201/198 read is not a large-production-graph benchmark.
 
-The optimization is committed as `b921a37`. Its app-only publication attempt
-stopped at tenant SPA verification on October 25, before Rayfin state changed:
-Continuous Access Evaluation still rejected Azure CLI after a clean tenant
-sign-in. These measurements validate the revised native reader and local canvas,
-**not publication of the revised hosted UI**. Resume the canonical app-only
-deployment after the authentication prerequisite is resolved; do not bypass the
-SPA verification or change tenant access policies to force a deployment.
+The optimization is committed as `b921a37`. Its initial app-only publication
+stopped at tenant SPA verification on October 25. Authorization recovered on
+October 26; canonical app-only deployment published **1.0.1076** from **`e899a6a`**
+and passed runtime/connector readiness and preservation of all 40 redirects.
+Normal browser sign-in confirmed that build and the populated native graph,
+including the asset tree, native lineage, telemetry and operational context.
+
+That browser's single Fabric `executeQuery` request measured **49.310 seconds**;
+the earlier 6-8 second reads are not a guaranteed first-load response time.
+Returning to the graph within its memory-cache lifetime took **213 ms** and
+submitted **no additional native query**. The optimization removes duplicate
+submissions and repeat navigation reads, not Fabric's variable service latency.
+These observations do not certify a large production graph or agent runtime.
 
 Official references:
 
