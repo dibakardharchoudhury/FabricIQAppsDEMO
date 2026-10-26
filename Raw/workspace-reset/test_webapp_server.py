@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 import run_pipeline
@@ -377,6 +378,73 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload});comp
             response = self.client.get("/api/pipeline-params")
             self.assertEqual(response.status_code, 400)
             self.assertIn("FABRIC_TENANT", response.get_json()["error"])
+
+    def test_local_parameter_defaults_are_scoped_and_environment_takes_precedence(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "pipeline-defaults.local.json"
+            path.write_text(json.dumps({
+                "tenant": "tenant.example", "workspace": "Demo",
+                "parameters": {**PIPELINE_PARAMS, "pat": "never-expose"},
+            }), encoding="utf-8")
+            with patch.object(SERVER, "PIPELINE_DEFAULTS_FILE", path), patch.dict(os.environ, {
+                "FABRIC_PIPELINE_PARAMS": "", "FABRIC_TENANT": "", "FABRIC_WORKSPACE": "",
+            }):
+                response = self.client.get("/api/pipeline-params?tenant=TENANT.example&workspace=demo")
+                self.assertEqual(response.status_code, 200)
+                specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
+                self.assertEqual(specs["key_vault_uri"]["source"], "local configuration")
+                self.assertNotIn("never-expose", response.get_data(as_text=True))
+                response = self.client.get("/api/pipeline-params?tenant=other.example&workspace=demo")
+                specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                with patch.dict(os.environ, {
+                    "FABRIC_PIPELINE_PARAMS": '{"key_vault_uri":"https://environment.vault.azure.net/"}',
+                    "FABRIC_TENANT": "tenant.example", "FABRIC_WORKSPACE": "Demo",
+                }):
+                    response = self.client.get("/api/pipeline-params?tenant=tenant.example&workspace=Demo")
+                    specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                    self.assertEqual(specs["key_vault_uri"]["default"], "https://environment.vault.azure.net/")
+                    self.assertEqual(specs["key_vault_uri"]["source"], "server configuration")
+
+    def test_invalid_local_defaults_are_reported(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "pipeline-defaults.local.json"
+            with patch.object(SERVER, "PIPELINE_DEFAULTS_FILE", path), patch.dict(os.environ, {
+                "FABRIC_PIPELINE_PARAMS": "",
+            }):
+                for raw in ("{", "[]", '{"tenant":true,"workspace":"Demo","parameters":{}}',
+                            '{"tenant":"","workspace":"Demo","parameters":{}}'):
+                    path.write_text(raw, encoding="utf-8")
+                    with self.subTest(raw=raw):
+                        response = self.client.get("/api/pipeline-params")
+                        self.assertEqual(response.status_code, 400)
+                        self.assertTrue(response.get_json()["error"])
+
+    def test_teams_fields_link_to_microsoft_id_instructions(self):
+        response = self.client.get("/api/pipeline-params")
+        specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+        for name in ("ops_agent_teams_team_id", "ops_agent_teams_channel_id"):
+            self.assertTrue(specs[name]["helpUrl"].startswith("https://learn.microsoft.com/"))
+            self.assertIn("#deep-link-to-navigate-to-channel", specs[name]["helpUrl"])
+        self.assertIn("groupId=", specs["ops_agent_teams_team_id"]["help"])
+        self.assertIn("URL-decode", specs["ops_agent_teams_channel_id"]["help"])
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        code = page[page.index("function renderPipelineFields("):page.index("function updatePipelineDefaultsSummary(")]
+        script = """
+const assert=require("node:assert/strict");
+const pipelineSpec = """ + json.dumps([specs["ops_agent_teams_team_id"], specs["ops_agent_teams_channel_id"]]) + """;
+const requiredPipelineFields=pipelineSpec.map(spec=>spec.name);
+const escapeHtml=value=>String(value).replaceAll("&","&amp;").replaceAll('"',"&quot;");
+""" + code + """
+for(const prefix of ["pp_","wf_pp_"]){
+  const html=renderPipelineFields(prefix);
+  assert.equal(html.split("How to find this ID (Microsoft Learn)").length-1,2);
+  assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
+}
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_browser_parameter_storage_and_identity_suggestions(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")

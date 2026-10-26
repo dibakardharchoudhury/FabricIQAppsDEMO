@@ -1247,7 +1247,7 @@ function renderPipelineFields(prefix) {
     const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
     const html = `<div class="param${wide ? " wide" : ""}">
       <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
-      <span class="phelp">${escapeHtml(p.help)}</span>
+      <span class="phelp">${escapeHtml(p.help)}${p.helpUrl ? ` <a href="${escapeHtml(p.helpUrl)}" target="_blank" rel="noopener noreferrer">How to find this ID (Microsoft Learn)</a>` : ""}</span>
       <input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />
     </div>`;
     return { advanced, html };

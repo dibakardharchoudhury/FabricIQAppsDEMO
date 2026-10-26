@@ -61,6 +61,24 @@ execution, Teams/email delivery or complete data ingestion.
 The sections below are the access checklist and detailed reference, not extra
 steps to perform for every deployment.
 
+### Find your Teams team and channel IDs
+
+1. Open the intended team and channel in Microsoft Teams.
+2. Select the channel's **More options (...) → Get link to channel / Copy link**.
+3. From that link, copy the GUID in the `groupId` query parameter into **Teams
+   team id**. Do not use `tenantId`.
+4. Copy the path segment immediately after `/channel/` into **Teams channel id**,
+   URL-decoding it first: `%3A` becomes `:` and `%40` becomes `@`. Keep the whole
+   `19:...@thread.tacv2` identifier, not the channel's display name.
+
+For example, `/l/channel/19%3Aexample%40thread.tacv2/General?groupId=<team-guid>`
+contains team ID `<team-guid>` and channel ID `19:example@thread.tacv2`
+(illustrative values only).
+Microsoft documents the format in
+[Deep link to navigate to channel](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/deep-link-teams#deep-link-to-navigate-to-channel).
+Both ID fields link to that documentation in the local app. These IDs select a
+destination; they do not grant access or prove alert delivery.
+
 ## Start here: choose your interface, not a different deployment process
 
 | Your target | Choose in the local app |

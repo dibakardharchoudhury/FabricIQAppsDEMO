@@ -51,6 +51,7 @@ DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
 PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
 DEPLOY_SCRIPT = SCRIPT_DIR / "deploy_fabric_app.py"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+PIPELINE_DEFAULTS_FILE = Path(__file__).with_name("pipeline-defaults.local.json")
 REPO_ROOT = SCRIPT_DIR.parent.parent
 
 SYNC_TIMEOUT_S = 1800
@@ -607,10 +608,12 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
      "help": "Name of the Key Vault secret that stores the client secret."},
     {"name": "ops_agent_teams_team_id", "type": "string", "default": "",
      "label": "Teams team id",
-     "help": "GUID of the Microsoft Teams team targeted by Operations Agent alert configuration."},
+     "help": "In Teams, copy the target channel's link. Use the GUID after groupId= as the Team ID.",
+     "helpUrl": "https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/deep-link-teams#deep-link-to-navigate-to-channel"},
     {"name": "ops_agent_teams_channel_id", "type": "string", "default": "",
      "label": "Teams channel id",
-     "help": "Target Teams channel (thread) id, e.g. 19:...@thread.tacv2. Delivery requires verified agent configuration and permissions."},
+     "help": "From the same Teams link, copy the segment after /channel/ and URL-decode it (%3A becomes : and %40 becomes @). Use the full 19:...@thread.tacv2 ID, not the channel name. Delivery still requires permissions.",
+     "helpUrl": "https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/deep-link-teams#deep-link-to-navigate-to-channel"},
     {"name": "ops_agent_run_as_user", "type": "string", "default": "",
      "label": "Agent run-as user",
      "help": "Optional UPN guard for the delegated user that provisions and runs the Operations Agents; blank uses the signed-in deploying user."},
@@ -629,11 +632,28 @@ def api_pipeline_params():
     """Expose the pipeline's parameter spec so the UI can render labelled fields."""
     parameters = [dict(spec) for spec in PIPELINE_PARAM_SPEC]
     configured = os.environ.get("FABRIC_PIPELINE_PARAMS", "").strip()
+    tenant = os.environ.get("FABRIC_TENANT", "").strip()
+    workspace = os.environ.get("FABRIC_WORKSPACE", "").strip()
+    source = "server configuration"
+    if not configured and PIPELINE_DEFAULTS_FILE.exists():
+        try:
+            local = json.loads(PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            return jsonify(error=f"Could not read local pipeline defaults: {exc}"), 400
+        if (
+            not isinstance(local, dict)
+            or not isinstance(local.get("tenant"), str)
+            or not isinstance(local.get("workspace"), str)
+            or not isinstance(local.get("parameters"), dict)
+        ):
+            return jsonify(error="Local pipeline defaults require tenant, workspace and a parameters object."), 400
+        tenant = local["tenant"].strip()
+        workspace = local["workspace"].strip()
+        configured = json.dumps(local["parameters"])
+        source = "local configuration"
     if configured:
-        tenant = os.environ.get("FABRIC_TENANT", "").strip()
-        workspace = os.environ.get("FABRIC_WORKSPACE", "").strip()
         if not tenant or not workspace:
-            return jsonify(error="FABRIC_PIPELINE_PARAMS defaults require FABRIC_TENANT and FABRIC_WORKSPACE."), 400
+            return jsonify(error="Pipeline defaults require a tenant and workspace (FABRIC_TENANT and FABRIC_WORKSPACE for environment defaults)."), 400
         try:
             values = json.loads(configured)
         except json.JSONDecodeError:
@@ -657,7 +677,7 @@ def api_pipeline_params():
                     return jsonify(error=f"Configured {spec['label']} must be a whole number."), 400
             if matching_target:
                 spec["default"] = str(value).strip()
-                spec["source"] = "server configuration"
+                spec["source"] = source
     response = jsonify(pipeline="01_Pipe_Setup", parameters=parameters)
     response.headers["Cache-Control"] = "no-store"
     return response

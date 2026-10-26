@@ -113,6 +113,16 @@ defaults apply only when both target fields match the configured values
 defaults produce a visible error, not a silently empty form. Restart the server
 after changing its environment.
 
+This machine can also keep non-secret defaults in the gitignored
+`webapp/pipeline-defaults.local.json`, with `tenant`, `workspace`, and a
+`parameters` object using the pipeline parameter names. These values apply only
+to the matching target, across browsers and server restarts. Environment
+`FABRIC_PIPELINE_PARAMS` configuration takes precedence; browser edits still
+override defaults. Never put tokens, PATs or credential secret values in this file.
+Invalid local configuration produces a visible error. The Teams ID fields link
+directly to Microsoft's channel-link documentation; see also
+[how to get the IDs](../../HydroOperationsApp/DEPLOY.md#find-your-teams-team-and-channel-ids).
+
 Foundry setup now shows just subscription, optional existing project resource ID,
 and optional model deployment for the normal reuse path. A verified matching
 subscription is selected automatically when unambiguous. SPA, endpoint, registry,
