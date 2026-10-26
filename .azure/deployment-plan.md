@@ -112,6 +112,36 @@ Read-only checks after the failure verified:
   sign-in. Inspect its source/runtime diagnostics after signing in before
   guessing a configuration change or rerunning the whole setup pipeline.
 
+### API-only diagnosis and third recovery attempt
+
+The portal sign-in was not required to diagnose the source definition. Microsoft's
+exported datasource example and its published datasource schema use native
+`lakehouse_tables.schema` roots with table children, not the initializer's
+UI-only `schema_grouping` and `table_grouping` wrappers.
+A guarded repair flattened only those wrappers in the existing draft Lakehouse
+source, preserving semantic-node IDs, selections, descriptions and all other
+agent parts, then verified and published that change. Server JSON formatting
+differs from submitted formatting; semantic JSON comparison verified the target
+source, with exact comparison for unrelated parts, before publication.
+
+A fresh delegated MCP call then returned three actual facility ID/name rows
+and a CSV result attachment, replacing the previously reproduced missing-tool
+response. This is live functional evidence for the hierarchy repair, not an
+all-source or end-to-end deployment claim.
+
+The actual successful response also exposed a strict-parser issue: Fabric's
+`Source result: ... (3 rows returned).` footer was rejected after fenced JSON.
+NB09 now accepts that bounded footer while rejecting trailing errors; the
+independent row-comparison gate remains in place. Both failures were reproduced
+as red tests before implementation. All 259 affected regressions now pass.
+
+NB09 generates native Lakehouse hierarchies and normalizes legacy wrappers in
+context-backed reruns without changing source selections or adding duplicate
+sources. Its repaired live notebook source has exact readback, retaining other
+cells, dependency metadata, parameters and definition parts. The third local
+Core retry is job `78af860a9d3040b3984c8e12c93383f1`, still targeting V12 without
+Git import, reset or deletion. Await its terminal result before final deployment.
+
 ## Current SQL rollout validation (October 25, 2026)
 
 This section supersedes the historical validation below for the pending SQL

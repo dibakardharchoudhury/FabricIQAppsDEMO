@@ -255,6 +255,18 @@ telemetry, ontology reference data and operational SQL successfully. This is not
 to remove selected/custom sources indiscriminately or claim the federation planner itself
 was repaired. See the [bounded live evidence](../../docs/foundry-deployment-and-multi-agent-setup.md#compact-data-agent-instructions-and-automatic-sources-october-23-2026).
 
+Lakehouse datasource elements must use native `lakehouse_tables.schema` roots
+containing `lakehouse_tables.table` nodes and their columns. Do not serialize
+UI-only `schema_grouping` / `table_grouping` wrappers into this hierarchy:
+the live V12 agent published those wrappers successfully but exposed no Lakehouse
+query tool. Removing only the wrappers restored actual facility query results.
+NB09 now generates the native hierarchy and normalizes legacy wrappers on reruns,
+including context-backed agents, while retaining schema/table/column IDs,
+selections, descriptions, custom source fields and unrelated definition parts.
+Its smoke test also accepts Fabric's observed JSON result-file footer; arbitrary
+trailing errors still fail, and results must still match independent Lakehouse rows.
+Publication alone remains insufficient proof of readiness.
+
 The authorized live correction updated only NB09/NB11/setup notebook definitions, preserving live
 metadata, attachments, configure/parameter cells, and unrelated parts. Only NB09 executed once:
 `b1818634-f77e-4dec-ab55-982460ecb101` correctly **failed** on the actual unsupported Ontology API

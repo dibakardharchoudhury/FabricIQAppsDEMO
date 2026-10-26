@@ -607,6 +607,7 @@ def mcp_semantic_error(value):
                 return error
     elif isinstance(value, str):
         text = value.strip()
+        fenced = text.startswith("```")
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
         if text.startswith(("{", "[")):
@@ -615,8 +616,11 @@ def mcp_semantic_error(value):
             except json.JSONDecodeError:
                 return "Malformed structured MCP response; execution cannot be verified."
             suffix = text[end:].strip()
+            if fenced and suffix.startswith("```"):
+                suffix = suffix[3:].strip()
             if suffix and not re.fullmatch(
-                r"File\(s\) [A-Za-z0-9_. ,()-]+ were generated as a result of the query\.", suffix,
+                r"(?:File\(s\) [A-Za-z0-9_. ,()-]+ were generated as a result of the query\."
+                r"|Source result: `[A-Za-z0-9_.-]+\.json` \(\d+ rows? returned\)\.)", suffix,
             ):
                 return "Unexpected content after structured MCP response; execution cannot be verified."
             return mcp_semantic_error(decoded)
@@ -1065,6 +1069,20 @@ def lakehouse_schema_map() -> dict:
     return schema_map
 
 
+def normalize_lakehouse_elements(elements: list) -> list:
+    """Remove UI-only grouping nodes without changing source selections or identities."""
+    if not isinstance(elements, list) or any(not isinstance(node, dict) for node in elements):
+        raise RuntimeError("Existing Lakehouse source elements are malformed.")
+    normalized = []
+    for node in elements:
+        children = normalize_lakehouse_elements(node["children"]) if "children" in node else []
+        if node.get("type") in ("schema_grouping", "table_grouping"):
+            normalized.extend(children)
+        else:
+            normalized.append({**node, **({"children": children} if "children" in node else {})})
+    return normalized
+
+
 def build_lakehouse_datasource_obj(existing: dict, schema_map: dict) -> dict:
     ds = dict(existing)
     ds["$schema"] = DATASOURCE_SCHEMA_URL
@@ -1088,14 +1106,10 @@ def build_lakehouse_datasource_obj(existing: dict, schema_map: dict) -> dict:
             "lakehouse_tables.table", table_name, True, columns,
             description=description,
         ))
-    desired = [
-        _ds_element("schema_grouping", "Schemas", False, [
-            _ds_element("lakehouse_tables.schema", "dbo", False, [
-                _ds_element("table_grouping", "Tables", False, table_nodes),
-            ]),
-        ]),
-    ]
-    ds["elements"] = merge_source_elements(existing.get("elements", []), desired)
+    desired = [_ds_element("lakehouse_tables.schema", "dbo", False, table_nodes)]
+    ds["elements"] = merge_source_elements(
+        normalize_lakehouse_elements(existing.get("elements", [])), desired,
+    )
     return ds
 
 
@@ -1287,6 +1301,12 @@ try:
     for part in parts:
         if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json"):
             ds = decode_payload(part["payload"])
+            if ds.get("type") == "lakehouse_tables":
+                normalized = normalize_lakehouse_elements(ds.get("elements", []))
+                if normalized != ds.get("elements", []):
+                    ds["elements"] = normalized
+                    part["payload"] = encode_payload(ds)
+                submitted_direct_sources[part["path"]] = ds
             if context_paths or ds.get("type") == "sql_database":
                 submitted_direct_sources[part["path"]] = ds
     validate_agent_ontology_sources(parts, ontology_id, require_draft=True)

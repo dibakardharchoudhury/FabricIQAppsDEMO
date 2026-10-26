@@ -35,7 +35,10 @@ def functions(number, *names, **overrides):
                  "sql_db_item_name": "sql"}
     namespace.update(overrides)
     tree = ast.parse(source(number))
-    included = set(names) | {"definition_parts", "is_ontology_context_path", "operational_source_path"}
+    included = set(names) | {
+        "definition_parts", "is_ontology_context_path", "operational_source_path",
+        "normalize_lakehouse_elements",
+    }
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)
     return namespace
@@ -125,13 +128,27 @@ class DataAgentInstructionTests(unittest.TestCase):
         context = {"artifactId": "ontology", "workspaceId": "ws", "elements": [], "custom": {"keep": True}}
         sql_path = "Files/Config/draft/sql-source/datasource.json"
         sql = {"type": "sql_database", "dataSourceInstructions": "Keep exact SQL policy.", "elements": []}
+        lakehouse_path = "Files/Config/draft/lakehouse-source/datasource.json"
+        schema = {
+            "id": "schema-id", "type": "lakehouse_tables.schema", "display_name": "dbo",
+            "children": [{
+                "id": "table-id", "type": "lakehouse_tables.table",
+                "display_name": "silver_facilities", "is_selected": False, "children": [],
+            }],
+        }
+        lakehouse = {
+            "type": "lakehouse_tables", "artifactId": "lakehouse", "workspaceId": "ws",
+            "dataSourceInstructions": "Keep Lakehouse guidance.", "custom": {"keep": True},
+            "elements": [{"type": "schema_grouping", "display_name": "Schemas", "children": [schema]}],
+        }
         parts = [
             json_part(context_path, context),
             json_part(sql_path, sql),
+            json_part(lakehouse_path, lakehouse),
             json_part("Files/Config/draft/custom_queries.json", {"queries": ["keep"]}),
         ]
         ns = functions(
-            "009", "decode_payload", "validate_agent_ontology_sources", "require_v2_ontology",
+            "009", "decode_payload", "encode_payload", "validate_agent_ontology_sources", "require_v2_ontology",
             workspace_id="ws", get_ontology_generation=Mock(return_value=2),
             parts=copy.deepcopy(parts), ontology_id="ontology",
             lakehouse_schema_map=Mock(side_effect=AssertionError("Must use context-owned sources")),
@@ -150,8 +167,13 @@ class DataAgentInstructionTests(unittest.TestCase):
                     and deployment.body[index].value.func.id == "validate_agent_ontology_sources")
         block = ast.Module(body=deployment.body[start:stop + 1], type_ignores=[])
         exec(compile(block, "context-rerun", "exec"), ns)
-        self.assertEqual(ns["parts"], parts)
-        self.assertEqual(ns["submitted_direct_sources"], {context_path: context, sql_path: sql})
+        normalized = {**lakehouse, "elements": [schema]}
+        expected = copy.deepcopy(parts)
+        expected[2]["payload"] = ns["encode_payload"](normalized)
+        self.assertEqual(ns["parts"], expected)
+        self.assertEqual(ns["submitted_direct_sources"], {
+            context_path: context, sql_path: sql, lakehouse_path: normalized,
+        })
         for name in (
             "lakehouse_schema_map", "build_datasource_obj", "build_lakehouse_datasource_obj",
             "build_kusto_datasource_obj", "update_operational_source_guidance",
@@ -1108,18 +1130,18 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(lakehouse["type"], "lakehouse_tables")
         self.assertEqual(lakehouse["dataSourceInstructions"], "operator lakehouse guidance")
         self.assertEqual(lakehouse["custom"], {"preserve": True})
-        root = lakehouse["elements"][0]
-        self.assertEqual(root["id"], "saved-root")
-        tables = root["children"][0]["children"][0]
-        self.assertEqual(tables["children"][0]["id"], "saved-table")
-        self.assertTrue(tables["children"][0]["is_selected"])
-        self.assertEqual(tables["children"][0]["description"], "operator description")
+        schema = lakehouse["elements"][0]
+        self.assertEqual(schema["type"], "lakehouse_tables.schema")
+        self.assertEqual(schema["id"], "saved-schema")
+        self.assertEqual(schema["children"][0]["id"], "saved-table")
+        self.assertTrue(schema["children"][0]["is_selected"])
+        self.assertEqual(schema["children"][0]["description"], "operator description")
         self.assertEqual(
-            [node["display_name"] for node in tables["children"]],
+            [node["display_name"] for node in schema["children"]],
             ["silver_facilities", "silver_equipment"],
         )
         self.assertEqual(
-            [node["display_name"] for node in tables["children"][0]["children"]],
+            [node["display_name"] for node in schema["children"][0]["children"]],
             ["facility_id", "facility_name"],
         )
 
@@ -1139,6 +1161,34 @@ class CapabilityTests(unittest.TestCase):
                 ("quality", "string"),
             ],
         )
+
+    def test_nb09_accepts_observed_query_result_footer_but_not_trailing_errors(self):
+        ns = functions("009", "mcp_semantic_error", re=re)
+        text = (
+            '```json\n[{"facility_id":"FACILITY_RTI_001","facility_name":"Sloy Power Station"}]'
+            '\n```\n\nSource result: `result_0.json` (1 rows returned).'
+        )
+        self.assertIsNone(ns["mcp_semantic_error"]({"content": [{"type": "text", "text": text}]}))
+        self.assertIsNotNone(ns["mcp_semantic_error"]({
+            "content": [{"type": "text", "text": text + "\nError: source access denied"}],
+        }))
+
+    def test_nb09_native_lakehouse_elements_are_idempotent_and_reject_malformed_children(self):
+        normalize = functions("009")["normalize_lakehouse_elements"]
+        native = [{
+            "id": "schema", "type": "lakehouse_tables.schema", "display_name": "dbo",
+            "custom": {"preserve": True}, "children": [{
+                "id": "table", "type": "lakehouse_tables.table", "display_name": "custom_table",
+                "is_selected": False, "description": "operator description",
+            }],
+        }]
+        original = copy.deepcopy(native)
+        self.assertEqual(normalize(native), original)
+        self.assertEqual(normalize(normalize(native)), original)
+        self.assertEqual(native, original)
+        for malformed in (None, [None], [{"children": None}]):
+            with self.subTest(elements=malformed), self.assertRaisesRegex(RuntimeError, "malformed"):
+                normalize(malformed)
 
     def test_nb09_failed_runtime_rerun_preserves_sql_and_custom_capabilities(self):
         sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
@@ -1332,10 +1382,8 @@ class CapabilityTests(unittest.TestCase):
             )
             self.assertEqual(retained_lakehouse["customLakehouseOptions"], {"preserve": True})
             self.assertEqual(retained_lakehouse["dataSourceInstructions"], "Custom Lakehouse guidance")
-            self.assertEqual(retained_lakehouse["elements"][0]["id"], "lakehouse-root")
-            retained_lakehouse_table = (
-                retained_lakehouse["elements"][0]["children"][0]["children"][0]["children"][0]
-            )
+            self.assertEqual(retained_lakehouse["elements"][0]["id"], "lakehouse-schema")
+            retained_lakehouse_table = retained_lakehouse["elements"][0]["children"][0]
             self.assertTrue(retained_lakehouse_table["is_selected"])
             retained_kusto = ns["decode_payload"](
                 actual[prefix + "kusto-source/datasource.json"]["payload"]
