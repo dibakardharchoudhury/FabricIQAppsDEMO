@@ -197,8 +197,8 @@ image or runtime configuration differs. Each reuse/update is logged, with specia
   across Foundry, full workflow and app publication for this tenant/workspace.
   An explicit selection requires a valid GUID and is verified before deployment;
   redirect, permission and consent setup remains automated.
-- **Work-order permissions:** a separate application policy control. The default
-  preserves this target's current setting; enabled writes require human approval.
+- **Work-order permissions:** the launcher preserves this target's current policy
+  without a UI override; enabled writes require human approval.
 - **Automatic configuration:** project endpoints, connected registries and ontology
   graph ownership are resolved internally. The launcher does not accept graph-binding
   JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
@@ -267,6 +267,11 @@ NB01 creates `RTI_Demo_SQLDatabase_<suffix>`; NB11 owns additive seeding and sou
 publication. The `hydrooperations` connector uses that independent database,
 not the AppBackend child. Routine app deployment needs no manual migrations or
 reseeding. Preserve retained legacy databases.
+The hosted Administration guide does not offer a second seeding action. Its
+steps are sign-in, start stream, connect STID, connect telemetry and connect
+weather. STID/weather can connect independently of telemetry startup. Existing
+in-flight seed jobs from older app versions can still be monitored to completion;
+the app no longer starts NB11 or a client-side seed fallback.
 [Cutover safeguards](../docs/ontology-test-review.md#october-25-canonical-sql-naming-cutover-completed).
 
 ## Redeploying to a different tenant, workspace, or region

@@ -18,7 +18,7 @@ export function AdministrationExperience({ steps }: AdministrationExperienceProp
   return <section className="setup">
     <div className="setup-head">
       <span className="eyebrow">GUIDED SETUP</span>
-      <p>{complete ? 'All setup steps are complete. Use the actions below to verify each connection.' : 'Steps 2 and 3 are independent — you can start them together, then finish 4 and 5.'}</p>
+      <p>{complete ? 'All setup steps are complete. Use the actions below to verify each connection.' : 'Operational data is prepared by workspace setup. Start the stream, STID and weather independently; connect telemetry after the stream is ready.'}</p>
     </div>
     <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
       <span className="step-num" aria-label={`Step ${step.n}`}>{step.n}</span>

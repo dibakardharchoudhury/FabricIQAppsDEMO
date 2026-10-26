@@ -71,6 +71,8 @@ export class WeatherLocations extends Source({ schema: 'dbo', table: 'weather_lo
   @decimal({ optional: true }) latitude?: number
   @decimal({ optional: true }) longitude?: number
   @decimal({ optional: true }) elevation_m?: number
+  @text({ optional: true, max: 8000 }) metadata_json?: string
+  @date({ optional: true }) updated_at_utc?: Date
 }
 
 @entity()
@@ -82,6 +84,7 @@ export class WeatherAreas extends Source({ schema: 'dbo', table: 'weather_areas'
   @text({ optional: true, max: 8000 }) geometry_geojson?: string
   @text({ optional: true, max: 8000 }) crs?: string
   @text({ optional: true, max: 8000 }) metadata_json?: string
+  @date({ optional: true }) updated_at_utc?: Date
 }
 
 @entity()
@@ -90,6 +93,10 @@ export class WeatherVariables extends Source({ schema: 'dbo', table: 'weather_va
   declare static [Symbol.metadata]: EntityClass[typeof Symbol.metadata]
   @text({ optional: true, max: 8000 }) variable_id?: string
   @text({ optional: true, max: 8000 }) canonical_unit?: string
+  @text({ optional: true, max: 8000 }) canonical_name?: string
+  @text({ optional: true, max: 8000 }) aggregation_kind?: string
+  @text({ optional: true, max: 8000 }) description?: string
+  @date({ optional: true }) updated_at_utc?: Date
 }
 
 @entity()
@@ -108,6 +115,8 @@ export class WeatherLatestObservations extends Source({ schema: 'dbo', table: 'w
   @decimal({ optional: true }) wind_speed?: number
   @decimal({ optional: true }) wind_gust?: number
   @decimal({ optional: true }) wind_direction?: number
+  @date({ optional: true }) calculated_at_utc?: Date
+  @text({ optional: true, max: 8000 }) ontology_key?: string
 }
 
 @entity()
@@ -133,13 +142,71 @@ export class WeatherLatestForecasts extends Source({ schema: 'dbo', table: 'weat
   @decimal({ optional: true }) wind_speed?: number
   @decimal({ optional: true }) wind_gust?: number
   @decimal({ optional: true }) wind_direction?: number
+  @date({ optional: true }) calculated_at_utc?: Date
+  @text({ optional: true, max: 8000 }) ontology_key?: string
+}
+
+@entity()
+@authenticated('read')
+export class SilverSignalMaster extends Source({ schema: 'dbo', table: 'silver_signal_master', primaryKey: [] }) {
+  declare static [Symbol.metadata]: EntityClass[typeof Symbol.metadata]
+  @text({ optional: true, max: 8000 }) opcua_node_id?: string
+  @text({ optional: true, max: 8000 }) tag?: string
+  @text({ optional: true, max: 8000 }) instrument_id?: string
+  @text({ optional: true, max: 8000 }) equipment_id?: string
+  @text({ optional: true, max: 8000 }) system_id?: string
+  @text({ optional: true, max: 8000 }) facility_id?: string
+  @text({ optional: true, max: 8000 }) unit?: string
+  @boolean({ optional: true }) is_active?: boolean
+  @text({ optional: true, max: 8000 }) signal_type?: string
+}
+
+@entity()
+@authenticated('read')
+export class WeatherSources extends Source({ schema: 'dbo', table: 'weather_sources', primaryKey: [] }) {
+  declare static [Symbol.metadata]: EntityClass[typeof Symbol.metadata]
+  @text({ optional: true, max: 8000 }) source_id?: string
+  @text({ optional: true, max: 8000 }) source_name?: string
+  @text({ optional: true, max: 8000 }) source_type?: string
+  @text({ optional: true, max: 8000 }) provider?: string
+  @text({ optional: true, max: 8000 }) license?: string
+  @text({ optional: true, max: 8000 }) endpoint?: string
+  @boolean({ optional: true }) active?: boolean
+  @date({ optional: true }) updated_at_utc?: Date
+}
+
+@entity()
+@authenticated('read')
+export class WeatherIngestionRuns extends Source({ schema: 'dbo', table: 'weather_ingestion_runs', primaryKey: [] }) {
+  declare static [Symbol.metadata]: EntityClass[typeof Symbol.metadata]
+  @text({ optional: true, max: 8000 }) run_id?: string
+  @text({ optional: true, max: 8000 }) source_id?: string
+  @text({ optional: true, max: 8000 }) source_item_id?: string
+  @text({ optional: true, max: 8000 }) data_kind?: string
+  @date({ optional: true }) reference_time_utc?: Date
+  @date({ optional: true }) started_at_utc?: Date
+  @date({ optional: true }) completed_at_utc?: Date
+  @text({ optional: true, max: 8000 }) status?: string
+  @int({ optional: true }) row_count?: number
+  @text({ optional: true, max: 8000 }) error_message?: string
+}
+
+@entity()
+@authenticated('read')
+export class InstrumentClassification extends Source({ schema: 'dbo', table: 'gold_instrument_classification', primaryKey: [] }) {
+  declare static [Symbol.metadata]: EntityClass[typeof Symbol.metadata]
+  @text({ optional: true, max: 8000 }) system_id?: string
+  @text({ optional: true, max: 8000 }) signal_type?: string
+  @int({ optional: true }) signal_count?: number
+  @text({ optional: true, max: 8000 }) ontology_key?: string
 }
 
 export const connectorConfig = {
   connector: 'fabric-sqlanalytics',
   operations: ['read'],
   entities: { SilverFacilities, SilverSystems, SilverEquipment, SilverInstruments,
-    WeatherLocations, WeatherAreas, WeatherVariables, WeatherLatestObservations, WeatherLatestForecasts },
+    WeatherLocations, WeatherAreas, WeatherVariables, WeatherLatestObservations, WeatherLatestForecasts,
+    SilverSignalMaster, WeatherSources, WeatherIngestionRuns, InstrumentClassification },
 } as const satisfies ConnectorConfig
 
 export type HydrolakehouseSchema = GraphQLBackedConnector<typeof connectorConfig.entities, typeof connectorConfig>

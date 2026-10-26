@@ -7,10 +7,10 @@ import { CopilotExperience, CopilotResponse } from './components/CopilotExperien
 import { FacilityMap, type FacilityStat, type AssetPin } from './components/FacilityMap'
 // Lazy so three.js / model-viewer only load when a GLB is actually shown.
 const AssetModelViewer = lazy(() => import('./components/AssetModelViewer').then(m => ({ default: m.AssetModelViewer })))
-import { askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
+import { askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
 import {
   createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
-  listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
+  listMaintenanceNotifications, listSpareParts, listWorkOrders, signInToRayfin,
   updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from './services/rayfin'
@@ -58,7 +58,6 @@ const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 // ETAs the progress bar eases toward — set to the upper end of observed run times so the
 // bar keeps moving through the whole window instead of stalling at its 95% cap too early.
-const SEED_ETA_MS = 6 * 60_000    // RTI_011 provision: ~5-6 min
 const STREAM_ETA_MS = 5 * 60_000  // 02_Pipe_Stream: pipeline start + generator cell warmup until events flow (~5 min)
 // While a Fabric job is still "Queued" (cold-starting a Spark session) the bar only crawls to
 // this cap; it catches up toward 95% once the job flips to "Running".
@@ -117,12 +116,10 @@ export default function App() {
   const [notice, setNotice] = useState<string>()
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
-  const [provisioned, setProvisioned] = useState(false)
   const [copilotOpen, setCopilotOpen] = useState(activeTab === 'copilot')
   const [copilotMax, setCopilotMax] = useState(false)
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
-  const [seeding, setSeeding] = useState(false)
   const [raising, setRaising] = useState<string>()
   const [orderScope, setOrderScope] = useState<OrderScope>('facility')
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE])
@@ -482,7 +479,6 @@ export default function App() {
     try {
       const status = await poll()
       if (status === 'Completed') {
-        setProvisioned(true)
         await loadOperationalData()
         setNotice('Operational data re-seeded and Fabric provisioning complete — connecting STID…')
         await connectStid({ retries: 5 })
@@ -533,38 +529,11 @@ export default function App() {
   async function resumeJob(job: ProgressJob) {
     const sinceIso = new Date(job.startedAt - 60_000).toISOString()
     if (job.kind === 'seed') {
-      setSeeding(true)
-      try { await awaitProvision(() => resumePostSeedNotebook(s => updateJob('seed', humanStatus(s)), sinceIso)) }
-      finally { setSeeding(false) }
+      await awaitProvision(() => resumePostSeedNotebook(s => updateJob('seed', humanStatus(s)), sinceIso))
     } else {
       setStreamState('starting')
       await awaitStream(() => resumeStreamingPipeline(s => updateJob('stream', humanStatus(s)), sinceIso), job.startedAt)
     }
-  }
-
-  async function seedDemo() {
-    if (seeding || jobs.seed) return
-    setSeeding(true); setNotice(undefined)
-    try {
-      const activeUser = user ?? await authenticate()
-      if (!activeUser) { setNotice('Sign in with Fabric to seed operational data.'); return }
-      if (isPostSeedConfigured()) {
-        // RTI_011 is the authoritative seeder: its SQL MERGE upserts (re-seeds/updates)
-        // every run, so skip the client-side insert-if-empty pre-seed.
-        const label = 'Seeding independent operational SQL and refreshing its verified Data Agent source (RTI_011)…'
-        beginProgress('seed', label, SEED_ETA_MS)
-        await awaitProvision(() => runPostSeedNotebook(s => updateJob('seed', humanStatus(s))))
-      } else {
-        // Fallback when RTI_011 isn't configured: client-side insert-if-empty seed.
-        const result = await seedOperationalDataIfEmpty(activeUser)
-        const created = result.filter(item => !item.skipped)
-        await loadOperationalData()
-        setNotice(created.length
-          ? `Seeded ${created.map(item => `${item.created} ${item.entity}`).join(', ')}.`
-          : 'Operational data already present.')
-      }
-    } catch (error) { setNotice(errorMessage(error)) }
-    finally { setSeeding(false) }
   }
 
   async function addWorkOrder() {
@@ -659,10 +628,9 @@ export default function App() {
   // Ordered first-run setup. Each step explains why it exists and unlocks the next.
   const steps = [
     { n: 1, title: 'Sign in to Fabric', why: 'Authenticate with your Microsoft Fabric identity — required for operational data and to run setup.', done: Boolean(user), busy: false, action: 'Sign in', run: () => void authenticate() },
-    { n: 2, title: 'Seed operational demo data', why: 'Adds missing demo records to independent operational SQL and refreshes its verified v2 Data Agent source (RTI_011). No STID GraphQL API or Foundry deployment; use the local launcher for multi-agent setup.', done: provisioned, busy: seeding, action: 'Seed demo data', run: () => void seedDemo() },
-    { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Independent of step 2 — run it in parallel. Takes ~5 min to warm up before signals appear.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
-    { n: 4, title: 'Connect STID', why: 'Loads facility & asset tables through the read-only Rayfin Lakehouse connector using your Fabric identity. Deploy the app to configure the connector.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
-    { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
+    { n: 2, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Takes ~5 min to warm up before signals appear. STID can connect independently.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
+    { n: 3, title: 'Connect STID', why: 'Loads facility & asset tables through the read-only Rayfin Lakehouse connector using your Fabric identity. Deploy the app to configure the connector.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
+    { n: 4, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 2.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]
   // Starter prompts grounded in the loaded data (SQL DB + ontology) so users click questions the
   // agent can actually answer, and phrased to encourage clean tabular output.
@@ -680,9 +648,9 @@ export default function App() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="source-actions">
-        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Read facility & asset tables through the deployed Rayfin Lakehouse connector with your Fabric identity.">4 · <Database size={14} />{sourceState}</button>
+        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 3 · Read facility & asset tables through the deployed Rayfin Lakehouse connector with your Fabric identity.">3 · <Database size={14} />{sourceState}</button>
         <div className="telemetry-source">
-          <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
+          <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 4 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">4 · <Radio size={14} />{telemetryState}</button>
           {telemetryLive && <span className={`live-pill ${dataStatus}`} title={`Polling every 10s · ${freshCount}/${eventTimesSorted.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataLabel}<em>· {dataAgo || telemetryAgo}</em></span>}
           {telemetryLive && <button className="refresh-btn" onClick={() => void manualRefreshTelemetry()} disabled={telemetryBusy} title="Refresh live telemetry now"><RefreshCw size={14} className={telemetryBusy ? 'spin' : undefined} /></button>}
         </div>

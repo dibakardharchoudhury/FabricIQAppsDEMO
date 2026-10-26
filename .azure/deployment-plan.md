@@ -1,8 +1,50 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 ## Knowledge Graph live-source publication
+
+### Coverage completion and visual restoration follow-up
+
+The next publication expands the existing read-only Lakehouse connector, not
+permissions or graph resources: signal master, weather sources/ingestion history,
+classification and all missing primary scalar/identity columns. It removes the
+duplicate browser seeding action from every layout, retains monitoring for older
+in-flight jobs, and restores earlier fluid stroke/arrow styling with the compact
+header and diagnostics below the canvas. Animation remains telemetry-driven and
+bounded for large graphs.
+
+Read-only SQL preflight on October 26 verified every new physical column and type:
+90 signals, three weather sources, nine variables, five ingestion runs and 15
+classification rows. Locations, areas, latest observations and latest forecasts
+were readable but empty at preflight. Empty tables are not missing projection
+support and must not be filled with synthetic graph instances.
+
+The safely restored FEATURE ontology definition was checked against the updated
+server/client projections: all 18 primary entity bindings and all 17 declared
+relationships are compatible. This local check used synthetic empty readers;
+actual signed-in connector acceptance remains required after publication.
+No SQL seed, data deletion, new role assignment or manual Entra changes are planned.
+
+#### Section 7: Follow-up validation proof
+
+On October 26, the 100-test graph suite passed, followed by the two additional
+visual regressions (four visual tests total). Seven connector/Administration tests
+and 26 discovery/service tests passed: 135 distinct focused tests in total.
+Scoped ESLint and TypeScript passed; final production `npm run build` ran its
+`validate-env` prerequisite and Vite finished in 24.43 seconds, with only the
+existing mixed-import/chunk-size warnings.
+
+Azure CLI confirmed the expected tenant and Enabled subscription
+`dac16501-5c35-4c91-aff0-11af8de17f2e`; live Lakehouse metadata verified SQL
+endpoint `95b16845-30e6-4be8-bee2-73935396f18b` in Success state. Authenticated
+read-only SQL verified the nine previously excluded bindings' columns and counts.
+No new infrastructure or principal is introduced: expanded entities remain
+`@authenticated('read')`, keyless and relationship-free at connector level.
+The app still verifies source identities and declared ontology joins itself.
+New ARM validation/what-if, role creation and a standalone Docker build are not
+applicable to this existing Fabric publication; the canonical deployer owns
+source fingerprinting and any shared supervisor image update.
 
 Target: existing FEATURE workspace `c7da7c28-0dee-4f45-bc9e-5628bb882732`,
 tenant `ad340c84-1886-4202-a483-2da2cb9168eb`. Existing Python AZCLI/Fabric

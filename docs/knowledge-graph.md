@@ -107,12 +107,19 @@ freshness must be read from the telemetry status and timestamps rather than infe
 The graph intentionally provides only the 2D Cytoscape presentation. Removing the optional WebGL
 mode avoids Three.js startup, download, GPU, animation-loop, and memory costs while preserving the
 hierarchy, semantic-network, and concentric layouts. Reduced-motion preferences disable animated
-telemetry flow. Telemetry strokes are 1.5 px with a short 4/8 dash pattern and
-time-based, gentle motion. Views over 150 edges animate only the selected
+telemetry flow. The earlier fluid appearance is retained: 1.9 px base strokes,
+2.8 px selected relationships and 3.2 px telemetry paths with a 10/12 dash pattern.
+Motion remains time-based and gentle. Views over 150 edges animate only the selected
 neighborhood; other relationships remain visible and static. Off-screen/hidden
 views stop their animation loop. Labels disappear below a readable zoom size
 instead of crowding the overview. Expanding a scope lays out newly added nodes
 rather than leaving them stacked at the origin, and theme changes retain the graph.
+The compact two-line source header and icon toolbar keep the canvas prominent.
+Execution selection, per-type coverage, observation consistency and read timing are
+available in the collapsed **Graph details** below the canvas. The header still
+discloses source-backed versus native execution and entity/relationship coverage.
+Moving dashes start only when loaded telemetry readings establish a governed path;
+they do not wait for graph materialization and do not indicate broken links.
 
 The graph is not a replacement for the Fabric IQ Ontology, Real-Time Dashboard, or SQL system of
 record. It is an application view that composes those governed sources and preserves their

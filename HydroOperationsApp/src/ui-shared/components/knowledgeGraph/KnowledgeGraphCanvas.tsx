@@ -100,22 +100,22 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         {
           selector: 'edge',
           style: {
-            width: 1.1, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
+            width: 1.9, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
             'curve-style': 'bezier', 'control-point-step-size': 44, label: 'data(label)', color: color('--cp-text-muted'),
             'font-size': 7.5, 'font-weight': 600, 'min-zoomed-font-size': 6, opacity: 0.58, 'text-opacity': 0.15,
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '3px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
-            'text-rotation': 'autorotate', 'arrow-scale': 0.75,
+            'text-rotation': 'autorotate', 'arrow-scale': 0.9,
             'transition-property': 'opacity, width, text-opacity', 'transition-duration': 220,
           },
         },
-        { selector: 'edge.focus-neighbor, edge:selected', style: { width: 1.6, opacity: 0.85, 'text-opacity': 1, 'z-index': 10 } },
-        { selector: 'edge[type = "has-signal"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [4, 7] } },
+        { selector: 'edge.focus-neighbor, edge:selected', style: { width: 2.8, opacity: 0.94, 'text-opacity': 1, 'z-index': 10 } },
+        { selector: 'edge[type = "has-signal"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [7, 5] } },
         {
           selector: 'edge[flow = 1]',
           style: {
-            width: 1.5, opacity: 0.76, 'line-color': 'data(flowColor)', 'target-arrow-color': 'data(flowColor)',
-            'line-style': 'dashed', 'line-dash-pattern': [4, 8], 'arrow-scale': 0.75, 'z-index': 8,
+            width: 3.2, opacity: 0.92, 'line-color': 'data(flowColor)', 'target-arrow-color': 'data(flowColor)',
+            'line-style': 'dashed', 'line-dash-pattern': [10, 12], 'arrow-scale': 1.05, 'z-index': 8,
           },
         },
       ],
@@ -207,7 +207,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
     let offset = 0
     const animate = (time: number) => {
       if (previous && time - previous >= 32) {
-        offset = (offset + Math.min(time - previous, 100) * 0.016) % 12
+        offset = (offset + Math.min(time - previous, 100) * 0.016) % 22
         animated.style('line-dash-offset', -offset)
         previous = time
       } else if (!previous) previous = time
