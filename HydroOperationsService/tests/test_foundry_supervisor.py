@@ -27,6 +27,7 @@ from hydro_orchestrator.foundry_supervisor import (
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, safe_exception_signature,
     transient_native_failure,
+    model_rate_limit_wait,
     canonical_source_arguments,
     _bounded_citation_fragments, _encoded, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
@@ -882,6 +883,45 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.owner.model_evidence("work-order"), [receipt.receipt()])
         self.assertEqual(receipt.work_coverage_equipment_ids, ())
 
+    def test_fixer_without_rca_preserves_selected_direct_evidence_and_population_without_mutating_audit(self):
+        rows = [{"equipment_id": "TEST_T005", "quality": "BAD"},
+                {"equipment_id": "TEST_T999", "quality": "GOOD"}]
+        receipt = ToolEvidence(
+            id="direct-quality-work", source=SOURCE, tool="query_signal_quality_snapshot", arguments={},
+            completed_at=utc_now(), result={"rows": rows, "row_count": 2,
+                "population": {"inventory_complete": True, "work_inventory_complete": True}},
+            row_identities={f"/rows/{index}": {"equipment_id": row["equipment_id"]}
+                            for index, row in enumerate(rows)},
+            resolved_equipment_ids=("TEST_T005", "TEST_T999"),
+            work_coverage_equipment_ids=("TEST_T005", "TEST_T999"),
+        )
+        self.owner.evidence[receipt.id] = receipt
+        self.owner.selected_equipment_ids = {"TEST_T005"}
+        projected = self.owner.model_evidence("work-order")
+        self.assertEqual(projected[0]["result"]["rows"], [rows[0]])
+        self.assertEqual(projected[0]["result"]["population"], receipt.result["population"])
+        self.assertEqual(projected[0]["work_coverage_equipment_ids"], ("TEST_T005",))
+        self.assertEqual(receipt.result["rows"], rows)
+        self.owner.selected_equipment_ids.clear()
+        self.assertEqual(self.owner.model_evidence("work-order"), [receipt.receipt()])
+
+    def test_model_rate_limit_wait_requires_bounded_provider_retry_after_and_not_hard_quota(self):
+        for headers, code, expected in (
+            ({"retry-after": "12"}, "rate_limit_exceeded", 12),
+            ({"retry-after-ms": "1500"}, "rate_limit_exceeded", 1.5),
+            ({"retry-after": "0"}, "rate_limit_exceeded", 1),
+            ({}, "rate_limit_exceeded", None),
+            ({"retry-after": "61"}, "rate_limit_exceeded", None),
+            ({"retry-after": "bad"}, "rate_limit_exceeded", None),
+            ({"retry-after": "1"}, "insufficient_quota", None),
+        ):
+            with self.subTest(headers=headers, code=code):
+                response = httpx.Response(429, headers=headers, request=httpx.Request("POST", ENDPOINT))
+                error = BadRequestError("Private provider detail", response=response, body={"code": code})
+                wrapped = AgentFrameworkException("Private wrapper")
+                wrapped.__cause__ = error
+                self.assertEqual(model_rate_limit_wait(wrapped), expected)
+
     def test_fixer_after_rca_retains_native_table_references_without_fabricating_sql_coverage(self):
         receipt = ToolEvidence(
             id="native-quality-work", source=SOURCE, tool="fabriciq-data-agent", arguments={},
@@ -1108,6 +1148,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["max_output_tokens"], 4096)
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
+        if ((self.mode == "work_order_rate_limit_once" and name == "hydro-work-order-agent" and round_number == 0)
+                or self.mode == "rate_limit_always"):
+            return httpx.Response(429, headers={"retry-after": "1"}, json={
+                "error": {"message": "Rate limited.", "code": "rate_limit_exceeded", "type": "error"},
+            })
         if self.mode == "native_timeout_once" and name == "hydro-fabric-iq-agent" and round_number == 0:
             raise APITimeoutError(request=httpx.Request("POST", request.url))
         if self.mode == "native_mcp_transport_once" and name == "hydro-fabric-iq-agent" and round_number == 0:
@@ -1252,6 +1297,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             output = [self.function("complete_work_order_review", {
                 "decision": "needs_clarification", "reason": "Inspection scope is not supplied by the source.",
             })] if round_number == 0 else [self.message("No SQL write executed.")]
+            if self.mode == "work_order_rate_limit_once" and round_number == 1:
+                output = [self.function("complete_work_order_review", {
+                    "decision": "needs_clarification", "reason": "The source does not establish inspection scope.",
+                })]
             if self.mode in ("proposal", "supervisor_no_plan") and round_number == 0:
                 output = [self.function("hydro_query", {"tool_name": "propose_work_order", "arguments": {
                     "equipment_id": "TEST_T005", "title": "Inspect BAD signal",
@@ -2100,6 +2149,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
         self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_work_order_rate_limit_honors_one_provider_wait_without_replaying_source_reads(self):
+        self.mode = "work_order_rate_limit_once"
+        with patch("hydro_orchestrator.foundry_supervisor.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            result = await self.owner.run(self.request)
+        sleep.assert_awaited_once_with(1.0)
+        self.assertEqual(self.calls["hydro-work-order-agent"], 2)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        self.assertFalse(any(item.tool == "propose_work_order" for item in self.owner.evidence.values()))
+
+    async def test_repeated_model_rate_limit_fails_after_one_wait_without_source_execution(self):
+        self.mode = "rate_limit_always"
+        with patch("hydro_orchestrator.foundry_supervisor.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            with self.assertRaises(AgentFrameworkException):
+                await self.owner.run(self.request)
+        sleep.assert_awaited_once_with(1.0)
+        self.assertEqual(self.calls["hydro-qa-agent"], 2)
         self.assertEqual(self.tools.calls, 0)
 
     async def test_native_refusal_gets_one_bounded_same_source_correction(self):

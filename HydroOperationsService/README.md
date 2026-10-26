@@ -9,7 +9,12 @@ string absence without weakening positive-match, timestamp or identity checks.
 Ordinary operational questions use governed connectors/Eventhouse tools; explicit
 native selection is retained across the Python/Node admission boundary.
 Function loops stop on the first real callback error; one local input correction
-remains available. Keep the pinned deterministic workflow and existing project.
+remains available. One model-rate retry honors a numeric provider wait of at most
+60 seconds within the existing completion budget/deadline, preserving captured
+evidence and never replaying a completed assessment, proposal or write. Hard
+quota, missing retry headers and repeated throttling still fail explicitly.
+No-RCA work-order handoffs preserve verified direct evidence and source
+population/provenance metadata. Keep the pinned deterministic workflow and existing project.
 Historical version/test counts below are not this release's runtime certificate.
 
 ## Current architecture and October 25 bounded review

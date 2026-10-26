@@ -24,6 +24,10 @@ requests and paraphrases use governed source tools, not three exact-sentence
 native-routing exceptions. An explicitly selected Data Agent remains native;
 its failure never triggers a direct-source fallback. Publication and signed
 browser acceptance must be recorded separately from local validation.
+The first repaired publication completed Gauge but exposed Fixer HTTP 429 against
+the existing 60,000-token/minute model. The follow-up preserves no-RCA direct
+handoff evidence and adds one explicitly reported provider-directed wait of at
+most 60 seconds, without replaying a completed assessment, proposal or write.
 
 ## October 12 v77 canonical-prompt release
 

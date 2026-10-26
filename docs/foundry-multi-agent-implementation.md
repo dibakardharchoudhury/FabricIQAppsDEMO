@@ -58,6 +58,33 @@ The workspace's `fabcapswc` capacity was checked **Active**. Weather remains blo
 by the invalid Aurora subscription credential/private-vault access; changing
 authentication headers or fabricating empty weather as successful ingestion is not a fix.
 
+### First publication exposed a separate model-rate boundary
+
+Canonical publication of `0e5a2d5` completed with `SUCCESS`/`DEPLOYED_APP_URL`,
+all three connector/runtime preflight checks and all **42** existing SPA redirects
+preserved. It reused all five prompt specialists, building only the changed
+coordinator image `src-d0ca478878436eed` (ACR run `dte`) and activating **v17**.
+The signed browser verified app **1.0.1113** and both source connections.
+
+The original compound request then completed Gauge but failed in Fixer at
+**36.4 seconds**: run `fed6e899-28d0-4967-960b-cd50cfef1759` received
+`rate_limit_exceeded` HTTP 429 from Foundry. The existing DataZoneStandard model
+deployment reports **60,000 tokens/minute and 60 requests/minute**. This is not
+the repaired Kusto failure and was not certified as success or draft creation.
+
+The follow-up repair keeps direct evidence in a no-RCA work-order handoff,
+projecting only verified selected equipment when available and preserving source
+population/provenance metadata. Empty scope retains its evidence rather than
+silently projecting it away. Complete immutable receipts are not mutated.
+Rate-limit recovery honors a numeric provider `Retry-After`/`retry-after-ms`
+of at most **60 seconds**, once, inside the existing completion budget and run
+deadline. It emits explicit application progress and reuses captured evidence.
+There is no retry after a completed assessment or staged proposal, no production
+write replay and no quota/resource change. Missing/invalid/over-budget retry
+headers, hard insufficient quota, repeated throttling and source failures still
+fail explicitly. The full **110-test** supervisor suite and Pyright passed;
+publication and live acceptance of this follow-up remain separate gates.
+
 ## October 26 publication and main-merge readiness
 
 Tenant Graph authorization recovered. The canonical **app-only** command published
