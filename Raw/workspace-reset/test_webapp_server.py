@@ -1034,6 +1034,7 @@ const legacyProject = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.
 stored.set(foundryTarget, JSON.stringify({
   FoundryProjectResourceId:legacyProject, FoundryProjectName:"duplicate-name",
   clientId:"12345678-1234-1234-1234-123456789abc", FoundryEndpoint:"retired-override",
+  ProductionWrites:"true",
 }));
 foundryTarget="";
 restoreFoundrySettings();
@@ -1042,6 +1043,8 @@ for (const clientId of spaClientIds) assert.equal($(clientId+"UseExisting").chec
 saveFoundrySettings("deploy");
 assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryEndpoint, undefined);
 assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryProjectResourceId, undefined);
+assert.equal(foundrySettingSuffixes.includes("ProductionWrites"), false);
+assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
 (async () => {
   await pipelineSaveQueue;
   const requests = [];
@@ -1444,7 +1447,7 @@ console.log(JSON.stringify([
         self.assertEqual(result.returncode, 0, result.stderr)
         forms = json.loads(result.stdout)
         for prefix, form in zip(("deploy", "workflow"), forms):
-            for suffix in ("AzureSubscriptionId", "FoundryModel", "ProductionWrites",
+            for suffix in ("AzureSubscriptionId", "FoundryModel",
                            "FoundryCreate", "FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
                            "FoundryModelSku", "FoundryModelCapacity"):
                 self.assertIn(f'id="{prefix}{suffix}"', form)
@@ -1460,13 +1463,14 @@ console.log(JSON.stringify([
             self.assertNotIn("<summary>Advanced settings</summary>", form)
             for suffix in ("OntologyGraphBinding", "FoundryEndpoint", "AcrName", "FoundryProjectResourceId"):
                 self.assertNotIn(f'id="{prefix}{suffix}"', form)
-            self.assertIn("<summary>Work-order permissions</summary>", form)
+            self.assertNotIn("Work-order permissions", form)
+            self.assertNotIn("ProductionWrites", form)
             self.assertIn("<summary>Fabric App authentication</summary>", form)
             client_id = "foundryClientId" if prefix == "deploy" else "workflowDeployClientId"
             self.assertIn(f'id="{client_id}UseExisting" type="checkbox"', form)
             self.assertIn(f'<div id="{client_id}Fields" hidden>', form)
             self.assertIn("Use a pre-created app registration", form)
-            self.assertIn("Keep this target's current setting", form)
+            self.assertNotIn("Keep this target's current setting", form)
             self.assertIn("Enter the existing project name to reuse it.", form)
             self.assertIn("Without a name, setup uses a saved, target-named or sole available project.", form)
             self.assertNotIn("usage charges", form)
@@ -1577,7 +1581,7 @@ const $ = id => fields[id];
 const suffixes = [
   "AzureSubscriptionId", "FoundryProjectName",
   "FoundryModel", "FoundryNewModel", "FoundryLocation", "FoundryModelName",
-  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "ProductionWrites",
+  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
   "FoundryCreate", "FoundryCreation", "FoundryNewProjectOptions", "FoundryNewProjectSummary",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
@@ -1602,12 +1606,9 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(foundryPayload(prefix).foundryProjectName, "");
   $(prefix+"FoundryProjectName").value = "existing-project-name";
   assert.equal(foundryPayload(prefix).foundryModel, "existing-model");
-  for (const key of ["foundryEndpoint", "acrName", "ontologyGraphBinding"]) {
+  for (const key of ["foundryEndpoint", "acrName", "ontologyGraphBinding", "productionWrites"]) {
     assert.equal(Object.hasOwn(foundryPayload(prefix), key), false);
   }
-  assert.equal(foundryPayload(prefix).productionWrites, "");
-  $(prefix+"ProductionWrites").value = "false";
-  assert.equal(foundryPayload(prefix).productionWrites, "false");
   $(prefix+"FoundryCreate").checked = true;
   updateFoundryMode(prefix);
   assert.equal(foundryValid(prefix), false);
@@ -1628,7 +1629,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(creating.foundryModel, "approved-new-model");
   assert.equal(creating.foundryProjectResourceId, "");
   assert.equal(creating.foundryProjectName, "");
-  assert.equal(creating.productionWrites, "false");
+  assert.equal(Object.hasOwn(creating, "productionWrites"), false);
   $(prefix+"FoundryCreate").checked = false;
   updateFoundryMode(prefix);
   assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "Create a new project");

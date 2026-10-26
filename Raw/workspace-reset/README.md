@@ -135,8 +135,8 @@ discovery/reuse or creation is automatic. Selecting this option requires a valid
 Application (client) ID; unchecking it stops sending the ID, including any saved value.
 This choice is shared across Foundry, full workflow and app publication, scoped to
 the tenant/workspace. Registration verification and automated auth setup remain required.
-**Work-order permissions** is a separate application policy, preserving the current
-target's setting by default and requiring human approval for enabled writes.
+The launcher preserves the target's existing work-order write policy; it does not
+offer or submit a write-permission override. Enabled writes still require human approval.
 **Create a new project** contains the explicit resource-creation approval and chat
 model input, with optional model deployment settings. Approval is never remembered.
 Existing saved project ARM IDs migrate into the project-name field; retired browser

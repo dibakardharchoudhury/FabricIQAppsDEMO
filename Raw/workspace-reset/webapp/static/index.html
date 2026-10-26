@@ -605,16 +605,7 @@ function renderFoundryFields(prefix, clientId) {
         <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
       </section>
     </details>
-    ${renderSpaFields(clientId)}
-    <details class="foundry-block">
-      <summary>Work-order permissions</summary>
-      <p class="hint">Controls agent write access, not resource discovery. Enabled writes still require human approval.</p>
-      <label>Work-order writes <select id="${prefix}ProductionWrites">
-          <option value="">Keep this target's current setting</option>
-          <option value="true">Enabled (human approval required)</option>
-          <option value="false">Disabled</option>
-        </select></label>
-    </details>`;
+    ${renderSpaFields(clientId)}`;
 }
 $("workflowFoundryFields").innerHTML = renderFoundryFields("workflow", "workflowDeployClientId");
 $("deployFoundryFields").innerHTML = renderFoundryFields("deploy", "foundryClientId");
@@ -1040,7 +1031,6 @@ function foundryPayload(prefix) {
     foundryModelVersion: creating ? value("FoundryModelVersion") : "",
     foundryModelSku: creating ? value("FoundryModelSku") : "",
     foundryModelCapacity: creating ? value("FoundryModelCapacity") : "",
-    productionWrites: value("ProductionWrites"),
     createFoundry: creating,
   };
 }
@@ -1201,7 +1191,7 @@ let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
   "AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryNewModel",
-  "ProductionWrites", "FoundryLocation", "FoundryModelName",
+  "FoundryLocation", "FoundryModelName",
   "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
