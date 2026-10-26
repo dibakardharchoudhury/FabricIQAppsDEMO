@@ -74,7 +74,7 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 
 try:
@@ -92,6 +92,22 @@ FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+
+
+def fabric_operation_url(response: requests.Response) -> str:
+    operation_id = response.headers.get("x-ms-operation-id")
+    if operation_id:
+        if not GUID_RE.fullmatch(operation_id):
+            raise ValueError("Fabric returned an invalid operation ID.")
+        return f"{FABRIC_BASE}/operations/{operation_id}"
+    location = response.headers.get("Location") or response.headers.get("Operation-Location", "")
+    if location.startswith("/v1/operations/"):
+        location = f"https://api.fabric.microsoft.com{location}"
+    if not location.startswith(f"{FABRIC_BASE}/operations/"):
+        raise ValueError("Fabric operation returned no supported status URL.")
+    return location.rstrip("/")
+
+
 WEATHER_ENVIRONMENT_NAME = "Weather"
 WEATHER_NOTEBOOK_FOLDER = "Notebooks"
 WEATHER_PIPELINE_NAME = "03_Pipe_Weather"
@@ -135,8 +151,22 @@ class Fabric:
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self._token()}"
-        for _ in range(6):
-            resp = self._session.request(method, url, headers=headers, timeout=120, **kwargs)
+        method = method.upper()
+        for attempt in range(6):
+            try:
+                resp = self._session.request(
+                    method, url, headers=headers, timeout=120, **kwargs
+                )
+            except requests.RequestException as exc:
+                if method != "GET" or attempt == 5:
+                    raise
+                wait = min(2 ** attempt, 15)
+                print(
+                    f"  transient Fabric connection failure "
+                    f"({type(exc).__name__}); retrying GET in {wait}s..."
+                )
+                time.sleep(wait)
+                continue
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", "10"))
                 print(f"  throttled (429); waiting {wait}s...")
@@ -265,10 +295,8 @@ class Fabric:
         """Follow a 202 long-running-operation to completion; return the final response."""
         if resp.status_code != 202:
             return resp
-        location = resp.headers.get("Location") or resp.headers.get("Operation-Location")
+        location = fabric_operation_url(resp)
         retry = int(resp.headers.get("Retry-After", "5"))
-        if not location:
-            return resp
         while True:
             time.sleep(retry)
             status = self.request("GET", location)
@@ -423,14 +451,14 @@ def test_connection_flow(
 
 
 def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dict[str, Any]:
-    """Read a notebook definition in ipynb form, following the long-running operation."""
+    """Read the native source definition without requiring Python-to-ipynb conversion."""
     url = (
         f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}"
-        "/getDefinition?format=ipynb"
+        "/getDefinition?format=fabricGitSource"
     )
     response = fab.request("POST", url)
     if response.status_code == 202:
-        operation = response.headers.get("Location")
+        operation = fabric_operation_url(response)
         fab.poll_lro(response)
         response = fab.request("GET", f"{operation}/result")
     if response.status_code != 200:
@@ -438,6 +466,39 @@ def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dic
             f"Failed to read notebook definition: HTTP {response.status_code} {response.text}"
         )
     return response.json()["definition"]
+
+
+def bind_notebook_definition(definition: dict[str, Any], lakehouse: dict[str, Any],
+                            environment: dict[str, Any]) -> bool:
+    parts = definition.get("parts", [])
+    part = next((part for part in parts if part.get("path") == "notebook-content.py"), None)
+    if part is not None:
+        source = base64.b64decode(part["payload"]).decode("utf-8").replace("\r\n", "\n")
+        match = re.search(r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)", source)
+        if not match:
+            raise SystemExit("Native notebook source has no metadata block.")
+        metadata = json.loads("\n".join(line.removeprefix("# META ") for line in match[1].splitlines()))
+        dependencies = metadata.setdefault("dependencies", {})
+        if dependencies.get("lakehouse") == lakehouse and dependencies.get("environment") == environment:
+            return False
+        dependencies.update(lakehouse=lakehouse, environment=environment)
+        block = "".join(f"# META {line}\n" for line in json.dumps(metadata, indent=2).splitlines())
+        payload = (source[:match.start(1)] + block + source[match.end(1):]).encode("utf-8")
+        definition["format"] = "fabricGitSource"
+    else:
+        part = next((part for part in parts if str(part.get("path", "")).endswith(".ipynb")), None)
+        if part is None:
+            raise SystemExit("Notebook has no supported source definition part.")
+        content = json.loads(base64.b64decode(part["payload"]))
+        dependencies = content.setdefault("metadata", {}).setdefault("dependencies", {})
+        if dependencies.get("lakehouse") == lakehouse and dependencies.get("environment") == environment:
+            return False
+        dependencies.update(lakehouse=lakehouse, environment=environment)
+        payload = json.dumps(content).encode("utf-8")
+        definition["format"] = "ipynb"
+    part["payload"] = base64.b64encode(payload).decode("ascii")
+    part["payloadType"] = "InlineBase64"
+    return True
 
 
 def rebind_weather_notebooks(
@@ -478,21 +539,9 @@ def rebind_weather_notebooks(
 
     for name, item in sorted(notebooks.items()):
         definition = notebook_definition(fab, workspace_id, item["id"])
-        part = next(
-            (part for part in definition.get("parts", []) if str(part.get("path", "")).endswith(".ipynb")),
-            None,
-        )
-        if part is None:
-            raise SystemExit(f"Notebook '{name}' has no .ipynb definition part.")
-        content = json.loads(base64.b64decode(part["payload"]))
-        dependencies = content.setdefault("metadata", {}).setdefault("dependencies", {})
-        if dependencies.get("lakehouse") == wanted_lakehouse and dependencies.get("environment") == wanted_environment:
+        if not bind_notebook_definition(definition, wanted_lakehouse, wanted_environment):
             print(f"  {name}: already bound.")
             continue
-        dependencies["lakehouse"] = wanted_lakehouse
-        dependencies["environment"] = wanted_environment
-        part["payload"] = base64.b64encode(json.dumps(content).encode("utf-8")).decode("ascii")
-        part["payloadType"] = "InlineBase64"
         response = fab.poll_lro(fab.request(
             "POST",
             f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}/updateDefinition?updateMetadata=true",
@@ -604,8 +653,83 @@ def configure_weather_schedule(
     print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")
 
 
+def ensure_spark_runtime(
+    request: Callable[..., requests.Response], workspace_id: str
+) -> None:
+    """Set and verify the project-wide Spark runtime without replacing other settings."""
+    url = f"{FABRIC_BASE}/workspaces/{workspace_id}/spark/settings"
+
+    def read_runtime() -> str:
+        response = request("GET", url)
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Spark runtime preflight failed: HTTP {response.status_code} {response.text}"
+            )
+        settings = response.json()
+        environment = settings.get("environment") if isinstance(settings, dict) else None
+        runtime = environment.get("runtimeVersion") if isinstance(environment, dict) else None
+        if not isinstance(runtime, str) or not runtime:
+            raise SystemExit("Spark runtime preflight failed: missing environment.runtimeVersion.")
+        return runtime
+
+    runtime = read_runtime()
+    if runtime != "2.0":
+        print(f"Spark runtime preflight: updating workspace runtime {runtime} -> 2.0...")
+        response = request("PATCH", url, json={"environment": {"runtimeVersion": "2.0"}})
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Spark runtime update failed: HTTP {response.status_code} {response.text}"
+            )
+        runtime = read_runtime()
+        if runtime != "2.0":
+            raise SystemExit(f"Spark runtime readback failed: expected 2.0, received {runtime}.")
+    print("Spark runtime preflight: verified workspace Runtime 2.0.")
+
+
+def verify_environment_runtimes(
+    request: Callable[..., requests.Response], workspace_id: str
+) -> None:
+    """Reject published environment overrides that could run notebooks on an older runtime."""
+    base = f"{FABRIC_BASE}/workspaces/{workspace_id}"
+    url: str | None = f"{base}/items?type=Environment"
+    while url:
+        response = request("GET", url)
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Environment runtime inventory failed: HTTP {response.status_code} {response.text}"
+            )
+        page = response.json()
+        if not isinstance(page, dict) or not isinstance(page.get("value"), list):
+            raise SystemExit("Environment runtime inventory failed: missing item list.")
+        for item in page["value"]:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise SystemExit("Environment runtime inventory failed: missing item identity.")
+            compute = request(
+                "GET", f"{base}/environments/{item['id']}/sparkcompute?beta=false"
+            )
+            if compute.status_code != 200:
+                raise SystemExit(
+                    f"Environment runtime readback failed for {item['id']}: "
+                    f"HTTP {compute.status_code} {compute.text}"
+                )
+            settings = compute.json()
+            runtime = settings.get("runtimeVersion") if isinstance(settings, dict) else None
+            if runtime != "2.0":
+                raise SystemExit(
+                    f"Environment {item.get('displayName') or item['id']} requires published "
+                    f"Runtime 2.0; received {runtime!r}. Publish the upgraded environment first."
+                )
+            print(f"Environment runtime preflight: verified {item['id']} on Runtime 2.0.")
+        url = page.get("continuationUri")
+        if url is not None and (
+            not isinstance(url, str) or not url.startswith(f"{base}/items?")
+        ):
+            raise SystemExit("Environment runtime inventory failed: invalid continuation URI.")
+
+
 def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:
     """Validate weather Git items, publish their Environment, and print secret guidance."""
+    ensure_spark_runtime(fab.request, workspace_id)
     items = fab.list_workspace_items(workspace_id)
     folders = fab.list_workspace_folders(workspace_id)
     notebook_folder = next(
@@ -721,6 +845,8 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
         print("Weather Environment publish completed.")
     else:
         print("Weather Environment is already published; no publish required.")
+
+    verify_environment_runtimes(fab.request, workspace_id)
 
     # Git stores empty notebook dependencies, so every import unbinds these notebooks.
     print("Binding weather notebooks to the lakehouse and Environment...")

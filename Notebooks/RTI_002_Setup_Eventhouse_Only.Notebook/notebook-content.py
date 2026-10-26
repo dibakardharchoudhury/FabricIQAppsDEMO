@@ -148,9 +148,19 @@ def fabric_get_items(workspace_id, access_token, item_type=None):
     """
     url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
     headers = {"Authorization": f"Bearer {access_token}"}
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    items = resp.json().get("value", [])
+    base_url = url
+    params = {}
+    items = []
+    while url:
+        resp = requests.get(url, headers=headers, params=params, timeout=60)
+        resp.raise_for_status()
+        page = resp.json()
+        items.extend(page.get("value", []))
+        url = page.get("continuationUri")
+        params = {}
+        if not url and page.get("continuationToken"):
+            url = base_url
+            params = {"continuationToken": page["continuationToken"]}
     if item_type:
         return [i for i in items if i.get("type", "").lower() == item_type.lower()]
     return items
@@ -500,10 +510,40 @@ import base64
 import json
 import requests
 import time
+from uuid import UUID
 
 SOURCE_NAME = settings.get("eventstream_source_name", "OPCUA_CustomEndpoint")
 STREAM_NAME = settings.get("eventstream_stream_name", "OPCUA_DefaultStream")
 DESTINATION_NAME = settings.get("eventstream_destination_name", "Eventhouse")
+
+
+def await_eventstream_operation(response, token: str, fetch_result: bool = False):
+    response.raise_for_status()
+    if response.status_code != 202:
+        return response
+    operation_id = response.headers.get("x-ms-operation-id")
+    if operation_id:
+        operation_url = f"{FABRIC_BASE_URL}/operations/{UUID(operation_id)}"
+    else:
+        operation_url = response.headers.get("Location", "")
+        if not operation_url.startswith(f"{FABRIC_BASE_URL}/operations/"):
+            raise RuntimeError("Eventstream operation returned no supported status URL.")
+    headers = {"Authorization": f"Bearer {token}", "x-ms-fabric-skill": "spark-cli"}
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        time.sleep(max(1, int(response.headers.get("Retry-After", "10"))))
+        response = requests.get(operation_url, headers=headers, timeout=60)
+        response.raise_for_status()
+        status = response.json().get("status")
+        if status == "Succeeded":
+            if fetch_result:
+                response = requests.get(f"{operation_url}/result", headers=headers, timeout=60)
+                response.raise_for_status()
+            return response
+        if status in {"Failed", "Cancelled"}:
+            raise RuntimeError(f"Eventstream operation {status}; operation URL: {operation_url}")
+    raise TimeoutError(f"Eventstream operation did not complete within ten minutes: {operation_url}")
+
 
 def get_eventstream_by_name(workspace_id: str, name: str, token: str):
     items = fabric_get_items(workspace_id, token, "Eventstream")
@@ -524,14 +564,28 @@ def create_eventstream(workspace_id: str, name: str, token: str) -> str:
         "folderId": target_folder_id,
     }
 
-    resp = requests.post(url, headers=headers, json=body)
+    resp = requests.post(url, headers=headers, json=body, timeout=60)
 
     if resp.status_code == 400 and "ItemDisplayNameNotAvailableYet" in resp.text:
         print("⏳ Display name not yet available. Waiting 30 seconds and retrying...")
         time.sleep(30)
-        resp = requests.post(url, headers=headers, json=body)
+        resp = requests.post(url, headers=headers, json=body, timeout=60)
 
     resp.raise_for_status()
+
+    if resp.status_code == 202:
+        operation_url = resp.headers.get("Location") or resp.headers.get("Operation-Location")
+        if not operation_url:
+            raise RuntimeError("Eventstream creation returned 202 without an operation URL.")
+        print("Eventstream creation accepted; waiting for Fabric provisioning...")
+        wait_for_fabric_lro(operation_url, token)
+        result = requests.get(operation_url.rstrip("/") + "/result", headers=headers, timeout=60)
+        result.raise_for_status()
+        data = result.json()
+        if not isinstance(data, dict) or not isinstance(data.get("id"), str) or not data["id"].strip():
+            raise RuntimeError("Eventstream creation completed without an item ID in its operation result.")
+        print(f"Created Eventstream '{name}' - ID: {data['id']}")
+        return data["id"]
 
     try:
         data = resp.json()
@@ -560,7 +614,7 @@ def get_eventstream_definition(workspace_id: str, eventstream_id: str, token: st
     url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/eventstreams/{eventstream_id}/getDefinition"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     resp = requests.post(url, headers=headers, json={})
-    resp.raise_for_status()
+    resp = await_eventstream_operation(resp, token, fetch_result=True)
 
     definition = resp.json()["definition"]["parts"]
     eventstream_json = None
@@ -645,9 +699,41 @@ def mutate_definition_add_custom_endpoint(evt_def: dict) -> dict:
     return evt_def
 
 
+def wait_for_fabric_lro(operation_url: str, token: str,
+                        max_wait_seconds: int = 300, poll_seconds: int = 5) -> dict:
+    deadline = time.time() + max_wait_seconds
+    while time.time() <= deadline:
+        response = requests.get(
+            operation_url,
+            headers={"Authorization": "Bearer " + token},
+            timeout=60,
+        )
+        if response.status_code == 429 or response.status_code >= 500:
+            delay = int(response.headers.get("Retry-After", poll_seconds))
+            print(f"⏳ Eventstream operation still provisioning ({response.status_code}); retrying in {delay}s...")
+            time.sleep(delay)
+            continue
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Eventstream operation poll failed: {response.status_code} | {response.text[:3000]}"
+            )
+        result = response.json()
+        status = str(result.get("status", "")).lower()
+        if status in ("succeeded", "completed"):
+            return result
+        if status in ("failed", "cancelled"):
+            raise RuntimeError(f"Eventstream operation failed: {json.dumps(result)[:3000]}")
+        time.sleep(poll_seconds)
+    raise TimeoutError("Timed out waiting for the Eventstream operation.")
+
+
 def update_eventstream_definition(workspace_id: str, eventstream_id: str, token: str):
     evt_def, platform_part = get_eventstream_definition(workspace_id, eventstream_id, token)
+    previous = json.dumps(evt_def, sort_keys=True)
     evt_def_mut = mutate_definition_add_custom_endpoint(evt_def)
+    if json.dumps(evt_def_mut, sort_keys=True) == previous:
+        print("Eventstream definition is already current.")
+        return
 
     evt_def_json = json.dumps(evt_def_mut, separators=(",", ":"))
     evt_def_b64 = base64.b64encode(evt_def_json.encode("utf-8")).decode("ascii")
@@ -671,8 +757,15 @@ def update_eventstream_definition(workspace_id: str, eventstream_id: str, token:
         raise RuntimeError(f"Failed to update Eventstream definition: {resp.status_code} | {resp.text}")
 
     if resp.status_code == 202:
-        print("⏳ Definition update accepted. Waiting 10 seconds...")
-        time.sleep(10)
+        operation_url = (
+            resp.headers.get("Location")
+            or resp.headers.get("Operation-Location")
+            or resp.headers.get("operation-location")
+        )
+        if not operation_url:
+            raise RuntimeError("Eventstream definition update returned 202 without an operation URL.")
+        print("⏳ Definition update accepted. Waiting for Fabric to finish provisioning...")
+        wait_for_fabric_lro(operation_url, token)
 
     print("✅ Eventstream definition updated.")
 
@@ -690,7 +783,8 @@ def get_eventstream_topology(workspace_id: str, eventstream_id: str, token: str)
     return topo
 
 
-def get_custom_endpoint_connection(workspace_id: str, eventstream_id: str, token: str, source_name: str) -> dict:
+def _get_custom_endpoint_connection_once(workspace_id: str, eventstream_id: str,
+                                         token: str, source_name: str) -> dict:
     topo = get_eventstream_topology(workspace_id, eventstream_id, token)
     ce = next((s for s in topo.get("sources", []) if s.get("name") == source_name), None)
     if not ce:
@@ -714,12 +808,37 @@ def get_custom_endpoint_connection(workspace_id: str, eventstream_id: str, token
     }
 
 
+def get_custom_endpoint_connection(workspace_id: str, eventstream_id: str, token: str,
+                                   source_name: str, max_wait_seconds: int = 300,
+                                   poll_seconds: int = 5) -> dict:
+    deadline = time.time() + max_wait_seconds
+    last_reason = f"CustomEndpoint source '{source_name}' is not ready."
+    while time.time() <= deadline:
+        try:
+            return _get_custom_endpoint_connection_once(
+                workspace_id, eventstream_id, token, source_name
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status not in (404, 409, 429) and (status is None or status < 500):
+                raise
+            last_reason = f"Eventstream readiness returned HTTP {status}."
+        except RuntimeError as exc:
+            if "CustomEndpoint source" not in str(exc):
+                raise
+            last_reason = str(exc)
+        print(f"⏳ {last_reason} Retrying in {poll_seconds}s...")
+        time.sleep(poll_seconds)
+    raise TimeoutError(
+        f"Timed out waiting for Eventstream source connection readiness. Last result: {last_reason}"
+    )
+
+
 eventstream_id = get_eventstream_by_name(workspace_id, fabric_eventstream_name, access_token)
 if not eventstream_id:
     eventstream_id = create_eventstream(workspace_id, fabric_eventstream_name, access_token)
 
 update_eventstream_definition(workspace_id, eventstream_id, access_token)
-time.sleep(10)
 
 custom_ep_info = get_custom_endpoint_connection(
     workspace_id,

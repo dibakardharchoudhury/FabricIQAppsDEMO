@@ -1,12 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Bot, Box, ClipboardCheck, Database, Factory, Gauge, MapPin, Maximize2, Minimize2, Package, Plus, Radio, RefreshCw, Send, Settings, SquarePen, Trash2, Wrench, X } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import './App.css'
 import './ui-v2/styles/app-v2.css'
 import { AdministrationExperience } from './components/AdministrationExperience'
-import { CopilotExperience } from './components/CopilotExperience'
-import { CopilotStreamCursor, CopilotThinking } from './components/CopilotThinking'
+import { CopilotExperience, CopilotResponse } from './components/CopilotExperience'
 import { FacilityMap, type FacilityStat, type AssetPin } from './components/FacilityMap'
 // Lazy so three.js / model-viewer only load when a GLB is actually shown.
 const AssetModelViewer = lazy(() => import('./components/AssetModelViewer').then(m => ({ default: m.AssetModelViewer })))
@@ -17,7 +14,8 @@ import {
   updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from './services/rayfin'
-import { twinStatus, ageLabel, freshnessOf, type TwinSignal, type TwinStatus } from './twin'
+import { twinSignalStatus, twinStatus, ageLabel, freshnessOf, type TwinSignal, type TwinStatus } from './twin'
+import { uncertifiedFailureMessage } from './services/copilot/orchestration'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const orderStatuses = ['Draft', 'Approved', 'Planned', 'Scheduled', 'Ready', 'In progress', 'On hold', 'Completed', 'Cancelled']
@@ -71,18 +69,16 @@ const isDoneStatus = (status: string) => status === 'Completed'
 const isTerminalJobStatus = (status: string) => isDoneStatus(status) || status === 'Failed' || status === 'Cancelled'
 // Compact elapsed-time label for a running or finished job (e.g. "3m 12s").
 const fmtElapsed = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); const m = Math.floor(s / 60); const r = s % 60; return m ? `${m}m ${r}s` : `${r}s` }
-// Sub-minute precision for how long a single Copilot answer took.
-const fmtDuration = (ms: number) => ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : fmtElapsed(ms)
-
 // Version + build timestamp injected by Vite at build time (see vite.config.ts).
 const BUILD_STAMP = new Date(__BUILD_TIME__).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 // Optional UI credits injected by `rayfin env --framework vite` from RAYFIN_PUBLIC_* variables.
 const UI_CREDIT_LINE_1 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_1 as string | undefined)?.trim()
 const UI_CREDIT_LINE_2 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_2 as string | undefined)?.trim()
+const UI_CREDIT_LINE_3 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_3 as string | undefined)?.trim()
 
 // A Copilot chat turn; agent turns carry per-answer timing/token metrics once finished.
-type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; meta?: { elapsedMs: number; tokens?: number } }
+type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; failed?: boolean; meta?: { elapsedMs: number; tokens?: number } }
 const wantsChart = (text: string) => /\b(chart|graph|plot|visuali[sz]e?|visual|trend(?:ing|s|line)?|bar\s*chart|pie|line\s*chart|histogram)\b/i.test(text)
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
 
@@ -211,6 +207,9 @@ export default function App() {
       return { reading, instrument, asset: instrument ? equipmentById.get(instrument.equipment_id) : undefined }
     }), [facilityTelemetry, instrumentByNode, equipmentById])
   const nodesWithOpenOrder = useMemo(() => new Set(openOrders.map(order => order.opcuaNodeId)), [openOrders])
+  const nodesWithCriticalOrder = useMemo(() => new Set(openOrders
+    .filter(order => order.priority.toLowerCase() === 'critical')
+    .map(order => order.opcuaNodeId)), [openOrders])
   // Live "digital twin" overlay: each instrument on the selected asset becomes a health-coded hotspot
   // on the 3D model — value + OPC UA quality from the Eventhouse, plus open-work-order state.
   const twinSignals = useMemo<TwinSignal[]>(() => instruments.map(instrument => {
@@ -223,12 +222,13 @@ export default function App() {
       unit: instrument.unit,
       quality: reading?.quality,
       hasOpenIssue: nodesWithOpenOrder.has(instrument.opcua_node_id),
+      hasCriticalIssue: nodesWithCriticalOrder.has(instrument.opcua_node_id),
       eventTime: reading?.eventTime,
     }
-  }), [instruments, readings, nodesWithOpenOrder])
+  }), [instruments, nodesWithCriticalOrder, readings, nodesWithOpenOrder])
   const twinHealth = useMemo(() => {
     const counts = { crit: 0, warn: 0, ok: 0, nodata: 0 }
-    for (const signal of twinSignals) counts[twinStatus(signal)]++
+    for (const signal of twinSignals) counts[twinSignalStatus(signal)]++
     return counts
   }, [twinSignals])
   // Per-facility health rolled up live from each facility's signal quality — drives the map markers.
@@ -237,7 +237,7 @@ export default function App() {
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     for (const inst of insts) {
       const reading = readings.get(inst.opcua_node_id)
-      health[twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id) })]++
+      health[twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id), hasCriticalIssue: nodesWithCriticalOrder.has(inst.opcua_node_id) })]++
     }
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
     return {
@@ -248,15 +248,16 @@ export default function App() {
       openOrders: openOrders.filter(o => equipmentById.get(o.equipmentId)?.facility_id === item.facility_id).length,
       health, worst,
     }
-  }), [facilities, stid, readings, nodesWithOpenOrder, openOrders, equipmentById])
+  }), [facilities, stid, readings, nodesWithOpenOrder, nodesWithCriticalOrder, openOrders, equipmentById])
   // The selected facility's assets, each with live per-signal quality, for the on-map asset ring.
   const assetPins = useMemo<AssetPin[]>(() => equipment.map(asset => {
     const insts = (stid?.instruments ?? []).filter(i => i.equipment_id === asset.equipment_id)
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     const signals = insts.map(inst => {
       const reading = readings.get(inst.opcua_node_id)
-      const status = twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id) })
-      health[status]++
+      const signal = { id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id), hasCriticalIssue: nodesWithCriticalOrder.has(inst.opcua_node_id) }
+      const status = twinSignalStatus(signal)
+      health[twinStatus(signal)]++
       return { label: inst.tag ?? inst.instrument_id, value: reading?.value, unit: inst.unit, quality: reading?.quality, status, eventTime: reading?.eventTime }
     })
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
@@ -264,7 +265,7 @@ export default function App() {
       equipment_id: asset.equipment_id, tag: asset.tag ?? asset.equipment_id, worst, health,
       openOrders: openOrders.filter(o => o.equipmentId === asset.equipment_id).length, signals,
     }
-  }), [equipment, stid, readings, nodesWithOpenOrder, openOrders])
+  }), [equipment, stid, readings, nodesWithOpenOrder, nodesWithCriticalOrder, openOrders])
 
   useEffect(() => {
     // Restore bars for any job still running when the page was last open (before auth) so a
@@ -280,7 +281,8 @@ export default function App() {
           if (current) await loadOperationalData()
         } catch (error) { setNotice(`Operations data: ${errorMessage(error)}`) }
       }
-      await initAuth()
+      try { await initAuth() }
+      catch (error) { setNotice(`Fabric authentication: ${errorMessage(error)}`) }
       if (isStidConfigured()) {
         try {
           const data = await queryStid()
@@ -436,13 +438,9 @@ export default function App() {
   async function connectStid(opts?: { retries?: number }) {
     setSourceState('Connecting...'); setNotice(undefined)
     const retries = opts?.retries ?? 0
-    // Always rediscover on a manual click: a config cache captured before Seed & provision
-    // (when the GraphQL API item didn't yet exist) would otherwise keep this stuck for the whole session.
     clearWorkspaceConfigCache()
     try {
       let data = await queryStid()
-      // Right after Seed & provision the GraphQL API can take a moment to become queryable —
-      // rediscover the workspace and retry a few times before surfacing an error.
       for (let attempt = 0; !data && attempt < retries; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 8_000))
         clearWorkspaceConfigCache()
@@ -454,10 +452,7 @@ export default function App() {
     } catch (error) {
       setSourceState('Connect STID')
       const message = errorMessage(error)
-      // Don't tell the operator to "run RTI_011" when Seed & provision has already completed.
-      if (provisioned && /No GraphQL API found/i.test(message)) {
-        setNotice('STID GraphQL API isn’t queryable yet — it can take a minute to finish publishing after Seed & provision. Wait a moment, then click Connect STID again.')
-      } else setNotice(message)
+      setNotice(message)
     }
   }
 
@@ -556,7 +551,7 @@ export default function App() {
       if (isPostSeedConfigured()) {
         // RTI_011 is the authoritative seeder: its SQL MERGE upserts (re-seeds/updates)
         // every run, so skip the client-side insert-if-empty pre-seed.
-        const label = 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)…'
+        const label = 'Seeding independent operational SQL and refreshing its verified Data Agent source (RTI_011)…'
         beginProgress('seed', label, SEED_ETA_MS)
         await awaitProvision(() => runPostSeedNotebook(s => updateJob('seed', humanStatus(s))))
       } else {
@@ -643,16 +638,16 @@ export default function App() {
     // Append the user turn plus an empty agent bubble that streamed tokens fill in place.
     const chart = wantsChart(text)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '', chart }])
-    const setLastAgent = (value: string, meta?: ChatMessage['meta']) => setMessages(current => {
+    const setLastAgent = (value: string, meta?: ChatMessage['meta'], failed?: boolean) => setMessages(current => {
       const copy = current.slice()
-      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value, chart: copy[i].chart, meta: meta ?? copy[i].meta }; break } }
+      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value, chart: failed ? false : copy[i].chart, failed, meta: meta ?? copy[i].meta }; break } }
       return copy
     })
     try {
       const { text: answer, usage } = await askDataAgent(text, partial => setLastAgent(partial))
       setLastAgent(answer, { elapsedMs: Date.now() - startedAt, tokens: usage?.total })
     }
-    catch (error) { setLastAgent(errorMessage(error), { elapsedMs: Date.now() - startedAt }) }
+    catch (error) { setLastAgent(uncertifiedFailureMessage(error), { elapsedMs: Date.now() - startedAt }, true) }
     setBusy(false)
   }
 
@@ -664,9 +659,9 @@ export default function App() {
   // Ordered first-run setup. Each step explains why it exists and unlocks the next.
   const steps = [
     { n: 1, title: 'Sign in to Fabric', why: 'Authenticate with your Microsoft Fabric identity — required for operational data and to run setup.', done: Boolean(user), busy: false, action: 'Sign in', run: () => void authenticate() },
-    { n: 2, title: 'Seed & provision', why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.', done: provisioned, busy: seeding, action: 'Seed & provision', run: () => void seedDemo() },
+    { n: 2, title: 'Seed operational demo data', why: 'Adds missing demo records to independent operational SQL and refreshes its verified v2 Data Agent source (RTI_011). No STID GraphQL API or Foundry deployment; use the local launcher for multi-agent setup.', done: provisioned, busy: seeding, action: 'Seed demo data', run: () => void seedDemo() },
     { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Independent of step 2 — run it in parallel. Takes ~5 min to warm up before signals appear.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
-    { n: 4, title: 'Connect STID', why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
+    { n: 4, title: 'Connect STID', why: 'Loads facility & asset tables through the read-only Rayfin Lakehouse connector using your Fabric identity. Deploy the app to configure the connector.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]
   // Starter prompts grounded in the loaded data (SQL DB + ontology) so users click questions the
@@ -685,7 +680,7 @@ export default function App() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="source-actions">
-        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
+        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Read facility & asset tables through the deployed Rayfin Lakehouse connector with your Fabric identity.">4 · <Database size={14} />{sourceState}</button>
         <div className="telemetry-source">
           <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
           {telemetryLive && <span className={`live-pill ${dataStatus}`} title={`Polling every 10s · ${freshCount}/${eventTimesSorted.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataLabel}<em>· {dataAgo || telemetryAgo}</em></span>}
@@ -693,7 +688,7 @@ export default function App() {
         </div>
       </div>
       <div className="top-actions">
-        {(UI_CREDIT_LINE_1 || UI_CREDIT_LINE_2) && <div
+        {(UI_CREDIT_LINE_1 || UI_CREDIT_LINE_2 || UI_CREDIT_LINE_3) && <div
           aria-label="Application credits"
           style={{
             display: 'flex',
@@ -709,6 +704,7 @@ export default function App() {
         >
           {UI_CREDIT_LINE_1 && <span>{UI_CREDIT_LINE_1}</span>}
           {UI_CREDIT_LINE_2 && <span>{UI_CREDIT_LINE_2}</span>}
+          {UI_CREDIT_LINE_3 && <span>{UI_CREDIT_LINE_3}</span>}
         </div>}
         <span className="app-version" title={`Version ${__APP_VERSION__}${__BUILD_COMMIT__ ? ` · ${__BUILD_COMMIT__}` : ''} · built ${BUILD_STAMP}`}><strong>v{__APP_VERSION__}</strong><small>{BUILD_STAMP}</small><a href="?ui=v2">Click here for V2 UI</a></span>
         <button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button>
@@ -775,7 +771,7 @@ export default function App() {
       </div>
 
       <div className="detail-grid">
-        <section className="twin-panel panel"><div className="panel-head"><div><h2>Digital twin</h2><p>{selected ? `${selected.tag ?? selected.equipment_id} · ${twinSignals.length} live signal${twinSignals.length === 1 ? '' : 's'}${twinHealth.crit ? ` · ${twinHealth.crit} critical` : ''}` : 'Asset 3D model'}</p></div><span className="provenance">Rayfin · Eventhouse · STID</span></div><div className="twin-body">{!user ? <EmptyState title="3D models are protected" action="Connect operations" onClick={() => void authenticate()} /> : selectedModel ? (canRenderModel(selectedModel.format) ? <><Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading 3D model…</div></div>}><AssetModelViewer key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} assetLabel={selected?.tag ?? selected?.equipment_id} updatedAt={telemetryAt} /></Suspense><div className="twin-legend"><span><i className="ok" />OK {twinHealth.ok}</span><span><i className="warn" />Uncertain {twinHealth.warn}</span><span><i className="crit" />Bad / open order {twinHealth.crit}</span><span><i className="nodata" />No data {twinHealth.nodata}</span></div><div className="twin-meta twin-meta-inline"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''} · click a hotspot for detail</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></> : <><div className="twin-thumb">{selectedModel.thumbnailUrl ? <img src={selectedModel.thumbnailUrl} alt={selectedModel.modelName} /> : <Box size={40} />}</div><div className="twin-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></>) : <div className="inline-empty">No 3D model registered for this asset.</div>}</div></section>
+        <section className="twin-panel panel"><div className="panel-head"><div><h2>Digital twin</h2><p>{selected ? `${selected.tag ?? selected.equipment_id} · ${twinSignals.length} live signal${twinSignals.length === 1 ? '' : 's'}${twinHealth.crit ? ` · ${twinHealth.crit} critical` : ''}` : 'Asset 3D model'}</p></div><span className="provenance">Rayfin · Eventhouse · STID</span></div><div className="twin-body">{!user ? <EmptyState title="3D models are protected" action="Connect operations" onClick={() => void authenticate()} /> : selectedModel ? (canRenderModel(selectedModel.format) ? <><Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading 3D model…</div></div>}><AssetModelViewer key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} assetLabel={selected?.tag ?? selected?.equipment_id} updatedAt={telemetryAt} /></Suspense><div className="twin-legend"><span><i className="ok" />OK {twinHealth.ok}</span><span><i className="warn" />Uncertain {twinHealth.warn}</span><span><i className="crit" />Bad {twinHealth.crit}</span><span><i className="nodata" />No data {twinHealth.nodata}</span></div><div className="twin-meta twin-meta-inline"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''} · click a hotspot for detail</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></> : <><div className="twin-thumb">{selectedModel.thumbnailUrl ? <img src={selectedModel.thumbnailUrl} alt={selectedModel.modelName} /> : <Box size={40} />}</div><div className="twin-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></>) : <div className="inline-empty">No 3D model registered for this asset.</div>}</div></section>
         <section className="inspections-panel panel"><div className="panel-head"><div><h2>Inspections</h2><p>{selected ? `${selectedInspections.length} record(s) for this asset` : 'Condition inspections'}</p></div><ClipboardCheck size={18} /></div><div className="order-list">{selectedInspections.map(item => <article className="order" key={item.id}><span className={`insp-result ${item.result.toLowerCase()}`}><ClipboardCheck size={14} /></span><div><strong>{item.inspectionType}</strong><small>{new Date(item.inspectedAt).toLocaleDateString()} · {item.result}</small><p>{item.findings ?? 'No findings recorded.'}</p></div></article>)}{!user && <EmptyState title="Inspection records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !selectedInspections.length && <div className="inline-empty">No inspections for this asset.</div>}</div></section>
       </div>
 
@@ -785,121 +781,10 @@ export default function App() {
       </div>
     </main>
 
-    {copilotOpen && <aside className={`copilot-panel${copilotMax ? ' maximized' : ''}`}><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={resetChat} disabled={busy || messages.length === 1} title="New chat"><SquarePen size={17} /></button><button className="icon-button" onClick={() => setCopilotMax(value => !value)} title={copilotMax ? 'Restore' : 'Maximize'}>{copilotMax ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index} aria-busy={item.role === 'agent' && busy && index === messages.length - 1}>{item.role === 'agent' ? (item.text ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>{item.chart && <ChartFromMarkdown markdown={item.text} />}{busy && index === messages.length - 1 && <CopilotStreamCursor />}</div> : <CopilotThinking />) : <p>{item.text}</p>}{item.meta && <small className="msg-meta">{fmtDuration(item.meta.elapsedMs)}{item.meta.tokens ? ` · ${item.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendQuestion() } }} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} disabled={busy || !question.trim()} title="Send"><Send size={16} /></button></div></aside>}
+    {copilotOpen && <aside className={`copilot-panel${copilotMax ? ' maximized' : ''}`}><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={resetChat} disabled={busy || messages.length === 1} title="New chat"><SquarePen size={17} /></button><button className="icon-button" onClick={() => setCopilotMax(value => !value)} title={copilotMax ? 'Restore' : 'Maximize'}>{copilotMax ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index} aria-busy={item.role === 'agent' && busy && index === messages.length - 1}>{item.role === 'agent' ? <CopilotResponse message={item} streaming={busy && index === messages.length - 1} question={messages[index - 1]?.text} /> : <p>{item.text}</p>}</div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendQuestion() } }} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} disabled={busy || !question.trim()} title="Send"><Send size={16} /></button></div></aside>}
   </div>
 }
 
 function EmptyState({ title, action, onClick }: { title: string; action: string; onClick: () => void }) {
   return <div className="empty-state"><Database size={20} /><p>{title}</p><button onClick={onClick}>{action}</button></div>
-}
-
-// The Fabric Data Agent answers in text/Markdown only — it cannot emit an image chart over this
-// REST flow. So we parse the data table it returns and render the chart client-side.
-type ParsedTable = { headers: string[]; rows: string[][] }
-function parseFirstTable(md: string): ParsedTable | null {
-  const lines = md.split('\n')
-  const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim())
-  for (let i = 0; i < lines.length - 1; i++) {
-    const isRow = /^\s*\|.*\|\s*$/.test(lines[i])
-    const isSep = /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('-')
-    if (!isRow || !isSep) continue
-    const headers = cells(lines[i])
-    const rows: string[][] = []
-    for (let j = i + 2; j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j]); j++) rows.push(cells(lines[j]))
-    if (headers.length >= 2 && rows.length) return { headers, rows }
-  }
-  return null
-}
-
-const toNumber = (raw: string) => { const value = parseFloat(raw.replace(/[^0-9.eE+-]/g, '')); return Number.isFinite(value) ? value : NaN }
-type ChartSeries = { labelHeader: string; valueHeader: string; points: { label: string; value: number }[] }
-function extractSeries(table: ParsedTable): ChartSeries | null {
-  const width = table.headers.length
-  const numericScore = (col: number) => table.rows.filter(row => Number.isFinite(toNumber(row[col] ?? ''))).length
-  let valueCol = -1
-  for (let col = width - 1; col >= 0; col--) { if (numericScore(col) >= Math.ceil(table.rows.length / 2)) { valueCol = col; break } }
-  if (valueCol < 0) return null
-  const labelCol = table.headers.findIndex((_, col) => col !== valueCol && numericScore(col) < Math.ceil(table.rows.length / 2))
-  const label = labelCol >= 0 ? labelCol : (valueCol === 0 ? 1 : 0)
-  const points = table.rows
-    .map(row => ({ label: row[label] ?? '', value: toNumber(row[valueCol] ?? '') }))
-    .filter(point => Number.isFinite(point.value) && point.label)
-  if (!points.length) return null
-  return { labelHeader: table.headers[label] ?? '', valueHeader: table.headers[valueCol] ?? 'Value', points: points.slice(0, 16) }
-}
-
-function ChartFromMarkdown({ markdown }: { markdown: string }) {
-  const series = useMemo(() => { const table = parseFirstTable(markdown); return table ? extractSeries(table) : null }, [markdown])
-  const [kind, setKind] = useState<'bar' | 'line' | 'pie'>('bar')
-  if (!series) return null
-  return (
-    <div className="chart-block">
-      <div className="chart-tabs" role="group" aria-label="Chart type">
-        <button className={kind === 'bar' ? 'on' : ''} onClick={() => setKind('bar')}>Bar</button>
-        <button className={kind === 'line' ? 'on' : ''} onClick={() => setKind('line')}>Line</button>
-        <button className={kind === 'pie' ? 'on' : ''} onClick={() => setKind('pie')}>Pie</button>
-      </div>
-      <ChartSvg series={series} kind={kind} />
-    </div>
-  )
-}
-
-const CHART_COLORS = ['#2f9e8f', '#4c8bf5', '#f5a623', '#e0554e', '#7b61ff', '#12a150', '#e879a6', '#8a94a6', '#d98b2b', '#5bb3d1']
-function ChartSvg({ series, kind }: { series: ChartSeries; kind: 'bar' | 'line' | 'pie' }) {
-  const W = 320, H = 190, padL = 34, padR = 12, padT = 10, padB = 46
-  const max = Math.max(...series.points.map(p => p.value), 0) || 1
-  const plotW = W - padL - padR, plotH = H - padT - padB
-  const short = (text: string) => text.length > 10 ? `${text.slice(0, 9)}…` : text
-
-  if (kind === 'pie') {
-    const total = series.points.reduce((sum, p) => sum + Math.max(p.value, 0), 0) || 1
-    const cx = 95, cy = H / 2, r = 72
-    const start = -Math.PI / 2
-    const fracs = series.points.map(point => Math.max(point.value, 0) / total)
-    const slices = series.points.map((point, index) => {
-      const angle = start + fracs.slice(0, index).reduce((sum, f) => sum + f, 0) * Math.PI * 2
-      const frac = fracs[index]
-      const end = angle + frac * Math.PI * 2
-      const p = (a: number) => `${cx + r * Math.cos(a)} ${cy + r * Math.sin(a)}`
-      const large = end - angle > Math.PI ? 1 : 0
-      const d = frac >= 0.9999 ? `M ${cx - r} ${cy} A ${r} ${r} 0 1 1 ${cx + r} ${cy} A ${r} ${r} 0 1 1 ${cx - r} ${cy} Z` : `M ${cx} ${cy} L ${p(angle)} A ${r} ${r} 0 ${large} 1 ${p(end)} Z`
-      return { d, color: CHART_COLORS[index % CHART_COLORS.length], point, pct: frac * 100 }
-    })
-    return (
-      <svg viewBox={`0 0 ${W} ${H}`} className="chart-svg" role="img" aria-label="Pie chart">
-        {slices.map((slice, index) => <path key={index} d={slice.d} fill={slice.color} stroke="var(--cp-surface)" strokeWidth={1} />)}
-        {slices.map((slice, index) => (
-          <g key={`l${index}`} transform={`translate(${W - 118} ${padT + index * 15})`}>
-            <rect width={9} height={9} rx={2} fill={slice.color} />
-            <text x={13} y={8} className="chart-legend">{short(slice.point.label)} {slice.pct.toFixed(0)}%</text>
-          </g>
-        ))}
-      </svg>
-    )
-  }
-
-  const n = series.points.length
-  const x = (index: number) => padL + (n === 1 ? plotW / 2 : (index * plotW) / (n - 1))
-  const y = (value: number) => padT + plotH - (value / max) * plotH
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart-svg" role="img" aria-label={`${kind} chart`}>
-      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} className="chart-axis" />
-      <line x1={padL} y1={padT + plotH} x2={W - padR} y2={padT + plotH} className="chart-axis" />
-      <text x={padL - 6} y={padT + 4} className="chart-tick" textAnchor="end">{max % 1 === 0 ? max : max.toFixed(1)}</text>
-      <text x={padL - 6} y={padT + plotH} className="chart-tick" textAnchor="end">0</text>
-      {kind === 'bar' && series.points.map((point, index) => {
-        const bw = Math.max(6, Math.min(30, (plotW / n) * 0.6))
-        const cx = padL + (plotW / n) * (index + 0.5)
-        const h = (point.value / max) * plotH
-        return <rect key={index} x={cx - bw / 2} y={padT + plotH - h} width={bw} height={h} rx={2} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-      })}
-      {kind === 'line' && <polyline className="chart-line" points={series.points.map((point, index) => `${x(index)},${y(point.value)}`).join(' ')} />}
-      {kind === 'line' && series.points.map((point, index) => <circle key={index} cx={x(index)} cy={y(point.value)} r={2.5} fill={CHART_COLORS[0]} />)}
-      {series.points.map((point, index) => {
-        const cx = kind === 'bar' ? padL + (plotW / n) * (index + 0.5) : x(index)
-        return <text key={`x${index}`} x={cx} y={padT + plotH + 12} className="chart-tick" textAnchor="end" transform={`rotate(-35 ${cx} ${padT + plotH + 12})`}>{short(point.label)}</text>
-      })}
-      <text x={padL + plotW / 2} y={H - 4} className="chart-axis-label" textAnchor="middle">{series.valueHeader}</text>
-    </svg>
-  )
 }

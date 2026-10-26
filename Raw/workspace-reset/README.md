@@ -1,19 +1,67 @@
 # Workspace reset — automated Git sync (alternative to the manual portal steps)
 
+**Deploying the project? Start with the [short deployment guide](../../HydroOperationsApp/DEPLOY.md).**
+This file is the detailed CLI/reference material, not a second required checklist.
+
 Populate (or wipe-and-repopulate) a Microsoft Fabric workspace from this GitHub repo
 **without clicking through the Fabric portal**. These tools drive the same Fabric
 Git-integration APIs the portal uses, so the result is identical to a manual sync —
-just scripted, repeatable, and safe to run from CI or a fresh machine.
+just scripted and repeatable from CI or a fresh machine. Git synchronization can remove generated
+resources: a prior full `PreferRemote` import did so in V3, and setup restored them. For the current
+readiness correction, use only bounded notebook-definition updates, not another full import/reset.
+
+This automation does **not** replace the ontology-managed graph portal prerequisite: in the selected
+v2 ontology choose **Manage graph → select eligible entities/relationships → Continue → Materialize**.
+Set `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`) for that
+graph; optional `nodeTypes`/`edgeTypes` map queryable aliases to exact ontology type names/IDs.
+No published ontology-owned materialization REST endpoint or ownership metadata association is
+established. Do not infer ownership from names, a sole graph, or structure, or promise unattended
+graph deployment. The graph canvas/tree/scopes use native topology, not GraphQL/STID fabrication.
+See [native graph prerequisites and validation](../../docs/knowledge-graph.md).
+
+NB04/NB06 and NB11 apply the shared, source-independent semantic catalog: entity/property
+descriptions, synonyms, usage/query guidance, and scoped TMDL business rules. Existing operator
+metadata, bindings, and unknown parts survive reruns; readback verifies descriptions as well as
+structural settings. Rules ground consumers but do not enforce database constraints or certify
+agent execution. NB06 now only discovers graph ownership: it does not rewrite a portal-selected
+graph, force the five-type projection, or run refresh/GQL jobs as part of ontology binding.
 
 Two ways to run everything:
+
+Both NB01 Lakehouse setup variants provision `RTI_Demo_SQLDatabase_<env_suffix>` as an
+independent Fabric SQLDatabase in `RTI_DEMO_<env_suffix>`, alongside the Lakehouse
+and Eventhouse. Stage 2 automatically runs NB11 after both agents and Weather_001
+to insert missing demo rows and publish the SQL Data Agent source. Neither creation
+nor seeding depends on an app-owned database. Existing marked `HydroOperationalStore`
+items are moved without changing identity; child SQL endpoints move with them.
+Fabric SQLDatabase names cannot be changed (`SQLDatabaseDisplayNameCannotBeChanged`).
+Existing items keep their immutable name unless a controlled, field-verified replacement
+migration is performed. A retained write-blocked archive identifies its exact replacement
+and is excluded from active-source discovery only while that replacement is available.
+Seed reruns preserve existing values. On an existing workspace, the app deployer's NB11 bootstrap performs an
+explicit, field-verified copy/cutover from the retained app-owned database, preserves
+custom Data Agent content and applies the writable `hydrooperations` connector.
+Do not rerun full setup or Git import to perform this upgrade. See the
+[independent-store deployment contract](../../HydroOperationsApp/DEPLOY.md#independent-operational-sql-lifecycle).
+
+For **app deployment only**, start with the
+[deployment interface chooser](../../HydroOperationsApp/DEPLOY.md#start-here-choose-your-interface-not-a-different-deployment-process).
+The local **Deploy app** action and command-line deployment use the same
+`deploy_fabric_app.py` orchestrator. A normal app update does not require workspace
+deletion, reset, full Git import or rerunning data setup. Access/consent actions reported
+as blocked and ontology graph materialization remain explicit operator prerequisites.
 
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
   workflows and streams live progress.
+- **Full workflow** — the local web UI runs GitHub sync, `01_Pipe_Setup`, selected
+  energy setup, independent Foundry setup, then final app publication in one
+  monitored serial job. Each component has its own progress and failure boundary.
 
 ## Easiest start — just launch it (no commands to type)
 
 One-time setup on the machine: install **[Python](https://www.python.org/downloads/)**
+(3.11 or later; the local web UI uses `datetime.UTC`)
 (on Windows, tick *"Add python.exe to PATH"*), the
 **[Azure CLI](https://aka.ms/installazurecli)**, and **[Node.js](https://nodejs.org/)**
 (which includes npm and npx; needed only for **Deploy app**).
@@ -35,6 +83,39 @@ the locked npm packages (including Rayfin) under Node 24. It signs you in to Azu
 `http://127.0.0.1:5000`** automatically. Keep the window open while you use it; close
 it (or press Ctrl+C) to stop.
 
+For the simplest deployment, choose the target tenant/workspace, then use **Load signed-in
+subscriptions** instead of copying a subscription GUID. The list shows tenant IDs and does
+not switch Azure subscriptions. Use **Deploy app** for an existing prepared workspace; only
+use **Initialize everything** when Git sync and data setup are actually needed.
+**Set up Foundry agents** is a separate module before final app publication;
+it owns project/model/registry settings and explicitly billable first-time
+provisioning. Blank overrides use verified discovery, never another tenant's saved target.
+
+For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
+checkout and explicitly select **Branch = `feat/dibakar`** when using Git sync or
+**Initialize everything**; those branch fields prefill from the current local checkout. **Deploy app**
+verifies prepared Foundry specialists, including Weather, without creating or
+publishing agents. It does not update Fabric notebook source or run Weather
+ingestion. **Set up energy sources** prepares PR #19 without a hidden feature
+profile; routine app publication preserves the same target's map setting.
+Explicit map enablement verifies the twelve live serving layers before build.
+Map Data Agent chat remains a separate prerequisite. See the
+[feature-branch deployment matrix and remaining prerequisites](../../HydroOperationsApp/DEPLOY.md#deploying-the-merged-feature-branch)
+before treating either workflow as complete end-to-end readiness.
+
+Every app deployment now records its eight section durations, including the failed section
+if it stops. The local progress panel shows the final timing table; `DEPLOY_TIMINGS=` in the
+log is the machine-readable receipt. Full-workflow Git sync and setup-pipeline time are
+separate, not hidden inside that app-only total.
+See [speed measurements and least-privilege handoff](../../HydroOperationsApp/DEPLOY.md#faster-deployment-and-a-simpler-operator-path)
+for the routine operator path, one-time administrator tasks, and the manual graph prerequisite.
+Neither an app deployment nor a timing receipt certifies business-agent execution or delivery.
+The October 24 FEATURE verification measured a warm app redeploy at **5m 51s**,
+versus **8m 38s** before the authentication-diagnostic replacement. All 40 workspace
+items and 40 SPA redirects were preserved. The linked timing comparison separates
+the directly measured authentication saving from other service-latency variation;
+it is not a fresh-workspace/setup-pipeline timing guarantee.
+
 ## What manual sync this replaces
 
 In the Fabric portal the manual flow is:
@@ -52,6 +133,96 @@ folders that already exist** — which also clears the "empty folder that won't 
 situation.
 
 ## Prerequisites
+
+The setup pipeline and **Run pipeline** form have no Data Agent or Operations Agent mode flags.
+The project always attempts agent provisioning against Ontology v2; existing v1 items are rejected
+rather than reused. The original Data Agent, ontology-backed Operations Agent, playbook/actions, Teams,
+and email-alert provisioning are retained. Real failures propagate through RTI_009/010/011 and
+setup. Product support and execution must still be checked in the target tenant; restored
+implementation is not live certification. See
+[ontology generation policies](../../README.md#ontology-generations-and-optional-agents).
+
+Healthy Data Agent completion is **deployment `ready`, publication `published`, runtime
+`verified`**, with generation `2`; publication-only success is not reported as readiness. The real NB09 smoke
+check requests the selected ontology's first five facility IDs/names, compares exact records with
+independently read Lakehouse rows, and does not put expected values in the prompt. Multi-source
+agents are allowed, with SQL/custom content and selections retained and no cached proof required.
+Evidence is a source-specific functional smoke test; **execution provenance is not attested**, and
+SQL/combined-source answers are not certified. Failed or inconclusive checks fail, except for the
+exact temporary `This API version is not supported for the specified Ontology item` response after
+verified publication. That response is recorded as `known_product_limitation`, not readiness.
+After a Fabric service fix, rerun NB09 against the existing settings Lakehouse as the delegated
+notebook user: it republishes/verifies the selected v2 source and makes a fresh smoke query without
+skipping because of the previous result. No code switch or workspace reset is needed. See the
+[recheck procedure](../../docs/foundry-deployment-and-multi-agent-setup.md#recheck-after-a-data-agentontology-service-fix)
+for exact status keys, preservation guarantees and separate acceptance gates.
+NB10 leaves the ontology-backed Operations Agent stopped; configuration does not prove delivery.
+
+The ontology-backed agent now uses the October 23 working playbook: two SQL/KQL-grounded
+BAD/UNCERTAIN rules, `Id` mapped from `opcua_node_id`, and direct email action bindings.
+The Knowledge source remains the verified v2 ontology. The notebook resolves the target
+Lakehouse SQL endpoint and KQL database query URI from Fabric, rather than copying endpoints
+from the reference workspace. This requires the target Lakehouse SQL endpoint to be ready.
+All copies of the queries in the playbook's grounding definitions are rebound together.
+The imported conditions remain state-based; **no 15-minute cooldown is implemented**.
+See the [alert policy guidance](../../docs/foundry-deployment-and-multi-agent-setup.md#operations-agent-playbook-and-alert-frequency).
+
+The existing `ops_agent_copy_playbook=false` setting remains supported for the ontology-backed
+agent when an operator chooses portal generation. The default remains `true`.
+The separate Eventhouse-Knowledge Operations Agent is retired. RTI_010 first verifies the
+retained ontology agent, then finds only `RTI_Demo_OpsAgent_Eventhouse_<suffix>` in the target
+folder. It checks saved identity and the exact target KQL database Knowledge source before
+deletion, requires an absence readback, and removes the four `eventhouse_ops_agent_*` settings.
+Missing retired agents are safe on rerun; identity conflicts or deletion/readback/settings
+cleanup failures propagate. Fresh RTI_001 runs no longer seed a name for the retired agent.
+The shared Eventhouse, silver tables, ontology agent's SQL/KQL grounding, Teams destination,
+Outlook connection, and `Pipe_SendEmailAlert` remain unchanged.
+The ontology agent remains stopped by default, and API/readback failures never cause the notebook to
+silently remove the playbook, Teams delivery, or actions.
+
+NB11 extends a live Data Agent with the operational SQL Database independently of NB09's
+ontology result. No ontology lookup, attachment, generation check, or runtime proof is required.
+Existing sources, custom settings, instructions, and selections are retained. Exact SQL-source
+draft and published readback is required; publication is not runtime verification. Missing agents
+and real SQL/API failures still fail the always-attempted extension. NB11
+writes only its SQL-source status/reason, leaving NB09's deployment/publication/runtime results
+untouched. Independent SQL/GraphQL results are preserved before required failure is raised.
+
+NB09's general Data Agent policy is bounded to 700 words / 5,500 characters before
+operator or NB11 additions. Ontology v2 supplies semantic context; its associated Lakehouse
+and Eventhouse execute source-native queries. Correlate telemetry/reference rows by
+`opcua_node_id`, then operational SQL rows by `equipment_id` / `equipmentId` and, where
+applicable, `opcuaNodeId`. Instructions cannot create missing source access or runtime
+capabilities. NB11 retains ownership of SQL source-specific guidance. NB09 replaces only
+its owned instruction sections and known legacy preamble, preserving custom headings,
+settings and NB11's `## Operational data (...)` section. An instruction-only live correction
+must preserve all source definitions/selections, ontology bindings and published parts;
+test the edited draft separately. A successful published query does not validate different
+draft selections, and publishing can promote those unrelated draft changes.
+
+For an existing context-backed agent, NB09 recognizes
+`Files/Config/<stage>/ontologies/<name>/ontology.json`, verifies its matching live v2
+identity, and preserves it without adding separate Lakehouse/Eventhouse profiles or
+rewriting NB11's SQL source guidance. The Foundry connection validator recognizes this
+published shape too. Fully deselected direct profiles for the same underlying items can
+suppress automatic attachment: native traces showed `attachedCount=0`, `skippedCount=2`
+and no Lakehouse/KQL tools. A guarded removal of just those unused profiles restored
+`attachedCount=2`, `skippedCount=0`. Fresh draft and published queries then joined
+telemetry, ontology reference data and operational SQL successfully. This is not a reason
+to remove selected/custom sources indiscriminately or claim the federation planner itself
+was repaired. See the [bounded live evidence](../../docs/foundry-deployment-and-multi-agent-setup.md#compact-data-agent-instructions-and-automatic-sources-october-23-2026).
+
+The authorized live correction updated only NB09/NB11/setup notebook definitions, preserving live
+metadata, attachments, configure/parameter cells, and unrelated parts. Only NB09 executed once:
+`b1818634-f77e-4dec-ab55-982460ecb101` correctly **failed** on the actual unsupported Ontology API
+semantic error despite HTTP 200 / `isError: false`. Delta readback confirmed deployment/runtime
+`failed`, publication/SQL-source `published`, and enabled mode. All five SQL tables, all five
+ontology elements, and custom content remained intact in draft and published definitions; a
+subsequent SQL-only MCP query returned `{"workOrderCount":12}`. **At that historical validation,
+full setup and NB11 were not rerun after the then-new gate. The NB11 gate has since been removed
+and the independent SQL extension validated offline only.** That live record proves NB09
+required-failure handling and preservation, not healthy ontology runtime or a live rerun of
+the current NB11. See [the full live record](../../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
 
 - **`az login`** first (optionally `az login --tenant <tenant>`). Both scripts use
   your current Azure CLI sign-in to get a Fabric token — whoever you are signed in as
@@ -127,6 +298,22 @@ everything required.
 
 ## Run the setup pipeline and Key Vault preflight
 
+For a fresh, isolated feature workspace **without Fabric Git integration**, use
+the optional `FABRIC_FEATURE_CONFIG` mode of the existing app orchestrator.
+See [the feature-workspace runbook](../../HydroOperationsApp/DEPLOY.md#optional-isolated-feature-workspace-without-fabric-git).
+It imports local definitions with target-specific notebook references, creates
+approved dedicated prerequisites, and runs setup/seed/stream without introducing a
+second app deployment command. It does not copy source workspace data or credentials.
+Fabric setup runs before public artifact discovery and Foundry provisioning. The
+bootstrap verifies workspace Runtime 2.0 and rejects incompatible published
+Environment overrides before setup or Geo notebook execution. A confirmed terminal
+failed/cancelled map-publication job can be retried on the next explicit invocation;
+active or indeterminate jobs are resumed rather than duplicated. The final feature
+seed explicitly enables demo seeding and fails if an expected operational table is empty.
+Private-only Key Vaults use secure ARM initialization followed by the same managed
+private-endpoint preflight described below. Public network access stays disabled;
+no separate VM or Fabric Git connection is needed.
+
 `01_Pipe_Setup` chains the `RTI_*` notebooks, and nearly all of them call
 `notebookutils.credentials.getSecret(key_vault_uri, ...)` to load a service principal. **A Key
 Vault holding that principal is a hard prerequisite** — create one with three secrets whose
@@ -135,9 +322,161 @@ pipeline permission to read them (for example *Key Vault Secrets User*), and add
 principal to the workspace as Contributor or Admin. The tenant must also leave *Service principals
 can call Fabric public APIs* enabled.
 
-Weather provisioning also imports and publishes the `Weather` Fabric Environment with a
-NumPy-1-compatible pinned set of `pandas`, `xarray`, `shapely`, `pyproj`, `adlfs`, `zarr` and
-`numcodecs`. The Git sync verifies that
+All project Spark notebooks require **Fabric Runtime 2.0 (Spark 4.1 / Python 3.13)**,
+including Weather, with no older-runtime fallback. Both Git sync and the standalone
+pipeline runner set the workspace default to 2.0 and verify readback before proceeding;
+they patch only the runtime setting, preserving unrelated pool and session configuration.
+They also verify every workspace Environment's **published** Spark compute runtime, across
+all inventory pages, and stop on an older or unreadable override rather than executing
+notebooks against it. They never downgrade or silently replace an operator's Environment.
+Unattached notebooks inherit that default. Weather notebooks attach to the Git-tracked
+`Weather` Environment, whose `Setting/Sparkcompute.yml` also explicitly selects 2.0.
+Its Python 3.13-compatible libraries use the official Runtime 2.0 NumPy 2.4.1 / pandas
+2.3.3 baseline, xarray 2025.10.1, shapely 2.1.2, pyproj 3.7.2 and adlfs 2025.8.0.
+Zarr 2.18.7 / numcodecs 0.15.1 retain Aurora's existing Zarr-2 reader contract.
+The previous NumPy-1 / pandas-2.1 pins are not compatible with this runtime; do not restore
+them or downgrade the runtime to make publication pass. Publication failures propagate.
+No custom pool ID is copied between workspaces. See the official
+[Runtime 2.0](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-2-0) and
+[migration guide](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-2-0-migration-guide).
+On October 23, 2026, the local app successfully imported commit `87fde47` into
+`ws-FabricIQAppsDemoFEATURE` and published Weather on Runtime 2.0. Authoritative
+readback verified the workspace default, the published Environment runtime and all eight
+library versions above; 74 focused regression tests passed. A separate read-only Weather
+notebook then executed under Python 3.13.11 / Spark 4.1, importing all Weather packages and
+passing geometry and in-memory Zarr-2 roundtrip checks. The initial workspace-folder HTTP 401
+was resolved by identifying the exact `clientid` principal through approved Fabric private
+connectivity and granting it Contributor on the target workspace. Lakehouse creation then
+completed successfully; Key Vault public access remained disabled.
+Fresh-workspace testing also exposed an Eventstream creation race: HTTP 202 is acceptance,
+not completed provisioning. NB02 now waits for the Fabric operation and reads its authoritative
+item result instead of attempting to find an unfinished item within 30 seconds. Item lookup
+also follows every inventory page. Failed or malformed operations still fail setup; no item
+is deleted or recreated to recover. These bounded checks do not certify the remaining setup,
+agent execution/delivery, native graph materialization or authenticated application runtime.
+The next rerun exposed a false source-mismatch error when Fabric returned valid native TMDL
+without private `ONT_*` annotations. Static binding identity is checked against the exact
+OneLake workspace/item URL, partition expression and physical table/column mappings;
+time-series bindings use the exact cluster/database/table resolved from target Fabric metadata.
+Private annotations are no longer authored or required, but conflicting ones, if present,
+still fail. An existing Direct Lake table with a missing source expression is rejected rather
+than silently retargeted. Unknown parts, existing mappings and strict readback verification
+remain preserved. The [official Ontology v2 definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition)
+provides the native backing-table contract.
+
+The subsequent FEATURE setup run completed the other notebook activities but failed NB09's
+strict ontology-only smoke with `Ontology query capability is unavailable in this environment.`
+This is **not** the narrowly allowed unsupported-API-version response, so that run failed rather
+than suppressing the error. The old smoke forbade SQL and KQL, contrary to the current agent
+instructions permitting source-native execution on ontology-associated sources. A separate delegated
+CLI diagnostic permitting the associated Lakehouse returned three facility ID/name rows in 46 seconds.
+NB09 now tests that intended ontology-context/static-binding contract, excluding operational SQL,
+KQL and unrelated sources, and still compares exact records with the independent live-row oracle.
+It also handles Fabric MCP's actual CSV result attachment/generated-file footer rather than
+misclassifying a successful query as malformed JSON. The evidence label is
+`ontology_context_facilities_smoke_v1`; this bounded check does not attest execution provenance,
+native ontology traversal, native graph readiness, telemetry/SQL joins, or browser access.
+All real execution, publication, transport, semantic and reconciliation failures still propagate.
+The corrected full setup pipeline then completed successfully through the local UI. Live Lakehouse
+SQL readback independently confirmed the Data Agent was ready/published and its bounded static smoke
+was verified. A separate NB09 follow-up persisted a complete 4,784-byte JSON receipt, including exact
+expected/returned facility rows, below the SQL endpoint's 8,000-byte string readback limit. These
+results do not certify SQL/telemetry joins, native traversal or agent delivery.
+
+The selected ontology's **Manage graph** page also reported all five entity types as
+**Ineligible**, with **Unsupported Datasource** details. Its displayed completed materialization
+contained zero projected node/edge types; this is not a usable native graph. Bounded
+same-Lakehouse SQL-source representation probes did not clear that validation. Only the
+task-modified source parts and notebook functions were then restored and verified; no source
+retarget, speculative authoring change, or graph fallback was retained. The FEATURE application
+has not been deployed or runtime-accepted. Reusing the existing Foundry project would also
+rebind its stable workspace connections; use an isolated target-specific project before publishing
+another concurrently hosted workspace. A native UI-created, task-owned one-entity ontology did
+show an eligible Lakehouse binding. Adding its schema field alone to the target did not resolve
+eligibility; the public definition update also omitted the native source annotations. Both bounded
+target experiments were restored with exact guards and verified readback; no speculative source
+change was retained.
+
+The first actual app deployment reused the SPA, preserved its 39 redirects, and provisioned a new
+FEATURE AppBackend and isolated Foundry project/model without changing the original project.
+It then stopped because the hosted source digest requires the independent STID GraphQL item that
+NB11 had not yet created. The canonical flow now bootstraps current NB11 after AppBackend/schema
+creation and before Foundry, with Boolean `seed_demo_data=False`. GraphQL and Data Agent SQL-source
+publication remain mandatory; existing operational rows and demo-seed status are preserved.
+The engine verifies the live notebook code, Runtime 2.0 and idle state before starting, bounds its
+job wait to 15 minutes, propagates failures, and refreshes the verified public source identity.
+An ordinary deployment with an existing verified GraphQL ID avoids this extra notebook run.
+The actual source-only retry then completed NB11 successfully: independent SQL counts before and
+after remained zero in all five operational tables, while GraphQL and the Data Agent SQL source
+were configured/published and four target-specific Foundry Prompt Agents passed definition readback.
+The first Hosted Agent image build stayed in local repository-root packaging without submitting an
+ACR build. Only that verified, task-owned CLI packaging process was stopped; no Azure build or
+resource was removed. The canonical builder now stages exactly its existing fingerprinted manifest
+in a temporary context (33 files / 1,064,697 bytes for this revision), verifies the same image tag,
+and cleans the context on either success or failure. The staged retry submitted ACR run `dt1`,
+which succeeded in 2m19s; local Unicode log streaming then failed and temporary-directory cleanup
+encountered a Windows working-directory lock. The builder now waits with `--no-logs` and a
+20-minute remote build timeout, launching from the stable repository directory with absolute
+staged paths. The next actual local **Deploy app** retry reused the verified image and completed
+with `SUCCESS` at `https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net`
+(build 1.0.975, Hosted Agent v1). All 40 required SPA redirects were preserved; GraphQL, token
+and connector preflight/POST readiness passed. Normal Fabric browser sign-in then loaded three
+facilities, 15 equipment records and 90 instruments through the connector before SQL demo seeding.
+Explicit **Seed & provision** still seeds demo data later. Full runtime acceptance, including
+the target ontology's currently ineligible native graph, remains a separate gate.
+Hosted acceptance also exposed an obsolete compatibility path that drew a graph from Lakehouse
+rows while native graph loading failed. That path is removed: graph canvas, tree and scopes now
+require actual verified native entities and relationships, and retries do not depend on STID.
+Operational SQL and connector-backed reference/weather pages remain independently available.
+
+The final local **Deploy app** run published build **1.0.979 (`346a95c`)**, with
+canonical `SUCCESS`, endpoint/CORS readiness and all 40 SPA redirects preserved.
+Actual authenticated browser reads on that build returned HTTP 200, no query errors
+and complete pagination for all nine Lakehouse connector entities: three facilities,
+three systems, 15 equipment records, 90 instruments, nine weather variables and
+currently empty weather areas, locations, observations and forecasts.
+Explicit **Seed & provision** completed; independent SQL counts are 12 work orders,
+six maintenance notifications, 30 inspections, 12 spare parts and 15 3D models.
+**Start stream** produced 90 fresh signals during acceptance; the bounded run later
+ended and the app correctly labels those readings stale, not currently fresh.
+
+The FEATURE Data Agent also answered actual read-only portal questions combining
+Lakehouse/Ontology mappings, Eventhouse telemetry and operational SQL. The positive
+UNCERTAIN-quality case returned three Sloy signals, correctly matched T001's
+`vibration_a` to `WO-2841`, distinguished T002's different-signal work order and
+reported no work order for T004. Independent SQL readback matched the cited
+work-order records. This bounded case is not execution-provenance attestation,
+comprehensive combined-source certification or Hosted/Operations Agent acceptance.
+Operations actions and Teams/email delivery remain untested.
+
+Weather ingestion is **blocked by the provider credential**, not a Runtime downgrade:
+Weather_002 failed with Aurora STAC HTTP 401 on Runtime 2.0. A bounded Python 3.13.11
+probe received `invalid subscription key` with both the existing query parameter
+and the subscription-header placement. No authentication-placement workaround was
+retained. An operator must verify or replace `mai-weather-api-key` in `akvfabcapnew`
+for this exact Aurora/STAC service, then rerun **Connect weather**. Do not put the
+secret in logs or chat. The failing owned pipeline is cancelled; the diagnostic
+completed and its original notebook definition and description were restored with
+exact readback. Weather_003 and Weather_020 did not execute in that failed pipeline.
+The workspace default and published Weather Environment both read back Runtime 2.0.
+Earlier portal inspection reported ineligible/unsupported source bindings, but the
+final authenticated browser verification returned actual native topology from the
+explicitly bound FEATURE GraphModel: metadata, queryable schema and both GQL queries
+returned HTTP 200, and the graph canvas/tree/scopes displayed native entities with
+operational overlays. The repeated GQL read returned **201 native nodes and 198
+native relationships**, execution code `00000`, without continuation; the **All**
+scope displayed 174 nodes after signal presentation and operational enrichment.
+This is live graph evidence, not the removed STID fallback.
+It does not establish an automated materialization endpoint or explain the earlier
+portal eligibility warning. No existing binding or resource was deleted.
+
+Missing native graph binding now stops the app engine before
+AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.
+This guard does not make ineligible entities eligible or certify nonempty topology from binding
+JSON alone. All 48 pre-existing ARM resource IDs across
+the two subscriptions were rechecked and remained present.
+
+The Git sync verifies that
 `Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
 `Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`
 folder and binds all four to the project Lakehouse. The fetch notebooks read
@@ -147,7 +486,9 @@ requests, reads, or stores their values.
 
 Provisioning also creates `03_Pipe_Weather` with its UTC schedule disabled. Stage 2 enables the
 six-hour schedule only after every setup activity, including Weather schema initialization,
-succeeds. The schedule aligns to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
+succeeds and `enable_weather_schedule` is true (the default). Set it to false for a
+feature workspace without provider credentials; the Git-free bootstrap does this
+automatically. The schedule aligns to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
 Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage rebuilds area metrics
 separately for every vendor and forecast type, enforces retention, and refreshes the wide serving
 tables the app reads. Downstream activities depend on `Succeeded`, so a failed ingestion stops the
@@ -156,14 +497,41 @@ schedule instead of adding duplicates.
 
 The pipeline's declared parameter defaults point at the tenant it was authored in, so
 **every environment-specific parameter must be overridden** — at minimum `workspace_id`,
-`key_vault_uri` and `ops_agent_run_as_user`. Leave `env_suffix` at `V6` unless you also change
-`rayfin/.env`, because the app discovers `RTI_Demo_Eventhouse_V6` and `Energy_IQ_LakehouseRTI_V6`
-by name. `ops_agent_teams_team_id` / `ops_agent_teams_channel_id` are optional; when they do not
-resolve, `RTI_010` falls back to an Operations Agent without Teams delivery.
+`key_vault_uri`. Keep the chosen `env_suffix` consistent with app discovery/configuration; example
+suffixes such as `V6` and `V9` are environment names, not ontology generations. Use a fresh workspace
+or unused suffix when an existing target ontology is v1: setup rejects it without migration.
+`ops_agent_run_as_user`, `ops_agent_teams_team_id`, and `ops_agent_teams_channel_id` configure the
+restored Operations Agent run-as identity and Teams delivery. `alert_email_to` separately configures
+the `Pipe_SendEmailAlert` recipient and is required by the local launcher. A direct RTI_010 run
+falls back to the configured run-as user, or the deploying user when both fields are blank. Email alerts
+also require the Office 365 Outlook OAuth2 connection described in the root README. Review status/reasons and
+verify actual playbook execution and delivery separately from app-deployment success.
 
 The **Run pipeline** tab accepts either the target workspace display name or GUID in
 the sidebar. Its workspace parameter mirrors that value, and the runner resolves it
 to the canonical GUID before starting `01_Pipe_Setup`.
+
+The **Full workflow** tab composes the existing actions without replacing their
+implementations. It is self-contained: only the target tenant and workspace are
+shared from the sidebar; Git, pipeline, and app-deployment values are entered on
+the Full workflow screen itself.
+
+1. **Sync from GitHub** using its own repository, branch, directory, reusable
+   connection/PAT settings, and connection test.
+2. **Run `01_Pipe_Setup`** using its own complete parameter set.
+3. **Deploy the Fabric app** using `deploy_fabric_app.py` and its own optional
+   SPA client ID.
+
+The individual Sync, Pipeline, and Deploy tabs remain available for running or
+troubleshooting a single component; their values are not prerequisites for a
+Full workflow run.
+
+The steps run strictly in order under one exclusive job. Each child keeps its
+existing validation, timeout, environment-only secrets, and live output. If a
+step exits unsuccessfully, the combined log identifies the failed component and
+records that later steps were not started. The progress display exposes detailed
+Sync, Pipeline, and Deploy subphases, and **Cancel running jobs** terminates the
+currently active child process.
 
 Before the pipeline starts, the app resolves the Key Vault URI against Azure resources
 visible to the current `az login` identity. If public network access is enabled with a
@@ -239,6 +607,10 @@ tenant and workspace selected in the sidebar:
   selected identity is missing from the Azure CLI token cache or its token is stale, deployment opens
   tenant-scoped Microsoft sign-in and retains that recovery in an isolated per-tenant cache for later
   deploys. Missing Node/npm/npx is reported with an install link.
+  The resolved capacity is checked when visible: a non-Active/unknown state stops before
+  configuration changes. Missing capacity-list permission/visibility is explicitly warned,
+  without adding a new operator-role requirement; final endpoint checks still apply.
+  The launcher never resumes, resizes or reassigns a paused capacity.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
   stop before changing Rayfin state and print an administrator handoff. A deployment never ships
@@ -247,10 +619,39 @@ tenant and workspace selected in the sidebar:
   current capacity. A workspace/capacity/tenant mismatch moves only the three Rayfin state files
   into a unique temporary backup, then generates and validates a fresh ignored `rayfin/.env`.
   Existing state is not deleted.
+   In the independent **Set up Foundry agents** module (or the combined CLI flow),
+   the deployer converges the **Foundry** side: the
+   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
+   Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
+   published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
+   Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,
+   `HYDRO_PRODUCTION_WRITES_ENABLED` in the launch environment). Select the Azure subscription with the form or
+   `HYDRO_AZURE_SUBSCRIPTION_ID`; the engine verifies that it is enabled in the Fabric tenant. New target-specific
+   project creation is an explicit, billable opt-in and requires model version/SKU/capacity settings, not defaults
+   copied from the demo tenant. Both forms expose those settings. Requires `azd`; missing
+   `azure.ai.agents` and `microsoft.foundry` extensions are installed
+   by the deployer. Native graph materialization remains a manual prerequisite; if the full workflow stops
+   there after setup, complete the ontology's Manage graph flow, resolve the explicit binding and resume
+   **Set up Foundry agents**, followed by **Deploy app**, not another workspace reset.
+   The final app module only reads prepared Foundry definitions/runtime identities;
+   it does not discover projects, bootstrap SQL, build images or publish agents.
+   Pass a fallback operator-verified binding through the form or
+   `HYDRO_ONTOLOGY_GRAPH_BINDING`; do not hand-edit generated state. See
+   [Foundry deployment and multi-agent setup](../../docs/foundry-deployment-and-multi-agent-setup.md).
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
    and deploy static hosting, apply the generated hosting origin to backend auth, then always
    reapply AppBackend runtime/CORS settings and the DAB/SQL configuration. This also runs for an
    unchanged hosting origin so managed-service restarts cannot leave stale runtime settings.
+   The same flow configures the read-only, delegated `hydrolakehouse` Rayfin connector for
+   STID/weather. It resolves the selected Lakehouse's SQL analytics endpoint ID from live
+   metadata, reapplies the connector, and rejects missing/skipped/partial generation or apply
+   receipts. No extra form parameters or manual GraphQL binding are needed for SPA reads.
+   An empty tenant-scoped Azure CLI cache never shadows an existing signed-in identity:
+   the engine selects a scoped cache only when its profile contains the target tenant,
+   then still verifies the active account's exact tenant before changing Fabric state.
+   Child Python processes use UTF-8 output. ACR waits with `--no-logs` because the
+   Windows Azure CLI isolated interpreter can ignore Python encoding environment variables.
+   Run ID/status and image digest readback verify the build without Unicode log streaming.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
   and consent, then verify the live app returns HTML over HTTP 200. The final hard checks ensure
   the generated API URL targets the current capacity/workspace/AppBackend and send
@@ -258,6 +659,16 @@ tenant and workspace selected in the sidebar:
   retried with bounded backoff. The checks also send a minimal GraphQL query and a deliberately
   incomplete token request; missing CORS headers, GraphQL failure, or a persistent token HTTP 5xx
   fails deployment.
+  The Lakehouse connector also requires a successful browser-equivalent CORS preflight and an
+  HTTP 401 authentication challenge from its unauthenticated POST; missing routes, server errors
+  and missing CORS fail deployment. The engine explicitly reports
+  `LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed`. Verify all nine entities separately through
+  normal Fabric browser sign-in, including complete pagination and seeded reference rows.
+  Empty weather tables are legitimate, not invented data. Azure CLI direct exchange is not a
+  supported acceptance path: requesting `Item.Execute.All` returned API-owner preauthorization
+  error `AADSTS65002`, not an operator-consent prerequisite. Browser acceptance proves only the
+  tested session's access. The existing Fabric GraphQL API remains for
+  the hosted crew's independent verification; SQL, agents, telemetry and native graph are unchanged.
   The final check also verifies the SPA redirect, every delegated scope, and its consent grant from
   Microsoft Graph. Missing SPA access, redirects, permissions, or consent blocks `SUCCESS` because
   browser sign-in and live Fabric data would otherwise be unavailable.

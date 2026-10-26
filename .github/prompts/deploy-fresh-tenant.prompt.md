@@ -10,6 +10,39 @@ tenant, workspace, or region. This repo already automates almost everything. **F
 existing scripts and docs — do not reinvent the wheel or click through the Entra portal by
 hand when a script does it.**
 
+## Ontology v2 readiness boundary
+
+RTI setup is v2-only. Before relying on ontology-backed features, require the selected item's live
+`properties.generation` to be numeric `2`; an app redeploy does not migrate an existing v1 item.
+Use the [RTI setup workflow](../../README.md#deploy) with a fresh workspace or unused environment
+suffix when a replacement is needed. REST `/v1` and suffixes such as `V9` are unrelated to the
+ontology generation.
+
+Report core setup, app hosting/auth, and agent execution/delivery separately. Agent provisioning is
+always attempted; there are no agent mode or skip flags. Retain the ontology-backed Operations
+Agent, its playbook/actions, Teams, and email-alert provisioning. Never recreate the retired
+Eventhouse-Knowledge agent; preserve shared telemetry and the ontology agent's SQL/KQL grounding.
+NB10 verifies the retained agent before retiring the exact old agent and its settings.
+Real failures propagate through
+RTI_009/010/011 and setup. NB09 alone records Fabric's exact temporary unsupported-Ontology-v2
+response as `known_product_limitation` after verified v2 publication, without claiming runtime
+readiness. NB11 must preserve existing sources and custom content while adding SQL with exact
+draft/published readback. The bounded smoke does not attest execution provenance or certify
+SQL/combined-source answers. No product issue resolution or full end-to-end acceptance follows
+from restoring the implementation. The orchestrator's
+`SUCCESS` marker certifies its deployment checks, not ontology provisioning, native graph readiness,
+or agent execution.
+
+Native graph features require a manual prerequisite in the selected ontology: **Manage graph →
+select eligible entities/relationships → Continue → Materialize**. Configure
+`RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON with `workspaceId`, `ontologyId`, and `graphModelId`;
+optional `nodeTypes`/`edgeTypes` map queryable aliases to exact ontology type names/IDs.
+Public REST metadata does not expose ownership. Never infer it from names, a sole graph, or
+structural similarity; never guess a namespace-label delimiter. No published ontology-owned
+materialization REST endpoint is established, so do not promise fully unattended graph deployment.
+Native topology drives canvas/tree/scopes independently of GraphQL/STID; KQL/SQL only enrich actual
+native entities. See [the native graph contract](../../docs/knowledge-graph.md).
+
 ## Mandatory one-shot command
 
 From the repository root, deploy through the orchestrator only:

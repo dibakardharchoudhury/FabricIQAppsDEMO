@@ -74,6 +74,13 @@
   input:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.28); background:#0c1531; }
   input:disabled { opacity:.45; cursor:not-allowed; }
   input[type=checkbox] { width:18px; height:18px; accent-color:var(--primary); }
+  select { background:var(--field); border:1px solid var(--border); color:var(--text); border-radius:10px; padding:.62rem .78rem;
+    font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal; width:100%; min-width:0; }
+  select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.28); }
+  .foundry-block { margin-top:1.15rem; padding-top:1rem; border-top:1px solid var(--border); }
+  .foundry-block > strong { display:block; margin-bottom:.2rem; color:#fff; }
+  .foundry-block > .hint { margin:.1rem 0 .85rem; }
+  .foundry-block label.check { margin-top:.85rem; align-items:flex-start; }
   .card.danger input[type=checkbox] { accent-color:var(--destructive); }
 
   /* buttons */
@@ -137,6 +144,26 @@
   .phases li.done::before { content:"\2713"; }
   .phases li.active { color:#0b1020; font-weight:750; background:linear-gradient(135deg,var(--warn),#f59e0b); border-color:transparent; }
   .phases li.active::before { content:"\25D0"; }
+  .workflow-phase-groups { display:grid; gap:.55rem; margin-top:.9rem; }
+  .workflow-phase-group { border:1px solid var(--border); border-radius:10px; background:rgba(3,8,20,.32); overflow:hidden; }
+  .workflow-phase-group[open] { border-color:rgba(59,130,246,.38); background:rgba(59,130,246,.05); }
+  .workflow-phase-group.active { border-color:rgba(251,191,36,.48); background:rgba(251,191,36,.06); }
+  .workflow-phase-group.done { border-color:rgba(52,211,153,.3); }
+  .workflow-phase-group.failed { border-color:rgba(251,113,133,.5); background:rgba(251,113,133,.06); }
+  .workflow-phase-summary { display:grid; grid-template-columns:1.45rem minmax(0,1fr) auto; gap:.55rem; align-items:center;
+    padding:.65rem .75rem; cursor:pointer; list-style:none; user-select:none; }
+  .workflow-phase-summary::-webkit-details-marker { display:none; }
+  .workflow-phase-summary::before { content:"\25CB"; display:grid; place-items:center; width:1.25rem; height:1.25rem;
+    border-radius:50%; color:var(--muted); border:1px solid var(--border); font-size:.68rem; }
+  .workflow-phase-group.active .workflow-phase-summary::before { content:"\25D0"; color:#0b1020; border-color:transparent; background:var(--warn); }
+  .workflow-phase-group.done .workflow-phase-summary::before { content:"\2713"; color:#06281e; border-color:transparent; background:var(--ok); font-weight:800; }
+  .workflow-phase-group.failed .workflow-phase-summary::before { content:"!"; color:#fff; border-color:transparent; background:var(--err); font-weight:800; }
+  .workflow-phase-name { min-width:0; color:var(--text); font-size:.8rem; font-weight:700; }
+  .workflow-phase-state { color:var(--muted); font-size:.7rem; font-weight:650; white-space:nowrap; }
+  .workflow-phase-group.active .workflow-phase-state { color:#fde68a; }
+  .workflow-phase-group.done .workflow-phase-state { color:var(--ok); }
+  .workflow-phase-group.failed .workflow-phase-state { color:#fecaca; }
+  .workflow-phase-group .phases { padding:.15rem .75rem .75rem 2.75rem; }
 
   /* shell: left sidebar + content pane */
   .shell { display:grid; grid-template-columns:266px 1fr; gap:1.6rem; align-items:start; }
@@ -204,6 +231,17 @@
 
   /* pipeline parameter fields (dynamically rendered) */
   .params { display:grid; grid-template-columns:repeat(2,1fr); gap:1.15rem 1.2rem; }
+  .workflow-steps { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin:1rem 0 0; }
+  .workflow-step { padding:.8rem .9rem; border:1px solid var(--border); border-radius:10px;
+    background:rgba(148,163,184,.06); color:var(--muted); font-size:.8rem; line-height:1.45; }
+  .workflow-step strong { display:block; color:var(--text); margin-bottom:.2rem; }
+  .workflow-config { display:grid; gap:1rem; margin:1rem 0; }
+  .workflow-config-section { padding:1rem; border:1px solid var(--border); border-radius:12px;
+    background:rgba(15,23,42,.28); }
+  .workflow-config-head { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:.85rem; }
+  .workflow-config-head strong { display:block; color:var(--text); font-size:.9rem; }
+  .workflow-config-head span { color:var(--muted); font-size:.75rem; line-height:1.45; }
+  .workflow-config-section .params { margin-top:.4rem; }
   .param { display:flex; flex-direction:column; gap:.4rem; }
   .param .plabel { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
   .param .phelp { font-size:.74rem; line-height:1.45; color:#7c8ab0; font-weight:400; margin:-.06rem 0 .1rem; }
@@ -233,6 +271,7 @@
   @media (max-width:640px) {
     .grid { grid-template-columns:1fr; }
     .params { grid-template-columns:1fr; }
+    .workflow-steps { grid-template-columns:1fr; }
     .page { padding:1.6rem 1rem 2.5rem; }
   }
 </style>
@@ -247,7 +286,7 @@
         </div>
         <div>
           <h1>Initialize Your Fabric Demo</h1>
-          <p class="sub">Sync a workspace from GitHub &amp; clear its items &mdash; powered by your <code>az login</code> session.</p>
+          <p class="sub">Choose a target, prepare its services, publish the app last.</p>
         </div>
       </div>
 
@@ -272,9 +311,12 @@
 
       <nav class="nav" role="tablist">
         <div class="nav-group"><span class="tag"></span> Actions</div>
-        <button id="tabSync" class="tab active" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
+        <button id="tabSync" class="tab" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
         <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
+        <button id="tabEnergy" class="tab run" data-tab="energy" type="button">Set up energy sources</button>
+        <button id="tabFoundry" class="tab run" data-tab="foundry" type="button">Set up Foundry agents</button>
         <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Deploy app</button>
+        <button id="tabWorkflow" class="tab active" data-tab="workflow" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg> Full workflow</button>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
       </nav>
 
@@ -292,7 +334,113 @@
 
     <main class="main">
 
-  <section id="paneSync" class="pane active">
+  <section id="paneWorkflow" class="pane active">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
+        <h2>New workspace: guided deployment</h2>
+      </div>
+      <p class="hint">Configure the complete workflow here. Only the tenant and workspace are shared from the target card on the left. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
+      <aside class="notice">
+        <strong>Already deployed? Use Deploy app instead.</strong> Do not import Git or rerun setup to update the website.
+        For a new target, reuse an administrator-prepared SPA, Key Vault and Foundry project.
+        You do not need Global Administrator or subscription Owner. Tenant consent, capacity access,
+        private endpoints and scoped Azure permissions must still be prepared by their owners.
+        <a href="/deploy-guide" target="_blank" rel="noopener">Open the short deployment guide</a>.
+      </aside>
+      <div class="workflow-steps">
+        <div class="workflow-step"><strong>1. Sync from GitHub</strong>Imports the selected branch into the target Fabric workspace.</div>
+        <div class="workflow-step"><strong>2. Run setup pipeline</strong>Runs Key Vault preflight and <code>01_Pipe_Setup</code>.</div>
+        <div class="workflow-step"><strong>3. Set up energy sources</strong>Prepares the selected energy-map data independently.</div>
+        <div class="workflow-step"><strong>4. Set up Foundry agents</strong>Reuses the selected project; converges five specialists and the Hosted coordinator.</div>
+        <div class="workflow-step"><strong>5. Deploy Fabric app</strong>Publishes the app last, with read-only agent verification and endpoint/CORS checks.</div>
+      </div>
+      <div class="workflow-config">
+        <section class="workflow-config-section" aria-labelledby="workflowSyncHeading">
+          <div class="workflow-config-head"><div><strong id="workflowSyncHeading">1. GitHub sync</strong><span>Choose the source and connection behavior used by this full workflow.</span></div></div>
+          <div class="grid">
+            <label>Repository (owner/repo or URL)
+              <input id="workflowRepository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
+            <label>Branch
+              <input id="workflowBranch" type="text" placeholder="Published branch matching this checkout" /></label>
+            <label>Directory (workspace root)
+              <input id="workflowDirectory" type="text" value="/" /></label>
+            <label class="check"><input id="workflowReuseConn" type="checkbox" checked /> Reuse existing connection</label>
+            <label class="check"><input id="workflowKeepConnected" type="checkbox" /> Keep connected after sync</label>
+            <label id="workflowPatWrap" style="display:none">GitHub PAT <span id="workflowPatNote"></span>
+              <input id="workflowPat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
+          </div>
+          <div class="testrow">
+            <button id="workflowTestBtn" type="button" class="ghost" disabled>Test connection</button>
+            <span id="workflowConnTestResult" class="testresult"></span>
+          </div>
+          <div id="workflowTestPanel"></div>
+        </section>
+        <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Setup pipeline</strong><span>Complete parameters for Key Vault, agents, alert delivery, and notebook execution.</span></div></div>
+          <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
+          <label class="check"><input id="workflowEnableEnergy" type="checkbox" checked /> Prepare and enable the energy map after core setup (no hidden bootstrap profile required).</label>
+        </section>
+        <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">4. Foundry multi-agent setup</strong><span>Separate from app publication. The tenant SPA is discovered automatically; its verified client ID is also used by the final app stage.</span></div></div>
+          <div class="grid">
+            <label>SPA client id (optional)
+              <input id="workflowDeployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+            <label>Azure subscription ID
+              <input id="workflowAzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Choose a signed-in subscription or enter its ID" /></label>
+          </div>
+          <button type="button" data-load-subscriptions>Load signed-in subscriptions</button>
+          <details class="foundry-block">
+            <summary>Advanced / first-time Foundry setup</summary>
+            <p class="hint">Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires the Azure Developer CLI (<code>azd</code>).</p>
+            <div class="grid">
+              <label>Operator-verified ontology graph binding (JSON)
+                <textarea id="workflowOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
+              <label>Foundry project endpoint
+                <input id="workflowFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
+              <label>Foundry project ARM resource ID (recommended)
+                <input id="workflowFoundryProjectResourceId" type="text" placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/.../projects/..." /></label>
+              <label>Model deployment
+                <input id="workflowFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
+              <label>Container registry
+                <input id="workflowAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
+              <label>Work-order writes
+                <select id="workflowProductionWrites">
+                  <option value="">Keep the current setting (default)</option>
+                  <option value="true">Enabled (every write needs human approval)</option>
+                  <option value="false">Disabled</option>
+                </select></label>
+            </div>
+            <label class="check"><input id="workflowFoundryCreate" type="checkbox" />
+              <span>Create/reuse a target-specific Foundry project when none is selected. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights. Unrelated projects are not reused.</span></label>
+            <div class="grid" style="margin-top:.85rem">
+              <label>Region for the new project (only when creating)
+                <input id="workflowFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
+              <label>Model catalog name (only when creating)
+                <input id="workflowFoundryModelName" type="text" placeholder="Blank: use the deployment name" disabled /></label>
+              <label>Model version (required when creating)
+                <input id="workflowFoundryModelVersion" type="text" placeholder="Available version in the selected region" disabled /></label>
+              <label>Model SKU (required when creating)
+                <input id="workflowFoundryModelSku" type="text" placeholder="Available deployment SKU" disabled /></label>
+              <label>Model capacity (required when creating)
+                <input id="workflowFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
+            </div>
+          </details>
+        </section>
+        <section class="workflow-config-section">
+          <div class="workflow-config-head"><div><strong>5. Final Fabric app deployment</strong><span>No Foundry project discovery, agent builds or publication. Verifies prepared source/runtime identities, publishes the SPA, and checks connectors, browser sign-in and CORS.</span></div></div>
+        </section>
+      </div>
+      <aside class="notice">
+        Tenant and workspace come from the target card. The GitHub PAT and pipeline parameters remain
+        environment-only, and deployment uses <code>deploy_fabric_app.py</code>.
+      </aside>
+      <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Initialize sources, set up Foundry &amp; deploy app last</button>
+      <div id="workflowPanel"><pre class="output muted">Combined progress and phase-tagged output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneSync" class="pane">
     <div class="card">
       <div class="card-head">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
@@ -303,7 +451,7 @@
         <label>Repository (owner/repo or URL)
           <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
         <label>Branch
-          <input id="branch" type="text" value="main" /></label>
+          <input id="branch" type="text" placeholder="Published branch matching this checkout" /></label>
         <label>Directory (workspace root)
           <input id="directory" type="text" value="/" /></label>
         <label class="check"><input id="reuseConn" type="checkbox" checked /> Reuse existing connection</label>
@@ -334,21 +482,31 @@
     </div>
   </section>
 
-  <section id="paneDeploy" class="pane">
+  <section id="paneEnergy" class="pane">
+    <div class="card">
+      <div class="card-head"><h2>Set up energy-map sources</h2></div>
+      <p class="hint">Run core Fabric setup first. This module reuses the selected workspace's RTI Eventhouse, prepares GeoContext, runs only energy ingestion, and verifies the twelve serving layers and nine reservoir polygons. It does not rerun core setup, SQL seeding, or Foundry deployment. Sync Git first to update existing Git-managed energy notebooks.</p>
+      <p class="hint">Provider failures stop setup explicitly. Map Data Agent chat is a separate prerequisite; this module does not create an unverified agent or certify AI responses.</p>
+      <button id="energyBtn" class="primary" disabled>Set up energy sources</button>
+      <div id="energyPanel"><pre class="output muted">Energy setup output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneFoundry" class="pane">
     <div class="card">
       <div class="card-head">
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
-        <h2>Deploy Hydro Operations app</h2>
+        <h2>Set up Foundry multi-agent runtime</h2>
       </div>
-      <p class="hint">Resolves the selected tenant, workspace, and current capacity; safely repairs stale Rayfin state; then deploys and verifies the backend, database, and website. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
+      <p class="hint">Independent of final app publication. Reuses the selected Foundry project, verifies Fabric sources, prepares an AppBackend gateway only when needed, and converges the five specialists (including Weather) and Hosted coordinator. This stage does not publish the website. Creating a new project is opt-in below.</p>
       <aside class="notice" aria-label="Browser sign-in setup">
-        <strong>Portable deployment and browser readiness</strong>
+        <strong>Source and identity prerequisites</strong>
         <ul>
           <li>Workspace or capacity changes are detected automatically; generated API URLs are never copied between targets.</li>
-          <li>Every deploy reapplies AppBackend runtime/CORS settings and the SQL data configuration, including same-workspace redeploys.</li>
-          <li>Success requires working CORS preflights and POST probes for both <code>/graphql</code> and <code>/api/auth/v1/token</code>; backend warm-up and token HTTP 5xx responses are retried automatically.</li>
-          <li>The deployer registers the current app URL and requests the permissions needed for live Fabric data.</li>
-          <li>A tenant administrator may need to approve those permissions.</li>
+          <li>Complete core Fabric setup, operational SQL publication and the ontology's manual Manage graph materialization first.</li>
+          <li>This stage verifies configuration readback, not agent execution or alert delivery.</li>
+          <li>The final app stage owns hosting, browser permission/consent setup and endpoint/CORS verification.</li>
+          <li>A tenant administrator may need to approve browser permissions; no tenant-wide administrator role is assumed.</li>
           <li>If no usable SPA client ID can be resolved, deployment stops before changing local Rayfin state.</li>
         </ul>
         <strong>Next step if stopped:</strong> ask your Entra administrator for the SPA client ID,
@@ -357,9 +515,70 @@
       </aside>
       <div class="grid">
         <label>SPA client id (optional)
-          <input id="deployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+          <input id="foundryClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+        <label>Azure subscription ID
+          <input id="deployAzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Choose a signed-in subscription or enter its ID" /></label>
       </div>
-      <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
+      <button type="button" data-load-subscriptions>Load signed-in subscriptions</button>
+      <details class="foundry-block">
+        <summary>Advanced / first-time Foundry setup</summary>
+        <p class="hint">This setup module converges connections, five specialists and the <code>hydro-orchestrator</code> Hosted Agent; final app publication does not. Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires <code>azd</code>; missing Foundry extensions are installed for you.</p>
+        <div class="grid">
+          <label>Operator-verified ontology graph binding (JSON)
+            <textarea id="deployOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
+          <label>Foundry project endpoint
+            <input id="deployFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
+          <label>Foundry project ARM resource ID (recommended)
+            <input id="deployFoundryProjectResourceId" type="text" placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/.../projects/..." /></label>
+          <label>Model deployment
+            <input id="deployFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
+          <label>Container registry
+            <input id="deployAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
+          <label>Work-order writes
+            <select id="deployProductionWrites">
+              <option value="">Keep the current setting (default)</option>
+              <option value="true">Enabled (every write needs human approval)</option>
+              <option value="false">Disabled</option>
+            </select></label>
+        </div>
+        <label class="check"><input id="deployFoundryCreate" type="checkbox" />
+          <span>Create/reuse a target-specific Foundry project when none is selected. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights. Unrelated projects are not reused.</span></label>
+        <div class="grid" style="margin-top:.85rem">
+          <label>Region for the new project (only when creating)
+            <input id="deployFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
+          <label>Model catalog name (only when creating)
+            <input id="deployFoundryModelName" type="text" placeholder="Blank: use the deployment name" disabled /></label>
+          <label>Model version (required when creating)
+            <input id="deployFoundryModelVersion" type="text" placeholder="Available version in the selected region" disabled /></label>
+          <label>Model SKU (required when creating)
+            <input id="deployFoundryModelSku" type="text" placeholder="Available deployment SKU" disabled /></label>
+          <label>Model capacity (required when creating)
+            <input id="deployFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
+        </div>
+      </details>
+      <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
+      <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneDeploy" class="pane">
+    <div class="card">
+      <div class="card-head"><h2>Deploy Fabric app last</h2></div>
+      <p class="hint">Use after source and Foundry setup. Publishes the app without provisioning Foundry, running ingestion or seeding SQL. Missing or stale agent/source configuration stops publication and directs you to the setup module. Existing backend state is reused; runtime/CORS, SQL connector and browser-auth checks are still required.</p>
+      <p class="hint">Success requires CORS preflights and POST probes for <code>/graphql</code> and <code>/api/auth/v1/token</code>, with the current app origin and all existing Entra redirects preserved.</p>
+      <div class="grid">
+        <label>SPA client id (optional)
+          <input id="deployClientId" type="text" placeholder="Blank: discover the target tenant SPA" /></label>
+        <label>Energy-map navigation
+          <select id="appEnergyMap">
+            <option value="keep">Keep this target's setting</option>
+            <option value="enabled">Enable (requires verified energy setup)</option>
+            <option value="disabled">Disable</option>
+          </select></label>
+        <label>Operator-verified ontology graph binding (JSON, optional)
+          <textarea id="appOntologyGraphBinding" rows="3" placeholder="Blank: authoritative lineage or the verified target configuration."></textarea></label>
+      </div>
+      <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
   </section>
@@ -381,6 +600,9 @@
     </main>
   </div>
 
+  <datalist id="azureSubscriptionOptions"></datalist>
+  <p id="subscriptionDiscoveryStatus" role="status"></p>
+  <p class="foot">Routine deployment: select tenant, workspace and subscription; leave discovered settings blank. First-time consent, tenant enablement and resource-scoped access may need an administrator. Native graph materialization remains a separate portal prerequisite.</p>
   <p class="foot">No build step &middot; secrets stay local &middot; run with <code>python webapp\server.py</code></p>
 </div>
 
@@ -408,12 +630,15 @@ function renderPanel(el, job) {
     : job.status === "succeeded" ? "Succeeded"
     : job.status === "cancelled" ? "Cancelled"
     : job.status === "interrupted" ? "Monitoring interrupted"
-    : "Failed";
+    : job.failedComponent ? `Failed \u00b7 ${job.failedComponent}` : "Failed";
   const phases = (job.phases || []).map((p, i) => {
     const cls = (job.status === "succeeded" || i < job.phaseIndex) ? "done"
       : (i === job.phaseIndex && job.status === "running") ? "active" : "";
     return `<li class="${cls}">${p}</li>`;
   }).join("");
+  const phaseProgress = el.id === "workflowPanel"
+    ? renderWorkflowPhaseGroups(el, job)
+    : (phases ? `<ol class="phases">${phases}</ol>` : "");
   const tail = (job.status !== "running" && job.returncode !== null && job.returncode !== undefined)
     ? "\n\nexit code: " + job.returncode : "";
   const err = job.error ? "\n[error] " + job.error : "";
@@ -424,13 +649,113 @@ function renderPanel(el, job) {
     `<div class="progress">
        <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
-       ${phases ? `<ol class="phases">${phases}</ol>` : ""}
+       ${phaseProgress}
+       ${renderDeploymentTimings(job.lines || [])}
        <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
      </div>`;
+  el.querySelectorAll(".workflow-phase-group").forEach((group) => {
+    group.addEventListener("toggle", () => {
+      if (group.dataset.state === "active" || group.dataset.state === "failed") return;
+      el._workflowBucketOpen = el._workflowBucketOpen || {};
+      el._workflowBucketOpen[group.dataset.group] = group.open;
+    });
+  });
   if (stick) {
     const out = el.querySelector(".output");
     if (out) out.scrollTop = out.scrollHeight;
   }
+}
+
+function renderDeploymentTimings(lines) {
+  const raw = [...lines].reverse().find((line) => line.includes("DEPLOY_TIMINGS="));
+  if (!raw) return "";
+  try {
+    const data = JSON.parse(raw.slice(raw.indexOf("DEPLOY_TIMINGS=") + "DEPLOY_TIMINGS=".length));
+    if (!data || !Array.isArray(data.steps) || !Number.isFinite(data.total_seconds) || data.total_seconds < 0 ||
+        !["succeeded", "failed"].includes(data.status) || data.steps.some((step) =>
+          !step || typeof step.label !== "string" || !Number.isFinite(step.seconds) || step.seconds < 0 ||
+          !Number.isInteger(step.section) || step.section < 1 || step.section > 8 ||
+          !["completed", "failed"].includes(step.status))) {
+      throw new Error("Invalid deployment timing receipt");
+    }
+    const rows = data.steps.map((step) => `<tr><td>${step.section}. ${escapeHtml(step.label)}</td><td>${formatElapsed(step.seconds * 1000)}</td><td>${escapeHtml(step.status)}</td></tr>`).join("");
+    return `<section aria-label="Deployment timings"><h3>Module timings (${escapeHtml(data.status)})</h3><table><thead><tr><th>Section</th><th>Elapsed</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table><p>Total: ${formatElapsed(data.total_seconds * 1000)}. Other modules and setup-pipeline time are separate.</p></section>`;
+  } catch (error) {
+    return `<p class="error" role="alert">Could not read deployment timings: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    const status = $("subscriptionDiscoveryStatus");
+    status.textContent = "Loading signed-in Azure subscriptions...";
+    try {
+      const response = await fetch("/api/subscriptions");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (!Array.isArray(data.subscriptions)) throw new Error("Invalid subscription list");
+      $("azureSubscriptionOptions").replaceChildren(...data.subscriptions.map((subscription) => {
+        const option = document.createElement("option");
+        option.value = subscription.id;
+        option.label = `${subscription.name} (tenant ${subscription.tenantId})`;
+        return option;
+      }));
+      status.textContent = data.subscriptions.length
+        ? "Subscriptions loaded. Choose one belonging to your target tenant; deployment verifies the match."
+        : "No enabled subscriptions found. Sign in to the target tenant or request access from its Azure administrator.";
+    } catch (error) {
+      status.textContent = `Subscription discovery failed: ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+});
+
+const WORKFLOW_PHASE_GROUPS = [
+  { key: "sync", title: "GitHub Sync", prefix: "Sync \u00b7", component: "GitHub sync" },
+  { key: "pipeline", title: "Setup Pipeline", prefix: "Pipeline \u00b7", component: "Setup pipeline" },
+  { key: "energy", title: "Energy Sources", prefix: "Energy \u00b7", component: "Energy setup" },
+  { key: "foundry", title: "Foundry Multi-agent Setup", prefix: "Foundry \u00b7", component: "Foundry multi-agent setup" },
+  { key: "deploy", title: "Fabric App Deployment", prefix: "Deploy \u00b7", component: "Fabric app deploy" },
+];
+
+function renderWorkflowPhaseGroups(el, job) {
+  const phases = job.phases || [];
+  if (!phases.length) return "";
+  const groups = WORKFLOW_PHASE_GROUPS.map((group) => {
+    const items = phases
+      .map((label, index) => ({ label, index }))
+      .filter((item) => item.label.startsWith(group.prefix));
+    if (!items.length) return "";
+    const completed = items.filter((item) =>
+      job.status === "succeeded" || item.index < (job.phaseIndex || 0)).length;
+    const activeItem = items.find((item) =>
+      job.status === "running" && item.index === (job.phaseIndex || 0));
+    const failed = job.status === "failed" && (
+      job.failedComponent === group.component ||
+      items.some((item) => item.index === (job.phaseIndex || 0))
+    );
+    const state = failed ? "failed"
+      : completed === items.length ? "done"
+      : activeItem ? "active" : "pending";
+    const stateLabel = failed ? "Failed"
+      : state === "done" ? `Complete \u00b7 ${items.length}/${items.length}`
+      : activeItem ? `${escapeHtml(activeItem.label.slice(group.prefix.length).trim())} \u00b7 ${completed}/${items.length}`
+      : `Waiting \u00b7 ${completed}/${items.length}`;
+    const rememberedOpen = el._workflowBucketOpen && el._workflowBucketOpen[group.key];
+    const open = state === "active" || state === "failed" || rememberedOpen === true;
+    const itemHtml = items.map((item) => {
+      const cls = (job.status === "succeeded" || item.index < (job.phaseIndex || 0)) ? "done"
+        : (job.status === "running" && item.index === (job.phaseIndex || 0)) ? "active" : "";
+      return `<li class="${cls}">${escapeHtml(item.label.slice(group.prefix.length).trim())}</li>`;
+    }).join("");
+    return `<details class="workflow-phase-group ${state}" data-group="${group.key}" data-state="${state}"${open ? " open" : ""}>
+      <summary class="workflow-phase-summary"><span class="workflow-phase-name">${group.title}</span><span class="workflow-phase-state">${stateLabel}</span></summary>
+      <ol class="phases">${itemHtml}</ol>
+    </details>`;
+  }).join("");
+  return groups ? `<div class="workflow-phase-groups" aria-label="Workflow stages">${groups}</div>` : "";
 }
 
 function escapeHtml(s) {
@@ -483,6 +808,8 @@ async function runJob(startUrl, body, panelEl, onDone) {
     job.status = j.status; job.phases = j.phases || job.phases;
     job.phaseIndex = j.phaseIndex != null ? j.phaseIndex : job.phaseIndex;
     job.phase = j.phase || job.phase; job.returncode = j.returncode;
+    job.component = j.component || job.component;
+    job.failedComponent = j.failedComponent || job.failedComponent;
     if (j.lines && j.lines.length) job.lines = job.lines.concat(j.lines);
     renderPanel(panelEl, job);
     if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone(job);
@@ -493,16 +820,22 @@ async function runJob(startUrl, body, panelEl, onDone) {
 // ---- validation + wiring ----
 // Result of the most recent "Test connection" run: null (untested), "ok", or "fail".
 let connTestState = null;
+let workflowConnTestState = null;
 
-function setTestResult(cls, text) {
-  const el = $("connTestResult");
+function setTestResult(cls, text, elementId = "connTestResult") {
+  const el = $(elementId);
   el.className = "testresult" + (cls ? " " + cls : "");
   el.textContent = text || "";
 }
 const reuseChecked = () => $("reuseConn").checked;
 const connValue = () => (reuseChecked() ? "yes" : "");
+const workflowReuseChecked = () => $("workflowReuseConn").checked;
+const workflowConnValue = () => (workflowReuseChecked() ? "yes" : "");
 function baseValid() {
   return $("tenant").value.trim() && $("workspace").value.trim() && $("repository").value.includes("/");
+}
+function workflowBaseValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim() && $("workflowRepository").value.includes("/");
 }
 function syncValid() {
   if (!baseValid()) return false;
@@ -510,8 +843,16 @@ function syncValid() {
   if (reuseChecked() && connTestState !== "fail") return true;
   return !!$("pat").value.trim();
 }
+function workflowSyncValid() {
+  if (!workflowBaseValid()) return false;
+  if (workflowReuseChecked() && workflowConnTestState !== "fail") return true;
+  return !!$("workflowPat").value.trim();
+}
 function testValid() {
   return baseValid() && (reuseChecked() || $("pat").value.trim());
+}
+function workflowTestValid() {
+  return workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
 }
 function deleteValid() {
   const dry = $("dryRun").checked;
@@ -534,14 +875,28 @@ function refresh() {
   } else {
     $("patNote").textContent = "";
   }
+  const workflowNeedPat = !workflowReuseChecked() || workflowConnTestState === "fail";
+  $("workflowPatWrap").style.display = workflowNeedPat ? "flex" : "none";
+  $("workflowPat").disabled = false;
+  if (workflowConnTestState === "fail") {
+    $("workflowPatNote").textContent = "\u2014 reuse failed; enter a PAT to create a new connection";
+  } else if (workflowNeedPat) {
+    $("workflowPatNote").textContent = "\u2014 needed to create a reusable connection";
+  } else {
+    $("workflowPatNote").textContent = "";
+  }
   const dry = $("dryRun").checked;
   $("confirmWrap").style.display = dry ? "none" : "flex";
   $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
   $("deleteBtn").className = dry ? "primary" : "destructive";
   $("syncBtn").disabled = !syncValid();
   $("testBtn").disabled = !testValid();
+  $("workflowTestBtn").disabled = !workflowTestValid();
   $("deleteBtn").disabled = !deleteValid();
   $("deployBtn").disabled = !deployValid();
+  $("foundryBtn").disabled = !deployValid();
+  $("energyBtn").disabled = !deployValid();
+  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid());
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -550,6 +905,11 @@ document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventLis
 // Any change to a connection-affecting field invalidates the previous test result.
 ["repository", "branch", "directory", "tenant", "workspace", "pat"].forEach((id) =>
   $(id).addEventListener("input", () => { connTestState = null; setTestResult("", ""); }));
+["workflowRepository", "workflowBranch", "workflowDirectory", "tenant", "workspace", "workflowPat"].forEach((id) =>
+  $(id).addEventListener("input", () => {
+    workflowConnTestState = null;
+    setTestResult("", "", "workflowConnTestResult");
+  }));
 
 let testing = false;
 async function runTest() {
@@ -576,6 +936,32 @@ async function runTest() {
   });
 }
 $("testBtn").addEventListener("click", runTest);
+let workflowTesting = false;
+async function runWorkflowTest() {
+  if (workflowTesting || !workflowTestValid()) return;
+  workflowTesting = true;
+  $("workflowTestBtn").disabled = true;
+  workflowConnTestState = null;
+  setTestResult("running", "Testing\u2026", "workflowConnTestResult");
+  await runJob("/api/test-connection", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    repository: $("workflowRepository").value, branch: $("workflowBranch").value,
+    directory: $("workflowDirectory").value, connectionId: workflowConnValue(),
+    pat: $("workflowPat").value,
+  }, $("workflowTestPanel"), (job) => {
+    workflowTesting = false;
+    if (job && job.returncode === 0) {
+      workflowConnTestState = "ok";
+      setTestResult("ok", "\u2713 Connection verified \u2014 it can reach GitHub.", "workflowConnTestResult");
+    } else {
+      workflowConnTestState = "fail";
+      setTestResult("error", "\u2717 Could not connect \u2014 enter a GitHub PAT below and test again.", "workflowConnTestResult");
+      $("workflowPat").focus();
+    }
+    refresh();
+  });
+}
+$("workflowTestBtn").addEventListener("click", runWorkflowTest);
 // Auto-verify a saved connection once we have enough to test it.
 function maybeAutoTest() {
   if (reuseChecked() && connTestState === null && !testing && testValid()) runTest();
@@ -589,9 +975,22 @@ $("reuseConn").addEventListener("change", () => {
     else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026");
   }
 });
+$("workflowReuseConn").addEventListener("change", () => {
+  workflowConnTestState = null;
+  setTestResult("", "", "workflowConnTestResult");
+  refresh();
+  if (workflowReuseChecked()) {
+    if (workflowTestValid()) runWorkflowTest();
+    else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026", "workflowConnTestResult");
+  }
+});
 // Finishing an edit (blur) on an identity/repo field re-runs the reuse test.
 ["tenant", "workspace", "repository", "branch", "directory"].forEach((id) =>
   $(id).addEventListener("change", maybeAutoTest));
+["tenant", "workspace", "workflowRepository", "workflowBranch", "workflowDirectory"].forEach((id) =>
+  $(id).addEventListener("change", () => {
+    if (workflowReuseChecked() && workflowConnTestState === null && !workflowTesting && workflowTestValid()) runWorkflowTest();
+  }));
 
 $("syncBtn").addEventListener("click", async () => {
   $("syncBtn").disabled = true;
@@ -609,13 +1008,78 @@ $("deleteBtn").addEventListener("click", async () => {
   }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
 });
 
+// Standalone Foundry controls retain the deploy-prefixed IDs.
+function foundryPayload(prefix) {
+  const value = (suffix) => $(prefix + suffix).value.trim();
+  const creating = $(prefix + "FoundryCreate").checked;
+  return {
+    azureSubscriptionId: value("AzureSubscriptionId"),
+    ontologyGraphBinding: value("OntologyGraphBinding"),
+    foundryEndpoint: value("FoundryEndpoint"),
+    foundryProjectResourceId: value("FoundryProjectResourceId"),
+    foundryModel: value("FoundryModel"),
+    acrName: value("AcrName"),
+    foundryLocation: creating ? value("FoundryLocation") : "",
+    foundryModelName: creating ? value("FoundryModelName") : "",
+    foundryModelVersion: creating ? value("FoundryModelVersion") : "",
+    foundryModelSku: creating ? value("FoundryModelSku") : "",
+    foundryModelCapacity: creating ? value("FoundryModelCapacity") : "",
+    productionWrites: value("ProductionWrites"),
+    createFoundry: creating,
+  };
+}
+for (const prefix of ["deploy", "workflow"]) {
+  const create = $(prefix + "FoundryCreate");
+  create.addEventListener("change", () => {
+    for (const suffix of ["FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+      $(prefix + suffix).disabled = !create.checked;
+    }
+  });
+}
+
 $("deployBtn").addEventListener("click", async () => {
   $("deployBtn").disabled = true;
   await runJob("/api/deploy-app", {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     clientId: $("deployClientId").value,
+    ontologyGraphBinding: $("appOntologyGraphBinding").value,
+    energyMap: $("appEnergyMap").value,
   }, $("deployPanel"), () => refresh());
+});
+
+$("foundryBtn").addEventListener("click", async () => {
+  $("foundryBtn").disabled = true;
+  await runJob("/api/setup-foundry", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    clientId: $("foundryClientId").value, ...foundryPayload("deploy"),
+  }, $("foundryPanel"), () => refresh());
+});
+
+$("energyBtn").addEventListener("click", async () => {
+  $("energyBtn").disabled = true;
+  await runJob("/api/setup-energy", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+  }, $("energyPanel"), () => refresh());
+});
+
+$("workflowBtn").addEventListener("click", async () => {
+  $("workflowBtn").disabled = true;
+  await runJob("/api/full-workflow", {
+    tenant: $("tenant").value,
+    workspace: $("workspace").value,
+    repository: $("workflowRepository").value,
+    branch: $("workflowBranch").value,
+    directory: $("workflowDirectory").value,
+    connectionId: workflowConnValue(),
+    keepConnected: $("workflowKeepConnected").checked,
+    pat: $("workflowPat").value,
+    pipeline: "01_Pipe_Setup",
+    parameters: collectPipelineParams("wf_pp_"),
+    clientId: $("workflowDeployClientId").value,
+    energyMap: $("workflowEnableEnergy").checked ? "enabled" : "keep",
+    ...foundryPayload("workflow"),
+  }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
 });
 
 $("restartBtn").addEventListener("click", async () => {
@@ -665,9 +1129,12 @@ $("stopBtn").addEventListener("click", async () => {
 // ---- tab switching ----
 function activateTab(name) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $("paneWorkflow").classList.toggle("active", name === "workflow");
   $("paneSync").classList.toggle("active", name === "sync");
   $("panePipeline").classList.toggle("active", name === "pipeline");
   $("paneDeploy").classList.toggle("active", name === "deploy");
+  $("paneFoundry").classList.toggle("active", name === "foundry");
+  $("paneEnergy").classList.toggle("active", name === "energy");
   $("paneDelete").classList.toggle("active", name === "delete");
 }
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => activateTab(b.dataset.tab)));
@@ -676,42 +1143,66 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 // The parameter spec (labels, help, defaults, types) is served by the backend so
 // the form stays in sync with the pipeline without duplicating it in the page.
 let pipelineSpec = [];
+const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
+function renderPipelineFields(prefix) {
+  const fields = pipelineSpec.map((p) => {
+    const advanced = !["env_suffix", ...requiredPipelineFields].includes(p.name);
+    const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
+    const html = `<div class="param${wide ? " wide" : ""}">
+      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
+      <span class="phelp">${escapeHtml(p.help)}</span>
+      <input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />
+    </div>`;
+    return { advanced, html };
+  });
+  return `<div class="params">${fields.filter(p => !p.advanced).map(p => p.html).join("")}</div>
+    <details class="foundry-block"><summary>Advanced: secret names, run-as identity and timeout</summary>
+    <div class="params">${fields.filter(p => p.advanced).map(p => p.html).join("")}</div></details>`;
+}
 function syncPipelineWorkspace() {
-  const field = $("pp_workspace_id");
-  if (field) field.value = $("workspace").value;
+  ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
+    const field = $(id);
+    if (field) field.value = $("workspace").value;
+  });
 }
 async function loadPipelineParams() {
   try {
     const res = await fetch("/api/pipeline-params");
     const data = await res.json();
-    pipelineSpec = data.parameters || [];
+    if (!res.ok || !Array.isArray(data.parameters)) throw new Error(data.error || `HTTP ${res.status}`);
+    pipelineSpec = data.parameters;
   } catch (e) {
-    $("pipelineFields").innerHTML = `<p class="phelp">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
+    for (const id of ["pipelineFields", "workflowPipelineFields"]) {
+      $(id).innerHTML = `<p class="phelp" role="alert">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
+    }
     return;
   }
-  $("pipelineFields").innerHTML = pipelineSpec.map((p) => {
-    // A couple of long-value fields span the full width for readability.
-    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user");
-    const numeric = p.type === "int";
-    return `<div class="param${wide ? " wide" : ""}">
-      <span class="plabel">${escapeHtml(p.label)}</span>
-      <span class="phelp">${escapeHtml(p.help)}</span>
-      <input id="pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
-    </div>`;
-  }).join("");
+  $("pipelineFields").classList.remove("params");
+  $("workflowPipelineFields").classList.remove("params");
+  $("pipelineFields").innerHTML = renderPipelineFields("pp_");
+  $("workflowPipelineFields").innerHTML = renderPipelineFields("wf_pp_");
   syncPipelineWorkspace();
   // Re-run validation whenever a pipeline field changes.
-  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) el.addEventListener("input", refresh); });
+  pipelineSpec.forEach((p) => {
+    ["pp_", "wf_pp_"].forEach((prefix) => {
+      const el = $(prefix + p.name);
+      if (el) el.addEventListener("input", refresh);
+    });
+  });
   refresh();
 }
-function collectPipelineParams() {
+function collectPipelineParams(prefix = "pp_") {
   const out = {};
-  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) out[p.name] = el.value; });
+  pipelineSpec.forEach((p) => { const el = $(prefix + p.name); if (el) out[p.name] = el.value; });
   return out;
 }
 function pipelineValid() {
-  const keyVault = $("pp_key_vault_uri");
-  return $("tenant").value.trim() && $("workspace").value.trim() && keyVault && keyVault.value.trim();
+  return $("tenant").value.trim() && $("workspace").value.trim()
+    && requiredPipelineFields.every(name => $("pp_" + name)?.value.trim());
+}
+function workflowPipelineValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim()
+    && requiredPipelineFields.every(name => $("wf_pp_" + name)?.value.trim());
 }
 
 $("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });
@@ -769,12 +1260,19 @@ async function loadVersion() {
     const res = await fetch("/api/version", { cache: "no-store" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    for (const [ids, value] of [
+      [["branch", "workflowBranch"], data.branch],
+      [["repository", "workflowRepository"], data.repository],
+    ]) {
+      if (value) for (const id of ids) if (!$(id).value) $(id).value = value;
+    }
+    refresh();
     const builtAt = new Date(data.timestamp);
     version.textContent = data.version;
     timestamp.textContent = Number.isNaN(builtAt.getTime()) ? data.timestamp : new Intl.DateTimeFormat(undefined, {
       year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     }).format(builtAt);
-    stamp.title = data.detail || `Git commit ${data.revision}\nCommitted ${data.timestamp}`;
+    stamp.title = data.detail || `Checkout ${data.branch || "(detached)"}\nGit commit ${data.revision}\nCommitted ${data.timestamp}`;
   } catch (error) {
     version.textContent = "Version check failed";
     timestamp.textContent = "Hover for details";

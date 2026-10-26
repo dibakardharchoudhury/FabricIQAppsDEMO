@@ -207,8 +207,9 @@ if eventhouse and (not cluster_query_uri or not kql_db_id):
     kql_db_name = kql_db_name or eventhouse.get("displayName")
     target_folder_id = target_folder_id or eventhouse.get("folderId")
 
-# The workspace holds more than one lakehouse (the ontology item creates its own), so never
-# just take the first one - resolve by id, then by name, and only then guess.
+# A workspace may contain multiple lakehouses. Ontology v2 auxiliary graph/storage
+# artifacts are optional; names such as "_lh_" do not prove generation or readiness.
+# Prefer the configured id, then name; the existing fallback below is only a heuristic.
 lakehouse_id = _clean(LAKEHOUSE_ID) or setting("lakehouse_id", "fabric_lakehouse_id")
 if not lakehouse_id:
     wanted = _clean(LAKEHOUSE_NAME) or setting("lakehouse_name")

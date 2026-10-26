@@ -67,12 +67,13 @@ export function WeatherPage() {
   }
 
   const load = async () => {
-    setState('loading'); setError(undefined)
+    setWeather(undefined); setState('loading'); setError(undefined)
     try {
       const data = await queryWeatherData(true)
-      if (!data) { setState('unavailable'); return }
+      if (!data) { setWeather(undefined); setState('unavailable'); return }
       applyWeather(data)
     } catch (reason) {
+      setWeather(undefined)
       setError(reason instanceof Error ? reason.message : 'Weather data is unavailable.')
       setState('error')
     }
@@ -83,9 +84,10 @@ export function WeatherPage() {
     void queryWeatherData().then(data => {
       if (cancelled) return
       if (data) applyWeather(data)
-      else setState('unavailable')
+      else { setWeather(undefined); setState('unavailable') }
     }).catch(reason => {
       if (cancelled) return
+      setWeather(undefined)
       setError(reason instanceof Error ? reason.message : 'Weather data is unavailable.')
       setState('error')
     })
@@ -168,7 +170,7 @@ export function WeatherPage() {
     <section className="weather-workspace">
       <article className="weather-map-panel">
         <div className="weather-map-stage">
-          {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>No weather data yet. In Administration, run Connect weather, then Seed &amp; provision to publish the GraphQL API.</span><button type="button" onClick={() => void load()}>Retry</button></>}</div>}
+          {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>No weather data yet. Run Connect weather in Administration, deploy the app to configure its Lakehouse connector, and sign in through Connect STID.</span><button type="button" onClick={() => void load()}>Retry</button></>}</div>}
           {selection && <div className="weather-precipitation-summary" aria-live="polite"><span>Next 24h precipitation</span><strong>{precipitationSummary?.amount == null ? 'No forecast' : `${precipitationSummary.amount.toFixed(1)} ${precipitationSummary.unit}`}</strong>{precipitationSummary?.volume != null && <small>{Math.round(precipitationSummary.volume).toLocaleString()} m³ over area</small>}{precipitationSummary != null && precipitationSummary.coveredHours > 0 && precipitationSummary.coveredHours < precipitationSummary.windowHours && <small>covers {precipitationSummary.coveredHours} of {precipitationSummary.windowHours} h</small>}</div>}
           <div className="weather-legend"><span><i className="station" />Station</span><span><i className="area" />Area</span></div>
         </div>

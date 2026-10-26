@@ -1,0 +1,1 @@
+Evaluate Hydro Operations multi-agent planning, source grounding, independent factual population coverage, specialist handoffs, chart semantics, and no-write approval safety using recent production traces.

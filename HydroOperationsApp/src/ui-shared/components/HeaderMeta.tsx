@@ -2,8 +2,9 @@ import { Moon, Sun, Users } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 
 const BUILD_STAMP = new Date(__BUILD_TIME__).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-const DEFAULT_DEVELOPERS = 'Dibakar Dharchoudhury, Jon Olav Abeland, Gareth O Brien, Ondrej Spilka'
-const DEFAULT_VTEAM = 'Alex Grubb, Gareth O Brien, Frode Odinsen, Jon Olav Abeland'
+const DEFAULT_DEVELOPERS = "Dibakar Dharchoudhury, Jon Olav Abeland, Gareth O'Brien, Espen Brandt-Kjelsen"
+const DEFAULT_VTEAM = "Alex Grubb, Gareth O'Brien, Frode Odinsen, Jon Olav Abeland"
+const DEFAULT_HACKATHON_PARTICIPANTS = "Ondrej Spilka, Aizo Wiebenga, Gareth O'Brien, Jon Olav Abeland, Frode Odinsen, Espen Brandt-Kjelsen, Alex Grubb, Dibakar Dharchoudhury, Yvonne Brzesowsky-Ruys"
 
 function names(value: string | undefined, prefix: string, fallback: string) {
   const text = value?.trim() || fallback
@@ -13,8 +14,8 @@ function names(value: string | undefined, prefix: string, fallback: string) {
 export function HeaderMeta() {
   const { theme, setTheme } = useTheme()
   const developers = names(import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_1 as string | undefined, 'Developers', DEFAULT_DEVELOPERS)
-  if (!developers.some(name => name.toLowerCase() === 'ondrej spilka')) developers.push('Ondrej Spilka')
   const vteam = names(import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_2 as string | undefined, 'vTeam Hydro', DEFAULT_VTEAM)
+  const hackathonParticipants = names(import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_3 as string | undefined, 'Hackathon Participants 2026', DEFAULT_HACKATHON_PARTICIPANTS)
 
   return <div className="v2-header-meta">
     <details className="v2-credit-menu">
@@ -22,6 +23,7 @@ export function HeaderMeta() {
       <div className="v2-credit-popover">
         <section><strong>Developers</strong><p>{developers.join(' · ')}</p></section>
         <section><strong>vTeam Hydro</strong><p>{vteam.join(' · ')}</p></section>
+        <section><strong>Hackathon Participants 2026</strong><p>{hackathonParticipants.join(' · ')}</p></section>
       </div>
     </details>
     <button className="v2-theme-toggle" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>

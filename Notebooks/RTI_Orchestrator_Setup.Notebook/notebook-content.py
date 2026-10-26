@@ -20,17 +20,38 @@
 # # RTI Demo – Setup Orchestrator (Stage 2 of 2)
 # 
 # **Stage 1** (`RTI_001_create_lakehouse_shortcut`) runs first as its own pipeline activity: it
-# creates the lakehouse, writes `rti_demo_settings`, and rebinds every child notebook's default
+# creates the Lakehouse and independent operational SQL in the demo folder, writes
+# `rti_demo_settings`, and rebinds every child notebook's default
 # lakehouse. **Stage 2 is this notebook**, launched by `Pipe_Setup` only after Stage 1 succeeds.
 # 
 # The `%%configure` cell below attaches the (now-existing) lakehouse to THIS session, so the single
 # `runMultiple` session has a real default lakehouse. Every child inherits it, so their relative
 # `spark.read.table(...)` / `saveAsTable(...)` calls resolve — no per-notebook attach, no ABFS rewrite.
 # 
-# - Runs **NB02–NB06, NB08–NB10** and **Weather_001** in one Spark session (VNet cold start paid once); independent
+# - Runs **NB02–NB06, NB08–NB11** and **Weather_001** in one Spark session (VNet cold start paid once); independent
 #   branches run in parallel per the DAG.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
+#
+# **Ontology v2 only:** NB04 creates explicit TMDL database/model/default namespace;
+# NB04–NB06 require live integer `properties.generation == 2`. Existing v1 is
+# rejected, not migrated or deleted. Binding reruns preserve live TMDL/custom parts
+# and verify service readback. REST `/v1` and suffixes such as `_V9` are not generations.
+#
+# Agent provisioning is always attempted; there are no mode or skip flags. Notebook
+# completion is not runtime readiness. NB09 verifies its v2 draft/published identity
+# and attempts a delegated MCP ontology-only query. Only Fabric's exact documented
+# temporary unsupported-Ontology-v2 response is reported as a non-ready known product
+# limitation; other semantic errors and inconclusive results fail. NB10 restores the
+# full playbook, Teams/action and email
+# pipeline with definition readback. Both reject v1 and propagate actual API failures.
+# NB11 runs after NB09, NB10 and Weather_001: it inserts missing operational demo rows
+# and verifies additive ontology/SQL source publication before app deployment.
+# App-only redeployment does not reseed operational records. The Knowledge Graph uses native
+# ontology-managed graph instances, enriched by KQL and operational SQL.
+# Materialize through Manage graph and configure the verified graph binding.
+# NB09 and NB10 are independent branches. NB11 waits for both before changing
+# ontology/Data Agent definitions; unrelated setup branches remain parallel.
 
 # CELL ********************
 
@@ -59,6 +80,7 @@
 #   workspace/key-vault values -> used only to enable the Weather schedule after setup succeeds.
 # lakehouseName has no Python default here because %%configure resolves it before Python runs.
 per_notebook_timeout_secs = 3600
+enable_weather_schedule = True
 workspace_id = ""
 key_vault_uri = ""
 key_vault_tenant_id_secret_name = "tenantid"
@@ -74,8 +96,10 @@ key_vault_client_secret_name = "clientsecret"
 
 # CELL ********************
 
+import json
 import requests
 import notebookutils
+from notebookutils.mssparkutils.handlers.notebookHandler import RunMultipleFailedException
 from urllib.parse import quote
 
 # NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).
@@ -92,15 +116,27 @@ setup_dag = {
         {"name": "NB06_tsbind",     "path": "RTI_006_TimeSeriesBinding_RTI_signal",          "dependencies": ["NB04_ontology", "NB05_entitybind", "NB02_eventhouse"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         # NB08 shortcuts the Lakehouse silver tables into the Eventhouse, so it needs NB03 as well as NB02.
         {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse", "NB03_medallion"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB04_ontology"],                    "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB09_dataagent"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        # Both agents consume the completed v2 ontology binding directly; neither consumes the
+        # other agent. Keep them as independent branches so one product failure does not block
+        # the other's deployment evidence. Required failures still fail the overall DAG below.
+        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NBW01_weather",   "path": "Weather_001_create_lakehouse",                    "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB11_operations", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB09_dataagent", "NB10_opsagent", "NBW01_weather"], "args": {**_lh, "seed_demo_data": True, "provision_shared_store": True}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
     "concurrency": 4,
 }
 
-results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
+try:
+    results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
+except RunMultipleFailedException as error:
+    failures = []
+    for name, outcome in error.result.items():
+        if outcome.get("exception"):
+            message = str(outcome["exception"]).splitlines()[0][:500]
+            failures.append(f"{name}: {message}")
+    raise RuntimeError("Stage 2 failed: " + "; ".join(failures)) from error
 
 
 def _require_successful_dag(results_by_activity: dict) -> None:
@@ -118,6 +154,9 @@ def _require_successful_dag(results_by_activity: dict) -> None:
 
 
 def _activate_weather_schedule() -> None:
+    if not enable_weather_schedule:
+        print("Weather schedule activation is disabled for this environment.")
+        return
     required = {
         "workspace_id": workspace_id,
         "key_vault_uri": key_vault_uri,
@@ -187,7 +226,7 @@ def _activate_weather_schedule() -> None:
 
 _require_successful_dag(results)
 _activate_weather_schedule()
-print("✅ Setup orchestration complete (NB02–06, 08–10, Weather_001); Weather schedule enabled.")
+print("✅ Setup notebooks complete; Weather schedule enabled. Agent runtime actions remain untested.")
 results
 
 # METADATA ********************

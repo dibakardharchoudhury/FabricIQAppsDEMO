@@ -154,7 +154,7 @@ launch.py → sync_workspace_from_git.py → run_pipeline.py (01_Pipe_Setup)
    commit it to `Raw/RTI_Notebooks/dashboards/RTI_Demo_OPCUA_TelemetryStats.json`.
 4. `python Raw\RTI_Notebooks\tools\build_rti_008.py` to refresh the seed, then re-run RTI_008.
 
-**Verified this session** in workspace `hkton2026`:
+**Historical dashboard validation** in workspace `hkton2026`:
 
 - Dashboard `RTI_Demo_OPCUA_TelemetryStats_V6` = `6168b506-419e-4ec2-a5e8-fc8eb5bc0f97`; read-back
   confirms 2 pages, 18 tiles, 20 queries, 3 parameters, data source on `RTI_Demo_Eventhouse_V6`.
@@ -163,9 +163,12 @@ launch.py → sync_workspace_from_git.py → run_pipeline.py (01_Pipe_Setup)
   discovery, resolved the right lakehouse by name, bootstrapped from the embedded seed, redeployed the
   dashboard, and rewrote `Files/dashboards/…json` (17,350 bytes). Job Completed.
 
-> The lakehouse lookup deliberately does not take the first `Lakehouse` item: the workspace also
-> contains the ontology's own `…_lh_…` lakehouse. Resolution order is `lakehouse_id` setting →
-> `lakehouse_name` setting → first non-`_lh_` lakehouse.
+> The validation above is a historical dashboard result, not an Ontology v2 acceptance result or
+> certification of the restored default-enabled agents, playbook/actions, or Teams/email delivery.
+> Current setup requires v2, whose auxiliary graph/storage items are optional; an `…_lh_…` name is
+> not an ontology ownership contract. Dashboard resolution still prefers `lakehouse_id`, then
+> `lakehouse_name`, with the existing non-`_lh_` fallback. Verify the configured source and see the
+> [current v2-only policy](../README.md#ontology-generations-and-optional-agents).
 
 ## Phase 4 — Embed into the Rayfin UI (next session)
 

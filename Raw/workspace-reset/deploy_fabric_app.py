@@ -9,7 +9,10 @@ the local "Initialize Your Fabric Demo" web app and can also be run directly.
 from __future__ import annotations
 
 import argparse
+import ast
+import base64
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -19,9 +22,10 @@ import sys
 import tempfile
 import time
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 
@@ -41,23 +45,25 @@ GUID_RE = re.compile(
 )
 TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 HOSTING_URL_RE = re.compile(r"https://[a-z0-9-]+\.webapp\.fabricapps\.net")
-APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token")
+APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token", "/connectors/hydrolakehouse/graphql",
+                         "/connectors/hydrooperations/graphql")
 APPBACKEND_READINESS_DELAYS = (0, 2, 5, 10, 20)
 REQUIRED_DELEGATED = {
+    "18a66f5f-dbdf-4c17-9dd7-1634712a9cbe": {"user_impersonation"},
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": {"user_impersonation"},
     "00000009-0000-0000-c000-000000000000": {
         "GraphQLApi.Execute.All",
         "Workspace.Read.All",
         "Item.Read.All",
         "Item.Execute.All",
+        "DataAgent.Execute.All",
         "Fabric.Embed",
     },
-    "7d312290-28c8-473c-a0ed-8e53749b6d6d": {"user_impersonation"},
 }
 RESOURCE_NAMES = {
+    "18a66f5f-dbdf-4c17-9dd7-1634712a9cbe": "Microsoft Foundry Agent Service",
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": "Azure Data Explorer",
     "00000009-0000-0000-c000-000000000000": "Power BI Service / Microsoft Fabric",
-    "7d312290-28c8-473c-a0ed-8e53749b6d6d": "Microsoft Cognitive Services",
 }
 STALE_TOKEN_CHALLENGE_RE = re.compile(
     r"TokenCreatedWithOutdatedPolicies|Continuous access evaluation|InteractionRequired|"
@@ -65,6 +71,7 @@ STALE_TOKEN_CHALLENGE_RE = re.compile(
     r"Please run ['\"]?az login|Run ['\"]?az login",
     re.IGNORECASE,
 )
+RTI_ARTIFACT_SUFFIX_RE = r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -72,6 +79,39 @@ APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
 AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
+_FABRIC_TOKEN_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+
+
+class DeploymentTimings:
+    def __init__(self) -> None:
+        self.started = time.monotonic()
+        self.started_at = datetime.now(UTC).isoformat()
+        self.steps: list[dict[str, Any]] = []
+        self.step_started = self.started
+
+    def _close(self, status: str, now: float) -> None:
+        if self.steps and self.steps[-1]["status"] == "running":
+            step = self.steps[-1]
+            step.update(seconds=round(now - self.step_started, 3), status=status)
+            print(f"TIMING [{step['section']}/8] {step['seconds']:.3f}s {status}: {step['label']}", flush=True)
+
+    def stage(self, section: int, label: str) -> None:
+        now = time.monotonic()
+        self._close("completed", now)
+        self.steps.append({"section": section, "label": label, "status": "running", "seconds": 0})
+        self.step_started = now
+        print(f"[{section}/8] {label}", flush=True)
+
+    def finish(self, succeeded: bool) -> None:
+        now = time.monotonic()
+        self._close("completed" if succeeded else "failed", now)
+        print("DEPLOY_TIMINGS=" + json.dumps({
+            "started_at": self.started_at,
+            "finished_at": datetime.now(UTC).isoformat(),
+            "total_seconds": round(now - self.started, 3),
+            "status": "succeeded" if succeeded else "failed",
+            "steps": self.steps,
+        }, separators=(",", ":")), flush=True)
 
 
 class DeployError(RuntimeError):
@@ -83,6 +123,141 @@ class AzureCliReauthenticationError(DeployError):
 
 
 T = TypeVar("T")
+
+
+class _HostingPage(HTMLParser):
+    """Read identity-bearing HTML elements without executing the hosting sign-in flow."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.titles: list[str] = []
+        self.headings: list[str] = []
+        self.bootstraps: list[str] = []
+        self.module_sources: list[str] = []
+        self.signin_button = False
+        self.signin_body = False
+        self.app_root = False
+        self._capture: tuple[str, list[str]] | None = None
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "title":
+            self._capture = (tag, self.titles)
+            self._text = []
+        elif tag == "h1":
+            self._capture = (tag, self.headings)
+            self._text = []
+        elif tag == "script":
+            if attributes.get("id") == "sh-bootstrap" and attributes.get("type") == "application/json":
+                self._capture = (tag, self.bootstraps)
+                self._text = []
+            if attributes.get("type") == "module" and attributes.get("src"):
+                self.module_sources.append(str(attributes["src"]))
+        elif tag == "body" and attributes.get("data-state") == "signin":
+            self.signin_body = True
+        elif tag == "button" and attributes.get("id") == "sh-signin":
+            self.signin_button = True
+        elif tag == "div" and attributes.get("id") == "root":
+            self.app_root = True
+
+    def handle_data(self, data: str) -> None:
+        if self._capture:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._capture and self._capture[0] == tag:
+            self._capture[1].append("".join(self._text).strip())
+            self._capture = None
+            self._text = []
+
+
+def validate_hosted_page(
+    hosting_url: str, workspace_id: str, item_id: str, tenant_id: str
+) -> str:
+    """Verify app-shell or identity-matched protected-gate availability, not browser acceptance."""
+    if not HOSTING_URL_RE.fullmatch(hosting_url.removesuffix("/")):
+        raise DeployError("Hosting verification requires the generated HTTPS Fabric hosting origin.")
+    try:
+        # Protected hosting negotiates a browser gate for HTML; */* instead returns JSON 401.
+        response = requests.get(
+            hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False
+        )
+    except requests.RequestException as exc:
+        raise DeployError(f"Hosting availability verification failed: {exc}") from exc
+    content_type = response.headers.get("Content-Type", "")
+    if response.status_code != 200 or content_type.split(";", 1)[0].strip().lower() != "text/html":
+        raise DeployError(
+            f"Hosting verification failed: {hosting_url} returned HTTP {response.status_code} "
+            f"with Content-Type {content_type or '(missing)'}. Expected identifiable HTML; "
+            "an unauthorized response or redirect is not deployment verification."
+        )
+    page = _HostingPage()
+    page.feed(response.text)
+    page.close()
+    if page.bootstraps:
+        if (
+            len(page.bootstraps) != 1
+            or page.titles != ["Sign in required"]
+            or "Sign in to continue" not in page.headings
+            or not page.signin_body
+            or not page.signin_button
+        ):
+            raise DeployError("Hosting verification failed: unrecognized Fabric protected sign-in gate.")
+        try:
+            bootstrap = json.loads(page.bootstraps[0])
+        except (ValueError, TypeError) as exc:
+            raise DeployError("Hosting verification failed: invalid protected-gate bootstrap JSON.") from exc
+        if not isinstance(bootstrap, dict) or not isinstance(bootstrap.get("authorizeBrokerUrl"), str):
+            raise DeployError("Hosting verification failed: missing protected-gate broker identity.")
+        broker = urlparse(bootstrap["authorizeBrokerUrl"])
+        parameters = parse_qs(broker.query, keep_blank_values=True)
+        expected = {
+            "workspaceId": workspace_id, "itemType": "AppBackend", "itemId": item_id,
+            "extensionPath": "/brokeredauth", "ctid": tenant_id,
+        }
+        if (
+            bootstrap.get("brokerOrigin") != "https://app.fabric.microsoft.com"
+            or str(bootstrap.get("projectId", "")).casefold() != item_id.casefold()
+            or broker.scheme != "https"
+            or broker.netloc != "app.fabric.microsoft.com"
+            or broker.path != "/secureItemEmbed"
+            or broker.fragment
+            or any(
+                len(parameters.get(key, [])) != 1
+                or parameters[key][0].casefold() != value.casefold()
+                for key, value in expected.items()
+            )
+        ):
+            raise DeployError(
+                "Hosting verification failed: protected-gate Fabric broker, tenant, workspace, "
+                "or AppBackend identity does not match this deployment."
+            )
+        state = "protected-sign-in-gate"
+        print(
+            "Hosting availability verified: identity-matched Fabric protected sign-in gate. "
+            "The application bundle/UI was not loaded by this check.",
+            flush=True,
+        )
+    elif (
+        page.titles == ["Hydro Operations"]
+        and page.app_root
+        and any(re.fullmatch(r"/assets/index-[A-Za-z0-9_-]+\.js", source) for source in page.module_sources)
+    ):
+        state = "app-shell"
+        print(
+            "Hosting availability verified: Hydro Operations HTML shell references a built app bundle. "
+            "JavaScript execution and authenticated UI behavior were not tested.",
+            flush=True,
+        )
+    else:
+        raise DeployError(
+            "Hosting verification failed: HTML is neither the Hydro Operations app shell "
+            "nor an identity-matched Fabric protected sign-in gate."
+        )
+    print(f"HOSTING_VERIFICATION={state}", flush=True)
+    print("INTERACTIVE_APP_ACCEPTANCE=not-performed", flush=True)
+    return state
 
 
 def command_argv(executable: str, *args: str) -> list[str]:
@@ -99,6 +274,7 @@ def run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
     proc = subprocess.run(
         argv,
         cwd=str(cwd) if cwd else None,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -121,7 +297,7 @@ def run_stream(
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd) if cwd else None,
-        env=env,
+        env={**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -365,22 +541,71 @@ def ensure_deploy_dependencies() -> None:
     print(f"Rayfin dependency ready: {version}", flush=True)
 
 
-def ensure_azure_tenant(tenant: str) -> None:
+def resolve_tenant_id(tenant: str) -> str:
+    if GUID_RE.fullmatch(tenant):
+        return tenant.lower()
+    if not TENANT_RE.fullmatch(tenant):
+        raise DeployError("Tenant must be a GUID or domain name.")
+    response = requests.get(
+        f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration",
+        timeout=30, allow_redirects=False,
+    )
+    response.raise_for_status()
+    match = re.fullmatch(
+        r"https://login\.microsoftonline\.com/([0-9a-fA-F-]{36})/v2\.0",
+        str(response.json().get("issuer") or ""),
+    )
+    if not match or not GUID_RE.fullmatch(match[1]):
+        raise DeployError("The tenant domain did not resolve to an authoritative Entra tenant GUID.")
+    return match[1].lower()
+
+
+def ensure_azure_tenant(tenant: str) -> str:
+    tenant_id = resolve_tenant_id(tenant)
     account = json.loads(run_capture(az("account", "show", "-o", "json")))
     active = str(account.get("tenantId") or "")
-    if active.casefold() != tenant.casefold():
+    if active.casefold() != tenant_id:
         raise DeployError(
-            f"Azure CLI is signed into tenant {active or '(unknown)'}, not {tenant}. "
+            f"Azure CLI is signed into tenant {active or '(unknown)'}, not {tenant} ({tenant_id}). "
             "Use the local app's Switch button with the target tenant, then retry."
         )
     user = (account.get("user") or {}).get("name") or "current Azure CLI user"
     print(f"Azure identity: {user} (tenant {active})", flush=True)
+    return tenant_id
 
 
 def isolated_azure_cli_config(tenant: str) -> Path:
     """Return the tenant-scoped cache used only for CAE reauthentication."""
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
     return AZURE_CLI_SESSION_ROOT / safe_tenant
+
+
+def prefer_tenant_scoped_azure_cli_config(tenant: str) -> bool:
+    """Reuse a previously refreshed tenant cache before consulting the default cache."""
+    config_dir = isolated_azure_cli_config(tenant)
+    if not config_dir.is_dir():
+        return False
+    profile_path = config_dir / "azureProfile.json"
+    try:
+        profile = json.loads(profile_path.read_text(encoding="utf-8-sig")) if profile_path.is_file() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DeployError(
+            f"Could not read the tenant-scoped Azure CLI profile at {profile_path}. "
+            "Use the local app's Switch button to refresh this tenant session."
+        ) from exc
+    accounts = profile.get("subscriptions", []) if isinstance(profile, dict) else None
+    if not isinstance(accounts, list) or any(not isinstance(account, dict) for account in accounts):
+        raise DeployError("The tenant-scoped Azure CLI profile has an invalid account list.")
+    if not any(str(account.get("tenantId") or "").casefold() == tenant.casefold() for account in accounts):
+        print(
+            "No target-tenant account in the tenant-scoped cache; retaining the existing "
+            "Azure CLI configuration for explicit tenant verification.",
+            flush=True,
+        )
+        return False
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
+    print(f"Reusing tenant-scoped Azure CLI session at {config_dir}.", flush=True)
+    return True
 
 
 def secure_private_directory(directory: Path, *, recursive: bool = False) -> None:
@@ -472,6 +697,7 @@ def run_with_azure_cli_reauthentication(
             raise
 
     try:
+        _FABRIC_TOKEN_CACHE.clear()
         reauthenticate_azure_cli(tenant, operation)
     except DeployError as exc:
         raise AzureCliReauthenticationError(str(exc)) from exc
@@ -489,6 +715,11 @@ def run_with_azure_cli_reauthentication(
 
 
 def fabric_headers(tenant: str) -> dict[str, str]:
+    key = (tenant.casefold(), os.environ.get("AZURE_CONFIG_DIR", ""))
+    cached = _FABRIC_TOKEN_CACHE.get(key)
+    if cached is not None and cached[0] > time.time() + 120:
+        return {"Authorization": f"Bearer {cached[1]}"}
+    _FABRIC_TOKEN_CACHE.pop(key, None)
     command = az(
         "account",
         "get-access-token",
@@ -496,16 +727,28 @@ def fabric_headers(tenant: str) -> dict[str, str]:
         tenant,
         "--resource",
         "https://api.fabric.microsoft.com",
-        "--query",
-        "accessToken",
         "-o",
-        "tsv",
+        "json",
     )
-    token = run_with_azure_cli_reauthentication(
+    output = run_with_azure_cli_reauthentication(
         tenant,
         "accessing the Fabric workspace",
         lambda: run_capture(command),
     )
+    try:
+        metadata = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise DeployError("Azure CLI did not return valid Fabric token metadata.") from error
+    if not isinstance(metadata, dict):
+        raise DeployError("Azure CLI Fabric token metadata must be an object.")
+    token, expires = metadata.get("accessToken"), metadata.get("expires_on")
+    if not isinstance(token, str) or not token.strip() or type(expires) is not int:
+        raise DeployError("Azure CLI Fabric token metadata requires accessToken and expires_on; upgrade Azure CLI.")
+    if expires <= time.time():
+        raise DeployError("Azure CLI returned an expired Fabric token; sign in again.")
+    if GUID_RE.fullmatch(tenant) and str(metadata.get("tenant", "")).casefold() != tenant.casefold():
+        raise DeployError("Azure CLI returned a Fabric token for a different tenant.")
+    _FABRIC_TOKEN_CACHE[key] = (expires, token)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -516,6 +759,58 @@ def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
     return response.json()
 
 
+def check_capacity_availability(capacity_id: str, headers: dict[str, str]) -> None:
+    url = f"{FABRIC_BASE}/capacities"
+    seen_tokens: set[str] = set()
+    while True:
+        response = requests.get(url, headers=headers, timeout=60)
+        if response.status_code == 403:
+            print(
+                "WARNING: Capacity-list access is unavailable. Capacity state is unverified; "
+                "the mandatory deployment endpoint checks must still pass.",
+                flush=True,
+            )
+            return
+        if not response.ok:
+            raise DeployError(
+                f"Fabric capacity availability check failed: HTTP {response.status_code} {response.text}"
+            )
+        page = response.json()
+        if not isinstance(page, dict):
+            raise DeployError("Fabric capacity availability response is not an object.")
+        items = page.get("value")
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise DeployError("Fabric capacity availability response omitted a valid capacity list.")
+        for item in items:
+            if str(item.get("id") or "").casefold() != capacity_id.casefold():
+                continue
+            state = item.get("state")
+            if state != "Active":
+                raise DeployError(
+                    f"Assigned Fabric capacity '{item.get('displayName') or capacity_id}' "
+                    f"({capacity_id}) is {state or 'in an unknown state'}, not Active. "
+                    "Deployment stopped before changing SPA, agents or Rayfin state. "
+                    "Ask the capacity owner to restore availability, then rerun this command. "
+                    "No resume, resize or reassignment was attempted."
+                )
+            print(f"Assigned Fabric capacity is Active ({capacity_id}).", flush=True)
+            return
+        token = page.get("continuationToken")
+        if not token:
+            if page.get("continuationUri"):
+                raise DeployError("Fabric capacity pagination omitted its continuation token.")
+            break
+        if not isinstance(token, str) or token in seen_tokens:
+            raise DeployError("Fabric capacity pagination returned an invalid or repeated token.")
+        seen_tokens.add(token)
+        url = f"{FABRIC_BASE}/capacities?continuationToken={quote(token, safe='')}"
+    print(
+        f"WARNING: Assigned capacity {capacity_id} is not visible to this identity. "
+        "Capacity state is unverified; the mandatory deployment endpoint checks must still pass.",
+        flush=True,
+    )
+
+
 def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
     headers = fabric_headers(tenant)
     if GUID_RE.fullmatch(workspace):
@@ -523,6 +818,7 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
         capacity_id = str(item.get("capacityId") or "")
         if not GUID_RE.fullmatch(capacity_id):
             raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+        check_capacity_availability(capacity_id, headers)
         return workspace, str(item.get("displayName") or workspace), capacity_id
 
     matches: list[dict[str, Any]] = []
@@ -550,6 +846,7 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
         capacity_id = str(item.get("capacityId") or "")
     if not GUID_RE.fullmatch(capacity_id):
         raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+    check_capacity_availability(capacity_id, headers)
     return workspace_id, str(matches[0]["displayName"]), capacity_id
 
 
@@ -812,6 +1109,8 @@ def validate_appbackend_cors(
     post_bodies = {
         "/graphql": {"query": "query { __typename }"},
         "/api/auth/v1/token": {},
+        "/connectors/hydrolakehouse/graphql": {"query": "query { __typename }"},
+        "/connectors/hydrooperations/graphql": {"query": "query { __typename }"},
     }
     failures: list[str] = []
     for path in APPBACKEND_CORS_PATHS:
@@ -856,7 +1155,9 @@ def validate_appbackend_cors(
                     "Access-Control-Allow-Origin", ""
                 )
                 expected_status = (
-                    post_response.status_code == 200
+                    post_response.status_code == 401
+                    if path.startswith("/connectors/")
+                    else post_response.status_code == 200
                     if path == "/graphql"
                     else 200 <= post_response.status_code < 500
                     and post_response.status_code not in {404, 405}
@@ -886,14 +1187,386 @@ def validate_appbackend_cors(
         )
 
 
+def _canonical_graph_binding(raw: str) -> str:
+    value = raw.strip()
+    if value in ("", "''", '""'):
+        return ""
+    cli_quoted = value.startswith('"') and value.endswith('"')
+    if value.startswith("'") and value.endswith("'"):
+        value = value[1:-1]
+    if len(value) > 1024 * 1024:
+        raise DeployError("The operator-provided Ontology graph binding exceeds the producer size limit.")
+    # Undo only the bounded Rayfin 1.36 writer/reader mismatch, at the producer.
+    # The browser still accepts strict JSON only; identities are verified below.
+    for layer in range(16):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            if not cli_quoted or not value.startswith("{") or not value.endswith("}"):
+                break
+            try:
+                decoded = json.loads('"' + value + '"')
+            except ValueError:
+                break
+            if len(decoded) >= len(value):
+                break
+            value = decoded
+            continue
+        if isinstance(decoded, dict):
+            try:
+                encoded = json.dumps(decoded, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            except ValueError:
+                break
+            encoded = re.sub(
+                r'\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})',
+                lambda match: "\\u" + format(ord(json.loads('"' + match.group(0) + '"')), "04x"),
+                encoded,
+            )
+            return encoded.replace("'", r"\u0027").replace("$", r"\u0024")
+        if layer == 0 and cli_quoted and isinstance(decoded, str):
+            value = decoded
+            continue
+        break
+    raise DeployError("The operator-provided Ontology graph binding is invalid JSON.")
+
+
+def _public_config_value(values: dict[str, str], key: str) -> str:
+    value = values.get(key, "").strip()
+    if key == "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING":
+        return _canonical_graph_binding(value)
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, str) else value
+        except ValueError:
+            return value[1:-1]
+    return value[1:-1] if value.startswith("'") and value.endswith("'") else value
+
+
+def _workspace_artifacts(workspace_id: str, headers: dict[str, str]) -> list[dict[str, Any]]:
+    path = f"workspaces/{workspace_id}/items"
+    next_path: str | None = path
+    seen_pages: set[str] = set()
+    items: list[dict[str, Any]] = []
+    while next_path:
+        if next_path in seen_pages or len(seen_pages) >= 100:
+            raise DeployError("Target-workspace artifact listing exceeded its pagination bound.")
+        seen_pages.add(next_path)
+        page = fabric_get(next_path, headers)
+        entries = page.get("value")
+        if not isinstance(entries, list) or any(
+            not isinstance(item, dict) or not item.get("id") or not item.get("type")
+            or not item.get("displayName")
+            or (item.get("workspaceId") and str(item["workspaceId"]).casefold() != workspace_id.casefold())
+            for item in entries
+        ):
+            raise DeployError("Target-workspace artifact listing is malformed or contains another workspace.")
+        items.extend(entries)
+        continuation = page.get("continuationUri")
+        token = page.get("continuationToken")
+        next_path = None
+        if continuation:
+            if not isinstance(continuation, str):
+                raise DeployError("Invalid Fabric artifact continuation URI.")
+            parsed = urlparse(continuation)
+            if (
+                parsed.scheme != "https" or parsed.netloc != "api.fabric.microsoft.com"
+                or parsed.path != f"/v1/{path}" or parsed.fragment
+            ):
+                raise DeployError("Refusing artifact continuation outside the selected workspace.")
+            next_path = path + (f"?{parsed.query}" if parsed.query else "")
+        elif token:
+            if not isinstance(token, str):
+                raise DeployError("Invalid Fabric artifact continuation token.")
+            next_path = f"{path}?continuationToken={quote(token, safe='')}"
+    if len({item["id"] for item in items}) != len(items):
+        raise DeployError("Target-workspace artifact listing contains duplicate identities.")
+    return items
+
+
+def _lineage_graph_binding(
+    workspace_id: str,
+    ontology: dict[str, Any],
+    items: list[dict[str, Any]],
+    headers: dict[str, str],
+) -> dict[str, str] | None:
+    ontology_id = str(ontology["id"])
+    metadata = fabric_get(
+        f"workspaces/{workspace_id}/ontologies/{quote(ontology_id, safe='')}", headers
+    )
+    if (
+        metadata.get("id") != ontology_id
+        or (metadata.get("workspaceId") and str(metadata["workspaceId"]).casefold() != workspace_id.casefold())
+        or not isinstance(metadata.get("properties"), dict)
+        or metadata["properties"].get("generation") != 2
+    ):
+        raise DeployError("The selected Ontology is not a verified generation-2 item in the target workspace.")
+
+    lineage = fabric_get(
+        f"workspaces/{workspace_id}/items/{quote(ontology_id, safe='')}/relations/downstream?beta=true",
+        headers,
+    )
+    related_items = lineage.get("items")
+    relations = lineage.get("relations")
+    if not isinstance(related_items, list) or not isinstance(relations, list):
+        raise DeployError("Ontology downstream lineage response is malformed.")
+    related_by_id = {
+        str(item["id"]): item for item in related_items
+        if isinstance(item, dict) and item.get("id")
+    }
+    workspace_by_id = {str(item["id"]): item for item in items}
+    graph_ids = {
+        str(relation["itemId"])
+        for relation in relations
+        if isinstance(relation, dict)
+        and str(relation.get("dependentOnItemId", "")).casefold() == ontology_id.casefold()
+        and relation.get("relationType") == "CascadeDelete"
+        and related_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphIndex"
+        and str(related_by_id[str(relation["itemId"])].get("workspaceId", "")).casefold() == workspace_id.casefold()
+        and workspace_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphModel"
+    }
+    if len(graph_ids) > 1:
+        raise DeployError("Ontology lineage identifies multiple materialized GraphModels; graph ownership is ambiguous.")
+    if not graph_ids:
+        return None
+    return {
+        "workspaceId": workspace_id,
+        "ontologyId": ontology_id,
+        "graphModelId": next(iter(graph_ids)),
+    }
+
+
+def resolve_public_artifact_config(
+    workspace_id: str, tenant: str, configured: dict[str, str]
+) -> dict[str, str]:
+    """Resolve public data pointers from target metadata only; never follow old env URLs."""
+    headers = fabric_headers(tenant)
+    items = _workspace_artifacts(workspace_id, headers)
+    same_scope = (
+        _public_config_value(configured, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace_id.casefold()
+        and _public_config_value(configured, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
+    )
+    hints = configured if same_scope else {}
+
+    def select(kind: str, name_key: str, convention: str, *, required: bool = False) -> dict[str, Any] | None:
+        candidates = [item for item in items if item["type"] == kind]
+        name = _public_config_value(hints, name_key)
+        exact = [item for item in candidates if item["displayName"] == name] if name else []
+        matches = exact or [item for item in candidates if re.fullmatch(convention, str(item["displayName"]))]
+        if len(matches) > 1:
+            raise DeployError(
+                f"Ambiguous target-workspace {kind} candidates; set {name_key} to a unique "
+                "verified name in this workspace before deploying."
+            )
+        if not matches and required:
+            raise DeployError(
+                f"No verified {kind} matches {name_key} or the RTI naming convention in the target workspace."
+            )
+        return matches[0] if matches else None
+
+    eventhouse = select(
+        "Eventhouse",
+        "RAYFIN_PUBLIC_EVENTHOUSE_NAME",
+        rf"RTI_Demo_Eventhouse(?:_{RTI_ARTIFACT_SUFFIX_RE})?",
+        required=True,
+    )
+    assert eventhouse is not None
+    databases = []
+    for item in items:
+        if item["type"] != "KQLDatabase":
+            continue
+        detail = fabric_get(f"workspaces/{workspace_id}/kqlDatabases/{quote(str(item['id']), safe='')}", headers)
+        if (
+            detail.get("id") != item["id"]
+            or (detail.get("workspaceId") and str(detail["workspaceId"]).casefold() != workspace_id.casefold())
+            or not isinstance(detail.get("properties"), dict)
+        ):
+            raise DeployError("KQL database metadata does not match its target-workspace identity.")
+        if str(detail["properties"].get("parentEventhouseItemId", "")).casefold() == str(eventhouse["id"]).casefold():
+            databases.append(detail)
+    configured_database = _public_config_value(hints, "RAYFIN_PUBLIC_KQL_DATABASE")
+    named_databases = [item for item in databases if item.get("displayName") == configured_database]
+    matches = named_databases or databases
+    if len(matches) != 1:
+        raise DeployError(
+            "Expected one KQL database with a verified parentEventhouseItemId matching the selected "
+            "Eventhouse; if multiple exist, set RAYFIN_PUBLIC_KQL_DATABASE to a unique associated database name."
+        )
+    database = matches[0]
+    cluster_uri = str(database["properties"].get("queryServiceUri") or "")
+    uri = urlparse(cluster_uri)
+    if (
+        not database.get("displayName") or uri.scheme != "https" or not uri.hostname
+        or uri.username or uri.password or uri.query or uri.fragment or uri.path not in ("", "/")
+    ):
+        raise DeployError("The target Eventhouse's KQL database has no valid HTTPS queryServiceUri or display name.")
+
+    pipeline = select("DataPipeline", "RAYFIN_PUBLIC_STREAM_PIPELINE_NAME", r"02_Pipe_Stream")
+    notebook = select("Notebook", "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME", r"RTI_011_seed_sql_wire_graphql_agent")
+    lakehouse = select(
+        "Lakehouse",
+        "RAYFIN_PUBLIC_LAKEHOUSE_NAME",
+        rf"Energy_IQ_LakehouseRTI(?:_{RTI_ARTIFACT_SUFFIX_RE})?",
+        required=True,
+    )
+    assert lakehouse is not None
+    lakehouse_detail = fabric_get(
+        f"workspaces/{workspace_id}/lakehouses/{quote(str(lakehouse['id']), safe='')}", headers
+    )
+    lakehouse_properties = lakehouse_detail.get("properties")
+    sql_endpoint = lakehouse_properties.get("sqlEndpointProperties") if isinstance(lakehouse_properties, dict) else None
+    sql_endpoint_id = str(sql_endpoint.get("id") or "") if isinstance(sql_endpoint, dict) else ""
+    if (
+        lakehouse_detail.get("id") != lakehouse["id"]
+        or (lakehouse_detail.get("workspaceId") and lakehouse_detail["workspaceId"] != workspace_id)
+        or not GUID_RE.fullmatch(sql_endpoint_id)
+    ):
+        raise DeployError("The selected Lakehouse has no verified SQL analytics endpoint identity.")
+    dashboard = select(
+        "KQLDashboard",
+        "RAYFIN_PUBLIC_KQL_DASHBOARD_NAME",
+        rf"RTI_Demo_OPCUA_TelemetryStats(?:_{RTI_ARTIFACT_SUFFIX_RE})?",
+    )
+    values = {
+        "RAYFIN_PUBLIC_EVENTHOUSE_NAME": str(eventhouse["displayName"]),
+        "RAYFIN_PUBLIC_EVENTHOUSE_ID": str(eventhouse["id"]),
+        "RAYFIN_PUBLIC_KQL_DATABASE": str(database["displayName"]),
+        "RAYFIN_PUBLIC_KQL_DATABASE_ID": str(database["id"]),
+        "RAYFIN_PUBLIC_KQL_CLUSTER_URI": cluster_uri.rstrip("/"),
+        "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT": "",
+        "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID": sql_endpoint_id,
+        "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
+        "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
+        "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "",
+    }
+    from operational_store_support import active_operational_items, OPERATIONAL_STORE_DESCRIPTION
+    stores = active_operational_items(items)
+    if len(stores) > 1:
+        raise DeployError("Multiple shared operational stores match the explicit setup name.")
+    if stores:
+        store = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{stores[0]['id']}", headers)
+        if store.get("description") != OPERATIONAL_STORE_DESCRIPTION or store.get("id") != stores[0]["id"]:
+            raise DeployError("Shared operational SQL identity/ownership marker verification failed.")
+        values["RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID"] = store["id"]
+    for prefix, item, default_name in [
+        ("STREAM_PIPELINE", pipeline, "02_Pipe_Stream"),
+        ("POSTSEED_NOTEBOOK", notebook, "RTI_011_seed_sql_wire_graphql_agent"),
+        ("LAKEHOUSE", lakehouse, ""), ("KQL_DASHBOARD", dashboard, ""),
+    ]:
+        values[f"RAYFIN_PUBLIC_{prefix}_NAME"] = str(item["displayName"]) if item else default_name
+        values[f"RAYFIN_PUBLIC_{prefix}_ID"] = str(item["id"]) if item else ""
+
+    ontology_name = _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_NAME")
+    ontologies = [item for item in items if item["type"] == "Ontology"]
+    explicit_binding = os.environ.get("HYDRO_ONTOLOGY_GRAPH_BINDING", "").strip()
+    if explicit_binding:
+        operator_binding = json.loads(_canonical_graph_binding(explicit_binding))
+        selected = [item for item in ontologies if item["id"] == operator_binding.get("ontologyId")]
+        if operator_binding.get("workspaceId") != workspace_id or len(selected) != 1:
+            raise DeployError("The operator-provided Ontology graph binding does not select an Ontology in the target workspace.")
+        ontology_name = selected[0]["displayName"]
+    named_ontologies = (
+        [item for item in ontologies if item["displayName"] == ontology_name]
+        if ontology_name else []
+    )
+    selected_ontologies = named_ontologies or ontologies
+    if len(selected_ontologies) > 1:
+        raise DeployError(
+            "The target workspace contains multiple Ontologies; set RAYFIN_PUBLIC_ONTOLOGY_NAME "
+            "to the intended generation-2 item."
+        )
+    selected_ontology = selected_ontologies[0] if selected_ontologies else None
+    lineage_binding = (
+        _lineage_graph_binding(workspace_id, selected_ontology, items, headers)
+        if selected_ontology else None
+    )
+    if selected_ontology:
+        values["RAYFIN_PUBLIC_ONTOLOGY_NAME"] = str(selected_ontology["displayName"])
+    if lineage_binding:
+        values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = json.dumps(
+            lineage_binding, separators=(",", ":")
+        )
+
+    binding_text = (
+        _canonical_graph_binding(explicit_binding) if explicit_binding
+        else _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")
+    )
+    if explicit_binding and lineage_binding:
+        supplied = json.loads(binding_text)
+        if any(supplied.get(key) != value for key, value in lineage_binding.items()):
+            raise DeployError("The operator-provided Ontology graph binding conflicts with authoritative target lineage.")
+        values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = binding_text
+    if binding_text and not lineage_binding:
+        try:
+            binding = json.loads(binding_text)
+        except ValueError as exc:
+            raise DeployError("The operator-provided Ontology graph binding is invalid JSON.") from exc
+        by_id = {str(item["id"]): item for item in items}
+        if (
+            not isinstance(binding, dict) or binding.get("workspaceId") != workspace_id
+            or by_id.get(str(binding.get("ontologyId")), {}).get("type") != "Ontology"
+            or by_id.get(str(binding.get("graphModelId")), {}).get("type") != "GraphModel"
+        ):
+            raise DeployError(
+                "The operator-provided Ontology graph binding does not match the target workspace's "
+                "Ontology/GraphModel identities. Clear it or provide a verified mapping; graph ownership is never guessed."
+            )
+        values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = binding_text
+    return values
+
+
+def _rebind_public_env(text: str, values: dict[str, str]) -> str:
+    def line_for(key: str, value: str) -> str:
+        if key == "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING":
+            binding = _canonical_graph_binding(value)
+            return f"{key}='{binding}'" if binding else f"{key}="
+        encoded = json.dumps(value, ensure_ascii=False) if re.search(r'''[\s#'"\\]''', value) else value
+        return f"{key}={encoded}"
+
+    remaining = dict(values)
+    lines = []
+    for line in text.splitlines():
+        key = line.split("=", 1)[0].strip()
+        if re.fullmatch(r"(?:VITE_)?RAYFIN_PUBLIC_STID_GRAPHQL_(?:NAME|ID|URL)", key):
+            continue
+        if "=" in line and key in values:
+            line = line_for(key, values[key])
+            remaining.pop(key, None)
+        lines.append(line)
+    for key, value in remaining.items():
+        lines.append(line_for(key, value))
+    return "\n".join(lines) + "\n"
+
+
+def configure_app_feature_flags(env_path: Path, *, enable_energy_map: bool) -> None:
+    key = "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP"
+    value = "true" if enable_energy_map else "false"
+    content = env_path.read_text(encoding="utf-8")
+    pattern = rf"(?m)^{key}=.*$"
+    if re.search(pattern, content):
+        content = re.sub(pattern, f"{key}={value}", content)
+    else:
+        content = content.rstrip("\r\n") + f"\n{key}={value}\n"
+    env_path.write_text(content, encoding="utf-8", newline="\n")
+
+
 def prepare_rayfin_env(
     tenant: str,
     workspace_id: str,
     workspace_name: str,
     capacity_id: str,
     client_id: str | None,
+    *,
+    enable_energy_map: bool | None = None,
 ) -> bool:
     values, deployment = current_rayfin_target()
+    if enable_energy_map is None:
+        same_scope = (
+            _public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
+            and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace_id.casefold()
+        )
+        enable_energy_map = same_scope and _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
+    public_artifacts = resolve_public_artifact_config(workspace_id, tenant, values)
     same_target = deployment and all(
         (
             values.get("FABRIC_WORKSPACE_NAME") == workspace_name,
@@ -917,6 +1590,13 @@ def prepare_rayfin_env(
     if target_matches:
         item_id = str(deployment.get("fabricItemId") or "")
         if fabric_item_exists(workspace_id, item_id, tenant):
+            env_path = RAYFIN_DIR / ".env"
+            env_path.write_text(
+                _rebind_public_env(env_path.read_text(encoding="utf-8"), public_artifacts),
+                encoding="utf-8", newline="\n",
+            )
+            configure_app_feature_flags(env_path, enable_energy_map=enable_energy_map)
+            print("Rebound public artifact configuration from verified target-workspace metadata.", flush=True)
             print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
             return True
         print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
@@ -942,7 +1622,8 @@ def prepare_rayfin_env(
         if placeholder not in template:
             raise DeployError(f"Expected placeholder {placeholder!r} is missing from rayfin/.env.example.")
         template = template.replace(placeholder, value)
-    (RAYFIN_DIR / ".env").write_text(template, encoding="utf-8", newline="\n")
+    (RAYFIN_DIR / ".env").write_text(_rebind_public_env(template, public_artifacts), encoding="utf-8", newline="\n")
+    configure_app_feature_flags(RAYFIN_DIR / ".env", enable_energy_map=enable_energy_map)
     print("Generated fresh rayfin/.env for the target workspace.", flush=True)
     return False
 
@@ -1053,7 +1734,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
             and grant.get("principalId") == current_user_id
             for scope in str(grant.get("scope") or "").split()
         }
-        principal_missing = scope_values - principal_scopes
+        principal_missing = missing - principal_scopes
         if principal_missing:
             other_user_grants = [
                 grant
@@ -1078,7 +1759,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
             "Delegated API scopes are configured, but OAuth consent is not granted:\n"
             + "\n".join(consent_issues)
             + "\nThe API permissions list declares requested scopes; it is not proof of consent. "
-            "In its Status column, each API must show 'Granted for <tenant>'.\n"
+            "Every required scope needs tenant-wide consent or consent for the current user.\n"
             f"Fix: Entra admin center > App registrations > {APP_DISPLAY_NAME} > "
             "API permissions > Grant admin consent for <tenant>. A disabled button means the "
             "signed-in administrator lacks a consent-granting directory role. Alternatively, if "
@@ -1088,7 +1769,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
     if principal_fallbacks:
         print(
             "WARNING: live-auth consent is current-user only for resources "
-            f"{', '.join(principal_fallbacks)}. The app works for this operator, but an enterprise "
+            f"{', '.join(principal_fallbacks)}. Consent covers this operator, but an enterprise "
             "rollout requires Privileged Role Administrator / Global Administrator to grant "
             "tenant-wide admin consent (AllPrincipals).",
             flush=True,
@@ -1109,21 +1790,176 @@ def validate_entra_live_auth_with_reauth(
     )
 
 
-def ensure_rayfin_login(tenant: str) -> None:
+def rayfin_environment(tenant: str) -> dict[str, str]:
+    """Pass the validated Azure CLI identity only to each Rayfin child process."""
+    token = fabric_headers(tenant)["Authorization"].removeprefix("Bearer ").strip()
+    if not token:
+        raise DeployError("Azure CLI returned an empty Fabric token; Rayfin deployment stopped.")
+    return {**os.environ, "RAYFIN_TOKEN": token, "RAYFIN_TENANT_ID": tenant}
+
+
+def ensure_rayfin_login(tenant: str, workspace_id: str) -> None:
+    environment = rayfin_environment(tenant)
+    headers = {"Authorization": f"Bearer {environment['RAYFIN_TOKEN']}"}
+    workspace = fabric_get(f"workspaces/{workspace_id}", headers)
+    if str(workspace.get("id", "")).casefold() != workspace_id.casefold():
+        raise DeployError("The tenant-scoped Rayfin token did not verify the selected workspace.")
+    print(
+        "Verified the tenant-scoped ambient Rayfin token against the selected Fabric workspace; "
+        "every Rayfin command receives this identity explicitly.",
+        flush=True,
+    )
+
+
+def export_frontend_env() -> None:
+    run_stream(
+        node24_script(APP_DIR / "scripts" / "export-env.mjs"),
+        cwd=APP_DIR,
+    )
+
+
+def run_rayfin_deployment(command: list[str], tenant: str) -> str:
     try:
-        status = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
-    except DeployError:
-        status = ""
-    if tenant.casefold() in status.casefold():
-        print("Rayfin is already signed into the target tenant.", flush=True)
-        return
-    if status:
-        run_stream(rayfin24("logout"), cwd=APP_DIR)
-    print("Rayfin sign-in is opening in your browser...", flush=True)
-    run_stream(rayfin24("login", "--tenant", tenant, "--select"), cwd=APP_DIR)
-    verified = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
-    if tenant.casefold() not in verified.casefold():
-        raise DeployError("Rayfin sign-in completed, but its tenant does not match the requested tenant.")
+        return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+    finally:
+        # Rayfin also rewrites .env after the prebuild hook and on failed up runs.
+        # Regenerate through the repository producer; never patch generated files.
+        export_frontend_env()
+
+
+def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydrolakehouse") -> None:
+    """Rayfin can exit zero on partial connector failure; require both steps."""
+    records = []
+    for line in output.splitlines():
+        if line.strip().startswith("{"):
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if not records:
+        raise DeployError("Rayfin returned no connector apply JSON receipt.")
+    receipt = records[-1]
+    if not isinstance(receipt, dict) or receipt.get("status") != "success":
+        raise DeployError("Lakehouse connector application did not succeed.")
+    for key, status in (("generate", "generated"), ("results", "success")):
+        rows = receipt.get(key)
+        if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
+                or rows[0].get("name") != connector_name or rows[0].get("status") != status):
+            raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
+
+
+def operational_graphql_rebind_plan(parts, workspace_id, archived_ids, target_id):
+    from copy import deepcopy
+    from operational_store_support import OPERATIONAL_COLUMNS
+
+    matches = [part for part in parts if part["path"] == "graphql-definition.json"]
+    if len(matches) != 1 or len({part["path"] for part in parts}) != len(parts):
+        raise DeployError("Operational GraphQL reconciliation requires one unambiguous definition.")
+    original = json.loads(base64.b64decode(matches[0]["payload"]))
+    detached = deepcopy(original)
+    sources = detached.get("datasources")
+    if not isinstance(sources, list):
+        raise DeployError("GraphQL definition has no explicit data-source list.")
+    moved = []
+    metadata = None
+    for source in list(sources):
+        if source.get("sourceItemId") not in archived_ids:
+            continue
+        if source.get("sourceWorkspaceId") != workspace_id or source.get("sourceType") != "SqlDbNative":
+            raise DeployError("Archived GraphQL SQL source has a conflicting workspace or source type.")
+        objects = source.get("objects")
+        if not isinstance(objects, list):
+            raise DeployError("Archived GraphQL SQL source has no explicit object list.")
+        managed = [node for node in objects if node.get("sourceObjectType") == "Table"
+                   and node.get("sourceObject") in {f"[dbo].[{table}]" for table in OPERATIONAL_COLUMNS}]
+        if not managed:
+            continue
+        candidate = {key: value for key, value in source.items() if key != "objects"}
+        candidate["sourceItemId"] = target_id
+        if metadata is not None and metadata != candidate:
+            raise DeployError("Archived GraphQL SQL sources have conflicting custom metadata.")
+        metadata = candidate
+        moved.extend(managed)
+        source["objects"] = [node for node in objects if node not in managed]
+        if not source["objects"]:
+            sources.remove(source)
+    if metadata is None:
+        return None
+    rebound = deepcopy(detached)
+    targets = [source for source in rebound["datasources"] if source.get("sourceItemId") == target_id]
+    if len(targets) > 1:
+        raise DeployError("GraphQL definition contains duplicate replacement SQL sources.")
+    target = targets[0] if targets else {**metadata, "objects": []}
+    if target.get("sourceWorkspaceId") != workspace_id or target.get("sourceType") != "SqlDbNative":
+        raise DeployError("GraphQL replacement SQL source has a conflicting identity.")
+    for key, value in metadata.items():
+        if key in target and target[key] != value:
+            raise DeployError("GraphQL replacement would overwrite custom source metadata.")
+        target[key] = value
+    by_type = {node["graphqlType"]: node for node in target["objects"]}
+    for node in moved:
+        existing = by_type.get(node["graphqlType"])
+        if existing is not None and existing != node:
+            raise DeployError("GraphQL replacement would overwrite a custom operational object.")
+        if existing is None:
+            target["objects"].append(node)
+            by_type[node["graphqlType"]] = node
+    if not targets:
+        rebound["datasources"].append(target)
+    def encode(body):
+        return [{**part, "payload": base64.b64encode(json.dumps(body).encode()).decode()}
+                if part["path"] == "graphql-definition.json" else part for part in parts]
+    return encode(detached), encode(rebound)
+
+
+def reconcile_archived_operational_graphql(workspace_id, tenant) -> None:
+    from operational_store_support import OPERATIONAL_ARCHIVE_PREFIX, OPERATIONAL_STORE_DESCRIPTION
+    from provision_foundry_agents import read_data_agent_definition
+    from sync_workspace_from_git import FABRIC_BASE, Fabric
+
+    values, _ = current_rayfin_target()
+    target_id = _public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")
+    headers = fabric_headers(tenant)
+    items = _workspace_artifacts(workspace_id, headers)
+    target = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{target_id}", headers)
+    if target.get("id") != target_id or target.get("description") != OPERATIONAL_STORE_DESCRIPTION:
+        raise DeployError("GraphQL source reconciliation requires the verified active operational SQL item.")
+    archived_ids = {item["id"] for item in items if item["type"] == "SQLDatabase"
+                    and item.get("description") == OPERATIONAL_ARCHIVE_PREFIX + target_id + "."}
+    if not archived_ids:
+        raise DeployError("Duplicate GraphQL nodes have no explicitly archived operational SQL replacement.")
+    fabric = Fabric(tenant)
+    changed = 0
+    def contents(parts):
+        return {part["path"]: json.loads(base64.b64decode(part["payload"]))
+                if part["path"].endswith(".json") or part["path"] == ".platform"
+                else base64.b64decode(part["payload"]) for part in parts}
+    for item in items:
+        if item["type"] != "GraphQLApi":
+            continue
+        before = read_data_agent_definition(
+            sys.modules[__name__], workspace_id, item["id"], headers, collection="items")["definition"]["parts"]
+        plan = operational_graphql_rebind_plan(before, workspace_id, archived_ids, target_id)
+        if plan is None:
+            continue
+        backup = Path(tempfile.mkdtemp(prefix="fabric-operational-graphql-")) / f"{item['id']}.json"
+        backup.write_text(json.dumps({"definition": {"parts": before}}), encoding="utf-8")
+        print(f"Rebinding archived operational GraphQL source {item['id']}; backup: {backup}", flush=True)
+        for parts in plan:
+            response = fabric.request(
+                "POST", f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item['id']}/updateDefinition",
+                json={"definition": {"parts": parts}},
+            )
+            response.raise_for_status()
+            fabric.poll_lro(response)
+            actual = read_data_agent_definition(
+                sys.modules[__name__], workspace_id, item["id"], headers, collection="items")["definition"]["parts"]
+            if contents(actual) != contents(parts):
+                raise DeployError("Operational GraphQL source replacement failed exact preservation readback.")
+        changed += 1
+    if not changed:
+        raise DeployError("Duplicate GraphQL nodes were not caused by the verified archived operational sources.")
+    print(f"Verified operational SQL source replacement in {changed} GraphQL definition(s).", flush=True)
 
 
 def current_git_push_target() -> tuple[str, str]:
@@ -1184,7 +2020,10 @@ def persist_generated_origin(workspace_name: str) -> None:
         raise DeployError(f"{upstream} changed during deployment. Merge it, then rerun deploy.")
     run_stream(command_argv("git", "add", relative), cwd=REPO_ROOT)
     run_stream(
-        command_argv("git", "commit", "-m", f"deploy: register {workspace_name} app origin"),
+        command_argv(
+            "git", "commit", "-m", f"deploy: register {workspace_name} app origin",
+            "-m", "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+        ),
         cwd=REPO_ROOT,
     )
     run_stream(command_argv("git", "push", "origin", branch), cwd=REPO_ROOT)
@@ -1284,16 +2123,360 @@ def validate_spa_redirect_preservation(
     )
 
 
+APPBACKEND_IDENTITY_KEYS = (
+    "RAYFIN_PUBLIC_ITEM_ID", "RAYFIN_PUBLIC_API_URL", "RAYFIN_PUBLIC_PUBLISHABLE_KEY",
+)
+
+
+def appbackend_identity_present() -> bool:
+    values, _ = current_rayfin_target()
+    return all(_public_config_value(values, key) for key in APPBACKEND_IDENTITY_KEYS)
+
+
+def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
+    """The Hosted Agent is configured from the AppBackend's identity, which Rayfin writes when it provisions.
+
+    A target that has no AppBackend yet would otherwise stop at Foundry provisioning, so create the backend (without
+    static hosting) first. Existing targets already carry the identity and skip this entirely."""
+    if appbackend_identity_present():
+        return
+    values, _ = current_rayfin_target()
+    if not GUID_RE.fullmatch(_public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")):
+        raise DeployError("Complete the current shared Lakehouse/SQL setup before creating an AppBackend.")
+    print(
+        "No AppBackend exists for this target yet; creating it (without static hosting) so the Hosted Agent "
+        "can be configured against its identity.",
+        flush=True,
+    )
+    ensure_rayfin_login(tenant, workspace_id)
+    run_rayfin_deployment(
+        rayfin24("up", "--workspace-id", workspace_id, "--exclude-services", "staticHosting", "--yes"), tenant,
+    )
+    if not appbackend_identity_present():
+        raise DeployError(
+            "Rayfin created the backend but did not record its identity (RAYFIN_PUBLIC_ITEM_ID, "
+            "RAYFIN_PUBLIC_API_URL, RAYFIN_PUBLIC_PUBLISHABLE_KEY) in rayfin/.env; the Hosted Agent cannot be "
+            "configured. Stop and report this output."
+        )
+
+
+def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
+    values, _ = current_rayfin_target()
+    notebook_id = _public_config_value(values, "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID")
+    backend_id = _public_config_value(values, "RAYFIN_PUBLIC_ITEM_ID")
+    lakehouse_id = _public_config_value(values, "RAYFIN_PUBLIC_LAKEHOUSE_ID")
+    if not all(GUID_RE.fullmatch(value) for value in (notebook_id, backend_id, lakehouse_id)):
+        raise DeployError("Fresh deployment requires verified NB11, AppBackend and Lakehouse identities.")
+    headers = fabric_headers(tenant)
+    backend = fabric_get(f"workspaces/{workspace_id}/items/{backend_id}", headers)
+    if backend.get("id") != backend_id or backend.get("type") != "AppBackend" or not backend.get("displayName"):
+        raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
+    if _published_operational_source_ready(workspace_id, values, "", headers, required=False):
+        bind_operational_store_env(workspace_id, headers)
+        print("Verified published Data Agent SQL source; no NB11 execution or demo DML needed.", flush=True)
+        return
+    legacy = [item for item in _workspace_artifacts(workspace_id, headers)
+              if item["type"] == "SQLDatabase" and item["displayName"] == backend["displayName"]]
+    if len(legacy) != 1:
+        raise DeployError("The AppBackend's exact legacy SQL item could not be verified.")
+    from sync_workspace_from_git import (
+        Fabric, ensure_spark_runtime, notebook_definition, verify_environment_runtimes,
+    )
+
+    fabric = Fabric(tenant)
+    definition = notebook_definition(fabric, workspace_id, notebook_id)
+    parts = [part for part in definition["parts"]
+             if part["path"] in ("notebook-content.ipynb", "notebook-content.py")]
+    if len(parts) != 1:
+        raise DeployError("NB11 bootstrap contract could not be read as one notebook definition.")
+    source = base64.b64decode(parts[0]["payload"]).decode("utf-8")
+    if parts[0]["path"].endswith(".py"):
+        code = source
+        metadata = re.search(r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)", source)
+        if metadata is None:
+            raise DeployError("Native NB11 has no verifiable dependency metadata.")
+        notebook = {"metadata": json.loads("\n".join(
+            line.removeprefix("# META ") for line in metadata[1].splitlines()))}
+    else:
+        notebook = json.loads(source)
+        code = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    expected = (SCRIPT_DIR.parent.parent / "Notebooks" /
+                "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+    if ast.dump(ast.parse(code)) != ast.dump(ast.parse(expected)):
+        raise DeployError(
+            "Live NB11 differs from this repository's verified non-seeding bootstrap contract. "
+            "Sync the current Git branch into the workspace before deploying; no notebook was run."
+        )
+    binding = notebook.get("metadata", {}).get("dependencies", {}).get("lakehouse", {})
+    if (binding.get("default_lakehouse") != lakehouse_id
+            or binding.get("default_lakehouse_workspace_id") != workspace_id):
+        raise DeployError(
+            "NB11 is not bound to the selected workspace's Lakehouse. Complete target setup "
+            "before deploying; no notebook was run."
+        )
+    ensure_spark_runtime(fabric.request, workspace_id)
+    verify_environment_runtimes(fabric.request, workspace_id)
+    jobs_path = f"workspaces/{workspace_id}/items/{notebook_id}/jobs/instances"
+    jobs = fabric_get(jobs_path, headers)
+    if not isinstance(jobs.get("value"), list) or jobs.get("continuationToken") or jobs.get("continuationUri"):
+        raise DeployError("Cannot verify an idle NB11 from its complete job inventory.")
+    if any(job.get("status") in ("NotStarted", "InProgress") for job in jobs["value"]):
+        raise DeployError("NB11 is already active. Let it finish before retrying deployment.")
+    print("Bootstrapping the Data Agent SQL source through NB11; no operational demo DML.", flush=True)
+    response = requests.post(
+        f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}/jobs/execute/instances?beta=false",
+        headers=headers, json={"parameters": [
+            {"name": "seed_demo_data", "value": False, "type": "Boolean"},
+            {"name": "provision_shared_store", "value": True, "type": "Boolean"},
+            {"name": "legacy_sql_db_item_id", "value": legacy[0]["id"], "type": "Text"},
+            {"name": "project_ontology_item_id", "value": json.loads(_public_config_value(
+                values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))["ontologyId"], "type": "Text"},
+        ]}, timeout=60,
+    )
+    if response.status_code != 202:
+        raise DeployError(f"NB11 bootstrap start failed: HTTP {response.status_code} {response.text}")
+    location = response.headers.get("Location", "")
+    prefixes = [f"{FABRIC_BASE}/workspaces/{workspace_id}/{kind}/{notebook_id}/jobs/instances/"
+                for kind in ("items", "notebooks")]
+    if not any(location.startswith(prefix) and GUID_RE.fullmatch(location[len(prefix):]) for prefix in prefixes):
+        raise DeployError("NB11 bootstrap did not return a verified target-workspace job location.")
+    deadline = time.monotonic() + 15 * 60
+    last_status = None
+    while time.monotonic() < deadline:
+        result = fabric_get(location[len(FABRIC_BASE) + 1:], headers)
+        status = result.get("status")
+        if status != last_status:
+            print(f"NB11 bootstrap: {status} ({location})", flush=True)
+            last_status = status
+        if status == "Completed":
+            break
+        if status not in ("NotStarted", "InProgress"):
+            raise DeployError(f"NB11 bootstrap failed: {json.dumps(result)}")
+        time.sleep(4)
+    else:
+        raise DeployError(f"NB11 bootstrap exceeded 15 minutes. Inspect the existing job before retrying: {location}")
+    if not _published_operational_source_ready(workspace_id, values, "", headers):
+        raise DeployError("NB11 completed but its operational SQL source publication could not be verified.")
+    bind_operational_store_env(workspace_id, headers)
+    print("Verified operational SQL source publication before Foundry provisioning.", flush=True)
+
+
+def bind_operational_store_env(workspace_id, headers) -> None:
+    from operational_store_support import active_operational_items, OPERATIONAL_STORE_DESCRIPTION
+    stores = active_operational_items(_workspace_artifacts(workspace_id, headers))
+    if len(stores) != 1:
+        raise DeployError("The shared operational SQL Database could not be resolved exactly.")
+    item = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{stores[0]['id']}", headers)
+    if item.get("id") != stores[0]["id"] or item.get("description") != OPERATIONAL_STORE_DESCRIPTION:
+        raise DeployError("The shared operational SQL Database failed identity verification.")
+    path = RAYFIN_DIR / ".env"
+    path.write_text(_rebind_public_env(path.read_text(encoding="utf-8"), {
+        "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": item["id"],
+    }), encoding="utf-8")
+
+
+def _published_operational_source_ready(workspace_id, values, sql_name, headers, *, required=True) -> bool:
+    from operational_store_support import is_operational_store_name
+    from provision_foundry_agents import (
+        published_sql_source_ready, read_data_agent_definition, verify_published_identity,
+    )
+
+    binding = json.loads(_public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
+    ontology_id = binding["ontologyId"]
+    ontology = fabric_get(f"workspaces/{workspace_id}/ontologies/{ontology_id}", headers)
+    if ontology.get("id") != ontology_id or type(ontology.get("properties", {}).get("generation")) is not int \
+            or ontology["properties"]["generation"] != 2:
+        raise DeployError("Data Agent SQL publication requires a verified numeric generation-2 Ontology.")
+    items = _workspace_artifacts(workspace_id, headers)
+    configured_sql_id = _public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")
+    databases = [
+        item for item in items if item["type"] == "SQLDatabase"
+        and (item["displayName"] == sql_name or is_operational_store_name(item["displayName"]))
+        and (not configured_sql_id or item["id"] == configured_sql_id)
+    ]
+    if not databases and not required:
+        return False
+    if len(databases) != 1:
+        raise DeployError("Cannot resolve exactly one operational SQL Database for this AppBackend.")
+    matches = []
+    for agent in items:
+        if agent["type"] != "DataAgent" or not agent["displayName"].startswith("RTI_Demo_Agent_"):
+            continue
+        definition = read_data_agent_definition(sys.modules[__name__], workspace_id, agent["id"], headers)
+        try:
+            verify_published_identity(definition, workspace_id, ontology_id)
+        except RuntimeError:
+            continue
+        matches.append(definition)
+    if len(matches) != 1:
+        raise DeployError("Exactly one published Data Agent must match the verified v2 Ontology.")
+    if not published_sql_source_ready(matches[0], workspace_id, databases[0]["id"]):
+        return False
+    from operational_store_support import WEATHER_PROJECT_ENTITIES, SQL_PROJECT_ENTITIES, project_source_expressions
+    from ontology_notebook_support import _verify_definition
+    extension = read_data_agent_definition(
+        sys.modules[__name__], workspace_id, ontology_id, headers, collection="ontologies")
+    expected = []
+    def require(path, text):
+        expected.append({"path": path, "payload": base64.b64encode(text.encode()).decode()})
+    for entity, physical in {**SQL_PROJECT_ENTITIES, **{
+            name: source[0] for name, source in WEATHER_PROJECT_ENTITIES.items()}}.items():
+        alias = "HydroProject_" + entity
+        expression = "HydroProjectLakehouse" if entity in WEATHER_PROJECT_ENTITIES else "HydroProjectOperations"
+        require(f"entities/{entity}.tmdl", f"entity {entity}\n\tbackingTable: {alias}\n")
+        require(f"tables/{alias}.tmdl",
+                f"table {alias}\n\tpartition {alias} = entity\n\t\tmode: directLake\n\t\tsource\n"
+                f"\t\t\tentityName: {physical}\n\t\t\tschemaName: dbo\n\t\t\texpressionSource: {expression}\n")
+    require("expressions.tmdl", "\n".join(project_source_expressions(
+        workspace_id, _public_config_value(values, "RAYFIN_PUBLIC_LAKEHOUSE_ID"), databases[0]["id"])))
+    actual_paths = {part["path"] for part in extension["definition"]["parts"]}
+    if any(part["path"] not in actual_paths for part in expected):
+        return False
+    try:
+        _verify_definition(expected, extension["definition"]["parts"])
+    except RuntimeError as exc:
+        raise DeployError(f"Project ontology source-binding readback failed: {exc}") from exc
+    return True
+
+
+def verify_lakehouse_connector(tenant: str) -> dict[str, int]:
+    command = [str(node24_executable()), "--import", "tsx", str(APP_DIR / "scripts" / "local-fabric-sources.mjs")]
+
+    def invoke(payload: dict) -> dict:
+        result = subprocess.run(
+            command, cwd=APP_DIR, input=json.dumps(payload), capture_output=True,
+            text=True, encoding="utf-8", timeout=120, check=False,
+        )
+        lines = [line.removeprefix("__HYDRO_RESULT__=") for line in result.stdout.splitlines()
+                 if line.startswith("__HYDRO_RESULT__=")]
+        if len(lines) != 1:
+            raise DeployError("Lakehouse connector verification returned no unambiguous source receipt.")
+        envelope = json.loads(lines[0])
+        if result.returncode or envelope.get("ok") is not True:
+            raise DeployError(f"Lakehouse connector verification failed: {envelope.get('error', 'source read failed')}")
+        return envelope["result"]
+
+    configuration = invoke({"action": "configuration"})
+    power_bi_token = run_with_azure_cli_reauthentication(
+        tenant, "verifying the Lakehouse connector",
+        lambda: run_capture(az("account", "get-access-token", "--tenant", tenant,
+                              "--resource", "https://analysis.windows.net/powerbi/api",
+                              "--query", "accessToken", "-o", "tsv")),
+    )
+    result = invoke({
+        "action": "verify_lakehouse_connector", "configuration_digest": configuration["configuration_digest"],
+        "tokens": {"fabric": fabric_headers(tenant)["Authorization"].removeprefix("Bearer ").strip(),
+                   "graphql": power_bi_token},
+    })
+    counts = result.get("counts")
+    if (not isinstance(counts, dict) or set(counts) != {"facilities", "equipment", "instruments"}
+            or any(type(count) is not int or count <= 0 for count in counts.values())):
+        raise DeployError("Lakehouse connector did not return complete nonempty asset inventories.")
+    print(f"Verified connector source readiness with the deployment identity: {counts}. "
+          "This does not certify signed-in SPA or Foundry agent execution.", flush=True)
+    return counts
+
+def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
+    values, _ = current_rayfin_target()
+    if not _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"):
+        raise DeployError(
+            "Native Ontology graph binding is missing. In the selected generation-2 Ontology, use "
+            "Manage graph -> select eligible entities/relationships -> Continue -> Materialize, then "
+            "supply authoritative lineage or operator-verified HYDRO_ONTOLOGY_GRAPH_BINDING JSON. "
+            "Ineligible entities or a zero-node materialization do not satisfy this prerequisite. "
+            "Stopped before AppBackend or Foundry provisioning."
+        )
+    ensure_appbackend_identity(tenant, workspace_id)
+    ensure_hosted_source_prerequisites(tenant, workspace_id)
+    foundry_spec = importlib.util.spec_from_file_location(
+        "provision_foundry_agents", SCRIPT_DIR / "provision_foundry_agents.py"
+    )
+    if not foundry_spec or not foundry_spec.loader:
+        raise DeployError("Foundry provisioning module is unavailable.")
+    foundry = importlib.util.module_from_spec(foundry_spec)
+    foundry_spec.loader.exec_module(foundry)
+    foundry.provision(sys.modules[__name__], tenant, workspace_id)
+
+
+def verify_foundry_agents(tenant: str, workspace_id: str) -> None:
+    from provision_foundry_agents import verify_existing
+
+    verify_existing(sys.modules[__name__], tenant, workspace_id)
+
+
+def energy_workspace(tenant: str, workspace_id: str):
+    from feature_workspace import EnergyConfig, FeatureWorkspace
+
+    items = _workspace_artifacts(workspace_id, fabric_headers(tenant))
+    matches = [item for item in items if item["type"] == "Eventhouse"
+               and re.fullmatch(rf"RTI_Demo_Eventhouse_({RTI_ARTIFACT_SUFFIX_RE})", item["displayName"])]
+    if len(matches) != 1:
+        raise DeployError("Run Fabric setup first: energy setup requires one unambiguous RTI Eventhouse.")
+    suffix = matches[0]["displayName"].removeprefix("RTI_Demo_Eventhouse_")
+    state_dir = Path(tempfile.gettempdir()) / "fabric-demo-energy" / tenant
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return FeatureWorkspace(EnergyConfig(
+        tenant, workspace_id, state_dir / f"{workspace_id}.json", suffix,
+    ), REPO_ROOT)
+
+
 def deploy(args: argparse.Namespace) -> None:
-    print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
+    _FABRIC_TOKEN_CACHE.clear()
+    timings = DeploymentTimings()
+    succeeded = False
+    try:
+        _deploy(args, timings)
+        succeeded = True
+    finally:
+        _FABRIC_TOKEN_CACHE.clear()
+        timings.finish(succeeded)
+
+
+def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
+    timings.stage(1, "Checking Azure tenant and Fabric workspace")
     if args.push_config:
         validate_git_push_ready()
-    ensure_azure_tenant(args.tenant)
-    workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, args.tenant)
+    prefer_tenant_scoped_azure_cli_config(args.tenant)
+    tenant_id = ensure_azure_tenant(args.tenant)
+    workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, tenant_id)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
-    print("[2/8] Resolving the tenant SPA app registration", flush=True)
-    client_id = resolve_spa(args.client_id, args.tenant)
+    stage = getattr(args, "stage", "all")
+    energy_setting = getattr(args, "energy_map", "keep")
+    if stage == "energy":
+        from feature_workspace import FeatureWorkspaceError
+
+        timings.stage(2, "Preparing energy sources and verifying serving readback")
+        print("Energy: setup - preparing map sources independently of app publication.", flush=True)
+        try:
+            energy_workspace(tenant_id, workspace_id).prepare_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
+        values, _ = current_rayfin_target()
+        if (_public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID") == tenant_id
+                and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID") == workspace_id):
+            configure_app_feature_flags(RAYFIN_DIR / ".env", enable_energy_map=True)
+        print("ENERGY_SETUP_SUCCESS (source readback verified; app publication is separate).", flush=True)
+        return
+
+    feature_workspace = None
+    enable_energy_map = None if energy_setting == "keep" else energy_setting == "enabled"
+    if os.environ.get("FABRIC_FEATURE_CONFIG", "").strip():
+        from feature_workspace import FeatureWorkspace, FeatureWorkspaceError, load_feature_config
+
+        try:
+            feature_config = load_feature_config(tenant_id, workspace_id)
+            if feature_config is None:
+                raise DeployError("Feature bootstrap configuration was not loaded.")
+            if energy_setting != "keep" and enable_energy_map != feature_config.enable_energy_map:
+                raise DeployError("Energy-map selection conflicts with FABRIC_FEATURE_CONFIG; use one consistent target configuration.")
+            enable_energy_map = feature_config.enable_energy_map
+            feature_workspace = FeatureWorkspace(feature_config, REPO_ROOT)
+        except (FeatureWorkspaceError, ValueError, OSError) as exc:
+            raise DeployError(f"Feature bootstrap configuration failed: {exc}") from exc
+
+    timings.stage(2, "Resolving the tenant SPA app registration")
+    client_id = resolve_spa(args.client_id, tenant_id)
     if not client_id:
         raise DeployError(
             "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
@@ -1306,7 +2489,7 @@ def deploy(args: argparse.Namespace) -> None:
     # A shared SPA may already serve several Fabric webapps, so losing even one existing
     # redirect URI is a deployment failure.
     try:
-        original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, args.tenant)
+        original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, tenant_id)
     except (DeployError, json.JSONDecodeError) as exc:
         raise DeployError(
             f"Could not snapshot existing SPA redirect URIs for {client_id}. "
@@ -1323,28 +2506,66 @@ def deploy(args: argparse.Namespace) -> None:
         _unique_redirect_uris(original_entra_redirects, ["http://localhost:5173"])
     )
 
-    print("[3/8] Resetting local Rayfin deployment state", flush=True)
+    if feature_workspace and stage == "all":
+        try:
+            feature_workspace.prepare()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
+
+    timings.stage(3, "Preparing target configuration and checking deployment prerequisites")
     reuse_deployment = prepare_rayfin_env(
-        args.tenant, workspace_id, workspace_name, capacity_id, client_id
+        tenant_id,
+        workspace_id,
+        workspace_name,
+        capacity_id,
+        client_id,
+        enable_energy_map=enable_energy_map,
     )
+    if feature_workspace:
+        feature_workspace.configure_app(RAYFIN_DIR / ".env")
     ensure_deploy_dependencies()
+    run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
+    if stage == "all" and energy_setting == "enabled" and not feature_workspace:
+        from feature_workspace import FeatureWorkspaceError
 
-    print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
-    ensure_rayfin_login(args.tenant)
+        try:
+            energy_workspace(tenant_id, workspace_id).prepare_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
+    if stage == "app":
+        if not reuse_deployment:
+            raise DeployError("Run the local Foundry setup module first to prepare this target's AppBackend and agents.")
+        verify_foundry_agents(tenant_id, workspace_id)
+    else:
+        provision_foundry_agents(tenant_id, workspace_id)
+        if stage == "foundry":
+            print("FOUNDRY_SETUP_SUCCESS (configuration readback verified; agent execution is separate).", flush=True)
+            return
+    values, _ = current_rayfin_target()
+    if _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true":
+        from feature_workspace import FeatureWorkspaceError
 
-    print("[5/8] Provisioning backend, database schema, and static app", flush=True)
+        try:
+            energy_workspace(tenant_id, workspace_id).verify_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(f"Energy prerequisites failed; run the local energy setup module first: {exc}") from exc
+
+    timings.stage(4, "Authenticating Rayfin to the target tenant")
+    ensure_rayfin_login(tenant_id, workspace_id)
+
+    timings.stage(5, "Provisioning backend, database schema, and static app")
     if reuse_deployment:
         print("Existing backend is healthy; deploying static content without reprovisioning it.", flush=True)
         command = rayfin24("up", "staticapp", "deploy")
     else:
         command = rayfin24("up", "--workspace-id", workspace_id, "--yes")
-    output = run_stream(command, cwd=APP_DIR)
+    output = run_rayfin_deployment(command, args.tenant)
     urls = HOSTING_URL_RE.findall(output)
     if not urls:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
     hosting_url = urls[-1]
 
-    print("[6/8] Adding the current app URL to the preserved redirect configuration", flush=True)
+    timings.stage(6, "Adding the current app URL to the preserved redirect configuration")
     rayfin_redirects = write_rayfin_redirects(
         _unique_redirect_uris(
             original_entra_redirects,
@@ -1363,19 +2584,38 @@ def deploy(args: argparse.Namespace) -> None:
         "restarts cannot retain stale CORS state.",
         flush=True,
     )
-    run_stream(
+    run_rayfin_deployment(
         rayfin24(
             "up", "--workspace-id", workspace_id,
             "--exclude-services", "staticHosting", "--yes",
         ),
-        cwd=APP_DIR,
+        args.tenant,
     )
+    connector_output = run_rayfin_deployment(
+        rayfin24("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
+        args.tenant,
+    )
+    validate_lakehouse_connector_apply(connector_output)
+    operational_output = run_rayfin_deployment(
+        rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
+    )
+    try:
+        validate_lakehouse_connector_apply(operational_output, "hydrooperations")
+    except DeployError:
+        if "Cannot add or update source as duplicate node detected in GraphQL schema" not in operational_output:
+            raise
+        print("Fabric retained the archived SQL attachment; reconciling its verified replacement.", flush=True)
+        reconcile_archived_operational_graphql(workspace_id, args.tenant)
+        operational_output = run_rayfin_deployment(
+            rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
+        )
+        validate_lakehouse_connector_apply(operational_output, "hydrooperations")
 
-    print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
+    timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
         try:
             run_with_azure_cli_reauthentication(
-                args.tenant,
+                tenant_id,
                 "configuring browser sign-in",
                 lambda: run_stream(
                     node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
@@ -1384,40 +2624,52 @@ def deploy(args: argparse.Namespace) -> None:
                 ),
             )
         except DeployError as exc:
+            if feature_workspace:
+                raise DeployError("Feature deployment stopped: browser sign-in setup failed.") from exc
             warn_live_auth(f"Automated SPA configuration did not complete ({exc}).")
     else:
         warn_live_auth(
             "SPA configuration was skipped because no usable Application (client) ID is available."
         )
 
-    print("[8/8] Checking the hosted page, Fabric backend, and sign-in readiness", flush=True)
-    response = requests.get(hosting_url, timeout=60)
-    if response.status_code != 200 or "text/html" not in response.headers.get("Content-Type", ""):
-        raise DeployError(
-            f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
-            f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
-        )
+    timings.stage(8, "Checking the hosted page, Fabric backend, and sign-in readiness")
     item_id = validate_fabric_app(workspace_id, args.tenant)
+    hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
     publishable_key = validate_rayfin_publishable_key()
     validate_appbackend_cors(api_url, hosting_url, publishable_key)
+    print(
+        "LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed "
+        "(use normal Fabric browser sign-in to verify all nine entities; "
+        "connector apply and protected transport readiness are not source-execution certification).",
+        flush=True,
+    )
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
-        validate_spa_redirect_preservation(client_id, required_entra_redirects, args.tenant)
-        validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
+        validate_spa_redirect_preservation(client_id, required_entra_redirects, tenant_id)
+        validate_entra_live_auth_with_reauth(client_id, hosting_url, tenant_id)
     else:
         warn_live_auth(
             f"Entra validation was skipped. After an administrator creates the SPA, register "
             f"{hosting_url} as its redirect URI and run npm run setup-live-auth."
         )
+    if feature_workspace and stage == "all":
+        try:
+            feature_workspace.finish(lakehouse_counts=verify_lakehouse_connector(tenant_id))
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
     print(f"DEPLOYED_APP_URL={hosting_url}", flush=True)
 
     if args.push_config:
         branch, _ = current_git_push_target()
         print(f"Persisting Rayfin redirect configuration to origin/{branch}...", flush=True)
         persist_generated_origin(workspace_name)
-    print(f"SUCCESS: Hydro Operations is live at {hosting_url}", flush=True)
+    print(
+        f"SUCCESS: Hydro Operations deployment checks passed at {hosting_url} "
+        f"(hosting: {hosting_state}; interactive authenticated app acceptance not performed).",
+        flush=True,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -1425,6 +2677,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tenant", required=True, help="Target Entra tenant GUID or domain.")
     parser.add_argument("--workspace", required=True, help="Target Fabric workspace GUID or name.")
     parser.add_argument("--client-id", help="Existing SPA app client id; auto-resolved/created when omitted.")
+    parser.add_argument("--stage", choices=("all", "energy", "foundry", "app"), default="all",
+                        help="Independent local setup module; app verifies existing Foundry without provisioning it.")
+    parser.add_argument("--energy-map", choices=("keep", "enabled", "disabled"), default="keep",
+                        help="Keep this target's visibility setting, or explicitly enable/disable energy navigation.")
     parser.add_argument(
         "--push-config",
         action="store_true",
@@ -1443,7 +2699,9 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     try:
-        deploy(parse_args())
+        arguments = parse_args()
+        arguments.tenant = resolve_tenant_id(arguments.tenant)
+        deploy(arguments)
     except (DeployError, requests.RequestException, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         raise SystemExit(1) from exc

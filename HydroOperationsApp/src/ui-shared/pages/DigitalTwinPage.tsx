@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo } from 'react'
-import { Activity, Box, ExternalLink, Factory, Gauge, Maximize2, Minimize2 } from 'lucide-react'
+import { Activity, Box, ExternalLink, Factory, Gauge, Maximize2, Minimize2, Radio } from 'lucide-react'
 import type { TwinSignal, TwinStatus } from '../../twin'
-import { ageLabel, freshnessOf, twinStatus } from '../../twin'
+import { ageLabel, freshnessOf, twinSignalStatus, twinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
@@ -25,6 +25,9 @@ export function DigitalTwinPage() {
   )
   const readings = useMemo(() => new Map(data.facilityTelemetry.map(item => [item.opcuaNodeId, item])), [data.facilityTelemetry])
   const openOrderNodes = useMemo(() => new Set(data.openOrders.map(order => order.opcuaNodeId)), [data.openOrders])
+  const criticalOrderNodes = useMemo(() => new Set(data.openOrders
+    .filter(order => order.priority.toLowerCase() === 'critical')
+    .map(order => order.opcuaNodeId)), [data.openOrders])
   const treeStations = useMemo(() => data.stid ? buildDigitalTwinTree(data.stid) : [], [data.stid])
   const revealPath = useMemo(() => pathToAsset(treeStations, selectedAsset?.equipment_id), [treeStations, selectedAsset])
   const expansion = useTreeExpansion(revealPath)
@@ -42,12 +45,13 @@ export function DigitalTwinPage() {
         value: reading?.value,
         quality: reading?.quality,
         hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id),
+        hasCriticalIssue: criticalOrderNodes.has(instrument.opcua_node_id),
       })
       const current = statuses.get(instrument.equipment_id) ?? 'nodata'
       if (rank[status] > rank[current]) statuses.set(instrument.equipment_id, status)
     }
     return statuses
-  }, [data.stid, data.telemetry, openOrderNodes])
+  }, [criticalOrderNodes, data.stid, data.telemetry, openOrderNodes])
   const twinSignals = useMemo<TwinSignal[]>(() => assetInstruments.map(instrument => {
     const reading = readings.get(instrument.opcua_node_id)
     return {
@@ -58,18 +62,21 @@ export function DigitalTwinPage() {
       unit: instrument.unit,
       quality: reading?.quality,
       hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id),
+      hasCriticalIssue: criticalOrderNodes.has(instrument.opcua_node_id),
       eventTime: reading?.eventTime,
     }
-  }), [assetInstruments, readings, openOrderNodes])
+  }), [assetInstruments, criticalOrderNodes, readings, openOrderNodes])
   const twinHealth = useMemo<Record<TwinStatus, number>>(() => {
     const counts = { ok: 0, warn: 0, crit: 0, nodata: 0 }
-    for (const signal of twinSignals) counts[twinStatus(signal)]++
+    for (const signal of twinSignals) counts[twinSignalStatus(signal)]++
     return counts
   }, [twinSignals])
   const eventTimes = twinSignals.map(signal => signal.eventTime ? Date.parse(signal.eventTime) : NaN).filter(time => !Number.isNaN(time)).sort((a, b) => a - b)
   const medianMs = eventTimes.length ? eventTimes[Math.floor((eventTimes.length - 1) / 2)] : 0
   const medianIso = medianMs ? new Date(medianMs).toISOString() : undefined
   const liveState = medianIso && ['live', 'recent'].includes(freshnessOf(medianIso)) ? 'Live telemetry' : medianIso ? 'Stale telemetry' : 'No current telemetry'
+  const healthTone: TwinStatus = twinHealth.crit ? 'crit' : twinHealth.warn ? 'warn' : twinHealth.ok ? 'ok' : 'nodata'
+  const healthLabel = healthTone === 'crit' ? 'Attention required' : healthTone === 'warn' ? 'Uncertain signals' : healthTone === 'ok' ? 'Operating normally' : 'Awaiting signal data'
   const treeMode = mode === 'tree'
   const blocker = data.stidState !== 'connected'
     ? { title: 'STID not connected', text: 'Use Administration to connect STID before viewing the Digital Twin.' }
@@ -81,24 +88,28 @@ export function DigitalTwinPage() {
 
   const detail = <>
     <section className="v2-twin-summary">
-      <div><span className="v2-eyebrow">Selected Asset</span><h1>{selectedAsset?.tag ?? selectedAsset?.equipment_id}</h1><p>{selectedAsset ? `${selectedAsset.equipment_id} · ${selectedAsset.equipment_type_name ?? 'Equipment'} · ${selectedAsset.status ?? 'Status unavailable'}` : 'Select an asset'}</p></div>
+      <div className="v2-twin-identity">
+        <div><span className="v2-eyebrow">Live asset intelligence</span><span className={`v2-twin-operating-state ${healthTone}`}><i />{healthLabel}</span></div>
+        <h1>{selectedAsset?.tag ?? selectedAsset?.equipment_id}</h1>
+        <p>{selectedAsset ? `${selectedAsset.equipment_type_name ?? 'Equipment'} · ${selectedAsset.status ?? 'Status unavailable'}` : 'Select an asset'}</p>
+        {selectedAsset && <code>{selectedAsset.equipment_id}</code>}
+      </div>
       <TwinMetric icon={Factory} label="Manufacturer / model" value={[selectedAsset?.manufacturer, selectedAsset?.model].filter(Boolean).join(' / ') || 'Unavailable'} />
       <TwinMetric icon={Activity} label="Live signals" value={String(twinSignals.filter(signal => signal.value !== undefined && signal.value !== null).length)} detail={`${assetInstruments.length} mapped instruments`} />
       <TwinMetric icon={Gauge} label="Current status" value={liveState} detail={medianIso ? `Median update ${ageLabel(medianIso)}` : 'No Eventhouse reading'} tone={liveState === 'Live telemetry' ? 'good' : medianIso ? 'warn' : 'muted'} />
     </section>
 
     <section className={`v2-twin-panel${twinView.expanded ? ' v2-expanded-view' : ''}`}>
-      <div className="v2-panel-headline v2-panel-headline-action"><div><span className="v2-eyebrow">Digital Twin</span><h2>{selectedAsset?.tag ?? 'Asset model'}</h2></div><button className="v2-icon-action" type="button" title={twinView.expanded ? 'Restore digital twin view' : 'Expand digital twin view'} aria-label={twinView.expanded ? 'Restore digital twin view' : 'Expand digital twin view'} aria-pressed={twinView.expanded} onClick={twinView.toggleExpanded}>{twinView.expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button></div>
+      <div className="v2-panel-headline v2-panel-headline-action"><div><span className="v2-eyebrow">Spatial operations view</span><h2>{selectedAsset?.tag ?? 'Asset model'}</h2></div><div className="v2-twin-panel-actions"><span className={liveState === 'Live telemetry' ? 'live' : 'stale'}><Radio size={13} />{liveState}</span><button className="v2-icon-action" type="button" title={twinView.expanded ? 'Restore digital twin view' : 'Expand digital twin view'} aria-label={twinView.expanded ? 'Restore digital twin view' : 'Expand digital twin view'} aria-pressed={twinView.expanded} onClick={twinView.toggleExpanded}>{twinView.expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button></div></div>
       {data.modelState !== 'connected' ? <EmptyTwin title="Model metadata unavailable" text="Sign in through Administration to load Rayfin 3D model metadata." compact />
         : !selectedModel ? <EmptyTwin title="No 3D model for selected asset" text="No Asset3DModel record matches this asset's equipment ID." compact />
           : !canRenderModel(selectedModel.format) ? <ModelFallback model={selectedModel} />
             : !assetInstruments.length ? <EmptyTwin title="No instruments for selected asset" text="This asset has no STID instruments to render as live hotspots." compact />
               : <>
-                <Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading 3D model...</div></div>}>
+                <Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading interactive model...</div></div>}>
                   <AssetModelViewer key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} assetLabel={selectedAsset?.tag ?? selectedAsset?.equipment_id} />
                 </Suspense>
-                <TwinLegend counts={twinHealth} />
-                <div className="v2-twin-model-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />Open model</a></div>
+                <div className="v2-twin-stage-footer"><TwinLegend counts={twinHealth} /><div className="v2-twin-model-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />Open model</a></div></div>
               </>}
     </section>
   </>
@@ -130,7 +141,7 @@ function TwinMetric({ icon: Icon, label, value, detail, tone = 'muted' }: { icon
 }
 
 function TwinLegend({ counts }: { counts: Record<TwinStatus, number> }) {
-  return <div className="v2-twin-health"><span><i className="ok" />OK {counts.ok}</span><span><i className="warn" />UNCERTAIN {counts.warn}</span><span><i className="crit" />BAD / open work order {counts.crit}</span><span><i className="nodata" />No data {counts.nodata}</span></div>
+  return <div className="v2-twin-health"><span><i className="ok" />OK {counts.ok}</span><span><i className="warn" />UNCERTAIN {counts.warn}</span><span><i className="crit" />BAD {counts.crit}</span><span><i className="nodata" />No data {counts.nodata}</span></div>
 }
 
 function ModelFallback({ model }: { model: { modelName: string; format: string; modelUrl: string; thumbnailUrl?: string; version?: string; fileSizeMb?: number } }) {

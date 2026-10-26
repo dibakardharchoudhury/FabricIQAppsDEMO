@@ -1,18 +1,25 @@
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
-  queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
+  beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
+  queryLatestTelemetry, queryOntologyContract, queryOntologyGraph, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
   runWeatherNotebooks,
+  refreshEnergyMap, resumeEnergyMapRefresh,
   startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
   createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
   listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
-  updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
+  subscribeWorkOrdersChanged, updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from '../../services/rayfin'
 import { twinStatus, type TwinStatus } from '../../twin'
-import { askFoundryCopilot, isFoundryConfigured, resetFoundryConversation, type AgentStep, type FoundryAnswer } from '../../services/copilot/foundry'
+import { isFoundryConfigured, resetFoundryConversation, type AgentStep, type FoundryAnswer } from '../../services/copilot/foundry'
+import { askCopilot } from '../../services/copilot/askCopilot'
+import { ENERGY_MAP_ENABLED } from '../appFeatures'
+import {
+  failedExecutionEvents, uncertifiedFailureMessage,
+  type OrchestrationEvent, type WorkOrderProposal,
+} from '../../services/copilot/orchestration'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
@@ -20,32 +27,42 @@ const fmtSince = (ms: number) => { if (ms < 5000) return 'just now'; const s = M
 const fmtElapsed = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); const m = Math.floor(s / 60); const r = s % 60; return m ? `${m}m ${r}s` : `${r}s` }
 const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : status === 'InProgress' ? 'Running' : status
 
-const SETUP_STORAGE_KEY = 'hydro.v2.setup.v1'
-const DATA_CACHE_KEY = 'hydro.data-cache.v1'
-const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
+const deploymentStorageScope = [
+  import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID,
+  import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID,
+  import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID,
+  import.meta.env.VITE_RAYFIN_LAKEHOUSE_ID,
+  import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID,
+].filter(Boolean).join('.')
+const scopedStorageKey = (key: string) => `${key}.${deploymentStorageScope || 'unconfigured'}`
+const SETUP_STORAGE_KEY = scopedStorageKey('hydro.v2.setup.v1')
+const LEGACY_DATA_CACHE_PREFIX = 'hydro.data-cache.v1.'
+const JOBS_STORAGE_KEY = scopedStorageKey('hydro.jobs.v1')
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 const SEED_ETA_MS = 6 * 60_000
 const STREAM_ETA_MS = 5 * 60_000
 const WEATHER_ETA_MS = 12 * 60_000
+const MAP_REFRESH_MAX_AGE_MS = 3 * 60 * 60_000
 const QUEUED_PCT_CAP = 15
 const STID_READINESS_RETRIES = 12
 const STID_READINESS_DELAY_MS = 5_000
 const STID_POLL_MS = 30_000
 const TELEMETRY_POLL_MS = 30_000
+const TELEMETRY_AGE_TICK_MS = 15_000
+const JOB_PROGRESS_TICK_MS = 1_000
 
 type LoadState = 'idle' | 'loading' | 'connected' | 'unavailable' | 'error'
 type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
-export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
+export type ProgressJob = { kind: 'seed' | 'stream' | 'weather' | 'map'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
-export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
-type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string>; copilotEngine?: CopilotEngine }
-type CachedData = { stid?: StidData; telemetry?: TelemetryReading[]; ontology?: OntologyContract }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
+type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
-  foundry: { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live telemetry, or maintenance work. I run an Azure AI Foundry model over the Lakehouse asset tables, the Eventhouse telemetry and the operational database, and show you every query I ran.' },
+  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, live telemetry, weather forecasts, or maintenance work. The deterministic Supervisor dispatches bounded Q&A, RCA, Weather and Work Order specialists and verifies their receipts. Weather uses the read-only Lakehouse connector; explicit published Data Agent requests use Sparky. Direct ontology-native chat is unavailable. Work-order drafts require your review and approval before any SQL write.' },
 }
 
 function readPersistedSetup(): PersistedSetup {
@@ -58,20 +75,12 @@ function writePersistedSetup(patch: PersistedSetup) {
   catch { /* storage unavailable */ }
 }
 
-function readCachedData(): CachedData {
+function clearLegacyDataCaches() {
   try {
-    const value = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || '{}') as CachedData
-    return {
-      stid: value.stid && Array.isArray(value.stid.facilities) && Array.isArray(value.stid.equipment) && Array.isArray(value.stid.instruments) ? { ...value.stid, systems: Array.isArray(value.stid.systems) ? value.stid.systems : [] } : undefined,
-      telemetry: Array.isArray(value.telemetry) ? value.telemetry : undefined,
-      ontology: value.ontology && typeof value.ontology.id === 'string' && Array.isArray(value.ontology.entityTypes) && Array.isArray(value.ontology.relationshipTypes) ? value.ontology : undefined,
-    }
-  } catch { return {} }
-}
-
-function writeCachedData(patch: CachedData) {
-  try { localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({ ...readCachedData(), ...patch })) }
-  catch { /* storage unavailable */ }
+    const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+      .filter((key): key is string => Boolean(key?.startsWith(LEGACY_DATA_CACHE_PREFIX)))
+    for (const key of keys) localStorage.removeItem(key)
+  } catch { /* storage unavailable */ }
 }
 
 function readPersistedJobs(): Record<string, ProgressJob> {
@@ -79,8 +88,9 @@ function readPersistedJobs(): Record<string, ProgressJob> {
     const saved = JSON.parse(localStorage.getItem(JOBS_STORAGE_KEY) || '{}') as Record<string, ProgressJob>
     const fresh: Record<string, ProgressJob> = {}
     for (const [key, job] of Object.entries(saved)) {
-      if (job && (job.kind === 'seed' || job.kind === 'stream' || job.kind === 'weather') && typeof job.startedAt === 'number'
-        && Date.now() - job.startedAt < JOB_RESUME_MAX_AGE_MS) fresh[key] = job
+      if (job && (job.kind === 'seed' || job.kind === 'stream' || job.kind === 'weather' || job.kind === 'map') && typeof job.startedAt === 'number'
+        && (job.kind !== 'map' || ENERGY_MAP_ENABLED)
+        && Date.now() - job.startedAt < (job.kind === 'map' ? MAP_REFRESH_MAX_AGE_MS : JOB_RESUME_MAX_AGE_MS)) fresh[key] = job
     }
     return fresh
   } catch { return {} }
@@ -92,12 +102,15 @@ const isTerminalJobStatus = (status: string) => isDoneStatus(status) || status =
 
 function useHydroOperationsDataController() {
   const persisted = useMemo(() => readPersistedSetup(), [])
-  const cached = useMemo(() => readCachedData(), [])
   const [user, setUser] = useState<AppUser | null>(null)
-  const [stid, setStid] = useState<StidData | null>(cached.stid ?? null)
-  const [ontology, setOntology] = useState<OntologyContract | null>(cached.ontology ?? null)
+  const [stid, setStid] = useState<StidData | null>(null)
+  const [ontology, setOntology] = useState<OntologyContract | null>(null)
+  const [ontologyError, setOntologyError] = useState<string>()
+  const [ontologyLoading, setOntologyLoading] = useState(false)
+  const ontologyRefreshVersion = useRef(0)
+  const prefetchedOntologyRef = useRef<string | undefined>(undefined)
   const [stidSyncedAt, setStidSyncedAt] = useState<number>()
-  const [telemetry, setTelemetry] = useState<TelemetryReading[]>(cached.telemetry ?? [])
+  const [telemetry, setTelemetry] = useState<TelemetryReading[]>([])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
   const [inspections, setInspections] = useState<InspectionRecord[]>([])
   const [spareParts, setSpareParts] = useState<SparePartRecord[]>([])
@@ -105,19 +118,21 @@ function useHydroOperationsDataController() {
   const [assetModels, setAssetModels] = useState<Asset3DModelRecord[]>([])
   const [selectedFacilityId, setSelectedFacilityIdState] = useState<string | undefined>(persisted.selectedFacilityId)
   const [selectedAssetIds, setSelectedAssetIds] = useState<Record<string, string>>(() => persisted.selectedAssetIds ?? {})
-  const [stidState, setStidState] = useState<LoadState>(cached.stid ? 'connected' : persisted.stidConnected ? 'loading' : 'idle')
-  const [telemetryState, setTelemetryState] = useState<LoadState>(cached.telemetry?.length ? 'connected' : persisted.telemetryConnected ? 'loading' : 'idle')
+  const [stidState, setStidState] = useState<LoadState>(persisted.stidConnected ? 'loading' : 'idle')
+  const [telemetryState, setTelemetryState] = useState<LoadState>(persisted.telemetryConnected ? 'loading' : 'idle')
   const [operationsState, setOperationsState] = useState<LoadState>('idle')
   const [modelState, setModelState] = useState<LoadState>('idle')
   const [provisionState, setProvisionState] = useState<ActionState>(persisted.provisioned ? 'complete' : 'idle')
   const [streamState, setStreamState] = useState<ActionState>('idle')
   const [weatherState, setWeatherState] = useState<ActionState>('idle')
+  const [mapRefreshState, setMapRefreshState] = useState<ActionState>('idle')
+  const [mapRefreshMessage, setMapRefreshMessage] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [telemetrySelections, setTelemetrySelections] = useState<Record<string, TelemetryExplorerSelection>>({})
-  const [copilotEngine, setCopilotEngineState] = useState<CopilotEngine>(() => persisted.copilotEngine === 'foundry' && isFoundryConfigured() ? 'foundry' : 'data-agent')
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES[persisted.copilotEngine === 'foundry' && isFoundryConfigured() ? 'foundry' : 'data-agent']])
+  const copilotEngine: CopilotEngine = 'foundry'
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES.foundry])
   const [copilotBusy, setCopilotBusy] = useState(false)
   const [mutationKey, setMutationKey] = useState<string>()
 
@@ -129,7 +144,6 @@ function useHydroOperationsDataController() {
   const applyStid = useCallback((data: StidData) => {
     setStid(data)
     setStidSyncedAt(Date.now())
-    writeCachedData({ stid: data })
     setSelectedFacilityIdState(current => {
       const next = current && data.facilities.some(facility => facility.facility_id === current)
         ? current
@@ -139,22 +153,60 @@ function useHydroOperationsDataController() {
     })
   }, [])
 
+  const clearStid = useCallback(() => {
+    setStid(null)
+    setStidSyncedAt(undefined)
+    writePersistedSetup({ stidConnected: false })
+  }, [])
+
+  const clearTelemetry = useCallback(() => {
+    setTelemetry([])
+    writePersistedSetup({ telemetryConnected: false })
+  }, [])
+
   const refreshOntology = useCallback(async (force = false) => {
-    const contract = await queryOntologyContract(force).catch(() => null)
-    if (contract) {
-      setOntology(contract)
-      writeCachedData({ ontology: contract })
+    const version = ++ontologyRefreshVersion.current
+    setOntologyLoading(true)
+    try {
+      const contract = await queryOntologyContract(force)
+      if (version === ontologyRefreshVersion.current) {
+        setOntology(contract)
+        setOntologyError(undefined)
+      }
+      return contract
+    } catch (error) {
+      if (version === ontologyRefreshVersion.current) {
+        setOntology(null)
+        setOntologyError(error instanceof Error ? error.message : 'Ontology definition is unavailable. Refresh and check Fabric access.')
+      }
+      return null
+    } finally {
+      if (version === ontologyRefreshVersion.current) setOntologyLoading(false)
     }
-    return contract
   }, [])
 
   const refreshStid = useCallback(async (forceOntology = false) => {
     const contractRequest = refreshOntology(forceOntology)
-    const data = await queryStid()
-    if (data) applyStid(data)
-    void contractRequest
+    const [data] = await Promise.all([queryStid(), contractRequest])
+    if (data) {
+      applyStid(data)
+      setStidState('connected')
+      writePersistedSetup({ stidConnected: true })
+    } else {
+      clearStid()
+      setStidState('unavailable')
+    }
     return data
-  }, [applyStid, refreshOntology])
+  }, [applyStid, clearStid, refreshOntology])
+
+  useEffect(() => {
+    if (!ontology) { prefetchedOntologyRef.current = undefined; return }
+    if (prefetchedOntologyRef.current === ontology.id) return
+    prefetchedOntologyRef.current = ontology.id
+    void queryOntologyGraph().catch(error => {
+      console.warn('Native graph prefetch failed; opening Knowledge Graph will retry the verified source.', error)
+    })
+  }, [ontology])
 
   const loadOperationalData = useCallback(async () => {
     const [loadedOrders, loadedModels, loadedInspections, loadedParts, loadedNotifications] = await Promise.allSettled([
@@ -209,17 +261,17 @@ function useHydroOperationsDataController() {
     }
     if (data) {
       setTelemetry(data)
-      writeCachedData({ telemetry: data })
       setTelemetryState('connected')
       writePersistedSetup({ telemetryConnected: data.length > 0 })
     } else {
-      setTelemetryState(current => !interactive && current === 'connected' ? current : 'unavailable')
+      clearTelemetry()
+      setTelemetryState('unavailable')
     }
     return data
-  }, [])
+  }, [clearTelemetry])
 
   const connectStid = useCallback(async (opts?: { retries?: number; interactive?: boolean }) => {
-    setStidState('loading'); setNotice(undefined)
+    clearStid(); setStidState('loading'); setNotice(undefined)
     const retries = opts?.retries ?? STID_READINESS_RETRIES
     const interactive = opts?.interactive ?? true
     clearWorkspaceConfigCache()
@@ -234,8 +286,7 @@ function useHydroOperationsDataController() {
           lastError = error
         }
         if (data || attempt === retries) break
-        // A thrown GraphQL/schema response proves a token was already accepted; retry it silently.
-        // Open consent only when the query returned no data because discovery or a token is absent.
+        // Retry source failures silently; open sign-in only when no Rayfin session exists.
         if (interactive && attempt === 0 && !lastError) {
           try {
             await beginInteractiveConnect('stid')
@@ -253,25 +304,29 @@ function useHydroOperationsDataController() {
         void refreshOntology()
       }
       else {
+        clearStid()
         setStidState('unavailable')
         const detail = lastError instanceof Error ? ` ${lastError.message}` : ''
-        setNotice(`The STID GraphQL API is still publishing or needs permission. Try Connect STID again shortly.${detail}`)
+        setNotice(`The Rayfin Lakehouse connector is unavailable or needs source permission. Deploy the app and try Connect STID again.${detail}`)
       }
     } catch (error) {
+      clearStid()
       setStidState('error')
       const message = error instanceof Error ? error.message : 'STID data is unavailable.'
-      setNotice(provisionState === 'complete' && /No GraphQL API found/i.test(message)
-        ? 'STID GraphQL API is not queryable yet. Wait a moment, then run Connect STID again.'
-        : message)
+      setNotice(message)
     }
-  }, [applyStid, provisionState, refreshOntology])
+  }, [applyStid, clearStid, refreshOntology])
 
   const connectTelemetry = useCallback(async () => {
-    setTelemetryState('loading'); setNotice(undefined)
+    clearTelemetry(); setTelemetryState('loading'); setNotice(undefined)
     clearWorkspaceConfigCache()
     try { await loadTelemetry(true) }
-    catch (error) { setTelemetryState('error'); setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.') }
-  }, [loadTelemetry])
+    catch (error) {
+      clearTelemetry()
+      setTelemetryState('error')
+      setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.')
+    }
+  }, [clearTelemetry, loadTelemetry])
 
   function beginProgress(key: ProgressJob['kind'], label: string, etaMs: number) {
     setJobs(prev => ({ ...prev, [key]: { kind: key, label, status: 'Starting', pct: 3, startedAt: Date.now(), etaMs } }))
@@ -297,7 +352,7 @@ function useHydroOperationsDataController() {
         setProvisionState('complete')
         writePersistedSetup({ provisioned: true })
         await loadOperationalData()
-        setNotice('Operational data re-seeded and Fabric provisioning complete. Checking STID publication...')
+        setNotice('Operational data re-seeded and Fabric provisioning complete. Connecting Lakehouse STID...')
       } else {
         setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
       }
@@ -315,7 +370,7 @@ function useHydroOperationsDataController() {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setProvisionState('idle'); setNotice('Sign in with Fabric to seed operational data.'); return }
       if (isPostSeedConfigured()) {
-        beginProgress('seed', 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)...', SEED_ETA_MS)
+        beginProgress('seed', 'Seeding independent operational SQL and refreshing its verified Data Agent source (RTI_011)...', SEED_ETA_MS)
         await awaitProvision(() => runPostSeedNotebook(status => updateJob('seed', humanStatus(status))))
       } else {
         const result = await seedOperationalDataIfEmpty(activeUser)
@@ -352,6 +407,44 @@ function useHydroOperationsDataController() {
     } finally { endJob('weather') }
   }, [authenticate, jobs.weather, user, weatherState])
 
+  const updateAllMapData = useCallback(async () => {
+    if (!ENERGY_MAP_ENABLED) {
+      setMapRefreshState('error')
+      setMapRefreshMessage('Energy map provisioning is disabled for this deployment.')
+      return
+    }
+    if (mapRefreshState === 'running' || jobs.map) return
+    setMapRefreshState('running')
+    setMapRefreshMessage('Starting the full map refresh in Fabric...')
+    beginProgress('map', 'Refreshing map sources and chat data', MAP_REFRESH_MAX_AGE_MS)
+    let attached = false
+    try {
+      const status = await refreshEnergyMap(
+        value => updateJob('map', humanStatus(value)),
+        true,
+        startedAt => {
+          attached = true
+          setMapRefreshMessage('A map refresh is already running. Monitoring that run instead of starting a duplicate; it may use the normal source cache.')
+          if (startedAt) setJobs(current => current.map
+            ? { ...current, map: { ...current.map, startedAt: Date.parse(startedAt), label: 'Monitoring existing map refresh' } } : current)
+        },
+      )
+      if (status === 'Completed') {
+        setMapRefreshState('complete')
+        setMapRefreshMessage(attached
+          ? 'The existing map refresh completed. Start a full update if you still need to bypass its source cache.'
+          : `All configured map sources refreshed. Completed ${new Date().toLocaleString()}.`)
+      } else {
+        setMapRefreshState('error')
+        setMapRefreshMessage(`Map refresh ${humanStatus(status).toLowerCase()}. A queued or running job continues in Fabric; starting again will reattach rather than duplicate it.`)
+      }
+    } catch (error) {
+      console.error('Full map data refresh failed.', error)
+      setMapRefreshState('error')
+      setMapRefreshMessage(error instanceof Error ? error.message : 'Map data refresh failed.')
+    } finally { endJob('map') }
+  }, [jobs.map, mapRefreshState])
+
   const refreshOperationalData = useCallback(async () => {
     setOperationsState('loading'); setNotice(undefined)
     try {
@@ -363,6 +456,12 @@ function useHydroOperationsDataController() {
       setNotice(error instanceof Error ? error.message : 'Operational data is unavailable.')
     }
   }, [authenticate, loadOperationalData, user])
+
+  useEffect(() => subscribeWorkOrdersChanged(() => {
+    void loadOperationalData().catch(error => {
+      setNotice(error instanceof Error ? error.message : 'Created work order, but refreshing operational data failed.')
+    })
+  }), [loadOperationalData])
 
   const waitForStreamData = useCallback(async (timeoutMs: number, sinceMs: number): Promise<TelemetryReading[] | null> => {
     const deadline = Date.now() + timeoutMs
@@ -422,6 +521,20 @@ function useHydroOperationsDataController() {
         setWeatherState('error')
         setNotice(error instanceof Error ? error.message : 'Weather load failed.')
       } finally { endJob('weather') }
+    } else if (job.kind === 'map') {
+      setMapRefreshState('running')
+      setMapRefreshMessage('Resuming progress for the map refresh already started in Fabric.')
+      try {
+        const status = await resumeEnergyMapRefresh(value => updateJob('map', humanStatus(value)), sinceIso)
+        setMapRefreshState(status === 'Completed' ? 'complete' : 'error')
+        setMapRefreshMessage(status === 'Completed'
+          ? 'The configured map-data refresh completed.'
+          : `Map refresh ${humanStatus(status).toLowerCase()}. The cloud run is not cancelled by closing this app.`)
+      } catch (error) {
+        console.error('Map refresh monitoring failed.', error)
+        setMapRefreshState('error')
+        setMapRefreshMessage(error instanceof Error ? error.message : 'Map refresh monitoring failed.')
+      } finally { endJob('map') }
     } else {
       setStreamState('running')
       await awaitStream(() => resumeStreamingPipeline(status => updateJob('stream', humanStatus(status)), sinceIso), job.startedAt)
@@ -430,6 +543,7 @@ function useHydroOperationsDataController() {
 
   useEffect(() => {
     let cancelled = false
+    clearLegacyDataCaches()
     const initialize = async () => {
       const initializeOperations = async () => {
         if (!isRayfinConfigured()) {
@@ -453,18 +567,18 @@ function useHydroOperationsDataController() {
       const initializeFabricData = async () => {
         try { await initAuth() }
         catch (error) { if (!cancelled) setNotice(error instanceof Error ? error.message : 'Fabric authentication is unavailable.') }
-
         const initializeStid = async () => {
-          if (!isStidConfigured()) { setStidState('unavailable'); return }
+          if (!isStidConfigured()) { clearStid(); setStidState('unavailable'); return }
           setStidState(current => current === 'connected' ? current : 'loading')
           try {
+            void refreshOntology()
             const data = await queryStid()
             if (cancelled) return
             if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
-            else setStidState(current => current === 'connected' ? current : 'unavailable')
-            void refreshOntology()
+            else { clearStid(); setStidState('unavailable') }
           } catch (error) {
             if (cancelled) return
+            clearStid()
             setStidState('error')
             setNotice(error instanceof Error ? error.message : 'STID data is unavailable.')
           }
@@ -473,7 +587,13 @@ function useHydroOperationsDataController() {
         const initializeTelemetry = async () => {
           setTelemetryState(current => current === 'connected' ? current : 'loading')
           try { await loadTelemetry(false) }
-          catch (error) { if (!cancelled) { setTelemetryState('error'); setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.') } }
+          catch (error) {
+            if (!cancelled) {
+              clearTelemetry()
+              setTelemetryState('error')
+              setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.')
+            }
+          }
         }
 
         await Promise.all([initializeStid(), initializeTelemetry()])
@@ -485,7 +605,7 @@ function useHydroOperationsDataController() {
     }
     void initialize()
     return () => { cancelled = true }
-  }, [applyStid, loadOperationalData, loadTelemetry, refreshOntology, resumeJob])
+  }, [applyStid, clearStid, clearTelemetry, loadOperationalData, loadTelemetry, refreshOntology, resumeJob])
 
   const telemetryLive = telemetry.length > 0
   useEffect(() => {
@@ -494,7 +614,12 @@ function useHydroOperationsDataController() {
     const refresh = async () => {
       if (inFlight || document.hidden) return
       inFlight = true
-      try { await refreshStid() } catch { /* retain the latest valid ontology snapshot */ }
+      try { await refreshStid() }
+      catch (error) {
+        clearStid()
+        setStidState('error')
+        setNotice(error instanceof Error ? error.message : 'STID data is unavailable.')
+      }
       finally { inFlight = false }
     }
     const handleVisibility = () => { if (!document.hidden) void refresh() }
@@ -504,7 +629,7 @@ function useHydroOperationsDataController() {
       window.clearInterval(id)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [refreshStid, stidState])
+  }, [clearStid, refreshStid, stidState])
 
   useEffect(() => {
     if (!telemetryLive) return
@@ -512,16 +637,21 @@ function useHydroOperationsDataController() {
     const poll = async () => {
       if (inFlight || document.hidden) return
       inFlight = true
-      try { await loadTelemetry(false) } catch { /* keep last good readings */ }
+      try { await loadTelemetry(false) }
+      catch (error) {
+        clearTelemetry()
+        setTelemetryState('error')
+        setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.')
+      }
       finally { inFlight = false }
     }
     const id = window.setInterval(poll, TELEMETRY_POLL_MS)
     return () => window.clearInterval(id)
-  }, [telemetryLive, loadTelemetry])
+  }, [clearTelemetry, telemetryLive, loadTelemetry])
 
   useEffect(() => {
     if (!telemetryLive) return
-    const id = window.setInterval(() => setNow(Date.now()), 1_000)
+    const id = window.setInterval(() => setNow(Date.now()), TELEMETRY_AGE_TICK_MS)
     return () => window.clearInterval(id)
   }, [telemetryLive])
 
@@ -535,6 +665,7 @@ function useHydroOperationsDataController() {
         const next: Record<string, ProgressJob> = {}
         for (const [key, job] of Object.entries(prev)) {
           const elapsed = Date.now() - job.startedAt
+          if (job.kind === 'map') { next[key] = job; continue }
           if (isTerminalJobStatus(job.status)) {
             const pct = isDoneStatus(job.status) ? 100 : job.pct
             const endedAt = job.endedAt ?? Date.now()
@@ -553,7 +684,7 @@ function useHydroOperationsDataController() {
       })
     }
     tick()
-    const id = window.setInterval(tick, 500)
+    const id = window.setInterval(tick, JOB_PROGRESS_TICK_MS)
     return () => window.clearInterval(id)
   }, [jobKeys])
 
@@ -626,13 +757,15 @@ function useHydroOperationsDataController() {
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     for (const instrument of facilityInstruments) {
       const reading = readings.get(instrument.opcua_node_id)
+      const nodeOrders = openOrders.filter(order => order.opcuaNodeId === instrument.opcua_node_id)
       health[twinStatus({
         id: instrument.instrument_id,
         label: instrument.tag ?? instrument.instrument_id,
         nodeId: instrument.opcua_node_id,
         value: reading?.value,
         quality: reading?.quality,
-        hasOpenIssue: openOrders.some(order => order.opcuaNodeId === instrument.opcua_node_id),
+        hasOpenIssue: nodeOrders.length > 0,
+        hasCriticalIssue: nodeOrders.some(order => order.priority.toLowerCase() === 'critical'),
       })]++
     }
     return health
@@ -711,27 +844,39 @@ function useHydroOperationsDataController() {
     const startedAt = Date.now()
     setCopilotBusy(true)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
-    // Text and tool steps arrive on separate callbacks, so keep both and repaint the whole message.
+    // Foundry owns its local tool trace. Data Agent MCP internals stay hidden while its answer is pending.
     let liveText = ''
     let liveSteps: AgentStep[] | undefined
+    let liveEvents: OrchestrationEvent[] | undefined
+    let proposals: WorkOrderProposal[] | undefined
+    let backendOwned: boolean | undefined
+    let failed = false
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, artifacts, visualizations, models, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, failed, steps: liveSteps, orchestrationEvents: liveEvents, proposals, backendOwned, artifacts, visualizations, models, meta }
       return next
     })
     try {
-      const answer: FoundryAnswer = copilotEngine === 'foundry'
-        ? await askFoundryCopilot(
+      const answer: FoundryAnswer = await askCopilot(
+          copilotEngine,
           text,
           partial => { liveText = partial; paint() },
           steps => { liveSteps = steps; paint() },
+          events => { liveEvents = events; paint() },
         )
-        : await askDataAgent(text, partial => { liveText = partial; paint() })
       liveText = answer.text
+      backendOwned = answer.backendOwned
+      proposals = answer.proposals
       liveSteps = answer.steps ?? liveSteps
+      liveEvents = answer.orchestrationEvents ?? liveEvents
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)
     } catch (error) {
-      liveText = error instanceof Error ? error.message : 'The copilot request failed.'
+      const detail = uncertifiedFailureMessage(error)
+      failed = true
+      backendOwned = true
+      proposals = undefined
+      liveText = detail
+      liveEvents = failedExecutionEvents(liveEvents, detail)
       paint({ elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
   }, [copilotBusy, copilotEngine])
@@ -741,15 +886,6 @@ function useHydroOperationsDataController() {
     resetDataAgentConversation()
     resetFoundryConversation()
     setMessages([INITIAL_MESSAGES[copilotEngine]])
-  }, [copilotBusy, copilotEngine])
-
-  const setCopilotEngine = useCallback((engine: CopilotEngine) => {
-    if (copilotBusy || engine === copilotEngine) return
-    resetDataAgentConversation()
-    resetFoundryConversation()
-    setCopilotEngineState(engine)
-    setMessages([INITIAL_MESSAGES[engine]])
-    writePersistedSetup({ copilotEngine: engine })
   }, [copilotBusy, copilotEngine])
 
   return {
@@ -764,8 +900,12 @@ function useHydroOperationsDataController() {
     provisionState,
     streamState,
     weatherState,
+    mapRefreshState,
+    mapRefreshMessage,
     stid,
     ontology,
+    ontologyError,
+    ontologyLoading,
     stidSyncedAt,
     telemetry,
     facilities,
@@ -810,6 +950,7 @@ function useHydroOperationsDataController() {
       seedAndProvision,
       startStream,
       connectWeather,
+      updateAllMapData,
       connectStid,
       refreshStid,
       connectTelemetry,
@@ -821,7 +962,6 @@ function useHydroOperationsDataController() {
       removeWorkOrder,
       sendCopilotQuestion,
       resetCopilot,
-      setCopilotEngine,
       refreshDiscovery: clearWorkspaceConfigCache,
     },
   }

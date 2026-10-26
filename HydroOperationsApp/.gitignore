@@ -14,6 +14,8 @@ dist-ssr
 rayfin/.env
 rayfin/.deployments.json
 rayfin/.temp/
+rayfin/connectors/*/metadata.json
+rayfin/.lockfile.json
 
 # Editor directories and files
 .vscode/*

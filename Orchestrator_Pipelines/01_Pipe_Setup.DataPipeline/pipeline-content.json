@@ -69,6 +69,13 @@
                 "type": "Expression"
               },
               "type": "string"
+            },
+            "alert_email_to": {
+              "value": {
+                "value": "@pipeline().parameters.alert_email_to",
+                "type": "Expression"
+              },
+              "type": "string"
             }
           }
         },
@@ -101,6 +108,13 @@
                 "type": "Expression"
               },
               "type": "int"
+            },
+            "enable_weather_schedule": {
+              "value": {
+                "value": "@pipeline().parameters.enable_weather_schedule",
+                "type": "Expression"
+              },
+              "type": "bool"
             },
             "workspace_id": {
               "value": {
@@ -168,7 +182,7 @@
       },
       "key_vault_uri": {
         "type": "string",
-        "defaultValue": "https://akvfabcapnew.vault.azure.net/"
+        "defaultValue": ""
       },
       "key_vault_tenant_id_secret_name": {
         "type": "string",
@@ -184,19 +198,27 @@
       },
       "ops_agent_teams_team_id": {
         "type": "string",
-        "defaultValue": "c480320e-9204-474b-9b2c-54a53e94f220"
+        "defaultValue": ""
       },
       "ops_agent_teams_channel_id": {
         "type": "string",
-        "defaultValue": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"
+        "defaultValue": ""
       },
       "ops_agent_run_as_user": {
         "type": "string",
-        "defaultValue": "admin@mngenvmcap218279.onmicrosoft.com"
+        "defaultValue": ""
+      },
+      "alert_email_to": {
+        "type": "string",
+        "defaultValue": ""
       },
       "per_notebook_timeout_secs": {
         "type": "int",
         "defaultValue": 3600
+      },
+      "enable_weather_schedule": {
+        "type": "bool",
+        "defaultValue": true
       }
     }
   }

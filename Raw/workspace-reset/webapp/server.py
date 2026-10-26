@@ -4,6 +4,7 @@
 Thin Flask backend that drives the workflow CLI scripts (kept as the single
 source of truth) as background jobs:
     - sync_workspace_from_git.py  -> POST /api/sync
+    - sync + pipeline + deploy    -> POST /api/full-workflow
     - delete_workspace_items.py   -> POST /api/delete
     - deploy_fabric_app.py        -> POST /api/deploy-app
 
@@ -55,7 +56,9 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 SYNC_TIMEOUT_S = 1800
 DELETE_TIMEOUT_S = 600
 PIPELINE_TIMEOUT_S = 3 * 3600
-DEPLOY_TIMEOUT_S = 45 * 60
+DEPLOY_TIMEOUT_S = 30 * 60
+FOUNDRY_TIMEOUT_S = 90 * 60
+ENERGY_TIMEOUT_S = 3 * 3600
 
 # Ordered phase labels + the substrings that mark reaching each phase. Index 0 is
 # the initial state; success jumps to the final phase.
@@ -105,6 +108,28 @@ DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (6, ("[6/8]",)),
     (7, ("[7/8]",)),
     (8, ("[8/8]",)),
+]
+FOUNDRY_PHASES = [
+    "Queued", "Checking prerequisites", "Resolving SPA", "Preparing source/gateway",
+    "Foundry project", "Foundry agents", "Hosted Agent", "Done",
+]
+FOUNDRY_MARKERS = [
+    (1, ("[1/8]",)), (2, ("[2/8]",)), (3, ("[3/8]",)),
+    (4, ("Foundry: project",)), (5, ("Foundry: agents",)), (6, ("Foundry: Hosted Agent",)),
+]
+ENERGY_PHASES = ["Queued", "Checking prerequisites", "Preparing energy sources", "Verifying read models", "Done"]
+ENERGY_MARKERS = [
+    (1, ("[1/8]",)), (2, ("Energy: setup",)), (3, ("Energy map read models are ready",)),
+]
+
+WORKFLOW_PHASES = [
+    "Queued",
+    *[f"Sync · {phase}" for phase in SYNC_PHASES[1:-1]],
+    *[f"Pipeline · {phase}" for phase in PIPELINE_PHASES[1:-1]],
+    *[f"Energy · {phase}" for phase in ENERGY_PHASES[1:-1]],
+    *[f"Foundry · {phase}" for phase in FOUNDRY_PHASES[1:-1]],
+    *[f"Deploy · {phase}" for phase in DEPLOY_PHASES[1:-1]],
+    "Done",
 ]
 
 # Interactive `az login` run from the UI so sign-in is the app's first step
@@ -168,6 +193,8 @@ class Job:
         self.exclusive = exclusive
         self.process: subprocess.Popen[str] | None = None
         self.cancel_requested = False
+        self.component: str | None = None
+        self.failed_component: str | None = None
 
 
 JOBS: dict[str, Job] = {}
@@ -250,7 +277,14 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
     if cancel_requested:
         _terminate_owned_process(proc)
 
-    timer = threading.Timer(timeout, _terminate_owned_process, args=(proc,))
+    timed_out = threading.Event()
+
+    def terminate_for_timeout() -> None:
+        if proc.poll() is None:
+            timed_out.set()
+            _terminate_owned_process(proc)
+
+    timer = threading.Timer(timeout, terminate_for_timeout)
     timer.start()
     try:
         assert proc.stdout is not None
@@ -264,6 +298,8 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
         proc.wait()
     finally:
         timer.cancel()
+        if proc.stdout is not None:
+            proc.stdout.close()
 
     with job.lock:
         job.process = None
@@ -274,6 +310,145 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             job.status = "succeeded" if proc.returncode == 0 else "failed"
         if job.status == "succeeded":
             job.phase_index = len(job.phases) - 1
+
+
+def _run_workflow_step(
+    job: Job,
+    name: str,
+    argv: list[str],
+    env_extra: dict[str, str] | None,
+    timeout: int,
+    markers: list[tuple[int, tuple[str, ...]]],
+    phase_offset: int,
+) -> int:
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    if env_extra:
+        env.update(env_extra)
+    cmd = [sys.executable, "-u", *argv]
+    with job.lock:
+        job.phase_index = phase_offset
+        job.component = name
+        job.lines.extend(("", f"===== {name} ====="))
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(SCRIPT_DIR),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=NO_WINDOW,
+            start_new_session=os.name != "nt",
+        )
+    except OSError as exc:
+        with job.lock:
+            job.lines.append(f"[{name} failed to start: {exc}]")
+        return -1
+
+    with job.lock:
+        job.process = proc
+        cancel_requested = job.cancel_requested
+    if cancel_requested:
+        _terminate_owned_process(proc)
+
+    timed_out = threading.Event()
+
+    def terminate_for_timeout() -> None:
+        if proc.poll() is None:
+            timed_out.set()
+            _terminate_owned_process(proc)
+
+    timer = threading.Timer(timeout, terminate_for_timeout)
+    timer.start()
+    try:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            with job.lock:
+                job.lines.append(f"[{name}] {line}")
+                for idx, subs in markers:
+                    target = phase_offset + idx - 1
+                    if target > job.phase_index and any(marker in line for marker in subs):
+                        job.phase_index = target
+        proc.wait()
+    finally:
+        timer.cancel()
+        if proc.stdout is not None:
+            proc.stdout.close()
+        with job.lock:
+            job.process = None
+            if timed_out.is_set():
+                job.lines.append(f"[{name} timed out after {timeout} seconds]")
+    return proc.returncode
+
+
+def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
+    for step in steps:
+        if job.cancel_requested:
+            break
+        name = str(step["name"])
+        try:
+            returncode = _run_workflow_step(
+                job,
+                name,
+                step["argv"],
+                step.get("env"),
+                int(step["timeout"]),
+                step["markers"],
+                int(step["phase_offset"]),
+            )
+        except Exception as exc:
+            with job.lock:
+                job.status = "failed"
+                job.returncode = -1
+                job.failed_component = name
+                job.process = None
+                job.lines.append(
+                    f"[workflow stopped] {name} monitor failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            return
+        if returncode != 0:
+            with job.lock:
+                job.returncode = returncode
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                else:
+                    job.status = "failed"
+                    job.failed_component = name
+                    job.lines.append(
+                        f"[workflow stopped] {name} failed with exit code {returncode}; "
+                        "later steps were not started."
+                    )
+            return
+        with job.lock:
+            job.lines.append(f"[workflow] {name} completed successfully.")
+
+    with job.lock:
+        if job.cancel_requested:
+            job.status = "cancelled"
+            job.returncode = job.returncode if job.returncode is not None else -1
+        else:
+            job.status = "succeeded"
+            job.returncode = 0
+            job.component = None
+            job.phase_index = len(job.phases) - 1
+            job.lines.append("[workflow] Sync, pipeline, and app deployment completed successfully.")
+
+
+def _start_workflow(steps: list[dict[str, object]], *, phases: list[str] | None = None) -> str | None:
+    job = Job(WORKFLOW_PHASES if phases is None else phases, exclusive=True)
+    with JOBS_LOCK:
+        running = [existing for existing in JOBS.values() if existing.status == "running"]
+        if running:
+            return None
+        JOBS[job.id] = job
+    threading.Thread(target=_workflow_worker, args=(job, steps), daemon=True).start()
+    return job.id
 
 
 def _start(argv: list[str], env_extra: dict[str, str] | None, timeout: int,
@@ -297,47 +472,41 @@ def job_response(job_id: str | None):
     return jsonify(jobId=job_id)
 
 
-@app.post("/api/sync")
-def api_sync():
-    data = request.get_json(silent=True) or {}
+def _sync_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
-    repository = (data.get("repository") or "").strip()
+    raw_repository = (data.get("repository") or "").strip()
     branch = (data.get("branch") or "main").strip() or "main"
     directory = (data.get("directory") or "/").strip() or "/"
     connection_id = (data.get("connectionId") or "").strip()
-    keep_connected = bool(data.get("keepConnected"))
     pat = (data.get("pat") or "").strip()
-
-    if not tenant or not workspace or not repository:
-        return jsonify(error="tenant, workspace and repository are required."), 400
-    # Accept a pasted GitHub URL (incl. /tree/<branch>) as well as 'owner/repo'.
-    repository = clean_repo(repository)
+    if not tenant or not workspace or not raw_repository:
+        raise ValueError("tenant, workspace and repository are required.")
+    repository = clean_repo(raw_repository)
     if not repository:
-        return jsonify(error="repository must be 'owner/repo' or a GitHub repo URL."), 400
+        raise ValueError("repository must be 'owner/repo' or a GitHub repo URL.")
     if not connection_id and not pat:
-        return jsonify(error="a PAT is required unless a connection id is reused."), 400
-
+        raise ValueError("a PAT is required unless a connection id is reused.")
     owner, repo = (part.strip() for part in repository.split("/", 1))
     argv = [
-        str(SYNC_SCRIPT),
-        "--tenant", tenant,
-        "--workspace", workspace,
-        "--owner", owner,
-        "--repository", repo,
-        "--branch", branch,
-        "--directory", directory,
-        "--yes",
+        str(SYNC_SCRIPT), "--tenant", tenant, "--workspace", workspace,
+        "--owner", owner, "--repository", repo, "--branch", branch,
+        "--directory", directory, "--yes",
     ]
-    env_extra: dict[str, str] = {}
     if connection_id:
         argv += ["--connection-id", connection_id]
-    # Pass the PAT whenever supplied: it's the create-new secret, and also the
-    # fallback that lets auto-reuse ("yes") make a new connection if none works.
-    if pat:
-        env_extra["FABRIC_GIT_PAT"] = pat
-    if keep_connected:
+    if data.get("keepConnected"):
         argv += ["--keep-connected"]
+    return argv, {"FABRIC_GIT_PAT": pat} if pat else {}
+
+
+@app.post("/api/sync")
+def api_sync():
+    data = request.get_json(silent=True) or {}
+    try:
+        argv, env_extra = _sync_invocation(data)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
     job_id = _start(
         argv, env_extra, SYNC_TIMEOUT_S, SYNC_PHASES, SYNC_MARKERS, exclusive=True
@@ -409,7 +578,7 @@ def api_delete():
 
 # Declared parameters of the 01_Pipe_Setup pipeline, in display order. Each entry
 # drives one field in the UI (label + help + prefilled default) and is validated
-# here. Defaults mirror the pipeline's own defaultValue in pipeline-content.json
+# here. Defaults are tenant-neutral; target destinations must be supplied explicitly.
 # (they are ids and secret *names*, not secret values); "int" values are coerced
 # so they reach the pipeline as JSON numbers, not strings.
 PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
@@ -419,7 +588,7 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
     {"name": "workspace_id", "type": "string", "default": "",
      "label": "Workspace name or ID",
      "help": "Mirrors the target workspace on the left. Names are resolved to the canonical workspace GUID before the pipeline starts."},
-    {"name": "key_vault_uri", "type": "string", "default": "https://akvfabcapnew.vault.azure.net/",
+    {"name": "key_vault_uri", "type": "string", "default": "",
      "label": "Key Vault URI",
      "help": "Azure Key Vault that holds the service-principal secrets the notebooks read (e.g. https://myvault.vault.azure.net/)."},
     {"name": "key_vault_tenant_id_secret_name", "type": "string", "default": "tenantid",
@@ -431,15 +600,18 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
     {"name": "key_vault_client_secret_name", "type": "string", "default": "clientsecret",
      "label": "KV secret · client secret",
      "help": "Name of the Key Vault secret that stores the client secret."},
-    {"name": "ops_agent_teams_team_id", "type": "string", "default": "c480320e-9204-474b-9b2c-54a53e94f220",
+    {"name": "ops_agent_teams_team_id", "type": "string", "default": "",
      "label": "Teams team id",
-     "help": "GUID of the Microsoft Teams team the operations agent posts to."},
-    {"name": "ops_agent_teams_channel_id", "type": "string", "default": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
+     "help": "GUID of the Microsoft Teams team targeted by Operations Agent alert configuration."},
+    {"name": "ops_agent_teams_channel_id", "type": "string", "default": "",
      "label": "Teams channel id",
-     "help": "Channel (thread) id the operations agent posts to, e.g. 19:...@thread.tacv2."},
-    {"name": "ops_agent_run_as_user", "type": "string", "default": "admin@mngenvmcap218279.onmicrosoft.com",
+     "help": "Target Teams channel (thread) id, e.g. 19:...@thread.tacv2. Delivery requires verified agent configuration and permissions."},
+    {"name": "ops_agent_run_as_user", "type": "string", "default": "",
      "label": "Agent run-as user",
-     "help": "UPN the operations agent runs as when sending Teams messages."},
+     "help": "Optional UPN guard for the delegated user that provisions and runs the Operations Agents; blank uses the signed-in deploying user."},
+    {"name": "alert_email_to", "type": "string", "default": "",
+     "label": "Alert email recipient",
+     "help": "Required by this launcher. This independent To address is used by Pipe_SendEmailAlert; direct notebook runs fall back to the run-as/deploying user when blank."},
     {"name": "per_notebook_timeout_secs", "type": "int", "default": "3600",
      "label": "Per-notebook timeout (secs)",
      "help": "Seconds the orchestrator waits for each notebook before giving up (e.g. 3600)."},
@@ -453,23 +625,25 @@ def api_pipeline_params():
     return jsonify(pipeline="01_Pipe_Setup", parameters=PIPELINE_PARAM_SPEC)
 
 
-@app.post("/api/run-pipeline")
-def api_run_pipeline():
-    data = request.get_json(silent=True) or {}
+def _pipeline_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
     pipeline = (data.get("pipeline") or "01_Pipe_Setup").strip() or "01_Pipe_Setup"
     raw_params = data.get("parameters") or {}
-
     if not tenant or not workspace:
-        return jsonify(error="tenant and workspace are required."), 400
+        raise ValueError("tenant and workspace are required.")
     if not isinstance(raw_params, dict):
-        return jsonify(error="parameters must be an object of name -> value."), 400
+        raise ValueError("parameters must be an object of name -> value.")
     if not str(raw_params.get("key_vault_uri") or "").strip():
-        return jsonify(error="Key Vault URI is required for connectivity preflight."), 400
-
-    # Keep only known parameters, drop blanks (so pipeline defaults apply), and
-    # coerce ints so they travel as JSON numbers.
+        raise ValueError("Key Vault URI is required for connectivity preflight.")
+    if not str(raw_params.get("alert_email_to") or "").strip():
+        raise ValueError("Alert email recipient is required.")
+    for name, label in (
+        ("ops_agent_teams_team_id", "Teams team id"),
+        ("ops_agent_teams_channel_id", "Teams channel id"),
+    ):
+        if not str(raw_params.get(name) or "").strip():
+            raise ValueError(f"{label} is required for Operations Agent provisioning.")
     params: dict[str, object] = {}
     for spec in PIPELINE_PARAM_SPEC:
         name = spec["name"]
@@ -481,25 +655,26 @@ def api_run_pipeline():
         if spec["type"] == "int":
             try:
                 params[name] = int(str(value).strip())
-            except ValueError:
-                return jsonify(error=f"{spec['label']} must be a whole number."), 400
+            except ValueError as exc:
+                raise ValueError(f"{spec['label']} must be a whole number.") from exc
         else:
             params[name] = str(value).strip()
-
-    # run_pipeline.py resolves the target workspace and replaces this value with
-    # its canonical GUID. Keep the display value here only for transparent input.
     params["workspace_id"] = workspace
-
+    params["ops_agent_run_as_user"] = str(raw_params.get("ops_agent_run_as_user") or "").strip()
     argv = [
-        str(PIPELINE_SCRIPT),
-        "--tenant", tenant,
-        "--workspace", workspace,
-        "--pipeline", pipeline,
-        "--yes",
+        str(PIPELINE_SCRIPT), "--tenant", tenant, "--workspace", workspace,
+        "--pipeline", pipeline, "--yes",
     ]
-    # Pass parameters as JSON through the environment so values with @ and : (a
-    # Teams channel id) never need shell escaping and stay off the command line.
-    env_extra = {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
+    return argv, {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
+
+
+@app.post("/api/run-pipeline")
+def api_run_pipeline():
+    data = request.get_json(silent=True) or {}
+    try:
+        argv, env_extra = _pipeline_invocation(data)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     job_id = _start(
         argv,
         env_extra,
@@ -514,31 +689,210 @@ def api_run_pipeline():
 @app.post("/api/deploy-app")
 def api_deploy_app():
     data = request.get_json(silent=True) or {}
+    try:
+        argv = _deploy_invocation(data)
+        env = _deploy_environment(data)
+        if any(key != "HYDRO_ONTOLOGY_GRAPH_BINDING" for key in env):
+            raise ValueError("Use the Foundry multi-agent setup module to change Foundry settings, then deploy the app.")
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    job_id = _start(
+        argv, env or None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
+    )
+    return job_response(job_id)
+
+
+@app.post("/api/setup-foundry")
+def api_setup_foundry():
+    return _setup_stage("foundry", FOUNDRY_TIMEOUT_S, FOUNDRY_PHASES, FOUNDRY_MARKERS)
+
+
+@app.post("/api/setup-energy")
+def api_setup_energy():
+    return _setup_stage("energy", ENERGY_TIMEOUT_S, ENERGY_PHASES, ENERGY_MARKERS)
+
+
+def _setup_stage(stage, timeout, phases, markers):
+    data = request.get_json(silent=True) or {}
+    try:
+        argv = _deploy_invocation(data, stage=stage)
+        env = _deploy_environment(data) if stage == "foundry" else {}
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return job_response(_start(argv, env or None, timeout, phases, markers, exclusive=True))
+
+
+FOUNDRY_ENDPOINT_RE = re.compile(r"^https://[a-z0-9-]+\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_.-]+/?$")
+FOUNDRY_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ACR_NAME_RE = re.compile(r"^[a-z0-9]{5,50}$")
+AZURE_LOCATION_RE = re.compile(r"^[A-Za-z][A-Za-z ]{2,39}$")
+
+
+def _deploy_environment(data: dict) -> dict[str, str]:
+    """Foundry settings for the deployer, from the form. Only whitelisted, validated, non-secret values are passed,
+    as environment variables the deployer already reads. Blank fields pass nothing, so the server's own environment
+    (and the deployer's discovery) still applies."""
+    def text(key: str) -> str:
+        value = data.get(key)
+        return value.strip() if isinstance(value, str) else ""
+
+    env: dict[str, str] = {}
+    graph_binding = text("ontologyGraphBinding")
+    if graph_binding:
+        try:
+            binding = json.loads(graph_binding)
+        except ValueError as error:
+            raise ValueError("Ontology graph binding must be a JSON object.") from error
+        if not isinstance(binding, dict) or any(
+            not isinstance(binding.get(key), str)
+            or not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", binding[key])
+            for key in ("workspaceId", "ontologyId", "graphModelId")
+        ):
+            raise ValueError("Ontology graph binding requires workspaceId, ontologyId and graphModelId GUIDs.")
+        env["HYDRO_ONTOLOGY_GRAPH_BINDING"] = json.dumps(binding, separators=(",", ":"))
+    subscription = text("azureSubscriptionId")
+    if subscription:
+        if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", subscription):
+            raise ValueError("Azure subscription ID must be a GUID in the selected Fabric tenant.")
+        env["HYDRO_AZURE_SUBSCRIPTION_ID"] = subscription
+    endpoint = text("foundryEndpoint")
+    if endpoint:
+        if not FOUNDRY_ENDPOINT_RE.fullmatch(endpoint):
+            raise ValueError("Foundry project endpoint must look like https://<resource>.services.ai.azure.com/api/projects/<project>.")
+        env["HYDRO_FOUNDRY_PROJECT_ENDPOINT"] = endpoint
+    project_id = text("foundryProjectResourceId")
+    if project_id:
+        if not re.fullmatch(
+            r"/subscriptions/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+            r"/resourceGroups/[^/?#]+/providers/Microsoft\.CognitiveServices"
+            r"/accounts/[A-Za-z0-9-]+/projects/[A-Za-z0-9_.-]+", project_id, re.IGNORECASE,
+        ):
+            raise ValueError("Foundry project resource ID must be a full project ARM resource ID.")
+        env["HYDRO_FOUNDRY_PROJECT_RESOURCE_ID"] = project_id
+    model = text("foundryModel")
+    if model:
+        if not FOUNDRY_MODEL_RE.fullmatch(model):
+            raise ValueError("Foundry model deployment name may contain only letters, digits, '.', '_' and '-'.")
+        env["HYDRO_FOUNDRY_MODEL"] = model
+    for field, key in (
+        ("foundryModelName", "HYDRO_FOUNDRY_MODEL_NAME"),
+        ("foundryModelVersion", "HYDRO_FOUNDRY_MODEL_VERSION"),
+        ("foundryModelSku", "HYDRO_FOUNDRY_MODEL_SKU"),
+    ):
+        value = text(field)
+        if value:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value):
+                raise ValueError("Foundry model name, version and SKU must be valid identifiers.")
+            env[key] = value
+    capacity = data.get("foundryModelCapacity")
+    if capacity not in (None, ""):
+        if type(capacity) not in (str, int) or not re.fullmatch(r"[1-9][0-9]*", str(capacity).strip()):
+            raise ValueError("Foundry model capacity must be a positive whole number.")
+        env["HYDRO_FOUNDRY_MODEL_CAPACITY"] = str(capacity).strip()
+    registry = text("acrName")
+    if registry:
+        if not ACR_NAME_RE.fullmatch(registry):
+            raise ValueError("Container registry name must be 5-50 lowercase letters or digits.")
+        env["HYDRO_ACR_NAME"] = registry
+    location = text("foundryLocation")
+    if location:
+        if not AZURE_LOCATION_RE.fullmatch(location):
+            raise ValueError("Foundry location must be an Azure region such as swedencentral.")
+        env["HYDRO_FOUNDRY_LOCATION"] = location
+    if "createFoundry" in data:
+        if type(data["createFoundry"]) is not bool:
+            raise ValueError("Create Foundry must be an explicit boolean.")
+        env["HYDRO_FOUNDRY_CREATE"] = str(data["createFoundry"]).lower()
+    writes = text("productionWrites").lower()
+    if writes:
+        if writes not in ("true", "false"):
+            raise ValueError("Work-order writes must be enabled or disabled, or left to keep the current setting.")
+        env["HYDRO_PRODUCTION_WRITES_ENABLED"] = writes
+    return env
+
+
+def _deploy_invocation(data: dict, *, stage: str = "app") -> list[str]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
     client_id = (data.get("clientId") or "").strip()
 
     if not tenant or not workspace:
-        return jsonify(error="tenant and workspace are required."), 400
+        raise ValueError("tenant and workspace are required.")
     if not TENANT_RE.fullmatch(tenant):
-        return jsonify(error="tenant must be a GUID or a domain like contoso.onmicrosoft.com."), 400
+        raise ValueError("tenant must be a GUID or a domain like contoso.onmicrosoft.com.")
     if client_id and not re.fullmatch(
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
         r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         client_id,
     ):
-        return jsonify(error="SPA client id must be a GUID."), 400
+        raise ValueError("SPA client id must be a GUID.")
+    energy = data.get("energyMap", "keep")
+    if energy not in ("keep", "enabled", "disabled"):
+        raise ValueError("Energy map must be keep, enabled or disabled.")
 
     argv = [
         str(DEPLOY_SCRIPT),
         "--tenant", tenant,
         "--workspace", workspace,
+        "--stage", stage,
+        "--energy-map", energy,
     ]
     if client_id:
         argv += ["--client-id", client_id]
-    job_id = _start(
-        argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
-    )
+    return argv
+
+
+@app.post("/api/full-workflow")
+def api_full_workflow():
+    data = request.get_json(silent=True) or {}
+    try:
+        sync_argv, sync_env = _sync_invocation(data)
+        pipeline_argv, pipeline_env = _pipeline_invocation(data)
+        deploy_argv = _deploy_invocation(data)
+        deploy_env = _deploy_environment(data)
+        foundry_argv = _deploy_invocation(data, stage="foundry")
+        energy_argv = _deploy_invocation(data, stage="energy")
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+    sync_offset = 1
+    pipeline_offset = sync_offset + len(SYNC_PHASES) - 2
+    energy_offset = pipeline_offset + len(PIPELINE_PHASES) - 2
+    energy_enabled = data.get("energyMap") == "enabled"
+    foundry_offset = energy_offset + (len(ENERGY_PHASES) - 2 if energy_enabled else 0)
+    deploy_offset = foundry_offset + len(FOUNDRY_PHASES) - 2
+    steps = [
+        {
+            "name": "GitHub sync", "argv": sync_argv, "env": sync_env,
+            "timeout": SYNC_TIMEOUT_S, "markers": SYNC_MARKERS, "phase_offset": sync_offset,
+        },
+        {
+            "name": "Setup pipeline", "argv": pipeline_argv, "env": pipeline_env,
+            "timeout": PIPELINE_TIMEOUT_S, "markers": PIPELINE_MARKERS,
+            "phase_offset": pipeline_offset,
+        },
+        {
+            "name": "Foundry multi-agent setup", "argv": foundry_argv, "env": deploy_env or None,
+            "timeout": FOUNDRY_TIMEOUT_S, "markers": FOUNDRY_MARKERS,
+            "phase_offset": foundry_offset,
+        },
+        {
+            "name": "Fabric app deploy", "argv": deploy_argv,
+            "env": {key: value for key, value in deploy_env.items()
+                    if key == "HYDRO_ONTOLOGY_GRAPH_BINDING"} or None,
+            "timeout": DEPLOY_TIMEOUT_S, "markers": DEPLOY_MARKERS,
+            "phase_offset": deploy_offset,
+        },
+    ]
+    if energy_enabled:
+        steps.insert(2, {
+            "name": "Energy setup", "argv": energy_argv, "env": None,
+            "timeout": ENERGY_TIMEOUT_S, "markers": ENERGY_MARKERS, "phase_offset": energy_offset,
+        })
+    phases = WORKFLOW_PHASES if energy_enabled else [
+        phase for phase in WORKFLOW_PHASES if not phase.startswith("Energy ·")
+    ]
+    job_id = _start_workflow(steps, phases=phases)
     return job_response(job_id)
 
 
@@ -558,6 +912,8 @@ def api_job(job_id: str):
         phases = job.phases
         status = job.status
         returncode = job.returncode
+        component = job.component
+        failed_component = job.failed_component
     return jsonify(
         status=status,
         returncode=returncode,
@@ -565,6 +921,8 @@ def api_job(job_id: str):
         phases=phases,
         phaseIndex=phase_index,
         phase=phases[phase_index],
+        component=component,
+        failedComponent=failed_component,
         lines=new_lines,
         nextSince=total,
     )
@@ -660,6 +1018,30 @@ def api_login():
     return job_response(job_id)
 
 
+@app.get("/api/subscriptions")
+def api_subscriptions():
+    cmd = "az account list --all -o json" if os.name == "nt" else ["az", "account", "list", "--all", "-o", "json"]
+    try:
+        proc = subprocess.run(
+            cmd, shell=(os.name == "nt"), capture_output=True, text=True, timeout=40, creationflags=NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return jsonify(error=f"Could not list signed-in subscriptions: {exc}"), 503
+    if proc.returncode != 0:
+        return jsonify(error=(proc.stderr or proc.stdout or "Azure CLI subscription discovery failed").strip()[:500]), 503
+    try:
+        accounts = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return jsonify(error="Azure CLI returned invalid subscription JSON."), 502
+    if not isinstance(accounts, list) or any(not isinstance(account, dict) for account in accounts):
+        return jsonify(error="Azure CLI returned an invalid subscription list."), 502
+    return jsonify(subscriptions=[
+        {"id": account["id"], "name": account.get("name", account["id"]), "tenantId": account["tenantId"]}
+        for account in accounts
+        if account.get("state") == "Enabled" and account.get("id") and account.get("tenantId")
+    ])
+
+
 @app.get("/api/whoami")
 def api_whoami():
     """Report the identity of the current `az login` session (best-effort, cached)."""
@@ -718,12 +1100,15 @@ def app_version():
             errors="replace",
             timeout=10,
             check=True,
+            creationflags=NO_WINDOW,
         ).stdout.strip()
 
     try:
         commit_count = git_value("rev-list", "--count", "HEAD")
         revision = git_value("rev-parse", "--short=8", "HEAD")
         timestamp = git_value("show", "-s", "--format=%cI", "HEAD")
+        branch = git_value("branch", "--show-current")
+        repository = clean_repo(git_value("remote", "get-url", "origin"))
     except (OSError, subprocess.SubprocessError) as exc:
         timestamp = datetime.fromtimestamp(Path(__file__).stat().st_mtime, UTC).isoformat()
         response = jsonify(
@@ -735,9 +1120,17 @@ def app_version():
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    response = jsonify(version=f"v1.0.{commit_count}", timestamp=timestamp, revision=revision)
+    response = jsonify(
+        version=f"v1.0.{commit_count}", timestamp=timestamp, revision=revision,
+        branch=branch, repository=repository,
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.get("/deploy-guide")
+def deploy_guide():
+    return send_from_directory(REPO_ROOT / "HydroOperationsApp", "DEPLOY.md", mimetype="text/plain")
 
 
 @app.get("/")

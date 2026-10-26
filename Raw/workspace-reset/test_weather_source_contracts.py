@@ -1,11 +1,136 @@
 import json
+import ast
 import unittest
+from datetime import datetime, timedelta, timezone
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_project_identity_producers_preserve_the_complete_natural_grain(self):
+        expected = {
+            "Weather_020_area_calculations": [
+                ["source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc"],
+                ["source_id", "location_id", "observed_at_utc"],
+            ],
+            "RTI_003_ingest_transform_medallion": [["system_id", "signal_type"]],
+            "RTI_003_ingest_transform_medallion_SelfContained": [["system_id", "signal_type"]],
+        }
+        for name, keys in expected.items():
+            source = (ROOT / "Notebooks" / (name + ".Notebook") / "notebook-content.py").read_text(encoding="utf-8")
+            raw = json.loads((ROOT / "Raw/RTI_Notebooks" / (name + ".ipynb")).read_text(encoding="utf-8"))
+            mirror = "\n".join("".join(cell["source"]) for cell in raw["cells"] if cell["cell_type"] == "code")
+            self.assertEqual(ast.dump(ast.parse(source)), ast.dump(ast.parse(mirror)), name)
+            calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Attribute) and node.func.attr == "withColumn"
+                     and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "ontology_key"]
+            actual = []
+            for call in calls:
+                digest = call.args[1]
+                self.assertEqual(digest.func.attr, "sha2")
+                self.assertEqual(digest.args[1].value, 256)
+                encoding = digest.args[0]
+                self.assertEqual(ast.literal_eval(encoding.args[1]), {
+                    "timeZone": "UTC", "timestampFormat": "yyyy-MM-dd HH:mm:ss.SSSSSS", "ignoreNullFields": "false",
+                })
+                actual.append([arg.value for arg in encoding.args[0].args])
+            self.assertCountEqual(actual, keys, name)
+
+    def test_aurora_discovers_recent_issues_without_valid_time_sorting(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        names = {"newest_stream_issue", "issue_items", "latest_complete_issue"}
+        functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in names]
+        frozen_now = datetime(2026, 10, 23, 14, tzinfo=timezone.utc)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen_now
+
+        old = frozen_now.replace(hour=12) - timedelta(hours=48)
+        recent = frozen_now.replace(hour=6)
+        newest = frozen_now.replace(hour=12)
+        items = {}
+        for issue, horizon in ((old, 240), (recent, 72), (newest, 5)):
+            for lead in range(1, horizon + 1):
+                key = f"oper_{issue:%Y%m%d%H%M}_{issue + timedelta(hours=lead):%Y%m%d%H%M}"
+                items[key] = {"id": key}
+
+        def search(_session, _endpoint, _key, params):
+            self.assertNotIn("sortby", params)
+            self.assertLessEqual(len(params["ids"].split(",")), 50)
+            return {"features": [items[key] for key in params["ids"].split(",") if key in items]}
+
+        context = {"datetime": Clock, "timedelta": timedelta, "timezone": timezone,
+                   "stream": "oper", "collection": "mai-aurora", "stac_search": search}
+        code = "from __future__ import annotations\n" + ast.unparse(ast.Module(body=functions, type_ignores=[]))
+        exec(compile(code, "aurora_issue_test", "exec"), context)
+        issue, selected = context["latest_complete_issue"](None, "unused", "unused", list(range(1, 73)))
+        self.assertEqual(issue, recent)
+        self.assertEqual(set(selected), set(range(1, 73)))
+        self.assertTrue(all(f"oper_{recent:%Y%m%d%H%M}_" in item["id"] for item in selected.values()))
+        items.clear()
+        for lead in range(1, 241):
+            key = f"oper_{old:%Y%m%d%H%M}_{old + timedelta(hours=lead):%Y%m%d%H%M}"
+            items[key] = {"id": key}
+        with self.assertRaisesRegex(RuntimeError, "No recent"):
+            context["latest_complete_issue"](None, "unused", "unused", list(range(1, 73)))
+
+    def test_aurora_raw_mirror_retains_all_canonical_function_bodies(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        raw = json.loads((ROOT / "Raw/RTI_Notebooks/Weather_002_fetch_area_weather.ipynb").read_text(encoding="utf-8"))
+        mirror = "\n".join("".join(cell["source"]) for cell in raw["cells"] if cell["cell_type"] == "code")
+        functions = lambda text: {node.name: ast.dump(node) for node in ast.parse(text).body if isinstance(node, ast.FunctionDef)}
+        self.assertEqual(functions(source), functions(mirror))
+
+    def test_ukmet_forecast_pressure_is_stored_in_hpa(self):
+        source = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        compile(source, "Weather_003", "exec")
+        self.assertIn('FORECAST_SCALE = {"pressure": 0.01}', source)
+        self.assertIn("value *= FORECAST_SCALE.get(variable_id, 1.0)", source)
+
+    def test_packaged_workflows_require_runtime_two_without_weather_exceptions(self):
+        for path in (ROOT / "Raw/RTI_Ontology_Workflow_clean.docx",
+                     ROOT / "Raw/RTI_Notebooks/RTI_Ontology_Workflow_clean.docx"):
+            with self.subTest(path=str(path)), zipfile.ZipFile(path) as document:
+                root = ET.fromstring(document.read("word/document.xml"))
+                text = "".join(root.itertext())
+                self.assertIn("All Spark notebooks, including every Weather notebook, require Fabric Runtime 2.0", text)
+                self.assertIn("no older-runtime exceptions or downgrade fallback", text)
+                self.assertIn("Waits for asynchronous Eventstream creation/update operations", text)
+
+    def test_weather_environment_requires_runtime_two_and_python_313_libraries(self):
+        environment = ROOT / "Environments/Weather.Environment"
+        compute = (environment / "Setting/Sparkcompute.yml").read_text(encoding="utf-8")
+        libraries = (environment / "Libraries/PublicLibraries/environment.yml").read_text(encoding="utf-8")
+        self.assertIn("runtime_version: '2.0'", compute)
+        self.assertNotIn("instance_pool_id:", compute)
+        for package in ("numpy=2.4.1", "pandas=2.3.3", "xarray=2025.10.1",
+                        "shapely=2.1.2", "pyproj=3.7.2", "adlfs==2025.8.0",
+                        "zarr==2.18.7", "numcodecs==0.15.1"):
+            self.assertIn(package, libraries)
+        self.assertNotIn("numpy=1.", libraries)
+
+    def test_notebooks_inherit_runtime_without_bundled_environment_ids(self):
+        notebooks = list((ROOT / "Notebooks").glob("*.Notebook/notebook-content.py"))
+        raw_notebooks = list((ROOT / "Raw/RTI_Notebooks").glob("*.ipynb"))
+        self.assertTrue(notebooks)
+        self.assertTrue(raw_notebooks)
+        for path in notebooks:
+            header = path.read_text(encoding="utf-8").split("# MARKDOWN", 1)[0]
+            lines = [line.removeprefix("# META ") for line in header.splitlines()
+                     if line.startswith("# META ")]
+            metadata, _ = json.JSONDecoder().raw_decode("\n".join(lines))
+            self.assertFalse(metadata.get("dependencies", {}).get("environment"),
+                             str(path))
+        for path in raw_notebooks:
+            metadata = json.loads(path.read_text(encoding="utf-8")).get("metadata", {})
+            self.assertFalse(metadata.get("dependencies", {}).get("environment"),
+                             str(path))
+
     def test_scoped_area_run_does_not_execute_global_cleanup(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
         compile(source, "Weather_002", "exec")
@@ -26,12 +151,16 @@ class WeatherSourceContractTests(unittest.TestCase):
         expected = '{"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}'
         self.assertEqual(source.count(expected), 2)
 
-    def test_weather_query_contract_uses_supported_bound_and_refreshes_discovery(self):
+    def test_weather_query_contract_pages_the_verified_connector_without_legacy_api(self):
         source = (ROOT / "HydroOperationsApp/src/services/fabric.ts").read_text(encoding="utf-8")
-        weather_query = source.split("query HydroWeather", 1)[1].split("const response", 1)[0]
-        self.assertEqual(weather_query.count("first: 100000)"), 5)
-        self.assertNotIn("first: 1000)", weather_query)
-        self.assertIn("ensureConfig(forceRefresh, forceRefresh)", source)
+        weather_query = source.split("export async function queryWeatherData", 1)[1].split("export async function startStreamingPipeline", 1)[0]
+        self.assertEqual(weather_query.count("collectLakehousePages(cursor =>"), 5)
+        self.assertEqual(weather_query.count(".first(500).after(cursor).executePaginated()"), 5)
+        self.assertIn("const key = lakehouseConnectionKey()", weather_query)
+        self.assertIn("if (forceRefresh) weatherDataCache = undefined", weather_query)
+        self.assertIn("weatherDataCache = undefined", weather_query.split(".catch(error =>", 1)[1])
+        self.assertNotIn("graphqlUrl", weather_query)
+        self.assertNotIn("query HydroWeather", source)
 
     def test_setup_pagination_and_observation_fallbacks(self):
         setup = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
@@ -58,7 +187,10 @@ class WeatherSourceContractTests(unittest.TestCase):
             self.assertIn("quote(body['continuationToken'], safe='')", source)
             self.assertIn("set(results_by_activity) != expected", source)
             self.assertIn('outcome.get("exception")', source)
-            self.assertIn('_require_successful_dag(results)\n_activate_weather_schedule()', source)
+            self.assertIn(
+                '_require_successful_dag(results)\n_activate_weather_schedule()',
+                source,
+            )
             self.assertGreater(
                 source.rindex("_activate_weather_schedule()"),
                 source.index("notebookutils.notebook.runMultiple"),
@@ -124,7 +256,7 @@ class WeatherSourceContractTests(unittest.TestCase):
         canonical = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
         raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
         raw_source = "".join("".join(cell.get("source", [])) for cell in raw["cells"])
-        marker = "Required weather notebook binding failed"
+        marker = "Required downstream notebook binding failed"
         self.assertEqual(canonical.count(marker), 1)
         self.assertEqual(raw_source.count(marker), 1)
         self.assertEqual(canonical.count("quote(token, safe='')"), 1)

@@ -1,11 +1,116 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyFilter, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+import { applyFilter, validateFilters, QueryInputValidationError, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+import { describeToolEvidence } from '../src/services/copilot/domainContract.ts'
+
+test('low-stock column comparisons include equality and exclude above-threshold and missing quantities', () => {
+  const rows = [
+    { id: 'below', quantityOnHand: 2, reorderLevel: 3 },
+    { id: 'equal', quantityOnHand: 2, reorderLevel: 2 },
+    { id: 'above', quantityOnHand: 6, reorderLevel: 4 },
+    { id: 'missing', quantityOnHand: null, reorderLevel: 2 },
+    { id: 'no-limit', quantityOnHand: 1 },
+    { id: 'zero', quantityOnHand: 0, reorderLevel: 0 },
+  ]
+  const where = [{ column: 'quantityOnHand', op: 'lte', value_column: 'reorderLevel' }]
+  validateFilters(where, ['quantityOnHand', 'reorderLevel'])
+  assert.deepEqual(applyFilter(rows, where).map(row => row.id), ['below', 'equal', 'zero'])
+  assert.throws(() => applyFilter(rows, [{ column: 'quantityOnHand', op: 'lte', value: 'reorderLevel' }]), QueryInputValidationError)
+})
+
+test('column operands are explicit and catalog checked even for empty inventories', () => {
+  const base = { column: 'quantityOnHand', op: 'lte', value_column: 'reorderLevel' }
+  assert.throws(() => validateFilters([base], ['quantityOnHand']), /Unknown comparison column/)
+  for (const patch of [{ value: 2 }, { value_column: '' }, { value_column: null }, { op: 'in' }, { op: 'is_null' }]) {
+    assert.throws(() => applyFilter([], [{ ...base, ...patch }]), QueryInputValidationError)
+  }
+  assert.throws(() => validateFilters([{ column: 'quantityOnHand', op: 'lte', value: 'reorderLevel' }],
+    ['quantityOnHand', 'reorderLevel']), /Use value_column/)
+  assert.throws(() => applyFilter([{ amount: 5 }], [{ column: 'amount', op: 'gt', value: 'not numeric' }]), QueryInputValidationError)
+  assert.deepEqual(applyFilter([{ a: 2, b: 2 }, { a: 3, b: 2 }], [{ column: 'a', op: 'eq', value_column: 'b' }]), [{ a: 2, b: 2 }])
+  assert.deepEqual(applyFilter([{ a: null, b: null }, {}], [{ column: 'a', op: 'eq', value_column: 'b' }]), [])
+  assert.throws(() => applyFilter([{ amount: NaN }], [{ column: 'amount', op: 'lte', value: Infinity }]), /finite operands/)
+})
+
+test('observed twelve-part inventory produces exactly four at-or-below-reorder records', () => {
+  const stock = [
+    ['SP-BRG-1001', 6, 4], ['SP-BRG-1002', 2, 3],
+    ['SP-ELE-5001', 4, 3], ['SP-ELE-5002', 1, 2], ['SP-ELE-5003', 14, 6],
+    ['SP-SEAL-2001', 9, 5], ['SP-SEAL-2002', 3, 4],
+    ['SP-SEN-3001', 12, 6], ['SP-SEN-3002', 20, 8], ['SP-SEN-3003', 7, 6],
+    ['SP-VAL-4001', 2, 2], ['SP-VAL-4002', 5, 3],
+  ].map(([partNumber, quantityOnHand, reorderLevel]) => ({ partNumber, quantityOnHand, reorderLevel }))
+  assert.deepEqual(applyFilter(stock, [{ column: 'quantityOnHand', op: 'lte', value_column: 'reorderLevel' }])
+    .map(row => row.partNumber), ['SP-BRG-1002', 'SP-ELE-5002', 'SP-SEAL-2002', 'SP-VAL-4001'])
+  assert.equal(stock.length, 12)
+})
+
+test('inspection date filters compare complete timestamps, not their shared year prefix', () => {
+  const rows = [
+    { id: 'old', inspectedAt: '2026-07-21T09:00:00.000Z' },
+    { id: 'boundary', inspectedAt: '2026-09-08T08:26:40.953Z' },
+    { id: 'equivalent-offset', inspectedAt: '2026-09-08T10:26:40.953+02:00' },
+    { id: 'missing', inspectedAt: null },
+  ]
+  assert.deepEqual(applyFilter(rows, [{ column: 'inspectedAt', op: 'gte', value: '2026-09-08T08:26:40.953Z' }]).map(row => row.id), ['boundary', 'equivalent-offset'])
+  assert.deepEqual(applyFilter(rows, [{ column: 'inspectedAt', op: 'lt', value: '2026-09-08' }]).map(row => row.id), ['old'])
+  assert.deepEqual(applyFilter([{ value: '12.5' }, { value: 2 }], [{ column: 'value', op: 'gte', value: 10 }]), [{ value: '12.5' }])
+  assert.throws(() => applyFilter(rows, [{ column: 'inspectedAt', op: 'gte', value: '2026-99-99' }]), /valid ISO/)
+})
+
+test('invalid filter envelopes and operators cannot silently return the unfiltered inventory', () => {
+  for (const where of [
+    { column: 'status', op: 'eq', value: 'Draft' },
+    [{ column: 'status', op: 'unsupported', value: 'Draft' }],
+    [{ column: 'status', op: 'eq' }],
+    [{ column: 'status', op: 'in', value: 'Draft' }],
+  ]) assert.throws(() => applyFilter([], where))
+})
 import { applyChunk, applyResponsesEvent, createStreamState, readResponsesStream, splitSseEvents } from '../src/services/copilot/chatStream.ts'
 import { catalogPrompt } from '../src/services/copilot/catalog.ts'
 import { appendCompletedTurn, buildResponsesInput, buildResponsesRequest } from '../src/services/copilot/responsesProtocol.ts'
 import { defaultCopilotSettings, DEFAULT_SYSTEM_PROMPT, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
 import { extractSuggestions, stripOptionsMarker } from '../src/services/copilot/suggestions.ts'
+
+test('station power uses exact power-output nodes and authoritative units, never fuzzy power signals', () => {
+  const query = buildStationPowerQuery()
+  assert.match(query, /ago\(24h\)/)
+  assert.match(query, /endswith_cs '\.power_output'/)
+  assert.match(query, /AssetMaster\(\)/)
+  assert.doesNotMatch(query, /contains|where.*quality/)
+  assert.doesNotThrow(() => validateKql(query))
+  assert.throws(() => buildStationPowerQuery('0h'), /Invalid lookback/)
+  assert.throws(() => buildStationPowerQuery('24h); drop'), /Invalid lookback/)
+})
+
+test('station chart uses sample-weighted MW conversions and preserves exact chart values', () => {
+  const base = { Station: 'Site,"A"', average: 1000, samples: 2, invalid_values: 0, bad_samples: 1, latest_event_time: '2026-10-07T20:00:00Z', Unit: 'kW' }
+  const evidence = stationPowerEvidence([base, { ...base, Unit: 'MW', average: 3, samples: 6 }], '24h')
+  assert.equal(evidence.rows[0].average_power_MW, 2.5)
+  assert.equal(evidence.rows[0].samples, 8)
+  assert.equal(evidence.rows[0].bad_samples, 2)
+  assert.match(evidence.visualization.inlineCsvData, /"Site,""A""",2\.5/)
+  assert.equal(evidence.visualization.yAxisTitle, 'MW')
+  for (const patch of [{ Unit: 'kWh' }, { Unit: '' }, { Station: '' }, { average: NaN }, { invalid_values: 1 }, { samples: 0 }]) {
+    assert.throws(() => stationPowerEvidence([{ ...base, ...patch }], '24h'), /No partial chart/)
+  }
+  assert.equal(stationPowerEvidence([], '24h').visualization, undefined)
+})
+
+test('station answer preserves exact chart values, MW units, source times and freshness', () => {
+  const evidence = stationPowerEvidence([{ Station: 'Sloy', Unit: 'MW', average: 1315.0626405438807,
+    samples: 4045, bad_samples: 212, invalid_values: 0, latest_event_time: '2026-10-07T20:20:15.102362Z' }], '24h')
+  const text = stationPowerSummary(evidence.rows, '24h', '2026-10-07T22:25:08.713Z')
+  assert.match(text, /1315\.0626405438807/)
+  assert.match(text, /20:20:15\.102362Z/)
+  assert.match(text, /Stale \(>60s\)/)
+  assert.doesNotMatch(text, /kW|02:20:/)
+  assert.ok(evidence.visualization.inlineCsvData.includes(String(evidence.rows[0].average_power_MW)))
+  assert.match(stationPowerSummary(evidence.rows, '24h', '2026-10-07T20:20:16Z'), /Within 60s/)
+  assert.match(stationPowerSummary(evidence.rows, '24h', '2026-10-07T20:00:00Z'), /Uncertain/)
+  assert.match(stationPowerSummary([], '24h', '2026-10-07T22:00:00Z'), /does not establish zero generation/)
+  assert.throws(() => stationPowerSummary([], '24h', 'invalid'), /time is invalid/)
+})
 
 test('rejects KQL control commands and cross-cluster access', () => {
   assert.throws(() => validateKql('.drop table OPCUAEvents'), /control commands/)
@@ -30,6 +135,45 @@ test('telemetry returns the most recent rows, raw when aggregation is none', () 
   const binned = buildTelemetryQuery({ bin: '1m', limit: 10_000 })
   assert.match(binned, /summarize value = avg\(value\)/)
   assert.match(binned, /\| top 500 by event_time desc/)
+})
+
+test('today keeps midnight UTC semantics in telemetry and station charts', () => {
+  assert.match(buildTelemetryQuery({ lookback: 'today', aggregation: 'none' }), /event_time >= startofday\(now\(\)\)/)
+  assert.match(buildStationPowerQuery('today'), /event_time >= startofday\(now\(\)\)/)
+  assert.throws(() => buildTelemetryQuery({ lookback: '0h' }), /Invalid lookback/)
+})
+
+test('latest telemetry returns raw values per node without binning or quality exclusions', () => {
+  const query = buildTelemetryQuery({ opcua_node_ids: ['ns=2;s=T005.power_output', 'ns=2;s=T005.vibration_a'],
+    lookback: '6h', aggregation: 'latest', bin: 'unused', limit: 100 })
+  assert.match(query, /event_time > ago\(6h\) and event_time <= now\(\)/)
+  assert.match(query, /opcua_node_id in \('ns=2;s=T005.power_output', 'ns=2;s=T005.vibration_a'\)/)
+  assert.match(query, /summarize arg_max\(event_time, value, quality\) by opcua_node_id/)
+  assert.match(query, /\| top 100 by event_time desc/)
+  assert.doesNotMatch(query, /avg\(|bin\(|where.*quality/)
+  assert.doesNotThrow(() => validateKql(query))
+})
+
+test('quality history summarises each signal once over the window for root-cause analysis', () => {
+  const query = buildTelemetryQuery({ opcua_node_ids: ['ns=2;s=T014.vibration_a'], lookback: '48h', aggregation: 'quality' })
+  assert.match(query, /event_time > ago\(48h\) and event_time <= now\(\)/)
+  assert.match(query, /opcua_node_id in \('ns=2;s=T014.vibration_a'\)/)
+  for (const column of ['samples = count()', 'good = countif', 'uncertain = countif', 'bad = countif',
+    'first_bad_time = minif', 'last_bad_time = maxif', 'hours_with_bad = dcountif', 'hours_with_data = dcount',
+    'good_value_min = minif', 'good_value_avg = avgif']) assert.ok(query.includes(column), column)
+  assert.match(query, /by opcua_node_id\n\| order by opcua_node_id asc\n\| take 500/)
+  assert.doesNotMatch(query, /top \d+ by event_time/)
+  assert.doesNotThrow(() => validateKql(query))
+  assert.deepEqual(describeToolEvidence('query_telemetry', { aggregation: 'quality' }, { rows: [], truncated: false })
+    .map(({ kind, role, scope, complete, identity_fields }) => ({ kind, role, scope, complete, identity_fields })),
+  [{ kind: 'telemetry', role: 'audit', scope: 'focus', complete: true, identity_fields: ['opcua_node_id'] }])
+})
+
+test('the reproduced missing enriched node-column filter is rejected before source execution', () => {
+  assert.throws(() => validateKql('TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null))\n| where opcua_node_id in ("ns=2;s=T005.power_output")'),
+    /does not return opcua_node_id.*aggregation latest/)
+  assert.doesNotThrow(() => validateKql('TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)) | where Turbine == "T005"'))
+  assert.doesNotThrow(() => validateKql('TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)) | where Signal == "opcua_node_id"'))
 })
 
 test('rejects tables outside the catalog', () => {
@@ -63,8 +207,22 @@ test('filters rows with the structured predicate', () => {
   const rows = [{ id: 'a', status: 'Open', criticality: 5 }, { id: 'b', status: 'closed', criticality: 1 }, { id: 'c', status: 'Open', criticality: 3 }]
   assert.deepEqual(applyFilter(rows, [{ column: 'status', op: 'eq', value: 'open' }]).map(row => row.id), ['a', 'c'])
   assert.deepEqual(applyFilter(rows, [{ column: 'criticality', op: 'gte', value: 3 }]).map(row => row.id), ['a', 'c'])
+  assert.deepEqual(applyFilter(rows, [{ column: 'criticality', op: 'gt', value: '2' }]).map(row => row.id), ['a', 'c'])
   assert.deepEqual(applyFilter(rows, [{ column: 'id', op: 'in', value: ['b'] }]).map(row => row.id), ['b'])
   assert.deepEqual(applyFilter(rows, [{ column: 'missing', op: 'eq', value: 'x' }]), [])
+})
+
+test('compares ISO timestamps chronologically rather than by their leading year', () => {
+  const rows = [
+    { id: 'early', valid_time_utc: '2026-10-15T06:00:00.000Z' },
+    { id: 'noon', valid_time_utc: '2026-10-15T12:00:00.000Z' },
+    { id: 'next', valid_time_utc: '2026-10-16T06:00:00.000Z' },
+  ]
+  const ids = where => applyFilter(rows, where).map(row => row.id)
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'gt', value: '2026-10-15T06:00:00Z' }]), ['noon', 'next'])
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'lte', value: '2026-10-15T12:00:00Z' }]), ['early', 'noon'])
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'gte', value: '2026-10-15T12:00' }]), ['noon', 'next'], 'zone-less times read as UTC')
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'lt', value: '2026-10-16' }]), ['early', 'noon'])
 })
 
 test('projection drops columns outside the requested set', () => {
@@ -214,9 +372,60 @@ test('settings default everything on and preserve stored opt-outs', () => {
   assert.deepEqual(mergeCopilotSettings(null), defaults)
 })
 
+test('weather is in the catalog, enabled by default, and narrowed by Administration', () => {
+  const defaults = defaultCopilotSettings()
+  assert.equal(defaults.tools.query_weather, true)
+  for (const key of ['weather_locations', 'weather_areas', 'weather_forecasts', 'weather_observations']) assert.equal(defaults.entities[key], true)
+  // Settings saved before weather existed still pick it up.
+  const legacy = mergeCopilotSettings({ tools: { query_assets: true }, entities: { work_orders: false } })
+  assert.equal(legacy.tools.query_weather, true)
+  assert.equal(legacy.entities.weather_forecasts, true)
+
+  const prompt = catalogPrompt(defaults)
+  assert.match(prompt, /Weather forecasts and observations \(Lakehouse, tool: query_weather\):/)
+  assert.match(prompt, /weather_forecasts \[weather_latest_forecasts\]:.*aurora.*ukmet.*Never combine vendors/)
+  assert.match(prompt, /weather_locations \[weather_locations\]:.*location_id equals facilities\.facility_id/)
+  assert.match(prompt, /pressure \(hPa, mean sea-level\)/)
+  assert.match(prompt, /cumulative_precipitation \(mm running total/)
+  assert.doesNotMatch(prompt, /geometry_geojson/)
+
+  const narrowed = catalogPrompt(mergeCopilotSettings({ entities: { weather_locations: false, weather_areas: false, weather_forecasts: false, weather_observations: false } }))
+  assert.doesNotMatch(narrowed, /query_weather/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /weather forecasts/)
+})
+
 test('prompt tells the model to stop when it has enough data', () => {
   assert.match(DEFAULT_SYSTEM_PROMPT, /As soon as the returned data answers the question, stop calling tools/)
   assert.doesNotMatch(DEFAULT_SYSTEM_PROMPT, /files\.- When/)
+})
+
+test('prompt gives running bad a stable cross-agent meaning', () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /literal telemetry quality BAD/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /all of its active instruments/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /do not silently narrow.*temperature/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /30-minute lookback/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /query_signal_quality_snapshot exactly once with quality BAD, lookback 30m/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /single latest raw row per node before filtering quality/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Do not prefilter a signal type, apply a top\/result limit/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /status is neither Completed nor Cancelled/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /same-signal only when opcuaNodeId or instrumentId matches/)
+})
+
+test('prompt gives running hot a temperature-only cross-agent meaning', () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /running hot.*turbine temperature/s)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /active turbine_temp instrument/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /30-minute lookback/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /five hottest turbines/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /do not call a value abnormal, overheating, or unsafe/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /same-signal only when opcuaNodeId or instrumentId matches that turbine's temperature signal/)
+})
+
+test('prompt uses an adaptive generic response contract', () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /presentation that fits the evidence/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Never force every answer into one fixed table or template/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Distinguish zero results, missing data, stale data, truncation, and source failure/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Separate facts returned by tools from interpretation/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /preserve the same facts and scope across the Data Agent, Foundry, and Battle panes/)
 })
 
 test('prefers the declared options marker over the prose heuristic', () => {

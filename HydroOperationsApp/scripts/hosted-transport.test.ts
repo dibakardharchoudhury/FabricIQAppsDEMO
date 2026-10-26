@@ -1,0 +1,437 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  hostedDecisionEdits, HostedTransport, HostedInvocationError, type SourceTokens,
+} from '../src/services/copilot/hostedTransport.ts'
+
+const project = 'https://test.services.ai.azure.com/api/projects/test'
+const endpoint = `${project}/agents/coordinator/endpoint/protocols/invocations`
+const source = { tenant_id: 'tenant', workspace_id: 'workspace', ontology_id: 'ontology',
+  generation: 2 as const, configuration_digest: 'a'.repeat(64) }
+const tokens = (): SourceTokens => ({ fabric: 'test-fabric', foundry: 'test-foundry',
+  graphql: 'test-graphql', kusto: 'test-kusto' })
+const reply = () => ({ run_id: 'run-1', source, production_write_executed: false,
+  proposals: [], proposal_digests: {},
+  presentation: { schema_version: 1, text: 'Backend-provided answer.', visualizations: [], execution_events: [] } })
+const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
+  { status, headers: { 'Content-Type': 'application/json' } })
+
+test('default fetch preserves the browser receiver', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async function (this: typeof globalThis, input, init) {
+    assert.equal(this, globalThis)
+    void input
+    void init
+    return response(reply())
+  }
+  try {
+    const client = new HostedTransport(project, endpoint, source, async () => tokens())
+    assert.equal((await client.run({ question: 'Browser request.' })).text, 'Backend-provided answer.')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('thin transport preserves backend output, renews leases and keeps session affinity without routing', async () => {
+  const calls: Array<{ url: URL; body: Record<string, unknown> }> = []
+  const leases: SourceTokens[] = []
+  const client = new HostedTransport(project, endpoint, source, async () => {
+    const lease = tokens()
+    leases.push(lease)
+    return lease
+  }, async (input, init) => {
+    calls.push({ url: new URL(String(input)), body: JSON.parse(String(init?.body)) })
+    assert.equal(init?.cache, 'no-store')
+    assert.equal(init?.redirect, 'error')
+    assert.equal(init?.signal, undefined)
+    return response(calls.at(-1)?.body.operation === 'decide'
+      ? { run_id: 'run-1', proposal_id: 'draft-1', status: 'rejected', production_write_executed: false }
+      : reply())
+  })
+  const answer = await client.run({ question: 'Operator question.' })
+  assert.equal(answer.text, 'Backend-provided answer.')
+  assert.deepEqual(answer.visualizations, [])
+  await client.evidence(answer.runId)
+  await client.decide(answer.runId, { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: false })
+  assert.equal(new Set(calls.map(call => call.url.searchParams.get('agent_session_id'))).size, 1)
+  assert.deepEqual(calls.map(call => call.body.operation), ['run', 'evidence', 'decide'])
+  assert.equal(leases.length, 3)
+  assert.ok(leases.every(lease => Object.values(lease).every(value => value === '')))
+  client.reset()
+  await client.run({ question: 'New chat.' })
+  assert.notEqual(calls[0].url.searchParams.get('agent_session_id'), calls[3].url.searchParams.get('agent_session_id'))
+})
+
+test('warm-up boots the session container without tokens, work or repeats, and is retried after failure', async () => {
+  const calls: Array<{ url: URL; body: string; auth: string }> = []
+  let failNext = false
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (input, init) => {
+    calls.push({ url: new URL(String(input)), body: String(init?.body),
+      auth: String((init?.headers as Record<string, string>).Authorization) })
+    if (failNext) throw new Error('network')
+    return response({ detail: 'Invalid invocation body.' }, 422)
+  })
+  await client.warm()
+  await client.warm()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].body, '{}')
+  assert.equal(calls[0].auth, 'Bearer test-foundry')
+  assert.doesNotMatch(JSON.stringify(calls[0]), /test-fabric|test-graphql|test-kusto/)
+  await client.run({ question: 'Real request.' }).catch(() => undefined)
+  assert.equal(calls[0].url.searchParams.get('agent_session_id'), calls[1].url.searchParams.get('agent_session_id'))
+  client.reset()
+  failNext = true
+  await client.warm()
+  failNext = false
+  await client.warm()
+  assert.equal(calls.length, 4)
+  assert.notEqual(calls[0].url.searchParams.get('agent_session_id'), calls[3].url.searchParams.get('agent_session_id'))
+})
+
+test('the container session id (only) is reused within a tab and engine, and replaced by reset', async () => {
+  const store = new Map<string, string>()
+  const original = globalThis.sessionStorage
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: {
+    getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value),
+  } })
+  const sessions: string[] = []
+  const make = (scope?: string) => new HostedTransport(project, endpoint, source, async () => tokens(), async input => {
+    sessions.push(new URL(String(input)).searchParams.get('agent_session_id') ?? '')
+    return response(reply())
+  }, undefined, scope)
+  try {
+    await make('foundry').run({ question: 'One.' })
+    await make('foundry').run({ question: 'Two after reload.' })
+    await make('data-agent').run({ question: 'Other engine.' })
+    assert.equal(sessions[0], sessions[1])
+    assert.notEqual(sessions[0], sessions[2])
+    const client = make('foundry')
+    client.reset()
+    await client.run({ question: 'Fresh chat.' })
+    assert.notEqual(sessions[1], sessions[3])
+    assert.deepEqual([...store.keys()].sort(), ['hydro.hosted.session.data-agent', 'hydro.hosted.session.foundry'])
+    assert.ok([...store.values()].every(value => /^[0-9a-f-]{36}$/.test(value)))
+    store.set('hydro.hosted.session.foundry', 'tampered value')
+    await make('foundry').run({ question: 'Invalid stored id is replaced.' })
+    assert.match(sessions[4], /^[0-9a-f-]{36}$/)
+    const unscoped = new HostedTransport(project, endpoint, source, async () => tokens(), async input => {
+      sessions.push(new URL(String(input)).searchParams.get('agent_session_id') ?? '')
+      return response(reply())
+    })
+    await unscoped.run({ question: 'No persistence without a scope.' })
+    assert.equal(store.size, 2)
+  } finally {
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: original })
+  }
+})
+
+test('new chat clears follow-up context without discarding the warmed container', async () => {
+  const calls: Array<{ url: URL; body: Record<string, unknown> }> = []
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (input, init) => {
+    const body = JSON.parse(String(init?.body))
+    calls.push({ url: new URL(String(input)), body })
+    return response(body.operation === 'run' ? reply() : { detail: 'Invalid invocation body.' }, body.operation === 'run' ? 200 : 422)
+  })
+  await client.warm()
+  await client.run({ question: 'First chat.' })
+  await client.run({ question: 'Follow up.' })
+  assert.equal((calls[2].body.chat as Record<string, unknown>).previous_run_id, 'run-1')
+  client.clearConversation()
+  await client.warm()
+  await client.run({ question: 'Independent new chat.' })
+  assert.equal(calls.length, 4)
+  assert.equal(new Set(calls.map(call => call.url.searchParams.get('agent_session_id'))).size, 1)
+  assert.equal((calls[3].body.chat as Record<string, unknown>).previous_run_id, undefined)
+  client.reset()
+  await client.run({ question: 'Changed deployment context.' })
+  assert.notEqual(calls[3].url.searchParams.get('agent_session_id'), calls[4].url.searchParams.get('agent_session_id'))
+})
+
+test('streaming transport paints only backend execution events and returns the certified final answer', async () => {
+  const snapshots: Array<Array<{ id: string; status: string }>> = []
+  let body: Record<string, unknown> | undefined
+  const chief = { id: 'run-1:chief', role: 'supervisor', status: 'running', label: 'Chief',
+    detail: 'Coordinating.', timestamp: 1, agentName: 'hydro-orchestrator', trace: [] }
+  const gauge = { id: 'run-1:gauge', role: 'qa', status: 'running', label: 'Gauge',
+    detail: 'Verifying.', timestamp: 2, agentName: 'hydro-qa-agent',
+    parentId: chief.id, parentCallId: 'call-1' }
+  const lines = [
+    { type: 'run', run_id: 'run-1', source },
+    { type: 'event', event: chief },
+    { type: 'event', event: gauge },
+    { type: 'event', event: { ...gauge, status: 'completed', responseId: 'resp_gauge' } },
+    { type: 'event', event: { ...chief, status: 'completed', responseId: 'resp_chief' } },
+    { type: 'answer', answer: reply() },
+  ]
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    body = JSON.parse(String(init?.body))
+    return new Response(lines.map(line => JSON.stringify(line)).join('\n') + '\n',
+      { headers: { 'Content-Type': 'application/x-ndjson' } })
+  })
+  const answer = await client.run({ question: 'Verify.' }, events => {
+    snapshots.push(events.map(event => ({ id: event.id, status: event.status })))
+  })
+  assert.equal(body?.stream, true)
+  assert.equal(answer.text, 'Backend-provided answer.')
+  assert.deepEqual(answer.executionEvents.map(event => [event.id, event.status]),
+    [['run-1:chief', 'completed'], ['run-1:gauge', 'completed']])
+  assert.ok(snapshots.some(snapshot => snapshot.some(event => event.status === 'running')))
+  assert.deepEqual(snapshots.at(-1), [
+    { id: 'run-1:chief', status: 'completed' },
+    { id: 'run-1:gauge', status: 'completed' },
+  ])
+})
+
+test('stream interruption recovers the exact server run without starting a duplicate', async () => {
+  const operations: string[] = []
+  const encoder = new TextEncoder()
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    operations.push(body.operation)
+    if (body.operation === 'result') {
+      assert.equal(body.run_id, 'run-recover')
+      return response({ status: 'completed', answer: { ...reply(), run_id: 'run-recover' } })
+    }
+    let sent = false
+    return new Response(new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'run', run_id: 'run-recover', source })}\n`))
+        } else {
+          controller.error(new Error('connection reset'))
+        }
+      },
+    }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+  })
+  const answer = await client.run({ question: 'Recover this run.' }, () => {})
+  assert.equal(answer.runId, 'run-recover')
+  assert.deepEqual(operations, ['run', 'result'])
+})
+
+test('missing stream heartbeat enters exact-run recovery without imposing an answer deadline', async () => {
+  const operations: string[] = []
+  const encoder = new TextEncoder()
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    operations.push(body.operation)
+    if (body.operation === 'result') {
+      assert.equal(body.run_id, 'run-stalled-stream')
+      return response({ status: 'completed', answer: { ...reply(), run_id: 'run-stalled-stream' } })
+    }
+    let sent = false
+    return new Response(new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(encoder.encode(`${JSON.stringify({
+            type: 'run', run_id: 'run-stalled-stream', source,
+          })}\n`))
+          return
+        }
+        return new Promise(() => {})
+      },
+    }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+  }, 1_000)
+  const answer = await client.run({ question: 'Recover a stalled stream.' }, () => {})
+  assert.equal(answer.runId, 'run-stalled-stream')
+  assert.deepEqual(operations, ['run', 'result'])
+})
+
+test('persisted failure after stream interruption remains an explicit failed run', async () => {
+  const encoder = new TextEncoder()
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    if (body.operation === 'result') {
+      return response({ status: 'failed', failure: { run_id: 'run-failed', category: 'source_request' } })
+    }
+    let sent = false
+    return new Response(new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'run', run_id: 'run-failed', source })}\n`))
+        } else {
+          controller.error(new Error('connection reset'))
+        }
+      },
+    }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+  })
+  await assert.rejects(
+    client.run({ question: 'Fail this run.' }, () => {}),
+    error => error instanceof HostedInvocationError && error.detail?.category === 'source_request',
+  )
+})
+
+test('foreign source, changed write boundary and malformed display never become connected answers', async () => {
+  for (const changed of [
+    { ...reply(), source: { ...source, workspace_id: 'foreign' } },
+    { ...reply(), production_write_executed: true },
+    { ...reply(), presentation: { schema_version: 2, text: 'Wrong contract.', visualizations: [] } },
+  ]) {
+    const lease = tokens()
+    const client = new HostedTransport(project, endpoint, source, async () => lease, async () => response(changed))
+    await assert.rejects(client.run({ question: 'Read.' }))
+    assert.ok(Object.values(lease).every(value => value === ''))
+  }
+})
+
+test('transport rejects foreign invocation targets before acquiring source credentials', () => {
+  for (const url of ['http://test.services.ai.azure.com/invocations',
+    'https://foreign.services.ai.azure.com/api/projects/test/agents/x/invocations',
+    `${endpoint}?unexpected=value`, `${endpoint}#fragment`]) {
+    assert.throws(() => new HostedTransport(project, url, source, async () => tokens()))
+  }
+})
+
+test('failed or ambiguous decisions are not automatically submitted again', async () => {
+  let calls = 0
+  const lease = tokens()
+  const client = new HostedTransport(project, endpoint, source, async () => lease, async () => {
+    calls++
+    throw new Error('Simulated lost acknowledgement.')
+  })
+  await assert.rejects(client.decide('run-1', { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64),
+    approved: true, edits: { title: 'Approved', description: 'Human scope.', priority: 'Medium' } }))
+  assert.equal(calls, 1)
+  assert.ok(Object.values(lease).every(value => value === ''))
+})
+
+const card = () => ({ id: 'draft-1', run_id: 'run-1', source, equipment_id: 'equipment-1',
+  instrument_id: null, opcua_node_id: 'node-1', title: 'Inspect signal', description: 'Human-reviewed scope.',
+  priority: 'Medium', work_read_at: new Date().toISOString(), expires_at: new Date(Date.now() + 60000).toISOString() })
+const cardReply = () => ({ ...reply(), proposals: [card()], proposal_digests: { 'draft-1': 'b'.repeat(64) } })
+
+test('new chat invalidates old approvals and reconciliation even when the container stays warm', async () => {
+  let calls = 0
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => {
+    calls++
+    return response(cardReply())
+  })
+  const proposal = (await client.run({ question: 'Draft for review.' })).proposals[0]
+  client.clearConversation()
+  await assert.rejects(proposal.backend!.decide(true), /reset conversation/)
+  await assert.rejects(proposal.backend!.reconcile(true), /reset conversation/)
+  await assert.rejects(proposal.backend!.decide(false), /reset conversation/)
+  assert.equal(calls, 1)
+})
+
+test('hosted approval serialization strips proposal identity and backend controls', () => {
+  const proposal = {
+    id: 'draft-1', equipmentId: 'equipment-1', title: 'Inspect signal',
+    description: 'Human-reviewed scope.', priority: 'Medium' as const, createdAt: Date.now(), backend: {},
+  }
+  assert.deepEqual(hostedDecisionEdits(proposal), {
+    title: 'Inspect signal', description: 'Human-reviewed scope.', priority: 'Medium',
+  })
+})
+
+test('backend cards preserve targets and send only reviewed edits or explicit rejection', async () => {
+  const bodies: Record<string, unknown>[] = []
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    bodies.push(body)
+    return response(body.operation === 'decide' || body.operation === 'reconcile'
+      ? { run_id: 'run-1', proposal_id: 'draft-1', status: 'rejected', production_write_executed: false }
+      : cardReply())
+  })
+  const proposal = (await client.run({ question: 'Draft.' })).proposals[0]
+  assert.equal(proposal.equipmentId, 'equipment-1')
+  assert.equal(proposal.instrumentId, undefined)
+  assert.equal(proposal.opcuaNodeId, 'node-1')
+  await proposal.backend!.decide(false, { title: 'Ignored', description: 'Ignored', priority: 'High' })
+  assert.deepEqual(bodies[1].decision,
+    { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: false })
+  const edits = { title: 'Reviewed', description: 'Scope', priority: 'High' as const }
+  await proposal.backend!.decide(true, edits)
+  assert.deepEqual(bodies[2].decision,
+    { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: true, edits })
+  await proposal.backend!.reconcile(true, edits)
+  assert.equal(bodies[3].operation, 'reconcile')
+  assert.deepEqual(bodies[3].decision, bodies[2].decision)
+  client.reset()
+  await assert.rejects(proposal.backend!.decide(true, edits), /reset conversation/)
+  assert.equal(bodies.length, 4)
+})
+
+test('malformed, duplicate and foreign cards are rejected before human approval is offered', async () => {
+  for (const changed of [
+    { ...cardReply(), proposals: [{ ...card(), source: { ...source, ontology_id: 'foreign' } }] },
+    { ...cardReply(), proposals: [{ ...card(), instrument_id: 1 }] },
+    { ...cardReply(), proposals: [{ ...card(), run_id: 'foreign-run' }] },
+    { ...cardReply(), proposal_digests: { 'draft-1': 'malformed' } },
+    { ...cardReply(), proposals: [card(), card()] },
+  ]) {
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(changed))
+    await assert.rejects(client.run({ question: 'Draft.' }))
+  }
+})
+
+test('decision receipts must match both identities; explicit no-write failures remain distinguishable', async () => {
+  const decision = { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: true }
+  for (const changed of [
+    { run_id: 'foreign-run', proposal_id: 'draft-1', status: 'created' },
+    { run_id: 'run-1', proposal_id: 'foreign-card', status: 'created' },
+  ]) {
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(changed))
+    await assert.rejects(client.decide('run-1', decision), /different run/)
+  }
+  for (const status of ['blocked', 'disabled', 'uncertain']) {
+    const detail = { run_id: 'run-1', proposal_id: 'draft-1', status,
+      ...(status === 'uncertain' ? {} : { production_write_executed: false }) }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(),
+      async () => response({ detail }, status === 'disabled' ? 503 : 409))
+    await assert.rejects(client.decide('run-1', decision), error =>
+      error instanceof HostedInvocationError && error.detail?.status === status)
+  }
+})
+
+test('reset cannot change session affinity during credential renewal or a human decision', async () => {
+  let release: ((value: SourceTokens) => void) | undefined
+  const client = new HostedTransport(project, endpoint, source,
+    () => new Promise(resolve => { release = resolve }), async () => response({
+      run_id: 'run-1', proposal_id: 'draft-1', status: 'rejected', production_write_executed: false,
+    }))
+  const pending = client.decide('run-1', { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: false })
+  assert.throws(() => client.reset(), /Wait/)
+  assert.throws(() => client.clearConversation(), /Wait/)
+  release!(tokens())
+  await pending
+  assert.doesNotThrow(() => client.reset())
+})
+
+test('a failed turn keeps the conversation; an unusable earlier run or a reset clears it', async () => {
+  const bodies: Array<{ chat: Record<string, unknown> }> = []
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)))
+    if (bodies.length === 2) return response({ ...reply(), production_write_executed: true })
+    if (bodies.length === 4) return response({ detail: 'No preceding completed conversation.' }, 404)
+    return response(reply())
+  })
+  await client.run({ question: 'First.' })
+  await assert.rejects(client.run({ question: 'Follow up.' }))
+  assert.equal(bodies[1].chat.previous_run_id, 'run-1')
+  await client.run({ question: 'After failure.' })
+  assert.equal(bodies[2].chat.previous_run_id, 'run-1')
+  await assert.rejects(client.run({ question: 'Earlier run is gone.' }), error =>
+    error instanceof HostedInvocationError && error.status === 404)
+  assert.equal(bodies[3].chat.previous_run_id, 'run-1')
+  await client.run({ question: 'After the lost context.' })
+  assert.equal(bodies[4].chat.previous_run_id, undefined)
+  client.reset()
+  await client.run({ question: 'New chat.' })
+  assert.equal(bodies[5].chat.previous_run_id, undefined)
+})
+
+test('specialist display preserves server response identities and rejects invented execution roles', async () => {
+  const event = { id: 'run-1:response-1', role: 'qa', status: 'completed', label: 'Verified receipt',
+    detail: 'Version 14; measured duration 123 ms.', timestamp: Date.now(),
+    agentName: 'existing-agent-fixture', responseId: 'response-1' }
+  const result = reply()
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () =>
+    response({ ...result, presentation: { ...result.presentation, execution_events: [event] } }))
+  assert.deepEqual((await client.run({ question: 'Read.' })).executionEvents, [event])
+  const invalid = new HostedTransport(project, endpoint, source, async () => tokens(), async () =>
+    response({ ...result, presentation: { ...result.presentation, execution_events: [{ ...event, role: 'made-up' }] } }))
+  await assert.rejects(invalid.run({ question: 'Read.' }), /execution receipt/)
+})

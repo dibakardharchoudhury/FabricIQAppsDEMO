@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { Database, Factory, Radio, RefreshCw } from 'lucide-react'
 import { V2_TABS, resolveV2Tab, type V2Tab } from '../navigation'
 import { TabViewActions } from '../../ui-shared/components/TabViewActions'
 import { HeaderMeta } from '../../ui-shared/components/HeaderMeta'
+import { PageErrorBoundary } from '../../ui-shared/components/PageErrorBoundary'
 import { ExplorerModeProvider } from '../../ui-shared/hooks/ExplorerModeProvider'
 import { HydroOperationsDataProvider, useHydroOperationsData } from '../../ui-shared/hooks/useHydroOperationsData'
 
@@ -48,7 +49,7 @@ function V2ShellContent() {
     <header className="v2-topbar">
       <div className="v2-brand"><span className="v2-brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="v2-header-status source-actions">
-        <button className={data.stidState === 'connected' ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectStid()} disabled={data.stidState === 'loading'} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{stidLabel}</button>
+        <button className={data.stidState === 'connected' ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectStid()} disabled={data.stidState === 'loading'} title="Step 4 · Load governed facility & asset metadata through the read-only Lakehouse connector. No GraphQL API or operational seeding step is required.">4 · <Database size={14} />{stidLabel}</button>
         <div className="telemetry-source">
           <button className={telemetryLive ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryLabel}</button>
           {telemetryLive && <span className={`live-pill ${data.telemetryStatus}`} title={`Polling every 30s · ${freshCount}/${eventTimes.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{data.telemetryStatusLabel}<em>· {data.telemetryAgeLabel}</em></span>}
@@ -75,7 +76,9 @@ function V2ShellContent() {
     </nav>
 
     <main className="v2-main">
-      <ActivePage />
+      <PageErrorBoundary key={activeTab.id}><Suspense fallback={<div className="v2-page-loading"><span />Loading {activeTab.title}…</div>}>
+        <ActivePage />
+      </Suspense></PageErrorBoundary>
     </main>
   </div>
 }

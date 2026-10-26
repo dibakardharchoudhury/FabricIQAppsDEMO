@@ -1,0 +1,2352 @@
+"""Offline capability-policy contracts; execute isolated AST nodes, never Spark."""
+
+import ast
+import base64
+import copy
+import json
+import re
+import time
+import unittest
+import uuid
+import zlib
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Optional
+from unittest.mock import Mock, patch
+
+
+ROOT = Path(__file__).resolve().parents[2]
+NAMES = {
+    "009": "RTI_009_build_data_agent",
+    "010": "RTI_010_build_operations_agent",
+    "011": "RTI_011_seed_sql_wire_graphql_agent",
+}
+
+
+def source(number):
+    return (ROOT / "Notebooks" / (NAMES[number] + ".Notebook") / "notebook-content.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def functions(number, *names, **overrides):
+    namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib,
+                 "provision_shared_store": False, "OPERATIONAL_STORE_NAME": "HydroOperationalStore",
+                 "sql_db_item_name": "sql"}
+    namespace.update(overrides)
+    tree = ast.parse(source(number))
+    included = set(names) | {"definition_parts", "is_ontology_context_path", "operational_source_path"}
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)
+    return namespace
+
+
+def assign_to(node, name):
+    return isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == name for target in node.targets
+    )
+
+
+class NotebookExit(Exception):
+    pass
+
+
+def ontology_part(stage="draft", ontology_id="ontology", workspace="ws"):
+    return {
+        "path": f"Files/Config/{stage}/ontology-source/datasource.json",
+        "payloadType": "InlineBase64",
+        "payload": base64.b64encode(json.dumps({
+            "type": "ontology", "artifactId": ontology_id, "workspaceId": workspace,
+        }).encode("utf-8")).decode("ascii"),
+    }
+
+
+def json_part(path, value):
+    return {
+        "path": path, "payloadType": "InlineBase64",
+        "payload": base64.b64encode(json.dumps(value).encode("utf-8")).decode("ascii"),
+    }
+
+
+def data_agent_instruction_namespace():
+    ns = functions(
+        "009", "upsert_instruction_section", "build_stage_obj",
+        STAGE_CONFIG_SCHEMA_URL="stage-schema",
+    )
+    names = {
+        "AI_INSTRUCTIONS", "LEGACY_AI_INSTRUCTIONS",
+        "ASSET_RESOLUTION_MARKER", "ASSET_RESOLUTION_INSTRUCTIONS",
+        "MULTISOURCE_INSTRUCTIONS_MARKER", "MULTISOURCE_INSTRUCTIONS",
+        "CROSS_SOURCE_OPERATIONAL_MARKER", "CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS",
+        "GLOBAL_SCOPE_MARKER", "GLOBAL_SCOPE_INSTRUCTIONS",
+        "RUNNING_BAD_MARKER", "RUNNING_BAD_INSTRUCTIONS",
+        "RUNNING_HOT_MARKER", "RUNNING_HOT_INSTRUCTIONS",
+        "ADAPTIVE_RESPONSE_MARKER", "ADAPTIVE_RESPONSE_INSTRUCTIONS",
+        "MCP_FOLLOWUP_MARKER", "MCP_FOLLOWUP_INSTRUCTIONS",
+        "DIRECT_RUNTIME_ROUTING_MARKER", "DIRECT_RUNTIME_ROUTING_INSTRUCTIONS",
+    }
+    nodes = [
+        node for node in ast.parse(source("009")).body
+        if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)
+    ]
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "009-instructions", "exec"), ns)
+    return ns
+
+
+class DataAgentInstructionTests(unittest.TestCase):
+    def test_context_sources_require_matching_live_v2_identity_in_both_stages(self):
+        ns = functions(
+            "009", "validate_agent_ontology_sources", "require_v2_ontology", "published_agent_sources",
+            workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+        )
+        parts = [
+            json_part(f"Files/Config/{stage}/ontologies/model/ontology.json", {
+                "artifactId": "ontology", "workspaceId": "ws",
+                "elements": [{"type": "ontology.entity", "is_selected": True, "id": "facilities"}],
+            })
+            for stage in ("draft", "published")
+        ]
+        ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True, require_published=True)
+        self.assertEqual(list(ns["published_agent_sources"](parts)), [parts[1]["path"]])
+        for field, value in (("artifactId", "other"), ("workspaceId", "other")):
+            with self.subTest(field=field):
+                bad = json.loads(base64.b64decode(parts[0]["payload"]))
+                bad[field] = value
+                with self.assertRaises(RuntimeError):
+                    ns["validate_agent_ontology_sources"](
+                        [json_part(parts[0]["path"], bad)], "ontology", require_draft=True,
+                    )
+        ns["get_ontology_generation"].return_value = 1
+        with self.assertRaisesRegex(RuntimeError, "not generation 2"):
+            ns["validate_agent_ontology_sources"](parts, "ontology")
+
+    def test_context_rerun_does_not_recreate_direct_profiles_or_rewrite_sql_guidance(self):
+        context_path = "Files/Config/draft/ontologies/model/ontology.json"
+        context = {"artifactId": "ontology", "workspaceId": "ws", "elements": [], "custom": {"keep": True}}
+        sql_path = "Files/Config/draft/sql-source/datasource.json"
+        sql = {"type": "sql_database", "dataSourceInstructions": "Keep exact SQL policy.", "elements": []}
+        parts = [
+            json_part(context_path, context),
+            json_part(sql_path, sql),
+            json_part("Files/Config/draft/custom_queries.json", {"queries": ["keep"]}),
+        ]
+        ns = functions(
+            "009", "decode_payload", "validate_agent_ontology_sources", "require_v2_ontology",
+            workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+            parts=copy.deepcopy(parts), ontology_id="ontology",
+            lakehouse_schema_map=Mock(side_effect=AssertionError("Must use context-owned sources")),
+            build_datasource_obj=Mock(side_effect=AssertionError("Must preserve ontology context")),
+            build_lakehouse_datasource_obj=Mock(side_effect=AssertionError("Must not add direct profiles")),
+            build_kusto_datasource_obj=Mock(side_effect=AssertionError("Must not add direct profiles")),
+            update_operational_source_guidance=Mock(side_effect=AssertionError("SQL belongs to NB11")),
+        )
+        deployment = next(node for node in ast.parse(source("009")).body
+                          if isinstance(node, ast.Try) and "create_data_agent" in ast.unparse(node))
+        start = next(index for index, node in enumerate(deployment.body) if assign_to(node, "context_paths"))
+        stop = next(index for index in range(start, len(deployment.body))
+                    if isinstance(deployment.body[index], ast.Expr)
+                    and isinstance(deployment.body[index].value, ast.Call)
+                    and isinstance(deployment.body[index].value.func, ast.Name)
+                    and deployment.body[index].value.func.id == "validate_agent_ontology_sources")
+        block = ast.Module(body=deployment.body[start:stop + 1], type_ignores=[])
+        exec(compile(block, "context-rerun", "exec"), ns)
+        self.assertEqual(ns["parts"], parts)
+        self.assertEqual(ns["submitted_direct_sources"], {context_path: context, sql_path: sql})
+        for name in (
+            "lakehouse_schema_map", "build_datasource_obj", "build_lakehouse_datasource_obj",
+            "build_kusto_datasource_obj", "update_operational_source_guidance",
+        ):
+            ns[name].assert_not_called()
+
+    def test_compact_policy_uses_ontology_context_and_actual_source_keys(self):
+        ns = data_agent_instruction_namespace()
+        text = ns["build_stage_obj"]({})["aiInstructions"]
+        self.assertLessEqual(len(text), 5500)
+        self.assertLessEqual(len(text.split()), 700)
+        for phrase in (
+            "Ontology v2 as semantic context", "associated Lakehouse", "associated Eventhouse",
+            "Source-native SQL/KQL", "not a bypass", "opcua_node_id", "equipment_id",
+            "equipmentId", "opcuaNodeId", "source-specific instructions",
+            "work orders, maintenance notifications, inspections, spare parts and 3D models",
+            "actual query results", "EVERY required returned identifier/count tuple",
+            "Treat null/0001 timestamps as missing", "Compare active-node coverage",
+            "report missing counts", "equate empty BAD results with healthy turbines",
+        ):
+            self.assertIn(phrase, text)
+        for phrase in (
+            "do not call the Ontology", "Do not search Ontology", "future ontology capability",
+            "ontology-only execution", "RTI Demo Hydropower Plant",
+        ):
+            self.assertNotIn(phrase, text)
+
+    def test_migration_preserves_custom_sql_sections_and_settings_idempotently(self):
+        ns = data_agent_instruction_namespace()
+        sql = "## Operational data (operations SQL)\nKeep the SQL policy exactly."
+        custom = "### Custom operator guidance\nKeep the maintenance policy exactly."
+        stage = {
+            "$schema": "custom-schema", "customOptions": {"enabled": True},
+            "aiInstructions": (
+                ns["LEGACY_AI_INSTRUCTIONS"]
+                + "\n\nOperator-added preamble."
+                + "\n\n### Direct Lakehouse and Eventhouse Sources\nobsolete direct-source policy"
+                + "\n\n### Authoritative source routing\nobsolete traversal-only policy"
+                + "\n\n" + sql + "\n\n" + custom
+            ),
+        }
+        original = copy.deepcopy(stage)
+        result = ns["build_stage_obj"](stage)
+        self.assertEqual(stage, original)
+        self.assertEqual(result["$schema"], stage["$schema"])
+        self.assertEqual(result["customOptions"], stage["customOptions"])
+        text = result["aiInstructions"]
+        self.assertTrue(text.startswith(ns["AI_INSTRUCTIONS"]))
+        for retained in ("Operator-added preamble.", sql, custom):
+            self.assertIn(retained, text)
+        for removed in ("obsolete", "### Direct Lakehouse and Eventhouse Sources", ns["LEGACY_AI_INSTRUCTIONS"]):
+            self.assertNotIn(removed, text)
+        self.assertEqual(text.count(ns["MULTISOURCE_INSTRUCTIONS_MARKER"]), 1)
+        self.assertEqual(ns["build_stage_obj"](result), result)
+
+    def test_owned_section_stops_before_any_markdown_heading(self):
+        ns = data_agent_instruction_namespace()
+        for level in range(1, 7):
+            suffix = "#" * level + " Unrelated section\nPreserve exactly."
+            with self.subTest(level=level):
+                result = ns["upsert_instruction_section"](
+                    "Custom preamble\n\n### Owned\nOld policy\n\n" + suffix,
+                    "### Owned", "### Owned\nNew policy",
+                )
+                self.assertEqual(
+                    result, "Custom preamble\n\n### Owned\nNew policy\n\n" + suffix,
+                )
+
+    def test_nb11_retains_compact_asset_guidance_and_only_appends_operational_policy(self):
+        ns = data_agent_instruction_namespace()
+        stage = ns["build_stage_obj"]({})
+        sql_policy = "\n\n## Operational data (operations SQL)\nExisting operational policy."
+        nb11 = functions(
+            "011", "build_stage_obj", STAGE_CONFIG_SCHEMA_URL="stage-schema",
+            OPERATIONAL_INSTRUCTIONS_MARKER="## Operational data (operations SQL)",
+            OPERATIONAL_INSTRUCTIONS=sql_policy,
+            ASSET_RESOLUTION_INSTRUCTIONS_MARKER=ns["ASSET_RESOLUTION_MARKER"],
+            ASSET_RESOLUTION_INSTRUCTIONS="Legacy asset resolution must not be appended.",
+        )
+        result = nb11["build_stage_obj"](stage)
+        self.assertEqual(result["aiInstructions"], stage["aiInstructions"] + sql_policy)
+        self.assertEqual(nb11["build_stage_obj"](result), result)
+        self.assertEqual(ns["build_stage_obj"](result), result)
+
+    def test_invalid_or_oversized_custom_instructions_are_rejected(self):
+        ns = data_agent_instruction_namespace()
+        with self.assertRaisesRegex(RuntimeError, "not a string"):
+            ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})
+        with self.assertRaisesRegex(RuntimeError, "15,000"):
+            ns["build_stage_obj"]({"aiInstructions": "x" * 15000})
+
+
+class CapabilityTests(unittest.TestCase):
+    def test_generation_policy(self):
+        for number in ("009", "010"):
+            ns = functions(number, "agent_capability_policy")
+            self.assertEqual(ns["agent_capability_policy"](2)["status"], "allowed")
+            blocked = ns["agent_capability_policy"](1)
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertTrue(blocked["reason"])
+            with self.assertRaises(ValueError):
+                ns["agent_capability_policy"](3)
+
+    def test_only_exact_known_ontology_v2_product_limitation_is_tolerated(self):
+        ns = functions("009", "is_known_ontology_v2_product_limitation")
+        self.assertTrue(ns["is_known_ontology_v2_product_limitation"](
+            "This API version is not supported for the specified Ontology item."
+        ))
+        self.assertTrue(ns["is_known_ontology_v2_product_limitation"](
+            "ERROR: THIS API VERSION IS NOT SUPPORTED FOR THE SPECIFIED ONTOLOGY ITEM"
+        ))
+        for reason in (
+            "permission denied",
+            "ontology source unavailable",
+            "This API version is not supported for another item",
+            "",
+        ):
+            with self.subTest(reason=reason):
+                self.assertFalse(ns["is_known_ontology_v2_product_limitation"](reason))
+
+    def test_generation_is_read_from_live_ontology_api(self):
+        for number in ("009", "010"):
+            for value in (1, 2, None, 0, 3, "2", True):
+                response = Mock()
+                response.json.return_value = {"properties": {"generation": value}}
+                api = Mock(return_value=response)
+                ns = functions(
+                    number, "get_ontology_generation", api_request=api,
+                    FABRIC_API_BASE="https://api.fabric.microsoft.com", workspace_id="workspace",
+                )
+                if type(value) is int and value in (1, 2):
+                    self.assertEqual(ns["get_ontology_generation"]("ontology"), value)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "properties.generation"):
+                        ns["get_ontology_generation"]("ontology")
+                api.assert_called_once_with(
+                    "GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace/ontologies/ontology"
+                )
+                response.raise_for_status.assert_called_once()
+
+    def test_required_v2_operations_attempts_instead_of_static_product_gate(self):
+        status = Mock()
+        ns = functions(
+            "010", "agent_capability_policy", "check_agent_capability",
+            resolve_ontology_id=lambda: "live-id",
+            get_ontology_generation=lambda _: 2,
+            ops_agent_ontology_datasource_id="",
+            persist_agent_status=status,
+        )
+        result = ns["check_agent_capability"]()
+        self.assertEqual(result["status"], "allowed")
+        self.assertEqual(result["ontology_id"], "live-id")
+        self.assertNotIn("1970", source("010"))
+
+    def test_final_deployment_exit_reports_capability_not_readiness(self):
+        for number, capability in (("009", "data_agent"), ("010", "operations_agent")):
+            tree = ast.parse(source(number))
+            exit_node = next(
+                node for node in reversed(tree.body) if isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and ast.unparse(node.value.func) == "notebookutils.notebook.exit"
+            )
+            exit_mock = Mock()
+            ns = {
+                "json": json,
+                "notebookutils": SimpleNamespace(notebook=SimpleNamespace(exit=exit_mock)),
+                "ontology_generation": 2,
+                "agent_deployment_result": {
+                    "status": "published" if number == "009" else "blocked",
+                    "reason": "Runtime behavior has not been verified.",
+                },
+            }
+            ns["result"] = {"capability": capability, **ns["agent_deployment_result"]}
+            exec(compile(ast.Module(body=[exit_node], type_ignores=[]), "exit", "exec"), ns)
+            payload = json.loads(exit_mock.call_args.args[0])
+            self.assertEqual(payload["capability"], capability)
+            self.assertEqual(payload["status"], ns["agent_deployment_result"]["status"])
+            self.assertEqual(payload["reason"], ns["agent_deployment_result"]["reason"])
+            self.assertNotEqual(payload["status"], "ready")
+
+    def operations_namespace(self):
+        ns = functions(
+            "010", "build_configurations",
+            "build_ontology_operations_playbook")
+        names = {
+            "EMBEDDED_OPS_CONFIG_B64",
+            "EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64", "ACTION_PARAMETERS",
+        }
+        nodes = [node for node in ast.parse(source("010")).body
+                 if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "operations-template", "exec"), ns)
+        ns.update(workspace_id="workspace", ops_agent_should_run=False, ops_agent_copy_playbook=True)
+        ns["resolve_operations_query_bindings"] = Mock(return_value={
+            "__HYDRO_SQL_SERVER__": "target.datawarehouse.fabric.microsoft.com",
+            "__HYDRO_LAKEHOUSE__": "TargetLakehouse",
+            "__HYDRO_KQL_URI__": "https://target.kusto.fabric.microsoft.com",
+            "__HYDRO_KQL_DATABASE__": "TargetEvents",
+            "__HYDRO_SIGNAL_TABLE__": "[target_signals]",
+            "__HYDRO_EVENT_TABLE__": "TargetTelemetry",
+        })
+        return ns
+
+    def test_full_operations_configuration_preserves_business_capabilities(self):
+        ns = self.operations_namespace()
+        config = ns["build_configurations"](
+            datasource_id="v2-ontology", pipeline_id="email-pipeline", team_id="team", channel_id="channel")
+        self.assertFalse(config["shouldRun"])
+        conf = config["configuration"]
+        self.assertEqual(conf["dataSources"], {
+            "v2-ontology": {"id": "v2-ontology", "type": "Ontology", "workspaceId": "workspace"},
+        })
+        self.assertEqual(conf["messageDestination"], {
+            "kind": "TeamsChannel", "teamId": "team", "channelId": "channel",
+        })
+        action = next(iter(conf["actions"].values()))
+        self.assertEqual(action["connection"]["jobArtifactId"], "email-pipeline")
+        self.assertEqual(action["connection"]["jobWorkspaceId"], "workspace")
+        self.assertEqual(action["connection"]["itemType"], "Pipeline")
+        self.assertEqual(action["connection"]["jobType"], "Pipeline")
+        parameters = {item["name"] for item in action["parameters"]}
+        self.assertEqual(parameters, {"equipment_id", "facility_id", "quality", "value", "unit", "event_time"})
+        rules = config["playbook"]["RuleDefinitions"]
+        self.assertEqual(len(rules), 2)
+        self.assertEqual({rule["RuleCondition"]["Value"] for rule in rules.values()}, {"BAD", "UNCERTAIN"})
+        for rule in rules.values():
+            binding = rule["ActionBinding"]
+            self.assertEqual(binding["ActionId"], action["id"])
+            self.assertTrue(parameters.issubset({item["Name"] for item in binding["ParameterBindings"]}))
+            self.assertEqual(
+                {item["Name"]: item["Key"] for item in binding["ParameterBindings"]},
+                {name: f"agent:operationalSet:SignalMaster:{column}" for name, column in {
+                    "equipment_id": "EquipmentId", "facility_id": "FacilityId",
+                    "quality": "Quality", "value": "SignalValue", "unit": "Unit",
+                    "event_time": "EventTime",
+                }.items()},
+            )
+        manual = ns["build_configurations"](
+            copy_playbook=False, datasource_id="v2-ontology",
+            pipeline_id="email-pipeline", team_id="team", channel_id="channel")
+        self.assertEqual(manual, {key: value for key, value in config.items() if key != "playbook"})
+        ns["ops_agent_copy_playbook"] = False
+        self.assertNotIn("playbook", ns["build_configurations"]())
+        ns["resolve_operations_query_bindings"].reset_mock()
+        ns["build_configurations"](copy_playbook=False)
+        ns["resolve_operations_query_bindings"].assert_not_called()
+
+    def test_working_ontology_playbook_rebinds_every_query_without_changing_alert_policy(self):
+        ns = self.operations_namespace()
+        template = json.loads(zlib.decompress(base64.b64decode(
+            ns["EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64"])))
+        encoded = json.dumps(template)
+        for token, value in ns["resolve_operations_query_bindings"].return_value.items():
+            encoded = encoded.replace(token, value)
+        playbook = ns["build_ontology_operations_playbook"]()
+        self.assertEqual(playbook, json.loads(encoded))
+        self.assertNotIn("__HYDRO_", json.dumps(playbook))
+        for rule in playbook["RuleDefinitions"].values():
+            expression = rule["ClassExpression"]
+            query = expression["Expression"]
+            self.assertEqual(expression["$type"], "kqldataquery")
+            self.assertEqual(expression["TriggerType"], 0)
+            self.assertEqual(rule["RuleCondition"]["$type"], "textwhenisequal")
+            self.assertIn("startTime .. endTime", query)
+            self.assertIn("dbo.[target_signals]", query)
+            self.assertIn("database('TargetEvents').['TargetTelemetry']", query)
+            self.assertIn("Id", expression["ProjectedColumns"])
+            self.assertEqual(rule["LocalOntology"]["SignalMaster"]["DataLink"]["Query"], query)
+        second_target = {key: value.replace("target", "second").replace("Target", "Second")
+                         for key, value in ns["resolve_operations_query_bindings"].return_value.items()}
+        ns["resolve_operations_query_bindings"].return_value = second_target
+        second = json.dumps(ns["build_ontology_operations_playbook"]())
+        self.assertIn("SecondLakehouse", second)
+        self.assertIn("second.kusto.fabric.microsoft.com", second)
+        self.assertNotIn("TargetLakehouse", second)
+        self.assertNotIn("target.datawarehouse.fabric.microsoft.com", second)
+
+    def test_ontology_playbook_requires_all_target_bindings(self):
+        ns = self.operations_namespace()
+        del ns["resolve_operations_query_bindings"].return_value["__HYDRO_SQL_SERVER__"]
+        with self.assertRaisesRegex(RuntimeError, "unresolved source binding"):
+            ns["build_ontology_operations_playbook"]()
+
+    def query_binding_namespace(self):
+        responses = [
+            Mock(json=Mock(return_value={
+                "displayName": "TargetLakehouse", "properties": {"sqlEndpointProperties": {
+                    "connectionString": "target.datawarehouse.fabric.microsoft.com",
+                    "provisioningStatus": "Success",
+                }},
+            })),
+            Mock(json=Mock(return_value={
+                "displayName": "TargetEvents",
+                "properties": {"queryServiceUri": "https://target.kusto.fabric.microsoft.com"},
+            })),
+        ]
+        ns = functions(
+            "010", "resolve_operations_query_bindings", re=re, workspace_id="workspace",
+            FABRIC_API_BASE="https://api.fabric.microsoft.com", eventhouse_table_name="TargetTelemetry",
+            first_setting=Mock(side_effect=lambda name, **_: {
+                "lakehouse_id": "target-lakehouse", "silver_signal_master_table": "target_signals",
+            }[name]), api_request=Mock(side_effect=responses),
+            resolve_kql_database_id=Mock(return_value="target-kql"))
+        return ns, responses
+
+    def test_ontology_query_sources_are_resolved_live_in_selected_workspace(self):
+        ns, responses = self.query_binding_namespace()
+        bindings = ns["resolve_operations_query_bindings"]()
+        self.assertEqual(bindings["__HYDRO_SQL_SERVER__"], "target.datawarehouse.fabric.microsoft.com")
+        self.assertEqual(bindings["__HYDRO_KQL_DATABASE__"], "TargetEvents")
+        self.assertEqual(bindings["__HYDRO_SIGNAL_TABLE__"], "[target_signals]")
+        self.assertEqual([call.args for call in ns["api_request"].call_args_list], [
+            ("GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace/lakehouses/target-lakehouse"),
+            ("GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace/kqlDatabases/target-kql"),
+        ])
+        for response in responses:
+            response.raise_for_status.assert_called_once()
+
+    def test_ontology_query_source_names_are_escaped_for_their_query_context(self):
+        ns, responses = self.query_binding_namespace()
+        responses[1].json.return_value["displayName"] = "Target Events'Archive"
+        ns["eventhouse_table_name"] = "Device's Events"
+        ns["first_setting"].side_effect = lambda name, **_: {
+            "lakehouse_id": "target-lakehouse", "silver_signal_master_table": "ops]signals'raw",
+        }[name]
+        bindings = ns["resolve_operations_query_bindings"]()
+        self.assertEqual(bindings["__HYDRO_KQL_DATABASE__"], "Target Events\\'Archive")
+        self.assertEqual(bindings["__HYDRO_EVENT_TABLE__"], "Device\\'s Events")
+        self.assertEqual(bindings["__HYDRO_SIGNAL_TABLE__"], "[ops]]signals''raw]")
+
+    def test_ontology_query_binding_failures_propagate(self):
+        for field, invalid, message in [
+            ("provisioningStatus", "Failed", "ready target Lakehouse"),
+            ("connectionString", "unverified.example.com", "ready target Lakehouse"),
+            ("connectionString", None, "ready target Lakehouse"),
+            ("queryServiceUri", "http://target.kusto.fabric.microsoft.com", "queryServiceUri"),
+            ("displayName", "Injected'; print secret", "Unsupported query identifier"),
+        ]:
+            with self.subTest(field=field):
+                ns, responses = self.query_binding_namespace()
+                if field in {"connectionString", "provisioningStatus"}:
+                    responses[0].json.return_value["properties"]["sqlEndpointProperties"][field] = invalid
+                elif field == "queryServiceUri":
+                    responses[1].json.return_value["properties"][field] = invalid
+                else:
+                    responses[0].json.return_value[field] = invalid
+                with self.assertRaisesRegex(RuntimeError, message):
+                    ns["resolve_operations_query_bindings"]()
+        ns, responses = self.query_binding_namespace()
+        responses[0].raise_for_status.side_effect = RuntimeError("HTTP source failure")
+        with self.assertRaisesRegex(RuntimeError, "HTTP source failure"):
+            ns["resolve_operations_query_bindings"]()
+
+
+
+    def retirement_namespace(self, present=True, saved=None, responses=None):
+        values = saved or {}
+        spark = Mock()
+        spark.sql.return_value.take.return_value = []
+        ns = functions(
+            "010", "retire_eventhouse_operations_agent",
+            env_suffix="V20", workspace_id="workspace", settings_table_name="rti_demo_settings",
+            FABRIC_API_BASE="https://api.fabric.microsoft.com",
+            first_setting=Mock(side_effect=lambda key, **kwargs: values.get(key, kwargs.get("default"))),
+            find_item_by_name=Mock(return_value={"id": "retired"} if present else None),
+            resolve_kql_database_id=Mock(return_value="kql"),
+            get_definition_parts=Mock(return_value=[]),
+            read_json_part=Mock(return_value={"configuration": {"dataSources": {
+                "kql": {"id": "kql", "type": "KustoDatabase", "workspaceId": "workspace"},
+            }}}),
+            api_request=Mock(side_effect=responses if responses is not None else [
+                Mock(status_code=200), Mock(status_code=404),
+            ]),
+            wait_for_lro=Mock(), spark=spark,
+        )
+        return ns
+
+    def test_retirement_deletes_only_verified_agent_and_its_four_settings(self):
+        ns = self.retirement_namespace(saved={
+            "eventhouse_ops_agent_name": "RTI_Demo_OpsAgent_Eventhouse_V20",
+            "eventhouse_ops_agent_id": "retired",
+            "eventhouse_ops_agent_kql_database_id": "kql", "ops_agent_id": "retained",
+        })
+        ns["retire_eventhouse_operations_agent"]()
+        ns["find_item_by_name"].assert_called_once_with("RTI_Demo_OpsAgent_Eventhouse_V20", "OperationsAgent")
+        ns["get_definition_parts"].assert_called_once_with("retired", "operationsAgents")
+        self.assertEqual([call.args for call in ns["api_request"].call_args_list], [
+            ("DELETE", "https://api.fabric.microsoft.com/v1/workspaces/workspace/items/retired"),
+            ("GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace/items/retired"),
+        ])
+        statements = [call.args[0] for call in ns["spark"].sql.call_args_list]
+        self.assertTrue(statements[0].startswith("DELETE FROM rti_demo_settings WHERE setting_name IN ("))
+        for statement in statements:
+            self.assertEqual(re.findall(r"'([^']+)'", statement), [
+                "eventhouse_ops_agent_name", "eventhouse_ops_agent_id",
+                "eventhouse_ops_agent_kql_database_id", "eventhouse_ops_agent_should_run",
+            ])
+
+    def test_retirement_is_idempotent_for_fresh_and_already_removed_agents(self):
+        for saved in ({}, {"eventhouse_ops_agent_id": "retired"}):
+            with self.subTest(saved=saved):
+                ns = self.retirement_namespace(present=False, saved=saved, responses=[Mock(status_code=404)])
+                ns["retire_eventhouse_operations_agent"]()
+                ns["resolve_kql_database_id"].assert_not_called()
+                ns["get_definition_parts"].assert_not_called()
+                self.assertFalse(any(call.args[0] == "DELETE" for call in ns["api_request"].call_args_list))
+                self.assertEqual(ns["spark"].sql.call_count, 2)
+
+    def test_retirement_rejects_conflicting_saved_identity(self):
+        for saved in (
+            {"eventhouse_ops_agent_name": "another-name"},
+            {"eventhouse_ops_agent_id": "another-agent"},
+            {"eventhouse_ops_agent_kql_database_id": "another-database"},
+            {"ops_agent_id": "retired"},
+        ):
+            with self.subTest(saved=saved):
+                ns = self.retirement_namespace(saved=saved)
+                with self.assertRaises(RuntimeError):
+                    ns["retire_eventhouse_operations_agent"]()
+                ns["api_request"].assert_not_called()
+                ns["spark"].sql.assert_not_called()
+
+    def test_retirement_never_deletes_ontology_or_unrelated_knowledge_agents(self):
+        for sources in (
+            {"ontology": {"id": "ontology", "type": "Ontology", "workspaceId": "workspace"}},
+            {"kql": {"id": "kql", "type": "KustoDatabase", "workspaceId": "another-workspace"}},
+            {"other": {"id": "other", "type": "KustoDatabase", "workspaceId": "workspace"}},
+            {},
+        ):
+            with self.subTest(sources=sources):
+                ns = self.retirement_namespace()
+                ns["read_json_part"].return_value = {"configuration": {"dataSources": sources}}
+                with self.assertRaisesRegex(RuntimeError, "exact retired KQL source"):
+                    ns["retire_eventhouse_operations_agent"]()
+                ns["api_request"].assert_not_called()
+                ns["spark"].sql.assert_not_called()
+
+    def test_retirement_waits_for_async_deletion_before_absence_readback(self):
+        ns = self.retirement_namespace(responses=[
+            Mock(status_code=202, headers={"Location": "operation-url"}), Mock(status_code=404),
+        ])
+        ns["retire_eventhouse_operations_agent"]()
+        ns["wait_for_lro"].assert_called_once_with("operation-url")
+
+    def test_retirement_failures_never_clear_settings(self):
+        for responses in (
+            [Mock(status_code=202, headers={})],
+            [Mock(status_code=200), Mock(status_code=200)],
+            [Mock(status_code=206)],
+            [Mock(status_code=403, raise_for_status=Mock(side_effect=RuntimeError("forbidden")))],
+        ):
+            with self.subTest(responses=responses):
+                ns = self.retirement_namespace(responses=responses)
+                with self.assertRaises(RuntimeError):
+                    ns["retire_eventhouse_operations_agent"]()
+                ns["spark"].sql.assert_not_called()
+        ns = self.retirement_namespace(responses=[
+            Mock(status_code=202, headers={"Location": "operation-url"}),
+        ])
+        ns["wait_for_lro"].side_effect = RuntimeError("delete failed")
+        with self.assertRaisesRegex(RuntimeError, "delete failed"):
+            ns["retire_eventhouse_operations_agent"]()
+        ns["spark"].sql.assert_not_called()
+
+    def test_retirement_refuses_saved_agent_outside_target_folder(self):
+        ns = self.retirement_namespace(
+            present=False, saved={"eventhouse_ops_agent_id": "elsewhere"}, responses=[Mock(status_code=200)])
+        with self.assertRaisesRegex(RuntimeError, "outside the expected target identity"):
+            ns["retire_eventhouse_operations_agent"]()
+        ns["spark"].sql.assert_not_called()
+        self.assertEqual(ns["api_request"].call_args.args[0], "GET")
+
+    def test_retirement_propagates_settings_cleanup_and_readback_failures(self):
+        ns = self.retirement_namespace(present=False)
+        ns["spark"].sql.side_effect = RuntimeError("Delta write failed")
+        with self.assertRaisesRegex(RuntimeError, "Delta write failed"):
+            ns["retire_eventhouse_operations_agent"]()
+        ns = self.retirement_namespace(present=False)
+        ns["spark"].sql.return_value.take.return_value = [{"setting_name": "eventhouse_ops_agent_id"}]
+        with self.assertRaisesRegex(RuntimeError, "settings remain"):
+            ns["retire_eventhouse_operations_agent"]()
+
+    def test_nb10_provisions_only_ontology_agent_before_retirement(self):
+        text = source("010")
+        tree = ast.parse(text)
+        names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        for retired in ("deploy_eventhouse_operations_agent", "build_eventhouse_configurations",
+                        "verify_eventhouse_operations_readback"):
+            self.assertNotIn(retired, names)
+        deployment = next(node for node in tree.body if isinstance(node, ast.Try)
+                          and any(isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                                  and child.func.id == "deploy_operations_agent" for child in ast.walk(node)))
+        calls = [node.func.id for node in ast.walk(deployment)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+        self.assertEqual(calls.count("deploy_operations_agent"), 1)
+        self.assertEqual(calls.count("retire_eventhouse_operations_agent"), 1)
+        self.assertIn("persist = deploy_operations_agent(result[\"ontology_id\"])\n"
+                      "    retire_eventhouse_operations_agent()", text)
+        self.assertNotIn("EMBEDDED_EVENTHOUSE_PLAYBOOK", text)
+        for name in ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut"):
+            content = (ROOT / "Notebooks" / f"{name}.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+            self.assertNotIn("eventhouse_ops_agent", content)
+
+    def test_operations_auth_selects_notebook_pbi_token(self):
+        get_token = Mock(return_value="offline-token")
+        ns = functions(
+            "010", "get_access_token_for_fabric", "get_headers",
+            notebookutils=SimpleNamespace(credentials=SimpleNamespace(getToken=get_token)))
+        self.assertEqual(ns["get_headers"]()["Authorization"], "Bearer offline-token")
+        get_token.assert_called_once_with("pbi")
+
+    def test_operations_update_never_drops_components_on_rejection(self):
+        for status in (400, 401, 403, 404, 500, 202):
+            response = Mock(status_code=status, text="product error", headers={})
+            ns = functions("010", "update_operations_agent_definition", "encode_payload",
+                           workspace_id="workspace", FABRIC_API_BASE="base",
+                           OPS_AGENT_DEFINITION_FORMAT="OperationsAgentV1",
+                           api_request=Mock(return_value=response), wait_for_lro=Mock())
+            with self.assertRaises(RuntimeError):
+                ns["update_operations_agent_definition"]("agent", {"configuration": {}, "playbook": {}})
+            ns["api_request"].assert_called_once()
+            ns["wait_for_lro"].assert_not_called()
+
+    def test_operations_readback_requires_all_components_and_exact_source(self):
+        ns = self.operations_namespace()
+        expected = ns["build_configurations"](
+            datasource_id="ontology", pipeline_id="pipeline", team_id="team", channel_id="channel")
+        for changed in ("source", "playbook", "actions", "teams", "none"):
+            actual = json.loads(json.dumps(expected))
+            if changed == "source":
+                actual["configuration"]["dataSources"]["ontology"]["workspaceId"] = "other"
+            elif changed == "playbook":
+                actual["playbook"] = {}
+            elif changed == "actions":
+                actual["configuration"]["actions"] = {}
+            elif changed == "teams":
+                actual["configuration"].pop("messageDestination")
+            check = functions(
+                "010", "verify_operations_readback", "require_retained", "read_json_part",
+                get_ontology_generation=Mock(return_value=2),
+                get_definition_parts=Mock(return_value=[json_part("Configurations.json", actual)]))
+            if changed == "none":
+                check["verify_operations_readback"]("agent", "ontology", expected)
+            else:
+                with self.assertRaises(RuntimeError):
+                    check["verify_operations_readback"]("agent", "ontology", expected)
+
+    def test_operations_provisioning_attempts_all_business_components_and_raises_actual_failure(self):
+        for outcome in ("success", "manual_playbook", "product_rejection", "missing_mailbox"):
+            ns = functions(
+                "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
+                get_ontology_generation=Mock(return_value=2),
+                ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
+                ops_agent_copy_playbook=outcome != "manual_playbook", ops_agent_should_run=False,
+                ops_agent_run_as_user="", ops_agent_name="agent", OPS_AGENT_DESCRIPTION="description",
+                get_access_token_for_fabric=Mock(), check_run_as=Mock(),
+                resolve_email_connection_id=Mock(return_value=None if outcome == "missing_mailbox" else "mailbox"),
+                ALERT_EMAIL_TO="operations@example.test", get_signed_in_upn=Mock(),
+                PIPELINE_NAME="Pipe_SendEmailAlert", PIPELINE_DESCRIPTION="alerts",
+                build_email_pipeline_content=Mock(return_value={"properties": {}}),
+                create_data_pipeline=Mock(return_value={"id": "pipeline"}),
+                get_definition_parts=Mock(), read_json_part=Mock(return_value={"properties": {}}),
+                require_retained=Mock(), create_operations_agent=Mock(return_value={"id": "agent"}),
+                build_configurations=Mock(return_value={"configuration": {}, "playbook": {"rules": "full"}}),
+                update_operations_agent_definition=Mock(), verify_operations_readback=Mock())
+            if outcome == "product_rejection":
+                ns["update_operations_agent_definition"].side_effect = RuntimeError("actual product failure")
+            if outcome in ("success", "manual_playbook"):
+                result = ns["deploy_operations_agent"]("ontology")
+                self.assertEqual(result["email_pipeline_id"], "pipeline")
+                self.assertEqual(result["ops_agent_id"], "agent")
+            else:
+                with self.assertRaisesRegex(RuntimeError, "actual product failure|OAuth2 connection is missing"):
+                    ns["deploy_operations_agent"]("ontology")
+            ns["create_data_pipeline"].assert_called_once()
+            ns["create_operations_agent"].assert_called_once()
+            ns["build_configurations"].assert_called_once_with(
+                should_run=False, copy_playbook=outcome != "manual_playbook", team_id="team", channel_id="channel",
+                datasource_id="ontology", pipeline_id="pipeline")
+            ns["update_operations_agent_definition"].assert_called_once()
+            if outcome == "product_rejection":
+                ns["verify_operations_readback"].assert_not_called()
+            else:
+                ns["verify_operations_readback"].assert_called_once()
+
+    def test_operations_alert_recipient_falls_back_to_run_as_then_deployer(self):
+        for run_as, deploying_user, expected in (
+            ("run-as@example.test", "deployer@example.test", "run-as@example.test"),
+            ("", "deployer@example.test", "deployer@example.test"),
+        ):
+            with self.subTest(run_as=run_as):
+                build_pipeline = Mock(return_value={"properties": {}})
+                ns = functions(
+                    "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
+                    get_ontology_generation=Mock(return_value=2),
+                    ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
+                    ops_agent_copy_playbook=True, ops_agent_should_run=False,
+                    ops_agent_run_as_user=run_as, ops_agent_name="agent",
+                    OPS_AGENT_DESCRIPTION="description", get_access_token_for_fabric=Mock(),
+                    check_run_as=Mock(), resolve_email_connection_id=Mock(return_value="mailbox"),
+                    ALERT_EMAIL_TO=" ", get_signed_in_upn=Mock(return_value=deploying_user),
+                    PIPELINE_NAME="Pipe_SendEmailAlert", PIPELINE_DESCRIPTION="alerts",
+                    build_email_pipeline_content=build_pipeline,
+                    create_data_pipeline=Mock(return_value={"id": "pipeline"}),
+                    get_definition_parts=Mock(), read_json_part=Mock(return_value={"properties": {}}),
+                    require_retained=Mock(), create_operations_agent=Mock(return_value={"id": "agent"}),
+                    build_configurations=Mock(return_value={"configuration": {}, "playbook": {}}),
+                    update_operations_agent_definition=Mock(), verify_operations_readback=Mock(),
+                )
+                ns["deploy_operations_agent"]("ontology")
+                build_pipeline.assert_called_once_with("mailbox", expected)
+                if run_as:
+                    ns["get_signed_in_upn"].assert_not_called()
+                else:
+                    ns["get_signed_in_upn"].assert_called_once()
+
+    def test_operations_outer_failure_is_persisted_and_reraised(self):
+        attempt = next(node for node in ast.parse(source("010")).body
+                       if isinstance(node, ast.Try) and "deploy_operations_agent" in ast.unparse(node))
+        failure = RuntimeError("actual product rejection")
+        ns = {
+            "deploy_operations_agent": Mock(side_effect=failure),
+            "persist_agent_status": Mock(), "result": {"ontology_id": "ontology"},
+        }
+        with self.assertRaisesRegex(RuntimeError, "actual product rejection"):
+            exec(compile(ast.Module(body=[attempt], type_ignores=[]), "operations-deploy", "exec"), ns)
+        ns["persist_agent_status"].assert_called_once_with("failed", "actual product rejection")
+
+    def test_operations_generation_failure_prevents_pipeline_and_agent_writes(self):
+        ns = functions("010", "deploy_operations_agent", get_ontology_generation=Mock(return_value=1),
+                       create_data_pipeline=Mock(), create_operations_agent=Mock())
+        with self.assertRaisesRegex(RuntimeError, "live v2"):
+            ns["deploy_operations_agent"]("legacy")
+        ns["create_data_pipeline"].assert_not_called()
+        ns["create_operations_agent"].assert_not_called()
+
+    def test_forced_email_connection_must_be_a_real_oauth2_mailbox(self):
+        for credential in ("ServicePrincipal", "OAuth2"):
+            response = Mock()
+            response.json.return_value = {
+                "connectionDetails": {"type": "MicrosoftOutlook"},
+                "credentialDetails": {"credentialType": credential},
+            }
+            ns = functions(
+                "010", "resolve_email_connection_id", "_is_office365_connection", "_office365_cred_type",
+                first_setting=lambda *args, **kwargs: "mailbox", api_request=Mock(return_value=response),
+                FABRIC_API_BASE="base")
+            if credential == "OAuth2":
+                self.assertEqual(ns["resolve_email_connection_id"](), "mailbox")
+            else:
+                with self.assertRaisesRegex(RuntimeError, "OAuth2"):
+                    ns["resolve_email_connection_id"]()
+
+    def test_generation1_is_blocked_before_agent_writes(self):
+        for number in ("009", "010"):
+            status = Mock()
+            ns = functions(
+                number, "agent_capability_policy", "check_agent_capability",
+                resolve_ontology_id=Mock(return_value="legacy-id"),
+                get_ontology_generation=Mock(return_value=1),
+                persist_agent_status=status,
+                create_data_agent=Mock(), create_operations_agent=Mock(),
+                create_data_pipeline=Mock(), update_item_definition=Mock(),
+            )
+            tree = ast.parse(source(number))
+            start_name = "data_agent_item_id" if number == "009" else "result"
+            start = next(i for i, node in enumerate(tree.body) if assign_to(node, start_name))
+            with self.assertRaisesRegex(RuntimeError, "v2-only"):
+                exec(compile(ast.Module(body=tree.body[start:], type_ignores=[]), number, "exec"), ns)
+            for name in ("create_data_agent", "create_operations_agent", "create_data_pipeline", "update_item_definition"):
+                ns[name].assert_not_called()
+            self.assertEqual(status.call_args.args[0], "blocked")
+
+    def test_failed_generation_check_clears_old_success_status(self):
+        for number in ("009", "010"):
+            status = Mock()
+            ns = functions(
+                number, "check_agent_capability",
+                resolve_ontology_id=Mock(return_value="ontology"),
+                get_ontology_generation=Mock(side_effect=PermissionError("denied")),
+                persist_agent_status=status,
+            )
+            with self.assertRaises(PermissionError):
+                ns["check_agent_capability"]()
+            self.assertEqual(status.call_args_list[0].args[0], "checking")
+            self.assertEqual(status.call_args.args, ("failed", "denied"))
+
+    def test_enabled_v2_data_agent_failures_are_not_success(self):
+        tree = ast.parse(source("009"))
+        deploy = next(
+            node for node in tree.body if isinstance(node, ast.Try)
+            and "create_data_agent" in ast.unparse(node)
+        )
+        for fail_at in (
+            "create_data_agent", "validate_agent_ontology_sources", "update_item_definition",
+            "verify_agent_source_readback", "publish_data_agent", "lakehouse_schema_map",
+        ):
+            status = Mock()
+            ns = functions("009", "upsert_part", "encode_payload")
+            ns.update({
+                "ontology_generation": 2, "ontology_id": "ontology", "data_agent_item_id": None,
+                "data_agent_name": "agent", "DATA_AGENT_DESCRIPTION": "description",
+                "DRAFT_STAGE_CONFIG_PATH": "stage", "DATASOURCE_PATH": "datasource",
+                "LAKEHOUSE_DATASOURCE_PATH": "lakehouse-source",
+                "KUSTO_DATASOURCE_PATH": "kusto-source",
+                "ONTOLOGY_ELEMENTS": [], "FABRIC_API_BASE": "base", "workspace_id": "ws",
+                "LAKEHOUSE_TABLES": [], "kql_table_name": "OPCUAEvents",
+                "get_spn_access_token_for_fabric": Mock(),
+                "create_data_agent": Mock(return_value={"id": "agent-id", "_created_this_run": True}),
+                "get_item_definition": Mock(return_value={"definition": {"parts": []}}),
+                "validate_agent_ontology_sources": Mock(),
+                "verify_agent_source_readback": Mock(),
+                "build_stage_obj": Mock(return_value={}), "build_datasource_obj": Mock(return_value={}),
+                "lakehouse_schema_map": Mock(return_value={}),
+                "build_lakehouse_datasource_obj": Mock(return_value={}),
+                "build_kusto_datasource_obj": Mock(return_value={}),
+                "update_item_definition": Mock(), "enable_preview_runtime": Mock(),
+                "update_operational_source_guidance": Mock(side_effect=lambda parts: parts),
+                "publish_data_agent": Mock(), "persist_agent_status": status,
+            })
+            ns[fail_at].side_effect = RuntimeError("real failure")
+            with self.assertRaisesRegex(RuntimeError, "real failure"):
+                exec(compile(ast.Module(body=[deploy], type_ignores=[]), "deploy", "exec"), ns)
+            self.assertEqual(status.call_args.args[0], "failed")
+            if fail_at == "validate_agent_ontology_sources":
+                ns["update_item_definition"].assert_not_called()
+                ns["enable_preview_runtime"].assert_not_called()
+                ns["publish_data_agent"].assert_not_called()
+
+    def test_agent_sources_must_all_be_live_v2_including_published_parts(self):
+        for number in ("009",):
+            ns = functions(
+                number, "require_v2_ontology", "validate_agent_ontology_sources",
+                workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+            )
+            parts = [ontology_part(), ontology_part("published")]
+            ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True, require_published=True)
+            self.assertEqual(ns["get_ontology_generation"].call_count, 2)
+            for generations in ((1, 2), (2, 1), (1, 1)):
+                ns["get_ontology_generation"] = Mock(side_effect=generations)
+                with self.assertRaisesRegex(RuntimeError, "v2-only"):
+                    ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True)
+
+    def test_unverifiable_or_missing_ontology_sources_fail_closed(self):
+        for number in ("009",):
+            ns = functions(
+                number, "require_v2_ontology", "validate_agent_ontology_sources",
+                workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+            )
+            for parts in (
+                [], [ontology_part("published")], [ontology_part(workspace="other-workspace")],
+                [ontology_part(ontology_id="")],
+            ):
+                with self.assertRaises(RuntimeError):
+                    ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True)
+            malformed = ontology_part()
+            malformed["payload"] = base64.b64encode(b"{}").decode("ascii")
+            with self.assertRaisesRegex(RuntimeError, "missing source type"):
+                ns["validate_agent_ontology_sources"]([malformed], "ontology")
+
+    def test_nb09_rejects_unrelated_published_sources_even_if_v2(self):
+        for number in ("009",):
+            ns = functions(
+                number, "require_v2_ontology", "validate_agent_ontology_sources",
+                workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+            )
+            parts = [ontology_part(), ontology_part("published", "unrelated-v2")]
+            with self.assertRaisesRegex(RuntimeError, "does not match selected ontology"):
+                ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True)
+            self.assertEqual(len(parts), 2)
+
+    def test_publication_is_preserved_but_inconclusive_runtime_fails(self):
+        tree = ast.parse(source("009"))
+        deploy = next(
+            node for node in tree.body if isinstance(node, ast.Try)
+            and "create_data_agent" in ast.unparse(node)
+        )
+        for mismatch_at in (
+            "submission", "before_publish", "after_publish", "draft_only",
+            "none", "known_product_result", "known_product_exception", "healthy",
+        ):
+            lakehouse_path = "Files/Config/draft/lakehouse-source/datasource.json"
+            kusto_path = "Files/Config/draft/kusto-source/datasource.json"
+            lakehouse_source = {
+                "type": "lakehouse_tables", "artifactId": "lakehouse", "workspaceId": "ws",
+            }
+            kusto_source = {
+                "type": "kusto", "artifactId": "kusto", "workspaceId": "ws",
+            }
+            draft_direct = [
+                json_part(lakehouse_path, lakehouse_source),
+                json_part(kusto_path, kusto_source),
+            ]
+            published_direct = [
+                json_part(path.replace("/draft/", "/published/", 1), source_value)
+                for path, source_value in (
+                    (lakehouse_path, lakehouse_source), (kusto_path, kusto_source),
+                )
+            ]
+            matching = {"definition": {"parts": [ontology_part(), *draft_direct]}}
+            published = {"definition": {"parts": [
+                ontology_part(), ontology_part("published"), *draft_direct, *published_direct,
+            ]}}
+            unrelated = {"definition": {"parts": [
+                ontology_part(ontology_id="unrelated-v2"), *draft_direct,
+            ]}}
+            responses = [{"definition": {"parts": []}}]
+            if mismatch_at == "before_publish":
+                responses += [unrelated]
+            elif mismatch_at == "after_publish":
+                responses += [matching, unrelated]
+            elif mismatch_at == "draft_only":
+                responses += [matching, matching]
+            elif mismatch_at in ("none", "known_product_result", "known_product_exception", "healthy"):
+                responses += [matching, published]
+            known_product_reason = (
+                "This API version is not supported for the specified Ontology item."
+            )
+            runtime_probe = (
+                Mock(side_effect=RuntimeError(
+                    f'MCP JSON-RPC error: {{"message": "{known_product_reason}"}}'
+                ))
+                if mismatch_at == "known_product_exception"
+                else Mock(return_value={
+                    "status": "verified" if mismatch_at == "healthy" else "inconclusive",
+                    "reason": (
+                        known_product_reason
+                        if mismatch_at == "known_product_result"
+                        else "Functional probe result"
+                    ),
+                    "evidence": {},
+                })
+            )
+            ns = functions(
+                "009", "upsert_part", "encode_payload", "decode_payload",
+                "validate_agent_ontology_sources",
+                "require_v2_ontology", "verify_agent_source_readback",
+                workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+                ontology_generation=2, ontology_id="ontology", data_agent_item_id=None,
+                data_agent_name="agent", DATA_AGENT_DESCRIPTION="description",
+                DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
+                DATASOURCE_PATH="Files/Config/draft/ontology-source/datasource.json",
+                LAKEHOUSE_DATASOURCE_PATH=lakehouse_path,
+                KUSTO_DATASOURCE_PATH=kusto_path,
+                ONTOLOGY_ELEMENTS=[], LAKEHOUSE_TABLES=[],
+                kql_table_name="OPCUAEvents", FABRIC_API_BASE="base",
+                get_spn_access_token_for_fabric=Mock(),
+                create_data_agent=Mock(return_value={"id": "agent-id", "_created_this_run": True}),
+                get_item_definition=Mock(side_effect=responses),
+                build_stage_obj=Mock(return_value={}),
+                build_datasource_obj=Mock(return_value={
+                    "artifactId": "unrelated-v2" if mismatch_at == "submission" else "ontology",
+                    "workspaceId": "ws", "type": "ontology",
+                }),
+                lakehouse_schema_map=Mock(return_value={}),
+                build_lakehouse_datasource_obj=Mock(return_value=lakehouse_source),
+                build_kusto_datasource_obj=Mock(return_value=kusto_source),
+                update_item_definition=Mock(), enable_preview_runtime=Mock(),
+                update_operational_source_guidance=Mock(side_effect=lambda parts: parts),
+                publish_data_agent=Mock(), persist_agent_status=Mock(),
+                is_known_ontology_v2_product_limitation=lambda reason: (
+                    "api version is not supported" in reason.lower()
+                ),
+                probe_data_agent_ontology=runtime_probe,
+            )
+            if mismatch_at == "healthy":
+                exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
+                final = ns["persist_agent_status"].call_args
+                self.assertEqual(final.args[0], "ready")
+                self.assertEqual(final.kwargs["runtime_status"], "verified")
+                self.assertEqual(final.kwargs["publication_status"], "published")
+                continue
+            if mismatch_at in ("known_product_result", "known_product_exception"):
+                exec(compile(ast.Module(body=[deploy], type_ignores=[]), "known-product", "exec"), ns)
+                final = ns["persist_agent_status"].call_args
+                self.assertEqual(final.args[0], "known_product_limitation")
+                self.assertEqual(final.kwargs["runtime_status"], "known_product_limitation")
+                self.assertEqual(final.kwargs["publication_status"], "published")
+                continue
+            if mismatch_at == "none":
+                with self.assertRaisesRegex(RuntimeError, "runtime inconclusive"):
+                    exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
+                calls = ns["persist_agent_status"].call_args_list
+                published_calls = [call for call in calls if call.args[0] == "published"]
+                self.assertEqual(len(published_calls), 1)
+                self.assertEqual(published_calls[0].kwargs["publication_status"], "published")
+                self.assertEqual(published_calls[0].kwargs["id"], "agent-id")
+                self.assertEqual(published_calls[0].kwargs["name"], "agent")
+                runtime_calls = [call for call in calls if "runtime_evidence" in call.kwargs]
+                self.assertEqual(runtime_calls[0].kwargs["runtime_status"], "inconclusive")
+                self.assertEqual(runtime_calls[0].kwargs["publication_status"], "published")
+                self.assertEqual(calls[-1].args[0], "failed")
+                self.assertEqual(ns["get_item_definition"].call_count, 3)
+                continue
+            message = "No verified published" if mismatch_at == "draft_only" else "does not match selected ontology"
+            with self.assertRaisesRegex(RuntimeError, message):
+                exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
+            self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
+            ns["probe_data_agent_ontology"].assert_not_called()
+            self.assertNotIn("published", [call.args[0] for call in ns["persist_agent_status"].call_args_list])
+            if mismatch_at in ("submission", "before_publish"):
+                ns["publish_data_agent"].assert_not_called()
+            else:
+                ns["publish_data_agent"].assert_called_once()
+            if mismatch_at == "submission":
+                ns["update_item_definition"].assert_not_called()
+
+    def test_data_source_builder_rejects_generation1(self):
+        ns = functions(
+            "009", "build_datasource_obj", "require_v2_ontology",
+            get_ontology_generation=Mock(return_value=1),
+        )
+        with self.assertRaisesRegex(RuntimeError, "v2-only"):
+            ns["build_datasource_obj"]({}, "legacy")
+
+    def test_nb09_builds_curated_lakehouse_and_eventhouse_sources_without_resetting_custom_fields(self):
+        ns = functions(
+            "009", "_ds_element", "merge_source_elements",
+            "build_lakehouse_datasource_obj", "build_kusto_datasource_obj",
+            uuid=uuid, DATASOURCE_SCHEMA_URL="source-schema", workspace_id="ws",
+            lakehouse_id="lakehouse", lakehouse_name="RTI Lakehouse",
+            kql_db_id="kusto-db", kql_db_name="RTI KQL", kql_table_name="OPCUAEvents",
+            LAKEHOUSE_DATASOURCE_TYPE="lakehouse_tables", KUSTO_DATASOURCE_TYPE="kusto",
+            LAKEHOUSE_SOURCE_INSTRUCTIONS="lakehouse instructions",
+            KUSTO_SOURCE_INSTRUCTIONS="kusto instructions",
+            LAKEHOUSE_TABLES=[
+                ("silver_facilities", "Facility master."),
+                ("silver_equipment", "Equipment master."),
+            ],
+        )
+        existing_lakehouse = {
+            "custom": {"preserve": True},
+            "dataSourceInstructions": "operator lakehouse guidance",
+            "elements": [{
+                "id": "saved-root", "type": "schema_grouping", "display_name": "Schemas",
+                "is_selected": False, "children": [{
+                    "id": "saved-schema", "type": "lakehouse_tables.schema", "display_name": "dbo",
+                    "is_selected": False, "children": [{
+                        "id": "saved-tables", "type": "table_grouping", "display_name": "Tables",
+                        "is_selected": False, "children": [{
+                            "id": "saved-table", "type": "lakehouse_tables.table",
+                            "display_name": "silver_facilities", "is_selected": False,
+                            "description": "operator description", "children": [],
+                        }],
+                    }],
+                }],
+            }],
+        }
+        schema_map = {
+            "silver_facilities": [("facility_id", "string"), ("facility_name", "string")],
+            "silver_equipment": [("equipment_id", "string"), ("facility_id", "string")],
+        }
+        lakehouse = ns["build_lakehouse_datasource_obj"](existing_lakehouse, schema_map)
+        self.assertEqual(lakehouse["artifactId"], "lakehouse")
+        self.assertEqual(lakehouse["type"], "lakehouse_tables")
+        self.assertEqual(lakehouse["dataSourceInstructions"], "operator lakehouse guidance")
+        self.assertEqual(lakehouse["custom"], {"preserve": True})
+        root = lakehouse["elements"][0]
+        self.assertEqual(root["id"], "saved-root")
+        tables = root["children"][0]["children"][0]
+        self.assertEqual(tables["children"][0]["id"], "saved-table")
+        self.assertTrue(tables["children"][0]["is_selected"])
+        self.assertEqual(tables["children"][0]["description"], "operator description")
+        self.assertEqual(
+            [node["display_name"] for node in tables["children"]],
+            ["silver_facilities", "silver_equipment"],
+        )
+        self.assertEqual(
+            [node["display_name"] for node in tables["children"][0]["children"]],
+            ["facility_id", "facility_name"],
+        )
+
+        existing_kusto = {"custom": "preserve", "elements": []}
+        kusto = ns["build_kusto_datasource_obj"](existing_kusto)
+        self.assertEqual(kusto["artifactId"], "kusto-db")
+        self.assertEqual(kusto["type"], "kusto")
+        self.assertEqual(kusto["custom"], "preserve")
+        table = kusto["elements"][0]["children"][0]
+        self.assertEqual(table["display_name"], "OPCUAEvents")
+        self.assertEqual(
+            [(column["display_name"], column["data_type"]) for column in table["children"]],
+            [
+                ("event_time", "datetime"),
+                ("opcua_node_id", "string"),
+                ("value", "real"),
+                ("quality", "string"),
+            ],
+        )
+
+    def test_nb09_failed_runtime_rerun_preserves_sql_and_custom_capabilities(self):
+        sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
+                                          if assign_to(node, "SQL_TABLES")))
+        sql = {
+            "type": "sql_database", "artifactId": "sql-id", "workspaceId": "ws",
+            "dataSourceInstructions": "Keep operational SQL guidance",
+            "elements": [{"type": "sql_database.table", "display_name": name, "is_selected": True,
+                          "children": [{"id": "custom-column", "is_selected": True}]} for name, _ in sql_tables],
+            "customSqlOptions": {"preserve": True},
+        }
+        stage = {
+            "$schema": "existing-stage-schema",
+            "aiInstructions": (
+                "Original ontology instructions\nOperational SQL guidance\nUser custom rules\n"
+                "### Direct Lakehouse and Eventhouse Sources"
+            ),
+            "customOptions": {"preserve": True},
+        }
+        ontology = {
+            "type": "ontology", "artifactId": "ontology", "workspaceId": "ws",
+            "displayName": "Custom ontology label", "dataSourceInstructions": "Custom ontology guidance",
+            "elements": [
+                {"id": "ui-id", "type": "ontology.entity", "display_name": "facilities",
+                 "is_selected": False, "description": "custom description",
+                 "children": [{"id": "custom-property", "is_selected": True}]},
+                {"id": "extra-entity", "type": "ontology.entity", "display_name": "custom_entity",
+                 "is_selected": True, "children": []},
+            ],
+        }
+        lakehouse = {
+            "type": "lakehouse_tables", "artifactId": "lakehouse", "workspaceId": "ws",
+            "displayName": "RTI Lakehouse", "dataSourceInstructions": "Custom Lakehouse guidance",
+            "elements": [{
+                "id": "lakehouse-root", "type": "schema_grouping", "display_name": "Schemas",
+                "is_selected": False, "children": [{
+                    "id": "lakehouse-schema", "type": "lakehouse_tables.schema", "display_name": "dbo",
+                    "is_selected": False, "children": [{
+                        "id": "lakehouse-tables", "type": "table_grouping", "display_name": "Tables",
+                        "is_selected": False, "children": [{
+                            "id": "facilities-table", "type": "lakehouse_tables.table",
+                            "display_name": "silver_facilities", "is_selected": False,
+                            "children": [{"id": "facility-column", "type": "lakehouse_tables.column",
+                                          "display_name": "facility_id", "is_selected": True, "children": []}],
+                        }],
+                    }],
+                }],
+            }],
+            "customLakehouseOptions": {"preserve": True},
+        }
+        kusto = {
+            "type": "kusto", "artifactId": "kusto-db", "workspaceId": "ws",
+            "displayName": "RTI KQL", "dataSourceInstructions": "Custom Kusto guidance",
+            "elements": [{
+                "id": "kusto-root", "type": "table_grouping", "display_name": "Tables",
+                "is_selected": False, "children": [{
+                    "id": "events-table", "type": "kusto.table",
+                    "display_name": "OPCUAEvents", "is_selected": True, "children": [],
+                }],
+            }],
+            "customKustoOptions": {"preserve": True},
+        }
+        baseline = []
+        for version in ("draft", "published"):
+            for path, value in (
+                ("stage_config.json", stage), ("ontology-source/datasource.json", ontology),
+                ("lakehouse-source/datasource.json", lakehouse),
+                ("kusto-source/datasource.json", kusto),
+                ("sql-source/datasource.json", sql), ("custom_queries.json", {"queries": ["custom query"]}),
+            ):
+                baseline.append(json_part(f"Files/Config/{version}/{path}", value))
+        custom_part = {
+            "path": "Files/custom/document.txt", "payloadType": "InlineBase64",
+            "payload": base64.b64encode(b"custom agent knowledge").decode(), "customPartMetadata": "preserve",
+        }
+        baseline.append(custom_part)
+        state = {"parts": copy.deepcopy(baseline)}
+
+        def update(_agent, definition):
+            state["parts"] = copy.deepcopy(definition["parts"])
+
+        def publish(*_args):
+            by_path = {part["path"]: copy.deepcopy(part) for part in state["parts"]}
+            for part in state["parts"]:
+                if part["path"].startswith("Files/Config/draft/"):
+                    path = part["path"].replace("/draft/", "/published/", 1)
+                    by_path[path] = {**copy.deepcopy(part), "path": path}
+            state["parts"] = list(by_path.values())
+
+        ns = functions(
+            "009", "upsert_part", "encode_payload", "decode_payload", "validate_agent_ontology_sources",
+            "require_v2_ontology", "verify_agent_source_readback", "upsert_instruction_section",
+            "build_stage_obj", "build_datasource_obj", "update_operational_source_guidance",
+            "_ds_element", "merge_source_elements", "build_lakehouse_datasource_obj",
+            "build_kusto_datasource_obj",
+            workspace_id="ws", ontology_name="ontology-name", ontology_id="ontology",
+            get_ontology_generation=Mock(return_value=2), data_agent_name="agent",
+            DATA_AGENT_DESCRIPTION="description", FABRIC_API_BASE="base",
+            DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
+            DATASOURCE_PATH="Files/Config/draft/ontology-source/datasource.json",
+            LAKEHOUSE_DATASOURCE_PATH="Files/Config/draft/lakehouse-source/datasource.json",
+            KUSTO_DATASOURCE_PATH="Files/Config/draft/kusto-source/datasource.json",
+            STAGE_CONFIG_SCHEMA_URL="default-stage-schema", DATASOURCE_SCHEMA_URL="default-source-schema",
+            DATASOURCE_TYPE="ontology", AI_INSTRUCTIONS="default ontology instructions",
+            LEGACY_AI_INSTRUCTIONS="legacy default ontology instructions",
+            ASSET_RESOLUTION_MARKER="### Asset & Facility Resolution (Must Follow)",
+            ASSET_RESOLUTION_INSTRUCTIONS="### Asset & Facility Resolution (Must Follow)\nResolve actual keys",
+            COUNT_QUERY_GUIDANCE_MARKER="### Operational count queries",
+            COUNT_QUERY_GUIDANCE="### Operational count queries\nCount in SQL",
+            MULTISOURCE_INSTRUCTIONS_MARKER="### Direct Lakehouse and Eventhouse Sources",
+            MULTISOURCE_INSTRUCTIONS="\n### Direct Lakehouse and Eventhouse Sources\nNew guidance",
+            CROSS_SOURCE_OPERATIONAL_MARKER="### Cross-source operational joins",
+            CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS="\n### Cross-source operational joins\nCross-source guidance",
+            GLOBAL_SCOPE_MARKER="### Conversation scope",
+            GLOBAL_SCOPE_INSTRUCTIONS="\n### Conversation scope\nGlobal scope guidance",
+            RUNNING_BAD_MARKER='### Canonical "running bad" questions',
+            RUNNING_BAD_INSTRUCTIONS='\n### Canonical "running bad" questions\nBAD guidance',
+            RUNNING_HOT_MARKER='### Canonical "running hot" questions',
+            RUNNING_HOT_INSTRUCTIONS='\n### Canonical "running hot" questions\nHOT guidance',
+            ADAPTIVE_RESPONSE_MARKER="### Adaptive response",
+            ADAPTIVE_RESPONSE_INSTRUCTIONS="\n### Adaptive response\nAdaptive guidance",
+            MCP_FOLLOWUP_MARKER="### External MCP follow-ups and visualizations",
+            MCP_FOLLOWUP_INSTRUCTIONS=(
+                "\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"
+            ),
+            DIRECT_RUNTIME_ROUTING_MARKER="### Authoritative source routing",
+            DIRECT_RUNTIME_ROUTING_INSTRUCTIONS=(
+                "\n### Authoritative source routing\nDirect routing guidance"
+            ),
+            ONTOLOGY_ELEMENTS=[("facilities", "facility_id,facility_name"), ("equipment", "equipment_id")],
+            LAKEHOUSE_DATASOURCE_TYPE="lakehouse_tables", KUSTO_DATASOURCE_TYPE="kusto",
+            LAKEHOUSE_SOURCE_INSTRUCTIONS="default Lakehouse guidance",
+            KUSTO_SOURCE_INSTRUCTIONS="default Kusto guidance",
+            LAKEHOUSE_TABLES=[("silver_facilities", "Facility master.")],
+            lakehouse_id="lakehouse", lakehouse_name="RTI Lakehouse",
+            kql_db_id="kusto-db", kql_db_name="RTI KQL", kql_table_name="OPCUAEvents",
+            uuid=uuid,
+            get_spn_access_token_for_fabric=Mock(),
+            create_data_agent=Mock(return_value={"id": "agent-id", "_created_this_run": False}),
+            get_item_definition=Mock(side_effect=lambda _id: {"definition": {"parts": copy.deepcopy(state["parts"])}}),
+            lakehouse_schema_map=Mock(return_value={
+                "silver_facilities": [("facility_id", "string"), ("facility_name", "string")],
+            }),
+            update_item_definition=Mock(side_effect=update), publish_data_agent=Mock(side_effect=publish),
+            enable_preview_runtime=Mock(), persist_agent_status=Mock(),
+            is_known_ontology_v2_product_limitation=lambda reason: False,
+            probe_data_agent_ontology=Mock(return_value={
+                "status": "failed", "reason": "Ontology source unavailable", "evidence": {},
+            }),
+        )
+        deployment = next(node for node in ast.parse(source("009")).body
+                          if isinstance(node, ast.Try) and "create_data_agent" in ast.unparse(node))
+        with self.assertRaisesRegex(RuntimeError, "runtime failed"):
+            exec(compile(ast.Module(body=[deployment], type_ignores=[]), "preserving-rerun", "exec"), ns)
+        actual = {part["path"]: part for part in state["parts"]}
+        for version in ("draft", "published"):
+            prefix = f"Files/Config/{version}/"
+            retained_stage = ns["decode_payload"](actual[prefix + "stage_config.json"]["payload"])
+            custom_prefix = stage["aiInstructions"].split(
+                "### Direct Lakehouse and Eventhouse Sources", 1
+            )[0].rstrip()
+            self.assertTrue(retained_stage["aiInstructions"].startswith(custom_prefix))
+            self.assertEqual(retained_stage["customOptions"], stage["customOptions"])
+            self.assertEqual(retained_stage["aiInstructions"].count("### Cross-source operational joins"), 1)
+            self.assertEqual(retained_stage["aiInstructions"].count("### Conversation scope"), 1)
+            self.assertEqual(
+                retained_stage["aiInstructions"].count(
+                    "### External MCP follow-ups and visualizations"
+                ),
+                1,
+            )
+            self.assertEqual(
+                retained_stage["aiInstructions"].count("### Authoritative source routing"),
+                1,
+            )
+            retained_sql = ns["decode_payload"](actual[prefix + "sql-source/datasource.json"]["payload"])
+            self.assertEqual({k: v for k, v in retained_sql.items() if k != "dataSourceInstructions"},
+                             {k: v for k, v in sql.items() if k != "dataSourceInstructions"})
+            self.assertEqual(retained_sql["dataSourceInstructions"],
+                             "Keep operational SQL guidance\n\n### Operational count queries\nCount in SQL")
+            self.assertEqual(ns["update_operational_source_guidance"](state["parts"]), state["parts"])
+            self.assertEqual(len(retained_sql["elements"]), 5)
+            retained_ontology = ns["decode_payload"](actual[prefix + "ontology-source/datasource.json"]["payload"])
+            self.assertEqual(retained_ontology["elements"][:2], ontology["elements"])
+            self.assertEqual(retained_ontology["displayName"], "Custom ontology label")
+            self.assertEqual(retained_ontology["dataSourceInstructions"], "Custom ontology guidance")
+            self.assertEqual(len(retained_ontology["elements"]), 3)
+            self.assertEqual(ns["build_datasource_obj"](retained_ontology, "ontology"), retained_ontology)
+            retained_lakehouse = ns["decode_payload"](
+                actual[prefix + "lakehouse-source/datasource.json"]["payload"]
+            )
+            self.assertEqual(retained_lakehouse["customLakehouseOptions"], {"preserve": True})
+            self.assertEqual(retained_lakehouse["dataSourceInstructions"], "Custom Lakehouse guidance")
+            self.assertEqual(retained_lakehouse["elements"][0]["id"], "lakehouse-root")
+            retained_lakehouse_table = (
+                retained_lakehouse["elements"][0]["children"][0]["children"][0]["children"][0]
+            )
+            self.assertTrue(retained_lakehouse_table["is_selected"])
+            retained_kusto = ns["decode_payload"](
+                actual[prefix + "kusto-source/datasource.json"]["payload"]
+            )
+            self.assertEqual(retained_kusto["customKustoOptions"], {"preserve": True})
+            self.assertEqual(retained_kusto["dataSourceInstructions"], "Custom Kusto guidance")
+            self.assertEqual(retained_kusto["elements"][0]["id"], "kusto-root")
+            self.assertEqual(ns["decode_payload"](actual[prefix + "custom_queries.json"]["payload"]),
+                             {"queries": ["custom query"]})
+        self.assertEqual(actual[custom_part["path"]], custom_part)
+        ns["update_item_definition"].assert_called_once()
+        ns["publish_data_agent"].assert_called_once()
+        self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
+        self.assertEqual(
+            ns["build_stage_obj"]({})["aiInstructions"],
+            "default ontology instructions\n\n### Asset & Facility Resolution (Must Follow)\nResolve actual keys"
+            "\n\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
+            "\n\n### Cross-source operational joins\nCross-source guidance"
+            "\n\n### Conversation scope\nGlobal scope guidance"
+            '\n\n### Canonical "running bad" questions\nBAD guidance'
+            '\n\n### Canonical "running hot" questions\nHOT guidance'
+            "\n\n### Adaptive response\nAdaptive guidance"
+            "\n\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"
+            "\n\n### Authoritative source routing\nDirect routing guidance",
+        )
+        existing_guidance = ns["build_stage_obj"]({
+            "aiInstructions": (
+                "custom\n### Direct Lakehouse and Eventhouse Sources\nexisting direct guidance"
+                "\n### Cross-source operational joins\nexisting cross-source guidance"
+                "\n### External MCP follow-ups and visualizations\nexisting follow-up guidance"
+                "\n### Authoritative source routing\nexisting direct routing"
+            )
+        })
+        self.assertEqual(
+            existing_guidance["aiInstructions"].count("### Cross-source operational joins"), 1
+        )
+        self.assertEqual(
+            existing_guidance["aiInstructions"].count(
+                "### External MCP follow-ups and visualizations"
+            ),
+            1,
+        )
+        self.assertEqual(
+            existing_guidance["aiInstructions"].count("### Authoritative source routing"),
+            1,
+        )
+        self.assertNotIn("existing follow-up guidance", existing_guidance["aiInstructions"])
+        self.assertIn("Follow-up and chart guidance", existing_guidance["aiInstructions"])
+        self.assertNotIn("existing direct routing", existing_guidance["aiInstructions"])
+        self.assertIn("Direct routing guidance", existing_guidance["aiInstructions"])
+        with self.assertRaisesRegex(RuntimeError, "not a string"):
+            ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})
+        with self.assertRaisesRegex(RuntimeError, "malformed"):
+            ns["build_datasource_obj"]({"elements": None}, "ontology")
+
+        preserved = copy.deepcopy(state["parts"])
+        ns["probe_data_agent_ontology"].return_value = {
+            "status": "verified", "reason": "Fresh facilities smoke matched", "evidence": {"fresh": True},
+        }
+        exec(compile(ast.Module(body=[deployment], type_ignores=[]), "recovered-rerun", "exec"), ns)
+        final = ns["persist_agent_status"].call_args
+        self.assertEqual(final.args[0], "ready")
+        self.assertEqual(final.kwargs["publication_status"], "published")
+        self.assertEqual(final.kwargs["runtime_status"], "verified")
+        self.assertEqual(final.kwargs["runtime_evidence"], {"fresh": True})
+        self.assertEqual(ns["probe_data_agent_ontology"].call_count, 2)
+        self.assertEqual(state["parts"], preserved)
+
+    def test_malformed_existing_agent_baseline_never_updates_or_publishes(self):
+        tree = ast.parse(source("009"))
+        deploy = next(
+            node for node in tree.body if isinstance(node, ast.Try)
+            and "create_data_agent" in ast.unparse(node)
+        )
+        malformed = (
+            None, {}, {"definition": None}, {"definition": {}},
+            {"definition": {"parts": None}}, {"definition": {"parts": {}}},
+            {"definition": {"parts": []}}, {"definition": {"parts": [{}]}},
+            {"definition": {"parts": [ontology_part(), ontology_part()]}},
+            {"definition": {"parts": [{
+                "path": "bad", "payloadType": "InlineBase64", "payload": "!not-base64!",
+            }]}},
+            "empty-http-body",
+        )
+        for envelope in malformed:
+            response = Mock(status_code=200)
+            if envelope == "empty-http-body":
+                response.content = b""
+                response.json.side_effect = ValueError("Empty response is not JSON")
+            else:
+                response.json.return_value = envelope
+            ns = functions(
+                "009", "get_item_definition",
+                ontology_generation=2, ontology_id="ontology", data_agent_item_id=None,
+                data_agent_name="agent", DATA_AGENT_DESCRIPTION="description",
+                get_spn_access_token_for_fabric=Mock(),
+                create_data_agent=Mock(return_value={"id": "existing", "_created_this_run": False}),
+                api_request=Mock(return_value=response), FABRIC_API_BASE="base", workspace_id="ws",
+                update_item_definition=Mock(), publish_data_agent=Mock(), persist_agent_status=Mock(),
+            )
+            with self.subTest(envelope=envelope), self.assertRaises((RuntimeError, ValueError)):
+                exec(compile(ast.Module(body=[deploy], type_ignores=[]), "baseline", "exec"), ns)
+            ns["update_item_definition"].assert_not_called()
+            ns["publish_data_agent"].assert_not_called()
+            self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
+
+    def test_definition_getter_lro_also_requires_explicit_parts_list(self):
+        for number in ("009", "011"):
+            accepted = Mock(status_code=202, headers={"Location": "operation"})
+            completed = Mock(status_code=200)
+            completed.json.return_value = {"definition": {}}
+            ns = functions(
+                number, "get_item_definition",
+                api_request=Mock(side_effect=[accepted, completed]),
+                wait_for_lro=Mock(), FABRIC_API_BASE="base", workspace_id="ws",
+            )
+            with self.assertRaisesRegex(RuntimeError, "explicit list"):
+                ns["get_item_definition"]("agent")
+
+    def test_only_new_agent_provenance_allows_explicit_empty_baseline(self):
+        for existing in (None, {"id": "existing"}):
+            response = Mock(status_code=201, content=b"json")
+            response.json.return_value = {"id": "new"}
+            ns = functions(
+                "009", "create_data_agent", find_item_by_name=Mock(return_value=existing),
+                api_request=Mock(return_value=response), DATA_AGENT_ITEM_TYPE="DataAgent",
+                FABRIC_API_BASE="base", workspace_id="ws", target_folder_id="folder",
+            )
+            item = ns["create_data_agent"]("agent")
+            self.assertEqual(item["_created_this_run"], existing is None)
+            if existing is None:
+                self.assertEqual(ns["definition_parts"](
+                    {"definition": {"parts": []}}, allow_empty=item["_created_this_run"],
+                ), [])
+            else:
+                ns["api_request"].assert_not_called()
+                with self.assertRaisesRegex(RuntimeError, "Empty existing"):
+                    ns["definition_parts"](
+                        {"definition": {"parts": []}}, allow_empty=item["_created_this_run"],
+                    )
+
+    def test_async_creation_requires_authoritative_created_item_id(self):
+        for body in ({}, {"id": "created"}):
+            accepted = Mock(status_code=202, headers={"Location": "operation"})
+            result = Mock()
+            result.json.return_value = body
+            ns = functions(
+                "009", "create_data_agent", find_item_by_name=Mock(return_value=None),
+                api_request=Mock(side_effect=[accepted, result]), wait_for_lro=Mock(),
+                DATA_AGENT_ITEM_TYPE="DataAgent", FABRIC_API_BASE="base",
+                workspace_id="ws", target_folder_id="folder",
+            )
+            if body:
+                self.assertEqual(ns["create_data_agent"]("agent"), {**body, "_created_this_run": True})
+            else:
+                with self.assertRaisesRegex(RuntimeError, "provenance is unverified"):
+                    ns["create_data_agent"]("agent")
+            ns["find_item_by_name"].assert_called_once()
+
+    def test_configured_folder_never_falls_back_to_other_folder(self):
+        outside = {"id": "outside", "displayName": "ontology", "type": "Ontology", "folderId": "other"}
+        for number in ("009", "010"):
+            response = Mock()
+            response.json.return_value = {"value": [outside]}
+            ns = functions(
+                number, "check_agent_capability", "resolve_ontology_id",
+                ontology_name="ontology",
+                target_folder_id="target", workspace_id="ws", FABRIC_API_BASE="base",
+                api_request=Mock(return_value=response), persist_agent_status=Mock(),
+                get_ontology_generation=Mock(return_value=2),
+                create_data_agent=Mock(), update_item_definition=Mock(), publish_data_agent=Mock(),
+            )
+            tree = ast.parse(source(number))
+            name = "data_agent_item_id" if number == "009" else "result"
+            start = next(i for i, node in enumerate(tree.body) if assign_to(node, name))
+            with self.assertRaisesRegex(RuntimeError, "target folder"):
+                exec(compile(ast.Module(body=tree.body[start:], type_ignores=[]), "folder", "exec"), ns)
+            ns["get_ontology_generation"].assert_not_called()
+            ns["create_data_agent"].assert_not_called()
+            ns["update_item_definition"].assert_not_called()
+            ns["publish_data_agent"].assert_not_called()
+
+    def test_folder_uniqueness_checks_all_ontology_pages(self):
+        for number in ("009", "010"):
+            first = Mock()
+            second = Mock()
+            item = {"id": "one", "displayName": "ontology", "type": "Ontology", "folderId": "folder"}
+            first.json.return_value = {"value": [item], "continuationUri": "next-page"}
+            second.json.return_value = {"value": [{**item, "id": "two"}]}
+            ns = functions(
+                number, "resolve_ontology_id", api_request=Mock(side_effect=[first, second]),
+                FABRIC_API_BASE="base", workspace_id="ws", target_folder_id="folder", ontology_name="ontology",
+            )
+            with self.assertRaisesRegex(RuntimeError, "target folder"):
+                ns["resolve_ontology_id"]()
+            self.assertEqual(ns["api_request"].call_count, 2)
+
+    def sql_extension_namespace(self, baseline=None):
+        state = {"definition": {"parts": copy.deepcopy(baseline or [])}}
+        ns = functions(
+            "011", "extend_data_agent_sql_source", "verify_agent_source_readback",
+            "decode_payload", "encode_payload", "upsert_part", "_ds_element",
+            "build_sql_datasource_obj", "merge_sql_elements", "build_stage_obj",
+            workspace_id="ws", uuid=uuid,
+            get_item_definition=Mock(side_effect=lambda _: copy.deepcopy(state)),
+            sql_db_item_id="sql-id", sql_db_item_name="sql", sql_server="server", sql_database="database",
+            SQL_DATASOURCE_PATH="Files/Config/draft/sql-database-sql/datasource.json",
+            SQL_TABLES=[("table", "description")], SQL_SCHEMA_NAME="dbo",
+            SQL_DATASOURCE_TYPE="sql_database", DATASOURCE_SCHEMA_URL="datasource-schema",
+            SQL_DS_INSTRUCTIONS="SQL guidance", STAGE_CONFIG_SCHEMA_URL="stage-schema",
+            OPERATIONAL_INSTRUCTIONS_MARKER="Operational", OPERATIONAL_INSTRUCTIONS="\nOperational guidance",
+            ASSET_RESOLUTION_INSTRUCTIONS_MARKER="Asset", ASSET_RESOLUTION_INSTRUCTIONS="\nAsset guidance",
+            DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
+            fetch_sql_table_schema=Mock(return_value={"table": [("id", "int")]}),
+            enable_preview_runtime=Mock(), first_setting=Mock(side_effect=AssertionError("No NB09 settings")),
+            get_ontology_generation=Mock(side_effect=AssertionError("No ontology lookup")),
+        )
+
+        def update(agent_id, definition):
+            self.assertEqual(agent_id, "agent")
+            state["definition"] = copy.deepcopy(definition)
+
+        def publish(agent_id, description):
+            self.assertEqual(agent_id, "agent")
+            parts = state["definition"]["parts"]
+            for part in list(parts):
+                if part["path"].startswith("Files/Config/draft/"):
+                    published = {**part, "path": part["path"].replace("/draft/", "/published/", 1)}
+                    parts[:] = [old for old in parts if old["path"] != published["path"]]
+                    parts.append(published)
+
+        ns["update_item_definition"] = Mock(side_effect=update)
+        ns["publish_data_agent"] = Mock(side_effect=publish)
+        return ns, state
+
+    def test_sql_extension_publishes_without_ontology_or_nb09_evidence(self):
+        for baseline in ([], [json_part("Files/Config/draft/custom.json", {"custom": True})]):
+            with self.subTest(baseline=baseline):
+                ns, state = self.sql_extension_namespace(baseline)
+                result = ns["extend_data_agent_sql_source"]("agent")
+                self.assertEqual(set(result), {"status", "reason"})
+                self.assertEqual(result["status"], "published")
+                ns["update_item_definition"].assert_called_once()
+                ns["publish_data_agent"].assert_called_once()
+                self.assertEqual(ns["get_item_definition"].call_count, 3)
+                ns["first_setting"].assert_not_called()
+                ns["get_ontology_generation"].assert_not_called()
+                parts = {part["path"]: part for part in state["definition"]["parts"]}
+                path = ns["SQL_DATASOURCE_PATH"]
+                self.assertEqual(parts[path]["payload"], parts[path.replace("/draft/", "/published/")]["payload"])
+                self.assertFalse(any("/ontology-" in path for path in parts))
+
+    def test_sql_extension_preserves_sources_custom_settings_and_selections_on_rerun(self):
+        baseline = [
+            ontology_part(ontology_id="unrelated-or-legacy", workspace="other"),
+            ontology_part("published", ontology_id="unrelated-or-legacy", workspace="other"),
+            json_part("Files/Config/draft/other-sql/datasource.json", {
+                "type": "sql_database", "artifactId": "other-sql", "elements": [{"is_selected": False}],
+                "dataSourceInstructions": "Other SQL instructions",
+            }),
+            json_part("Files/Config/draft/lakehouse-tables-rti/datasource.json", {
+                "type": "lakehouse_tables", "artifactId": "lakehouse",
+                "elements": [{"id": "lakehouse-table", "is_selected": True}],
+                "dataSourceInstructions": "Lakehouse routing instructions",
+            }),
+            json_part("Files/Config/draft/kusto-rti/datasource.json", {
+                "type": "kusto", "artifactId": "kusto",
+                "elements": [{"id": "events-table", "is_selected": True}],
+                "dataSourceInstructions": "Eventhouse routing instructions",
+            }),
+            json_part("Files/Config/draft/custom.json", {"custom": ["untouched"]}),
+            json_part("Files/Config/draft/stage_config.json", {
+                "aiInstructions": "My custom instructions", "customSetting": "keep",
+            }),
+        ]
+        ns, state = self.sql_extension_namespace(baseline)
+        existing = ns["build_sql_datasource_obj"]({}, "sql-id", {"table": [("id", "int")]})
+        existing.update(dataSourceInstructions="Keep SQL instructions", userDescription="My source",
+                        metadata={"keep": True}, customSetting={"x": 1})
+        table = existing["elements"][0]["children"][0]["children"][0]["children"][0]
+        table.update(is_selected=False, description="Keep table choice", customSetting=True)
+        table["children"][0]["is_selected"] = False
+        state["definition"]["parts"].append(json_part(ns["SQL_DATASOURCE_PATH"], existing))
+        for _ in range(2):
+            ns["extend_data_agent_sql_source"]("agent")
+            parts = {part["path"]: part for part in state["definition"]["parts"]}
+            for original in baseline[:-1]:
+                self.assertEqual(parts[original["path"]], original)
+            actual = ns["decode_payload"](parts[ns["SQL_DATASOURCE_PATH"]]["payload"])
+            self.assertEqual(actual, {**existing, "artifactId": "sql-id"})
+            stage = ns["decode_payload"](parts[ns["DRAFT_STAGE_CONFIG_PATH"]]["payload"])
+            self.assertEqual(stage["customSetting"], "keep")
+            self.assertEqual(stage["aiInstructions"],
+                             "My custom instructions\nOperational guidance\nAsset guidance")
+        ns["get_ontology_generation"].assert_not_called()
+
+    def test_sql_extension_rejects_replacing_another_database_at_the_preferred_path(self):
+        ns, state = self.sql_extension_namespace([])
+        existing = ns["build_sql_datasource_obj"]({}, "another-sql-id", {"table": [("id", "int")]})
+        state["definition"]["parts"].append(
+            json_part(ns["SQL_DATASOURCE_PATH"], existing)
+        )
+        with self.assertRaisesRegex(RuntimeError, "preferred operational SQL source path belongs to another source"):
+            ns["extend_data_agent_sql_source"]("agent")
+        ns["update_item_definition"].assert_not_called()
+        ns["publish_data_agent"].assert_not_called()
+
+    def test_sql_extension_full_api_lifecycle_without_ontology(self):
+        ns, state = self.sql_extension_namespace()
+        runtime_settings = {"experimental": {"customSetting": "keep"}}
+        update = ns["update_item_definition"].side_effect
+        publish = ns["publish_data_agent"].side_effect
+
+        def api(method, url, **kwargs):
+            if url.endswith("/getDefinition") and method == "POST":
+                return Mock(status_code=200, json=lambda: copy.deepcopy(state))
+            if url.endswith("/updateDefinition") and method == "POST":
+                update("agent", kwargs["data"]["definition"])
+                return Mock(status_code=200, content=b"")
+            if url.endswith("/staging/publish") and method == "POST":
+                publish("agent", kwargs["data"]["publishedDescription"])
+                return Mock(status_code=200)
+            if url.endswith("/staging/settings") and method in ("GET", "PATCH"):
+                if method == "PATCH":
+                    runtime_settings.update(copy.deepcopy(kwargs["data"]))
+                return Mock(status_code=200, json=lambda: copy.deepcopy(runtime_settings))
+            self.fail(f"Unexpected API request: {method} {url}")
+
+        real = functions(
+            "011", "get_item_definition", "update_item_definition", "publish_data_agent",
+            "enable_preview_runtime", api_request=Mock(side_effect=api), workspace_id="ws",
+            FABRIC_API_BASE="base", wait_for_lro=Mock(),
+        )
+        for name in ("get_item_definition", "update_item_definition", "publish_data_agent",
+                     "enable_preview_runtime"):
+            ns[name] = real[name]
+        result = ns["extend_data_agent_sql_source"]("agent")
+        self.assertEqual(result["status"], "published")
+        self.assertNotIn("runtime_status", result)
+        self.assertEqual(runtime_settings["experimental"],
+                         {"customSetting": "keep", "enableExperimentalFeatures": True})
+        self.assertEqual(
+            [(call.args[0], call.args[1].removeprefix("base/v1/workspaces/ws/"))
+             for call in real["api_request"].call_args_list],
+            [
+                ("POST", "items/agent/getDefinition"),
+                ("POST", "items/agent/updateDefinition"),
+                ("POST", "items/agent/getDefinition"),
+                ("GET", "dataAgents/agent/staging/settings"),
+                ("PATCH", "dataAgents/agent/staging/settings"),
+                ("GET", "dataAgents/agent/staging/settings"),
+                ("POST", "dataAgents/agent/staging/publish"),
+                ("POST", "items/agent/getDefinition"),
+            ],
+        )
+
+    def test_sql_extension_rejects_unreadable_baselines_before_writes(self):
+        for envelope in (None, {}, {"definition": {}}, {"definition": {"parts": None}},
+                         {"definition": {"parts": [{"path": "custom", "payload": "bad",
+                                                  "payloadType": "InlineBase64"}]}}):
+            with self.subTest(envelope=envelope):
+                ns, _ = self.sql_extension_namespace()
+                ns["get_item_definition"].side_effect = None
+                ns["get_item_definition"].return_value = envelope
+                with self.assertRaises((RuntimeError, ValueError)):
+                    ns["extend_data_agent_sql_source"]("agent")
+                ns["update_item_definition"].assert_not_called()
+                ns["publish_data_agent"].assert_not_called()
+
+    def test_sql_extension_requires_exact_draft_and_published_sql_readback(self):
+        for phase in ("draft", "published"):
+            for mismatch in ("missing", "artifact", "schema"):
+                with self.subTest(phase=phase, mismatch=mismatch):
+                    ns, state = self.sql_extension_namespace()
+
+                    def readback(_):
+                        result = copy.deepcopy(state)
+                        if ns["get_item_definition"].call_count == (2 if phase == "draft" else 3):
+                            path = ns["SQL_DATASOURCE_PATH"].replace("/draft/", f"/{phase}/")
+                            parts = result["definition"]["parts"]
+                            if mismatch == "missing":
+                                parts[:] = [part for part in parts if part["path"] != path]
+                            else:
+                                part = next(part for part in parts if part["path"] == path)
+                                value = ns["decode_payload"](part["payload"])
+                                value["artifactId" if mismatch == "artifact" else "elements"] = (
+                                    "other" if mismatch == "artifact" else []
+                                )
+                                part["payload"] = ns["encode_payload"](value)
+                        return result
+
+                    ns["get_item_definition"].side_effect = readback
+                    with self.assertRaisesRegex(RuntimeError, "SQL source readback"):
+                        ns["extend_data_agent_sql_source"]("agent")
+                    self.assertEqual(ns["publish_data_agent"].call_count, phase == "published")
+
+    def test_sql_extension_surfaces_sql_and_api_failures(self):
+        for failing in ("get_item_definition", "fetch_sql_table_schema", "update_item_definition",
+                        "enable_preview_runtime", "publish_data_agent"):
+            with self.subTest(failing=failing):
+                ns, _ = self.sql_extension_namespace()
+                ns[failing].side_effect = PermissionError("denied")
+                with self.assertRaisesRegex(PermissionError, "denied"):
+                    ns["extend_data_agent_sql_source"]("agent")
+                if failing != "publish_data_agent":
+                    ns["publish_data_agent"].assert_not_called()
+        ns, _ = self.sql_extension_namespace()
+        ns.update(sql_db_item_id=None, find_item_by_name=Mock(return_value=None))
+        with self.assertRaisesRegex(RuntimeError, "SQL Database item"):
+            ns["extend_data_agent_sql_source"]("agent")
+        ns["update_item_definition"].assert_not_called()
+
+    def test_sql_publication_http_failures_are_not_success(self):
+        for status, headers in ((401, {}), (403, {}), (500, {}), (202, {})):
+            with self.subTest(status=status):
+                ns = functions("011", "publish_data_agent", FABRIC_API_BASE="base", workspace_id="ws",
+                               api_request=Mock(return_value=Mock(status_code=status, headers=headers,
+                                                                 text="failure")),
+                               wait_for_lro=Mock())
+                with self.assertRaises(RuntimeError):
+                    ns["publish_data_agent"]("agent")
+                ns["wait_for_lro"].assert_not_called()
+
+    def extension_namespace(self, agents=None):
+        return functions(
+            "011", "resolve_data_agent_id", "resolve_agent_extension_target",
+            data_agent_id=None, data_agent_name="agent", target_folder_id="folder",
+            DATA_AGENT_ITEM_TYPE="DataAgent",
+            list_items_of_type=Mock(side_effect=lambda kind: (
+                agents or [] if kind == "DataAgent" else [{
+                    "id": "ontology-id", "displayName": "ontology", "folderId": "folder",
+                }]
+            )),
+        )
+
+    def test_sql_scaffolding_never_creates_stid_api_and_required_agent_failure_is_recorded(self):
+        for agents, seed_demo_data in (
+            ([], True), ([], False),
+            ([{"id": "agent-id", "displayName": "agent"}], True),
+            ([{"id": "agent-id", "displayName": "agent"}], False),
+        ):
+            ns = self.extension_namespace(agents)
+            ns.update({
+                "resolve_sql_database": Mock(return_value=("sql-id", "server", "database")),
+                "sql_db_item_name": "sql", "seed_sql_database": Mock(return_value={}), "seed_demo_data": seed_demo_data,
+                "create_graphql_api": Mock(return_value={"id": "graphql-id"}),
+                "graphql_api_name": "graphql", "lakehouse_name": "lakehouse", "lakehouse_id": "lh-id",
+                "resolve_sql_analytics_endpoint_id": Mock(return_value="endpoint"),
+                "get_item_definition": Mock(return_value={"definition": {"parts": []}}),
+                "upsert_part": Mock(return_value=[]), "build_graphql_definition": Mock(return_value={}),
+                "GRAPHQL_DEFINITION_PATH": "graphql", "GRAPHQL_OBJECTS": [],
+                "update_item_definition": Mock(), "extend_data_agent_sql_source": Mock(return_value={
+                    "status": "published", "reason": "SQL readback matches",
+                }),
+                "persist_sql_extension_status": Mock(),
+            })
+            tree = ast.parse(source("011"))
+            start = next(i for i, node in enumerate(tree.body) if assign_to(node, "step_results"))
+            end = next(i for i, node in enumerate(tree.body) if assign_to(node, "persist"))
+            nodes = [node for node in tree.body[start:end] if not isinstance(node, ast.FunctionDef)]
+            exec(compile(ast.Module(body=nodes, type_ignores=[]), "scaffolding", "exec"), ns)
+            self.assertEqual(ns["seed_sql_database"].call_count, int(seed_demo_data))
+            self.assertEqual(ns["step_results"]["sql_seed"]["status"],
+                             "completed" if seed_demo_data else "not_requested")
+            ns["create_graphql_api"].assert_not_called()
+            ns["update_item_definition"].assert_not_called()
+            self.assertNotIn("graphql", ns["step_results"])
+            self.assertNotIn("create_graphql_api", source("011"))
+            succeeds = bool(agents)
+            if succeeds:
+                ns["extend_data_agent_sql_source"].assert_called_once_with("agent-id")
+            else:
+                ns["extend_data_agent_sql_source"].assert_not_called()
+            result = ns["step_results"]["data_agent_sql_source"]
+            self.assertEqual(result["status"], "published" if succeeds else "failed")
+            self.assertEqual(bool(ns["step_errors"]), not succeeds)
+
+    def test_nonseeding_bootstrap_preserves_previous_demo_seed_status(self):
+        tree = ast.parse(source("011"))
+        start = next(i for i, node in enumerate(tree.body) if assign_to(node, "persist"))
+        for seed_demo_data in (True, False):
+            for result in ({"status": "completed", "receipt": {"tables": {}}},
+                           {"status": "failed", "reason": "original seed error"}):
+                with self.subTest(seed=seed_demo_data, status=result["status"]):
+                    ns = {"json": json, "seed_demo_data": seed_demo_data, "provision_shared_store": False,
+                          "step_results": {"sql_seed": result}}
+                    exec(compile(ast.Module(body=tree.body[start:start + 3], type_ignores=[]), "persist", "exec"), ns)
+                    self.assertEqual("operational_sql_seed_status" in ns["persist"], seed_demo_data)
+                    if seed_demo_data:
+                        receipt = json.loads(ns["persist"]["operational_sql_seed_receipt"])
+                        self.assertEqual(receipt, result.get("receipt", result))
+
+    def test_sql_extension_failure_is_persisted_and_reraised(self):
+        tree = ast.parse(source("011"))
+        attempt = next(
+            node for node in tree.body if isinstance(node, ast.Try)
+            and node.finalbody and "resolve_agent_extension_target" in ast.unparse(node)
+        )
+        for failing_call in ("resolve_agent_extension_target", "extend_data_agent_sql_source"):
+            ns = {
+                "resolve_agent_extension_target": Mock(return_value=(
+                    "agent", {"status": "allowed", "reason": ""},
+                )),
+                "extend_data_agent_sql_source": Mock(),
+                "persist_sql_extension_status": Mock(),
+                "step_results": {"data_agent_sql_source": {"status": "failed", "reason": "failure"}},
+                "step_errors": [],
+                "provision_shared_store": False,
+                "json": json,
+            }
+            ns[failing_call].side_effect = PermissionError("forbidden")
+            exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+            terminal = next(node for node in tree.body if isinstance(node, ast.If)
+                            and isinstance(node.test, ast.Name) and node.test.id == "step_errors")
+            with self.assertRaisesRegex(RuntimeError, "Operational setup failed"):
+                exec(compile(ast.Module(body=[terminal], type_ignores=[]), "terminal", "exec"), ns)
+            ns["persist_sql_extension_status"].assert_called_once_with(
+                {"status": "failed", "reason": "forbidden"}
+            )
+
+    def test_extension_auth_errors_surface_without_ontology_lookup(self):
+        ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
+        ns["list_items_of_type"].side_effect = PermissionError("denied")
+        with self.assertRaises(PermissionError):
+            ns["resolve_agent_extension_target"]()
+        ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
+        self.assertEqual(ns["resolve_agent_extension_target"]()[0], "agent-id")
+
+    def test_sql_extension_requires_only_live_agent(self):
+        ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
+        agent_id, policy = ns["resolve_agent_extension_target"]()
+        self.assertEqual((agent_id, policy["status"]), ("agent-id", "allowed"))
+        self.assertEqual(policy, {"status": "allowed", "reason": ""})
+        ns["list_items_of_type"].assert_called_once_with("DataAgent")
+
+    def test_sql_extension_fails_on_unavailable_agent(self):
+        ns = self.extension_namespace(agents=[])
+        with self.assertRaises(RuntimeError):
+            ns["resolve_agent_extension_target"]()
+        ns = self.extension_namespace()
+        ns["data_agent_name"] = ""
+        with self.assertRaisesRegex(RuntimeError, "No Data Agent configured"):
+            ns["resolve_agent_extension_target"]()
+
+    def test_sql_extension_does_not_read_nb09_status_settings(self):
+        ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
+        ns["first_setting"] = Mock(side_effect=AssertionError("must not read NB09 status settings"))
+        self.assertEqual(ns["resolve_agent_extension_target"](),
+                         ("agent-id", {"status": "allowed", "reason": ""}))
+        ns["list_items_of_type"].assert_called_once_with("DataAgent")
+
+    def test_sql_extension_missing_name_fails_before_live_read(self):
+        ns = self.extension_namespace()
+        ns["data_agent_name"] = ""
+        ns["list_items_of_type"].side_effect = AssertionError("must not read without configuration")
+        with self.assertRaisesRegex(RuntimeError, "No Data Agent configured"):
+            ns["resolve_agent_extension_target"]()
+        ns["list_items_of_type"].assert_not_called()
+
+    def test_sql_status_preserves_nb09_result_on_every_outcome(self):
+        for status in ("published", "failed", "skipped"):
+            with self.subTest(status=status):
+                spark = SimpleNamespace(createDataFrame=Mock())
+                delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
+                ns = functions(
+                    "011", "persist_sql_extension_status", spark=spark,
+                    F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings",
+                )
+                with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
+                    ns["persist_sql_extension_status"]({"status": status, "reason": "SQL step result"})
+                written = {row["setting_name"]: row["setting_value"]
+                           for row in spark.createDataFrame.call_args.args[0]}
+                self.assertEqual(written, {
+                    "data_agent_sql_source_status": status,
+                    "data_agent_sql_source_reason": "SQL step result",
+                })
+
+    def test_sql_final_step_completes_without_ontology_runtime_proof(self):
+        tree = ast.parse(source("011"))
+        attempt = next(
+            node for node in tree.body if isinstance(node, ast.Try)
+            and node.finalbody and "resolve_agent_extension_target" in ast.unparse(node)
+        )
+        result = {"status": "published", "reason": "SQL source readback matches"}
+        ns = {
+            "resolve_agent_extension_target": Mock(return_value=(
+                "agent", {"status": "allowed", "reason": ""})),
+            "extend_data_agent_sql_source": Mock(return_value=result),
+            "persist_sql_extension_status": Mock(), "step_results": {}, "step_errors": [], "json": json,
+            "provision_shared_store": False,
+        }
+        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+        self.assertEqual(ns["step_results"]["data_agent_sql_source"], result)
+        ns["persist_sql_extension_status"].assert_called_once_with(result)
+        ns["extend_data_agent_sql_source"].assert_called_once_with("agent")
+        self.assertEqual(ns["step_errors"], [])
+        terminal = next(node for node in tree.body if isinstance(node, ast.If)
+                        and isinstance(node.test, ast.Name) and node.test.id == "step_errors")
+        exec(compile(ast.Module(body=[terminal], type_ignores=[]), "terminal", "exec"), ns)
+        exit_node = next(node for node in tree.body if isinstance(node, ast.Expr)
+                         and "notebookutils.notebook.exit" in ast.unparse(node))
+        ns["notebookutils"] = SimpleNamespace(notebook=SimpleNamespace(exit=Mock()))
+        exec(compile(ast.Module(body=[exit_node], type_ignores=[]), "exit", "exec"), ns)
+        result = json.loads(ns["notebookutils"].notebook.exit.call_args.args[0])
+        self.assertEqual(result["status"], "completed")
+        self.assertFalse(result["agent_ready"])
+
+    def test_failed_shared_store_preparation_does_not_switch_agent_sources(self):
+        attempt = next(node for node in ast.parse(source("011")).body
+                       if isinstance(node, ast.Try) and node.finalbody
+                       and "resolve_agent_extension_target" in ast.unparse(node))
+        ns = {"provision_shared_store": True, "step_errors": [RuntimeError("copy verification failed")],
+              "step_results": {}, "resolve_agent_extension_target": Mock(),
+              "extend_data_agent_sql_source": Mock(), "persist_sql_extension_status": Mock(), "json": json}
+        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+        ns["resolve_agent_extension_target"].assert_not_called()
+        ns["extend_data_agent_sql_source"].assert_not_called()
+        self.assertEqual(ns["step_results"]["data_agent_sql_source"]["status"], "failed")
+
+    def test_sql_status_ignores_legacy_runtime_fields(self):
+        spark = SimpleNamespace(createDataFrame=Mock())
+        delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
+        ns = functions("011", "persist_sql_extension_status", spark=spark,
+                       F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings")
+        with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
+            ns["persist_sql_extension_status"]({
+                "status": "published", "runtime_status": "inconclusive", "reason": "SQL publication only"})
+        written = {row["setting_name"]: row["setting_value"]
+                   for row in spark.createDataFrame.call_args.args[0]}
+        self.assertEqual(written, {
+            "data_agent_sql_source_status": "published",
+            "data_agent_sql_source_reason": "SQL publication only",
+        })
+
+    def test_runtime_failure_status_preserves_published_identity_in_delta(self):
+        spark = SimpleNamespace(createDataFrame=Mock())
+        delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
+        ns = functions("009", "merge_settings_with_retry", "persist_agent_status", spark=spark,
+                       F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings",
+                       time=SimpleNamespace(sleep=Mock()))
+        with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
+            ns["persist_agent_status"](
+                "published", "identity readback verified", publication_status="published",
+                id="agent-id", name="agent", runtime_status="checking")
+            ns["persist_agent_status"](
+                "failed", "unsupported ontology API", runtime_status="failed",
+                runtime_reason="unsupported ontology API", runtime_evidence={"ontology_id": "ontology"})
+            ns["persist_agent_status"]("failed", "Data Agent runtime failed")
+        saved = {}
+        for call in spark.createDataFrame.call_args_list:
+            saved.update({row["setting_name"]: row["setting_value"] for row in call.args[0]})
+        self.assertEqual(saved["data_agent_publication_status"], "published")
+        self.assertEqual(saved["data_agent_id"], "agent-id")
+        self.assertEqual(saved["data_agent_name"], "agent")
+        self.assertEqual(saved["data_agent_deployment_status"], "failed")
+        self.assertEqual(saved["data_agent_runtime_status"], "failed")
+        self.assertEqual(json.loads(saved["data_agent_runtime_evidence"]), {"ontology_id": "ontology"})
+
+    def test_agent_settings_merges_retry_only_delta_concurrency_conflicts(self):
+        for number, expected_delay in (("009", 1.0), ("010", 1.5)):
+            with self.subTest(number=number):
+                execute = Mock(side_effect=[
+                    RuntimeError("[DELTA_CONCURRENT_APPEND] ConcurrentAppendException"),
+                    None,
+                ])
+
+                class Merge:
+                    def alias(self, *_):
+                        return self
+
+                    def merge(self, *_):
+                        return self
+
+                    def whenMatchedUpdateAll(self):
+                        return self
+
+                    def whenNotMatchedInsertAll(self):
+                        return self
+
+                    def execute(self):
+                        return execute()
+
+                delta = SimpleNamespace(
+                    DeltaTable=SimpleNamespace(forName=Mock(return_value=Merge())))
+                spark = SimpleNamespace(
+                    catalog=SimpleNamespace(clearCache=Mock()), sql=Mock())
+                sleep = Mock()
+                ns = functions(
+                    number, "merge_settings_with_retry", spark=spark,
+                    settings_table_name="settings", time=SimpleNamespace(sleep=sleep),
+                )
+                source = SimpleNamespace(alias=Mock(return_value="source"))
+                with patch.dict(
+                    "sys.modules",
+                    {"delta": SimpleNamespace(tables=delta), "delta.tables": delta},
+                ):
+                    ns["merge_settings_with_retry"](source)
+                self.assertEqual(execute.call_count, 2)
+                sleep.assert_called_once_with(expected_delay)
+                spark.catalog.clearCache.assert_called_once()
+                spark.sql.assert_called_once_with("REFRESH TABLE settings")
+
+                execute.reset_mock(side_effect=True)
+                execute.side_effect = ValueError("not a concurrency conflict")
+                sleep.reset_mock()
+                with (
+                    patch.dict(
+                        "sys.modules",
+                        {"delta": SimpleNamespace(tables=delta), "delta.tables": delta},
+                    ),
+                    self.assertRaisesRegex(ValueError, "not a concurrency conflict"),
+                ):
+                    ns["merge_settings_with_retry"](source)
+                sleep.assert_not_called()
+
+    def runtime_namespace(self, result, delegated=True):
+        def response(request_id, value, status=200, headers=None):
+            return Mock(
+                status_code=status, headers=headers or {"Content-Type": "application/json"},
+                json=Mock(return_value={"jsonrpc": "2.0", "id": request_id, "result": value}),
+            )
+
+        claims = {"scp": "DataAgent.Execute.All"} if delegated else {"idtyp": "app"}
+        token = "header." + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode() + ".signature"
+        replies = [
+            response(1, {"protocolVersion": "2025-03-26"},
+                     headers={"Mcp-Session-Id": "session", "Content-Type": "application/json"}),
+            response(None, {}, status=202),
+            response(2, {"tools": [{
+                "name": "DataAgent_agent", "inputSchema": {
+                    "type": "object", "properties": {"userQuestion": {"type": "string"}},
+                    "required": ["userQuestion"],
+                },
+            }]}),
+            response(3, result),
+        ]
+        request = SimpleNamespace(post=Mock(side_effect=replies), RequestException=ConnectionError)
+        ns = functions(
+            "009", "mcp_response_result", "mcp_semantic_error", "probe_data_agent_ontology",
+            "published_agent_sources", "normalized_facility_rows", "facility_rows_from_mcp",
+            "validate_agent_ontology_sources", "require_v2_ontology",
+            re=re, time=time, uuid=uuid, requests=request,
+            FABRIC_API_BASE="https://api.fabric.microsoft.com", workspace_id="ws", data_agent_name="agent",
+            lakehouse_id="lakehouse", first_setting=Mock(return_value="silver_facilities"),
+            get_item_definition=Mock(return_value={"definition": {"parts": [ontology_part("published")]}}),
+            get_ontology_generation=Mock(return_value=2),
+            facility_probe_reference=Mock(return_value=[
+                {"facility_id": "FACILITY_RTI_001", "facility_name": "Sloy Power Station"},
+                {"facility_id": "FACILITY_RTI_002", "facility_name": "Foyers Power Station"},
+                {"facility_id": "FACILITY_RTI_003", "facility_name": "Pitlochry Power Station"},
+            ]),
+            notebookutils=SimpleNamespace(credentials=SimpleNamespace(getToken=Mock(return_value=token))),
+        )
+        return ns, replies
+
+    def test_runtime_probe_rejects_actual_semantic_error_with_iserror_false(self):
+        error = ("Ontology source unavailable: The analyze_ontology tool call failed with "
+                 "The request is invalid. This API version is not supported for the specified Ontology item.")
+        ns, _ = self.runtime_namespace({
+            "isError": False, "content": [{"type": "text", "text": json.dumps({"error": error})}],
+        })
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["reason"], error)
+        self.assertEqual(outcome["evidence"]["ontology_id"], "ontology")
+        self.assertNotIn("Bearer", json.dumps(outcome))
+        self.assertNotIn(".signature", json.dumps(outcome))
+        calls = ns["requests"].post.call_args_list
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[-1].kwargs["json"]["method"], "tools/call")
+        self.assertEqual(calls[-1].kwargs["json"]["params"]["name"], "DataAgent_agent")
+        self.assertIn("Use ONLY the Ontology item ontology", calls[-1].kwargs["json"]["params"]["arguments"]["userQuestion"])
+        self.assertEqual(calls[-1].kwargs["headers"]["Mcp-Session-Id"], "session")
+        self.assertEqual(calls[-1].kwargs["headers"]["MCP-Protocol-Version"], "2025-03-26")
+        ns["notebookutils"].credentials.getToken.assert_called_once_with("pbi")
+
+    def test_runtime_probe_fails_closed_for_unverifiable_answers(self):
+        for result in (
+            {"isError": False, "content": []},
+            {"isError": False, "content": [{"type": "text", "text": "There are 5 facilities."}]},
+            {"isError": False, "content": [{"type": "text", "text": json.dumps({
+                "ontology_id": "ontology", "workspace_id": "ws", "count": 5, "verified": True,
+            })}]},
+            {"structuredContent": {"source": "ontology", "executed": True, "count": 5}},
+        ):
+            with self.subTest(result=result):
+                ns, _ = self.runtime_namespace(result)
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertEqual(outcome["status"], "inconclusive")
+                self.assertTrue(outcome["reason"])
+
+    def test_runtime_probe_has_positive_exact_content_path_without_receipts(self):
+        for shape in ("text", "fenced", "structured", "data_error_word"):
+            with self.subTest(shape=shape):
+                ns, replies = self.runtime_namespace({})
+                expected = ns["facility_probe_reference"].return_value
+                if shape == "data_error_word":
+                    expected[0]["facility_name"] = "Error Creek Station"
+                text = json.dumps(list(reversed(expected)))
+                result = ({"structuredContent": {"facilities": expected}} if shape == "structured" else {
+                    "isError": False, "content": [{
+                        "type": "text", "text": "```json\n" + text + "\n```" if shape == "fenced" else text,
+                    }],
+                })
+                replies[-1].json.return_value["result"] = result
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertEqual(outcome["status"], "verified")
+                self.assertEqual(outcome["evidence"]["expected_facilities"], expected)
+                self.assertEqual(outcome["evidence"]["returned_facilities"], expected)
+                self.assertEqual(outcome["evidence"]["verification"], "ontology_context_facilities_smoke_v1")
+                question = outcome["evidence"]["question"]
+                for row in expected:
+                    self.assertNotIn(row["facility_id"], question)
+                    self.assertNotIn(row["facility_name"], question)
+
+    def test_runtime_evidence_keeps_exact_rows_within_sql_string_readback_limit(self):
+        ns, replies = self.runtime_namespace({})
+        expected = ns["facility_probe_reference"].return_value
+        replies[-1].json.return_value["result"] = {
+            "structuredContent": {"facilities": expected}, "diagnostics": "x" * 20000,
+        }
+        source = {
+            "type": "ontology", "workspaceId": "ws", "artifactId": "ontology",
+            "children": [{"description": "full source schema " * 2000}],
+        }
+        ns["published_agent_sources"] = Mock(return_value={"published/ontology.json": source})
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "verified")
+        encoded = json.dumps(outcome["evidence"])
+        self.assertLess(len(encoded.encode("utf-8")), 8000)
+        readback = json.loads(encoded[:8000])
+        self.assertEqual(readback["expected_facilities"], expected)
+        self.assertEqual(readback["returned_facilities"], expected)
+        self.assertEqual(readback["published_sources"], {"published/ontology.json": {
+            "type": "ontology", "workspaceId": "ws", "artifactId": "ontology",
+        }})
+        self.assertTrue(readback["response_truncated"])
+
+    def test_runtime_probe_rejects_wrong_name_or_missing_rows(self):
+        for actual in (
+            [{"facility_id": "FACILITY_RTI_001", "facility_name": "RTI Demo Hydropower Plant"}],
+            [{"facility_id": "FACILITY_RTI_001", "facility_name": "Sloy Power Station"}],
+        ):
+            ns, _ = self.runtime_namespace({"content": [{"type": "text", "text": json.dumps(actual)}]})
+            outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+            self.assertEqual(outcome["status"], "failed")
+            self.assertIn("do not match", outcome["reason"])
+
+    def test_runtime_probe_accepts_real_csv_attachment_and_generated_file_footer(self):
+        ns, replies = self.runtime_namespace({})
+        expected = ns["facility_probe_reference"].return_value
+        csv_text = "facility_id,facility_name\r\n" + "".join(
+            f"{row['facility_id']},{row['facility_name']}\r\n" for row in expected)
+        replies[-1].json.return_value["result"] = {
+            "isError": False, "content": [
+                {"type": "text", "text": json.dumps(expected)
+                 + "\n\nFile(s) result_0.json were generated as a result of the query."},
+                {"type": "resource", "resource": {"mimeType": "text/csv", "text": csv_text}},
+            ],
+        }
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "verified")
+        self.assertEqual(outcome["evidence"]["returned_facilities"], expected)
+        self.assertIn("Source-native SQL on that associated Lakehouse is allowed", outcome["evidence"]["question"])
+        self.assertIn("Do not use operational SQL", outcome["evidence"]["question"])
+        self.assertIn("native ontology traversal, telemetry and operational SQL are not attested",
+                      outcome["evidence"]["scope"])
+
+    def test_runtime_probe_rejects_invalid_or_conflicting_csv_attachments(self):
+        for attachment, structured in (
+            ("facility_id,facility_id\none,two\n", None),
+            ("facility_id,facility_name\none,two,three\n", None),
+            ("facility_id,facility_name\n", None),
+            ("facility_id,facility_name\none,two\n",
+             [{"facility_id": "different", "facility_name": "Other"}]),
+        ):
+            ns, _ = self.runtime_namespace({
+                "structuredContent": structured,
+                "content": [{"type": "resource", "resource": {"mimeType": "text/csv", "text": attachment}}],
+            })
+            self.assertNotEqual(ns["probe_data_agent_ontology"]("agent-id", "ontology")["status"], "verified")
+
+    def test_healthy_multi_source_rerun_needs_no_cached_proof_and_still_rejects_semantic_errors(self):
+        ns, replies = self.runtime_namespace({})
+        ns["settings"] = {}
+
+        def fresh_setting(name, **_kwargs):
+            if name != "silver_facilities_table":
+                raise AssertionError(f"No cached proof/settings available for {name}")
+            return "silver_facilities"
+
+        ns["first_setting"].side_effect = fresh_setting
+        parts = ns["get_item_definition"].return_value["definition"]["parts"]
+        parts.append(json_part("Files/Config/published/sql/datasource.json", {
+            "type": "sql_database", "artifactId": "sql", "workspaceId": "ws",
+        }))
+        baseline = copy.deepcopy(parts)
+        replies[-1].json.return_value["result"] = {
+            "content": [{"type": "text", "text": json.dumps(ns["facility_probe_reference"].return_value)}]}
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "verified")
+        self.assertIn("functional smoke test", outcome["evidence"]["scope"])
+        self.assertIn("not attested", outcome["evidence"]["scope"])
+        self.assertIn("Use ONLY the Ontology item ontology", outcome["evidence"]["question"])
+        self.assertEqual(parts, baseline)
+        unsupported = ("The request is invalid. This API version is not supported for the specified Ontology item. "
+                       "RAID: 5082e3f9-6b1e-45a5-b675-acfe7d8660e2")
+        replies[-1].json.return_value["result"] = {
+            "isError": False, "content": [{"type": "text", "text": json.dumps({"error": unsupported})}]}
+        ns["requests"].post.side_effect = replies
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["reason"], unsupported)
+        self.assertEqual(parts, baseline)
+
+    def test_facility_reference_reads_configured_lakehouse_not_prompt_constants(self):
+        context = {"defaultLakehouseId": "lh", "defaultLakehouseWorkspaceId": "ws"}
+        spark = SimpleNamespace(read=SimpleNamespace(table=Mock()))
+        rows = [{"facility_id": "live-id", "facility_name": "Live lakehouse name"}]
+        frame = spark.read.table.return_value
+        frame.select.return_value.orderBy.return_value.limit.return_value.collect.return_value = [
+            SimpleNamespace(asDict=lambda: rows[0])]
+        ns = functions("009", "facility_probe_reference", "normalized_facility_rows",
+                       notebookutils=SimpleNamespace(runtime=SimpleNamespace(context=context)),
+                       lakehouse_id="lh", workspace_id="ws", re=re, spark=spark,
+                       first_setting=Mock(return_value="silver_facilities"))
+        self.assertEqual(ns["facility_probe_reference"](), rows)
+        spark.read.table.assert_called_once_with("silver_facilities")
+        frame.select.assert_called_once_with("facility_id", "facility_name")
+        frame.select.return_value.orderBy.return_value.limit.assert_called_once_with(5)
+        context["defaultLakehouseId"] = "wrong-lakehouse"
+        with self.assertRaisesRegex(RuntimeError, "configured Lakehouse"):
+            ns["facility_probe_reference"]()
+
+    def test_runtime_probe_recognizes_error_shapes(self):
+        for result in (
+            {"isError": True, "content": [{"type": "text", "text": "bad"}]},
+            {"content": [{"type": "resource", "resource": {"text": '{"error":"Unavailable"}'}}]},
+            {"structuredContent": {"status": "failed", "message": "bad"}},
+            {"content": [{"type": "text", "text": "```json\n{\"error\":\"Unavailable\"}\n```"}]},
+            {"content": [{"type": "text", "text": "This API version is not supported for this item."}]},
+            {"content": [{"type": "text", "text": '{"error":'}]},
+        ):
+            with self.subTest(result=result):
+                ns, _ = self.runtime_namespace(result)
+                self.assertEqual(ns["probe_data_agent_ontology"]("agent-id", "ontology")["status"], "failed")
+
+    def test_runtime_probe_rejects_app_identity_before_network(self):
+        ns, _ = self.runtime_namespace({}, delegated=False)
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertIn("delegated", outcome["reason"])
+        ns["requests"].post.assert_not_called()
+
+    def test_runtime_probe_transport_failures_do_not_become_ready(self):
+        for failure in ("http", "jsonrpc", "id", "tool", "schema", "pagination"):
+            with self.subTest(failure=failure):
+                ns, replies = self.runtime_namespace({})
+                if failure == "http":
+                    replies[0].raise_for_status.side_effect = ConnectionError("HTTP 403")
+                elif failure == "jsonrpc":
+                    replies[0].json.return_value = {"jsonrpc": "2.0", "id": 1, "error": {"message": "denied"}}
+                elif failure == "id":
+                    replies[0].json.return_value["id"] = 999
+                elif failure == "tool":
+                    replies[2].json.return_value["result"]["tools"][0]["name"] = "unrelated_agent"
+                elif failure == "schema":
+                    replies[2].json.return_value["result"]["tools"][0]["inputSchema"]["required"] = ["other"]
+                else:
+                    replies[2].json.return_value["result"]["nextCursor"] = "more"
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertEqual(outcome["status"], "failed")
+                self.assertTrue(outcome["reason"])
+                self.assertLess(ns["requests"].post.call_count, 4)
+
+    def test_mcp_sse_matches_request_id_and_rejects_duplicate_results(self):
+        ns, _ = self.runtime_namespace({})
+        message = json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"content": []}})
+        response = Mock(
+            status_code=200, headers={"Content-Type": "text/event-stream"},
+            text='data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\ndata: ' + message + "\n\n",
+        )
+        self.assertEqual(ns["mcp_response_result"](response, 3), {"content": []})
+        response.text += "data: " + message + "\n\n"
+        with self.assertRaisesRegex(RuntimeError, "duplicate"):
+            ns["mcp_response_result"](response, 3)
+
+    def test_raw_distributions_match_canonical_cells_and_preserve_metadata(self):
+        for number, name in NAMES.items():
+            raw = json.loads((ROOT / "Raw" / "RTI_Notebooks" / (name + ".ipynb")).read_text(encoding="utf-8"))
+            canonical_cells = []
+            for kind, body in re.findall(
+                r"# (MARKDOWN|CELL|PARAMETERS CELL) \*+\n(.*?)(?=\n# (?:MARKDOWN|CELL|PARAMETERS CELL) \*+|\Z)",
+                source(number), re.S,
+            ):
+                body = body.split("# METADATA ********************")[0].strip("\n")
+                if kind == "MARKDOWN":
+                    body = "\n".join(
+                        line[2:] if line.startswith("# ") else "" if line == "#" else line
+                        for line in body.splitlines()
+                    )
+                canonical_cells.append(body)
+            self.assertEqual(len(raw["cells"]), len(canonical_cells))
+            for cell, expected in zip(raw["cells"], canonical_cells):
+                self.assertEqual("".join(cell["source"]).strip("\n"), expected)
+                if cell["cell_type"] == "code":
+                    ast.parse("".join(cell["source"]))
+            self.assertEqual(raw["metadata"]["language_info"]["name"], "python")
+            if number == "011":
+                self.assertEqual(raw["cells"][1]["metadata"]["tags"], ["parameters"])
+
+
+if __name__ == "__main__":
+    unittest.main()

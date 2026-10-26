@@ -1,5 +1,7 @@
 import { initEmbeddedAuth, ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric'
-import { RayfinClient } from '@microsoft/rayfin-client'
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client'
+import { lakehouseConnectorConfig, type LakehouseConnectors } from './lakehouseConnector'
+import { operationalConnectorConfig, type OperationalConnectors } from './operationalConnector'
 import {
   seedWorkOrders, seedNotifications, seedInspections, seedSpareParts, seedAsset3DModels,
 } from './seedData'
@@ -87,11 +89,13 @@ const projectId = (import.meta.env.VITE_FABRIC_ITEM_ID ?? import.meta.env.VITE_R
 const fabricPortalUrl = (import.meta.env.VITE_FABRIC_PORTAL_URL ?? import.meta.env.VITE_RAYFIN_PORTAL_URL ?? 'https://app.fabric.microsoft.com') as string
 
 const configured = Boolean(apiUrl && publishableKey && workspaceId && projectId)
-const client = configured ? new RayfinClient<HydroSchema>({
+const WORK_ORDERS_CHANGED_EVENT = 'hydro:work-orders-changed'
+const client = configured ? new ConnectorsRayfinClient<HydroSchema, Record<string, never>, LakehouseConnectors & OperationalConnectors>({
   baseUrl: apiUrl!.endsWith('/') ? apiUrl! : `${apiUrl}/`,
   publishableKey: publishableKey!,
   useProxy: false,
   authStorage: true,
+  connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig },
 }) : undefined
 
 function options() {
@@ -108,6 +112,24 @@ function currentUser(): AppUser | null {
 export function isRayfinConfigured() { return configured }
 
 export function isRayfinSignedIn() { return currentUser() !== null }
+
+export function lakehouseConnectionKey(): string {
+  const lakehouseId = import.meta.env.VITE_RAYFIN_LAKEHOUSE_ID as string | undefined
+  const endpointId = import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID as string | undefined
+  if (!configured || !lakehouseId || !endpointId) throw new Error('Lakehouse connector identity is not configured. Run the canonical app deployer.')
+  return `${workspaceId}:${lakehouseId}:${endpointId}:${projectId}:${apiUrl}:${currentUser()?.id ?? 'signed-out'}`
+}
+
+export function connectedLakehouse() {
+  lakehouseConnectionKey()
+  return isRayfinSignedIn() ? client!.connectors.hydrolakehouse : undefined
+}
+
+export function subscribeWorkOrdersChanged(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined
+  window.addEventListener(WORK_ORDERS_CHANGED_EVENT, listener)
+  return () => window.removeEventListener(WORK_ORDERS_CHANGED_EVENT, listener)
+}
 
 export async function initializeRayfin(): Promise<AppUser | null> {
   if (!client) return null
@@ -127,44 +149,64 @@ export async function signInToRayfin(): Promise<AppUser> {
 
 export async function listWorkOrders(): Promise<WorkOrderRecord[]> {
   if (!client) return []
-  return await client.data.WorkOrder.select([
+  return await client.connectors.hydrooperations.WorkOrder.select([
     'id', 'workOrderNumber', 'equipmentId', 'instrumentId', 'opcuaNodeId', 'title',
     'description', 'priority', 'status', 'assignedToOid', 'createdByOid', 'createdAt',
     'dueAt', 'completedAt',
   ]).orderBy({ createdAt: 'desc' }).execute() as WorkOrderRecord[]
 }
 
-export async function createWorkOrder(user: AppUser, equipmentId: string, instrumentId?: string, opcuaNodeId?: string): Promise<WorkOrderRecord> {
+export type CreateWorkOrderInput = {
+  equipmentId: string
+  instrumentId?: string
+  opcuaNodeId?: string
+  title?: string
+  description?: string
+  priority?: 'Low' | 'Medium' | 'High' | 'Critical'
+}
+
+export async function createWorkOrder(
+  user: AppUser,
+  equipmentIdOrInput: string | CreateWorkOrderInput,
+  instrumentId?: string,
+  opcuaNodeId?: string,
+): Promise<WorkOrderRecord> {
   if (!client) throw new Error('Rayfin backend is not configured.')
-  return await client.data.WorkOrder.create({
-    workOrderNumber: `WO-${Date.now().toString().slice(-6)}`,
-    equipmentId,
-    instrumentId,
-    opcuaNodeId,
-    title: `Inspect ${equipmentId}`,
-    description: 'Operator-created inspection from Hydro Operations.',
-    priority: 'High',
+  const input: CreateWorkOrderInput = typeof equipmentIdOrInput === 'string'
+    ? { equipmentId: equipmentIdOrInput, instrumentId, opcuaNodeId }
+    : equipmentIdOrInput
+  const record = await client.connectors.hydrooperations.WorkOrder.create({
+    id: crypto.randomUUID(),
+    workOrderNumber: `WO-${crypto.randomUUID()}`,
+    equipmentId: input.equipmentId,
+    instrumentId: input.instrumentId,
+    opcuaNodeId: input.opcuaNodeId,
+    title: input.title ?? `Inspect ${input.equipmentId}`,
+    description: input.description ?? 'Operator-created inspection from Hydro Operations.',
+    priority: input.priority ?? 'High',
     status: 'Draft',
     createdByOid: user.id,
     createdAt: new Date(),
   }) as WorkOrderRecord
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORK_ORDERS_CHANGED_EVENT))
+  return record
 }
 
 export async function updateWorkOrderStatus(id: string, status: string): Promise<void> {
   if (!client) throw new Error('Rayfin backend is not configured.')
   const patch: { status: string; completedAt?: Date | null } = { status }
   patch.completedAt = ['completed', 'closed', 'done'].includes(status.toLowerCase()) ? new Date() : null
-  await client.data.WorkOrder.update({ id }, patch)
+  await client.connectors.hydrooperations.WorkOrder.update({ id }, patch)
 }
 
 export async function deleteWorkOrder(id: string): Promise<void> {
   if (!client) throw new Error('Rayfin backend is not configured.')
-  await client.data.WorkOrder.delete({ id })
+  await client.connectors.hydrooperations.WorkOrder.delete({ id })
 }
 
 export async function listInspections(): Promise<InspectionRecord[]> {
   if (!client) return []
-  return await client.data.Inspection.select([
+  return await client.connectors.hydrooperations.Inspection.select([
     'id', 'equipmentId', 'opcuaNodeId', 'inspectionType', 'result', 'findings',
     'inspectorOid', 'inspectedAt', 'nextDueAt',
   ]).orderBy({ inspectedAt: 'desc' }).execute() as InspectionRecord[]
@@ -172,7 +214,7 @@ export async function listInspections(): Promise<InspectionRecord[]> {
 
 export async function listSpareParts(): Promise<SparePartRecord[]> {
   if (!client) return []
-  return await client.data.SparePart.select([
+  return await client.connectors.hydrooperations.SparePart.select([
     'id', 'partNumber', 'name', 'category', 'equipmentType', 'quantityOnHand',
     'reorderLevel', 'storageLocation', 'unitCostUsd', 'lastRestockedAt',
   ]).orderBy({ partNumber: 'asc' }).execute() as SparePartRecord[]
@@ -180,7 +222,7 @@ export async function listSpareParts(): Promise<SparePartRecord[]> {
 
 export async function listAsset3DModels(): Promise<Asset3DModelRecord[]> {
   if (!client) return []
-  return await client.data.Asset3DModel.select([
+  return await client.connectors.hydrooperations.Asset3DModel.select([
     'id', 'equipmentId', 'modelName', 'format', 'modelUrl', 'thumbnailUrl',
     'fileSizeMb', 'version', 'updatedByOid', 'updatedAt',
   ]).orderBy({ updatedAt: 'desc' }).execute() as Asset3DModelRecord[]
@@ -188,7 +230,7 @@ export async function listAsset3DModels(): Promise<Asset3DModelRecord[]> {
 
 export async function listMaintenanceNotifications(): Promise<MaintenanceNotificationRecord[]> {
   if (!client) return []
-  return await client.data.MaintenanceNotification.select([
+  return await client.connectors.hydrooperations.MaintenanceNotification.select([
     'id', 'equipmentId', 'opcuaNodeId', 'summary', 'severity', 'status',
     'reportedByOid', 'reportedAt',
   ]).orderBy({ reportedAt: 'desc' }).execute() as MaintenanceNotificationRecord[]
@@ -204,12 +246,13 @@ export async function seedOperationalDataIfEmpty(user: AppUser): Promise<SeedSum
   const oid = user.id
   const summary: SeedSummary[] = []
 
-  const existingWo = await client.data.WorkOrder.select(['id', 'workOrderNumber']).execute() as { id: string; workOrderNumber: string }[]
+  const existingWo = await client.connectors.hydrooperations.WorkOrder.select(['id', 'workOrderNumber']).execute() as { id: string; workOrderNumber: string }[]
   const knownWo = new Set(existingWo.map(w => w.workOrderNumber))
   const missingWo = seedWorkOrders.filter(w => !knownWo.has(w.workOrderNumber))
   if (missingWo.length) {
     for (const w of missingWo) {
-      await client.data.WorkOrder.create({
+      await client.connectors.hydrooperations.WorkOrder.create({
+        id: crypto.randomUUID(),
         workOrderNumber: w.workOrderNumber, equipmentId: w.equipmentId, instrumentId: w.instrumentId,
         opcuaNodeId: w.opcuaNodeId, title: w.title, description: w.description, priority: w.priority,
         status: w.status, assignedToOid: w.assigned ? oid : undefined, createdByOid: oid,
@@ -221,12 +264,13 @@ export async function seedOperationalDataIfEmpty(user: AppUser): Promise<SeedSum
     summary.push({ entity: 'WorkOrder', created: 0, skipped: true })
   }
 
-  const existingNotif = await client.data.MaintenanceNotification.select(['id', 'equipmentId', 'summary']).execute() as { id: string; equipmentId: string; summary: string }[]
+  const existingNotif = await client.connectors.hydrooperations.MaintenanceNotification.select(['id', 'equipmentId', 'summary']).execute() as { id: string; equipmentId: string; summary: string }[]
   const knownNotif = new Set(existingNotif.map(n => `${n.equipmentId}|${n.summary}`))
   const missingNotif = seedNotifications.filter(n => !knownNotif.has(`${n.equipmentId}|${n.summary}`))
   if (missingNotif.length) {
     for (const n of missingNotif) {
-      await client.data.MaintenanceNotification.create({
+      await client.connectors.hydrooperations.MaintenanceNotification.create({
+        id: crypto.randomUUID(),
         equipmentId: n.equipmentId, opcuaNodeId: n.opcuaNodeId, summary: n.summary,
         severity: n.severity, status: n.status, reportedByOid: oid, reportedAt: new Date(n.reportedAt),
       })
@@ -236,10 +280,11 @@ export async function seedOperationalDataIfEmpty(user: AppUser): Promise<SeedSum
     summary.push({ entity: 'MaintenanceNotification', created: 0, skipped: true })
   }
 
-  const existingInsp = await client.data.Inspection.select(['id']).execute() as { id: string }[]
+  const existingInsp = await client.connectors.hydrooperations.Inspection.select(['id']).execute() as { id: string }[]
   if (existingInsp.length === 0) {
     for (const ins of seedInspections) {
-      await client.data.Inspection.create({
+      await client.connectors.hydrooperations.Inspection.create({
+        id: crypto.randomUUID(),
         equipmentId: ins.equipmentId, opcuaNodeId: ins.opcuaNodeId, inspectionType: ins.inspectionType,
         result: ins.result, findings: ins.findings, inspectorOid: oid,
         inspectedAt: new Date(ins.inspectedAt), nextDueAt: ins.nextDueAt ? new Date(ins.nextDueAt) : undefined,
@@ -250,10 +295,11 @@ export async function seedOperationalDataIfEmpty(user: AppUser): Promise<SeedSum
     summary.push({ entity: 'Inspection', created: 0, skipped: true })
   }
 
-  const existingParts = await client.data.SparePart.select(['id']).execute() as { id: string }[]
+  const existingParts = await client.connectors.hydrooperations.SparePart.select(['id']).execute() as { id: string }[]
   if (existingParts.length === 0) {
     for (const p of seedSpareParts) {
-      await client.data.SparePart.create({
+      await client.connectors.hydrooperations.SparePart.create({
+        id: crypto.randomUUID(),
         partNumber: p.partNumber, name: p.name, category: p.category, equipmentType: p.equipmentType,
         quantityOnHand: p.quantityOnHand, reorderLevel: p.reorderLevel, storageLocation: p.storageLocation,
         unitCostUsd: p.unitCostUsd, lastRestockedAt: p.lastRestockedAt ? new Date(p.lastRestockedAt) : undefined,
@@ -266,20 +312,21 @@ export async function seedOperationalDataIfEmpty(user: AppUser): Promise<SeedSum
 
   // Asset3Dmodels are refreshed (not just seeded-if-empty) so redeploys can swap the
   // per-manufacturer GLBs onto rows created by an earlier seed.
-  const existingModels = await client.data.Asset3DModel.select(['id', 'equipmentId', 'modelUrl']).execute() as { id: string; equipmentId: string; modelUrl: string }[]
+  const existingModels = await client.connectors.hydrooperations.Asset3DModel.select(['id', 'equipmentId', 'modelUrl']).execute() as { id: string; equipmentId: string; modelUrl: string }[]
   const modelByEquipment = new Map(existingModels.map(m => [m.equipmentId, m]))
   let modelChanges = 0
   for (const m of seedAsset3DModels) {
     const existing = modelByEquipment.get(m.equipmentId)
     if (!existing) {
-      await client.data.Asset3DModel.create({
+      await client.connectors.hydrooperations.Asset3DModel.create({
+        id: crypto.randomUUID(),
         equipmentId: m.equipmentId, modelName: m.modelName, format: m.format, modelUrl: m.modelUrl,
         thumbnailUrl: m.thumbnailUrl, fileSizeMb: m.fileSizeMb, version: m.version,
         updatedByOid: oid, updatedAt: new Date(m.updatedAt),
       })
       modelChanges++
     } else if (existing.modelUrl !== m.modelUrl) {
-      await client.data.Asset3DModel.update({ id: existing.id }, {
+      await client.connectors.hydrooperations.Asset3DModel.update({ id: existing.id }, {
         modelName: m.modelName, format: m.format, modelUrl: m.modelUrl,
         fileSizeMb: m.fileSizeMb, version: m.version, updatedByOid: oid, updatedAt: new Date(m.updatedAt),
       })

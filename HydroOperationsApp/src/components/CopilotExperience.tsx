@@ -1,14 +1,20 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
+import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
-import { extractSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
+import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
+import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
+import { AgentCrewTrace } from './AgentCrewTrace'
+import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
+import { answerSections, draftAnswerParts, draftDetailParts, operatorNarrative } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
+import { AnswerDashboard } from './AnswerDashboard'
 import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
+import { useExpandedView } from '../ui-shared/hooks/useExpandedView'
 
 // Lazy so three.js / model-viewer only load when the agent actually renders a GLB.
 const AssetModelViewer = lazy(() => import('./AssetModelViewer').then(module => ({ default: module.AssetModelViewer })))
@@ -17,10 +23,14 @@ const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].in
 export type CopilotMessage = {
   role: 'user' | 'agent'
   text: string
+  failed?: boolean
   artifacts?: AgentArtifact[]
   visualizations?: AgentVisualization[]
   models?: Asset3DModelRecord[]
   steps?: AgentStep[]
+  orchestrationEvents?: OrchestrationEvent[]
+  proposals?: WorkOrderProposal[]
+  backendOwned?: boolean
   meta?: { elapsedMs: number; tokens?: number }
 }
 
@@ -29,9 +39,11 @@ type CopilotExperienceProps = {
   busy: boolean
   engine: CopilotEngine
   foundryAvailable: boolean
+  battleEnabled?: boolean
   onSend: (question: string) => void
   onReset: () => void
-  onEngineChange: (engine: CopilotEngine) => void
+  onEngineChange?: (engine: CopilotEngine) => void
+  onBattle?: () => void
 }
 
 const ENGINE_LABELS: Record<CopilotEngine, { name: string; source: string }> = {
@@ -51,14 +63,21 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
     'Chart average power output per station over the last 24 hours.',
     'List the most critical equipment that has an open work order.',
     'Which spare parts are at or below their reorder level?',
+    'Compare Aurora and UKMet rainfall forecasts for each station over the next 24 hours.',
   ],
 }
 
-export function CopilotExperience({ messages, busy, engine, foundryAvailable, onSend, onReset, onEngineChange }: CopilotExperienceProps) {
+export function CopilotExperience({ messages, busy, engine, foundryAvailable, battleEnabled, onSend, onReset, onEngineChange, onBattle }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
+  const [flowExpanded, setFlowExpanded] = useState(false)
+  const [flowWidth, setFlowWidth] = useState(320)
+  const chatView = useExpandedView()
   const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const conversationEvents = messages.flatMap(message => message.orchestrationEvents ?? [])
+  const conversationProposals = messages.flatMap(message => message.proposals ?? [])
+  const currentEventIds = messages[messages.length - 1]?.orchestrationEvents?.map(event => event.id) ?? []
   // Follow new content only while the user is already at the bottom; scrolling up opts out.
   const stickToBottom = useRef(true)
 
@@ -86,10 +105,11 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
 
   return <div className="v2-domain-page v2-copilot-page">
     <section className="v2-page-head"><div><span className="v2-eyebrow">{ENGINE_LABELS[engine].source}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
-    <section className="v2-copilot"><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
+    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
+      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
       <span className="v2-copilot-actions">
-        {foundryAvailable && <span className="v2-engine-toggle" role="group" aria-label="Copilot engine">
-          {(['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
+        {foundryAvailable && (onEngineChange || battleEnabled) && <span className="v2-engine-toggle" role="group" aria-label="Copilot options">
+          {onEngineChange && (['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
             key={option}
             type="button"
             className={option === engine ? 'on' : ''}
@@ -97,29 +117,40 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
             disabled={busy}
             onClick={() => onEngineChange(option)}
           >{ENGINE_LABELS[option].name}</button>)}
+          {battleEnabled && <button
+            type="button"
+            title="Compare Fabric Data Agent and Foundry with the same prompt"
+            disabled={busy}
+            onClick={onBattle}
+          >Battle</button>}
         </span>}
-        <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button>
+        <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+        <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>
+      {conversationEvents.length > 0 && <aside className="v2-conversation-crew" aria-label="Conversation agent flow">
+        {flowExpanded && <label className="v2-flow-resize">Panel width<input aria-label="Agent panel width" type="range" min="280" max="420" step="20" value={flowWidth} onChange={event => setFlowWidth(Number(event.target.value))} /></label>}
+        <AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} expanded={flowExpanded} onExpandedChange={setFlowExpanded} />
+      </aside>}
       <div className="v2-messages" ref={listRef} onScroll={onScroll}>
         {messages.map((message, index) => {
           const last = index === messages.length - 1
           return <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && last}>
             {message.role === 'agent'
-              ? <AgentMessage message={message} streaming={busy && last} />
+              ? <CopilotResponse message={message} streaming={busy && last} showCrew={false} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />
               : <p>{message.text}</p>}
-            {message.meta && <MessageFooter message={message} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />}
-            {message.role === 'agent' && last && !busy && <SuggestionChips text={message.text} onCompose={compose} onSend={send} />}
+            {message.role === 'agent' && last && !busy && !message.failed && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
           </div>
         })}
         {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
       </div>
-      <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
+      <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
+        <button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>
 }
 
-function SuggestionChips({ text, onCompose, onSend }: { text: string; onCompose: (value: string) => void; onSend: (value: string) => void }) {
-  const suggestions = useMemo(() => extractSuggestions(text), [text])
+function SuggestionChips({ message, onCompose, onSend }: { message: CopilotMessage; onCompose: (value: string) => void; onSend: (value: string) => void }) {
+  const suggestions = useMemo(() => relatedSuggestions(message.text, message.proposals?.map(proposal => proposal.equipmentId)), [message.text, message.proposals])
   if (!suggestions.length) return null
   return <div className="v2-suggest-chips">{suggestions.map(suggestion => <span className="v2-suggest-chip" key={suggestion} title={suggestion}>
     <em>{suggestionLabel(suggestion)}</em>
@@ -128,26 +159,74 @@ function SuggestionChips({ text, onCompose, onSend }: { text: string; onCompose:
   </span>)}</div>
 }
 
-function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {
-  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length)
+export const CopilotResponse = memo(function CopilotResponse({ message, streaming, question, showCrew = true }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew?: boolean }) {
+  return <>
+    <AgentMessage message={message} streaming={streaming} question={question} showCrew={showCrew} />
+    {message.meta && <MessageFooter message={message} question={question} />}
+  </>
+})
+
+function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
+  const receiptPrefix = useId()
+  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
   // A running tool already shows its own progress, so only flag the gap where the model itself
   // is working and nothing is being echoed yet.
-  const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
+  const waitingOnModel = streaming && !steps.some(step => step.status === 'running')
+  const draftReady = !streaming && Boolean(message.proposals?.length)
+  const checkedText = message.orchestrationEvents?.some(event => event.trace?.some(entry =>
+    entry.source === 'application' && entry.activity === 'checked-presentation' && !entry.failed)) ?? false
+  const presentedText = message.text && (
+    message.backendOwned ? message.text : stripOptionsMarker(streaming ? '' : operatorNarrative(message.text))
+  )
+  const draftParts = draftReady && presentedText ? draftAnswerParts(presentedText) : undefined
+  const answer = presentedText && (message.failed
+    ? <p className="v2-agent-failure" role="alert">{presentedText}</p>
+    : message.backendOwned
+    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{presentedText}</ReactMarkdown>
+    : <AnswerText text={presentedText} streaming={streaming} />)
+  const draftSummary = draftParts?.summary && (message.backendOwned
+    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{draftParts.summary}</ReactMarkdown>
+    : <AnswerText text={draftParts.summary} streaming={false} />)
+  const draftDetails = draftParts?.details && (message.backendOwned
+    ? <DraftDetails details={draftParts.details} />
+    : <details className="v2-answer-support"><summary>Supporting findings and sources</summary><AnswerText text={draftParts.details} streaming={false} /></details>)
   return <>
-    <CopilotSteps steps={message.steps} />
+    {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
+    {draftReady && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
+    {streaming ? <CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} />
+      : steps.length > 0 && <details className="v2-answer-support"><summary>Execution audit — tool calls and receipts</summary><CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} /></details>}
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
-    {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripOptionsMarker(message.text)}</ReactMarkdown>}
+    {draftReady && draftSummary}
+    {draftReady
+      ? draftDetails
+      : answer}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
-    {message.visualizations?.map((visualization, index) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${index}`} />)}
+    {!streaming && !message.failed && !message.backendOwned && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} checkedText={checkedText} />}
+    {!streaming && !message.failed && message.backendOwned && message.visualizations?.map((spec, index) => <AgentVisualizationView spec={spec} key={index} />)}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
+}
+
+function DraftDetails({ details }: { details: string }) {
+  const { narrative, support } = draftDetailParts(details)
+  return <>
+    {narrative && <ReactMarkdown remarkPlugins={[remarkGfm]}>{narrative}</ReactMarkdown>}
+    {support && <details className="v2-answer-support"><summary>Supporting findings and sources</summary><ReactMarkdown remarkPlugins={[remarkGfm]}>{support}</ReactMarkdown></details>}
+  </>
+}
+
+function AnswerText({ text, streaming }: { text: string; streaming: boolean }) {
+  if (streaming) return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+  return answerSections(text).map((section, index) => section.collapsed
+    ? <details className="v2-answer-support" key={index}><summary>{section.title}</summary><ReactMarkdown remarkPlugins={[remarkGfm]}>{section.markdown.replace(/^#{1,6}\s+.*\n?/, '')}</ReactMarkdown></details>
+    : <ReactMarkdown remarkPlugins={[remarkGfm]} key={index}>{section.markdown}</ReactMarkdown>)
 }
 
 function AgentModel({ model }: { model: Asset3DModelRecord }) {
@@ -175,11 +254,14 @@ function buildTranscript(question: string | undefined, message: CopilotMessage):
   if (question) parts.push(`## Question\n\n${question}`)
   for (const step of message.steps ?? []) {
     const lines = [`### Tool: ${step.tool}${step.detail ? ` — ${step.detail}` : ''}`]
-    lines.push(`${step.error ? `failed: ${step.error}` : step.summary} · ${formatDuration(step.elapsedMs)}`)
+    lines.push(`${step.error ? `failed: ${step.error}` : step.summary} · ${step.timingSource === 'notification' ? 'status received (not server execution time)' : formatDuration(step.elapsedMs)}`)
     if (step.args) lines.push(`Arguments:\n\n${block('json', prettyJson(step.args))}`)
     if (step.query) lines.push(`Query:\n\n${block('kusto', step.query)}`)
     if (step.result) lines.push(`Result:\n\n${block('json', prettyJson(step.result))}`)
     parts.push(lines.join('\n\n'))
+  }
+  if (message.orchestrationEvents?.length) {
+    parts.push(`## Agent flow\n\n${message.orchestrationEvents.map(event => `- ${event.label}: ${event.status} — ${event.detail}`).join('\n')}`)
   }
   if (message.text) parts.push(`## Answer\n\n${stripOptionsMarker(message.text)}`)
   for (const visualization of message.visualizations ?? []) {
@@ -216,16 +298,17 @@ function MessageFooter({ message, question }: { message: CopilotMessage; questio
   </div>
 }
 
-function CopilotSteps({ steps }: { steps?: AgentStep[] }) {
+function CopilotSteps({ steps, receiptPrefix }: { steps?: AgentStep[]; receiptPrefix?: string }) {
   if (!steps?.length) return null
-  return <div className="v2-agent-steps">{steps.map((step, index) => <details className={`v2-agent-step ${step.status}`} key={index}>
+  return <div className="v2-agent-steps">{steps.map((step, index) => <details id={receiptPrefix ? `${receiptPrefix}-source-${index}` : undefined} className={`v2-agent-step ${step.status}`} key={index}>
     <summary>
       <Wrench size={12} />
       <code>{step.tool}</code>
       {step.detail && <em>{step.detail}</em>}
-      <span>{step.status === 'running' ? 'running…' : `${step.error ? 'failed' : step.summary} · ${formatDuration(step.elapsedMs)}`}</span>
+      <span>{step.status === 'running' ? 'running…' : `${step.error ? 'failed' : step.summary}${step.timingSource === 'notification' ? ' · status received' : ` · ${formatDuration(step.elapsedMs)}`}`}</span>
     </summary>
     <div className="v2-agent-step-body">
+      {step.timingSource === 'notification' && <p>Fabric reports lifecycle notifications, not server execution durations. Notifications can arrive together near completion.</p>}
       {step.error && <p className="v2-agent-step-error">{step.error}</p>}
       {step.args && <pre>{prettyJson(step.args)}</pre>}
       {step.query && <pre>{step.query}</pre>}

@@ -1,10 +1,24 @@
 import { PublicClientApplication } from '@azure/msal-browser'
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import type { AgentStep } from './agentSteps'
 import { type AgentAnswer } from './assistantStream'
-import { selectDataAgent } from './artifactDiscovery'
-import { selectGraphModel, selectOntology } from './ontologyArtifactDiscovery'
-import { parseOntologyContract, type OntologyContract, type OntologyDefinition } from './ontologyContract'
-import { parseOntologyGraph, type OntologyGraph } from './ontologyGraph'
+import { invokeVerifiedDataAgent, mapDataAgentName, requireDataAgentEndpoint, selectDataAgent, selectNamedDataAgent } from './artifactDiscovery'
+import { discoverOntology, type OntologyDiscovery } from './ontologyDiscovery'
+import { createOntologyCache, OntologyCacheInvalidatedError } from './ontologyCache'
+import { parseOntologyContract, type OntologyContract } from './ontologyContract'
+import { waitForDefinitionResult } from './ontologyDefinition'
+import type { OntologyGraph } from './ontologyGraph'
+import { parseGraphBinding, queryBoundOntologyGraph } from './ontologyGraphQuery'
+import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
+import { createEntraTokens } from './entraTokens'
+import { applyDataAgentProgress } from './dataAgentProgress'
+import { contextualizeDataAgentQuestion } from './dataAgentConversation'
+import { extractDataAgentVisualizations } from './dataAgentVisualizations'
+import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
+import { connectedLakehouse, lakehouseConnectionKey, signInToRayfin } from './rayfin'
+import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
+  requireLakehouseNumber, requireLakehouseText } from './lakehouseConnector'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 export type { OntologyContract } from './ontologyContract'
@@ -14,14 +28,18 @@ const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
 const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID) as string | undefined
 
-// Artifact ids / URIs are DISCOVERED at runtime from the workspace; only stable display names are configured.
+// Explicit deployment selections take precedence; otherwise discover by name or the legacy defaults.
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
 const weatherPipelineName = '03_Pipe_Weather'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
+const eventhouseId = import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID as string | undefined
+const kqlDatabaseId = import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID as string | undefined
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
-const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
+const configuredEventhouseQueryUri = import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined
+const configuredKqlDatabase = import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined
+const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME as string | undefined
 
 const msal = clientId && tenantId ? new PublicClientApplication({
   auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}`, redirectUri: location.origin },
@@ -29,105 +47,96 @@ const msal = clientId && tenantId ? new PublicClientApplication({
 }) : undefined
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
+const POWER_BI_ITEM_EXECUTE_SCOPE = 'https://analysis.windows.net/powerbi/api/Item.Execute.All'
+const HOSTED_RUN_TOKEN_LIFETIME_MS = 12 * 60_000
 // A named scope, not `.default`: `.default` only returns permissions already statically configured
 // for the exact cluster audience, so Entra escalates to "Need admin approval" instead of consenting.
 const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/user_impersonation`
 // Item.Read.All authorizes the per-item detail GET (e.g. Get Eventhouse → queryServiceUri);
 // Workspace.Read.All only covers List Items, and Item.Execute.All only covers running jobs.
-const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
+const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All']
+const FABRIC_JOB_SCOPES = [...FABRIC_SCOPES, 'https://api.fabric.microsoft.com/Item.Execute.All']
+const DATA_AGENT_SCOPES = [...FABRIC_SCOPES, 'https://api.fabric.microsoft.com/DataAgent.Execute.All']
 // Fabric Embed needs its own delegated scope. Named, not `.default`, for the same reason as kustoScope.
 const EMBED_SCOPES = ['https://api.fabric.microsoft.com/Fabric.Embed', 'https://api.fabric.microsoft.com/Item.Read.All']
 // Azure AI Foundry data plane. Named scope again, not `.default` — the caller needs the
-// `Cognitive Services OpenAI User` role on the Foundry resource for the token to be authorized.
-const FOUNDRY_SCOPES = ['https://cognitiveservices.azure.com/user_impersonation']
+// `Foundry User` role on the project for agent execution.
+const FOUNDRY_AGENT_SCOPES = ['https://ai.azure.com/user_impersonation']
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
-let initialized = false
+let initialization: Promise<void> | undefined
+const entraTokens = msal && tenantId ? createEntraTokens(msal, ensureInit, tenantId) : undefined
 
 /** Initialize MSAL and process any redirect returning from Entra. */
 export async function initAuth(): Promise<void> {
   if (!msal) return
-  await msal.initialize()
-  try {
-    await msal.handleRedirectPromise()
-  } catch (error) {
-    console.warn('Entra redirect handling failed.', error)
-  }
-  initialized = true
+  await ensureInit()
 }
 
 async function ensureInit() {
   if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
-  if (initialized) return
-  await msal.initialize()
-  try { await msal.handleRedirectPromise() } catch (error) { console.warn('Entra redirect handling failed.', error) }
-  initialized = true
+  if (!initialization) {
+    const current = (async () => {
+      await msal.initialize()
+      const response = await msal.handleRedirectPromise()
+      if (response?.account) msal.setActiveAccount(response.account)
+    })()
+    initialization = current
+    void current.catch(() => { if (initialization === current) initialization = undefined })
+  }
+  await initialization
 }
 
 /** Acquire a token silently. Returns null when interactive sign-in/consent is required. */
-async function silentToken(scopes: string[], forceRefresh = false): Promise<string | null> {
-  await ensureInit()
-  const account = msal!.getAllAccounts()[0]
-  if (!account) return null
-  try {
-    return (await msal!.acquireTokenSilent({ account, scopes, forceRefresh })).accessToken
-  } catch (error) {
-    console.warn('Silent token acquisition failed; interactive consent required.', error)
-    return null
-  }
+async function silentToken(scopes: string[], forceRefresh = false, minimumLifetimeMs = 0): Promise<string | null> {
+  if (!entraTokens) throw new Error('Microsoft Entra client configuration is missing.')
+  return entraTokens.silent(scopes, forceRefresh, minimumLifetimeMs)
 }
 
 /** Acquire a token interactively via popup (redirects are blocked inside the Fabric iframe).
  *  Must be invoked from a user gesture. */
 async function popupToken(scopes: string[]): Promise<string> {
-  await ensureInit()
-  const account = msal!.getAllAccounts()[0]
-  const result = await msal!.acquireTokenPopup({ scopes, account: account ?? undefined })
-  return result.accessToken
+  if (!entraTokens) throw new Error('Microsoft Entra client configuration is missing.')
+  return entraTokens.popup(scopes)
 }
 
-/** A Fabric REST token (read + execute). Silent first, popup only when interactive is allowed. */
-async function fabricToken(interactive: boolean): Promise<string | null> {
-  const silent = await silentToken(FABRIC_SCOPES)
+/** Fabric discovery/read token. Job execution explicitly requests its additional scope. */
+async function fabricToken(interactive: boolean, scopes = FABRIC_SCOPES): Promise<string | null> {
+  const silent = await silentToken(scopes)
   if (silent) return silent
   if (!interactive) return null
-  try {
-    return await popupToken(FABRIC_SCOPES)
-  } catch (error) {
-    console.warn('Fabric permission consent did not complete.', error)
-    throw new Error('Fabric permission consent is required before this action can run. Complete the consent popup and try again.', { cause: error })
-  }
+  return popupToken(scopes)
 }
 
 // ---- Workspace artifact discovery (resolve ids/URIs by display name, never hardcode) ----
 type WorkspaceItem = { id: string; type: string; displayName: string; folderId?: string }
-type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string; kqlDashboardId?: string; ontologyId?: string; ontologyName?: string; graphModelId?: string; graphModelName?: string }
+type ResolvedConfig = OntologyDiscovery & { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; dataAgentUrl?: string; dataAgentId?: string; kqlDashboardId?: string }
 let configCache: ResolvedConfig | null = null
 let configPromise: Promise<ResolvedConfig | null> | undefined
+let configRevision = 0
 
 function requireWorkspaceId(): string {
   if (!workspaceId) throw new Error('Fabric workspace configuration is missing. Rebuild the app with Rayfin environment injection.')
   return workspaceId
 }
 
-/** Last-known-good values injected at build time; used only when live discovery is unavailable. */
+/** Deployment-verified selections and endpoints used before slower live workspace discovery. */
 function envConfig(): ResolvedConfig {
   return {
     pipelineId: import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_ID as string | undefined,
     postseedNotebookId: import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_ID as string | undefined,
-    eventhouseQueryUri: import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined,
-    kqlDatabase: import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined,
-    graphqlUrl: graphqlUrlOverride,
+    eventhouseQueryUri: configuredEventhouseQueryUri,
+    kqlDatabase: configuredKqlDatabase,
     kqlDashboardId: import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_ID as string | undefined,
   }
 }
 
-async function listItems(token: string): Promise<WorkspaceItem[]> {
+async function listItems(token: string, signal?: AbortSignal): Promise<WorkspaceItem[]> {
   const items: WorkspaceItem[] = []
   let nextUrl: string | undefined = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items`
   while (nextUrl) {
-    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` }, signal })
     if (!res.ok) throw new Error(`Workspace listing failed (${res.status}).`)
     const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string; continuationToken?: string }
     items.push(...(page.value ?? []))
@@ -143,32 +152,36 @@ async function listItems(token: string): Promise<WorkspaceItem[]> {
  *  Discovered values are cached for the session so no id can go stale. */
 async function ensureConfig(interactive: boolean, forceRefresh = false): Promise<ResolvedConfig | null> {
   if (forceRefresh) {
-    configCache = null
-    configPromise = undefined
+    clearWorkspaceConfigCache()
   }
   if (configCache) return configCache
-  if (configPromise) return configPromise
-  configPromise = discoverConfig(interactive)
+  const revision = configRevision
+  const promise = configPromise ?? discoverConfig(interactive, revision)
+  configPromise = promise
   try {
-    return await configPromise
+    const config = await promise
+    return revision === configRevision ? config : ensureConfig(interactive)
   } finally {
-    configPromise = undefined
+    if (configPromise === promise) configPromise = undefined
   }
 }
 
-async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | null> {
+async function discoverConfig(interactive: boolean, revision: number): Promise<ResolvedConfig | null> {
   const env = envConfig()
   const token = await fabricToken(interactive)
   if (!token) {
     // Not signed in / no discovery consent — use env fallback when it carries anything usable.
-    return (env.eventhouseQueryUri || env.pipelineId || env.graphqlUrl || env.postseedNotebookId) ? env : null
+    return (env.eventhouseQueryUri || env.pipelineId || env.postseedNotebookId) ? env : null
   }
   try {
     const items = await listItems(token)
     const find = (type: string, name: string) => items.find(i => i.type === type && i.displayName === name)
     const pipeline = find('DataPipeline', pipelineName)
     const notebook = find('Notebook', postseedNotebookName)
-    const eh = find('Eventhouse', eventhouseName) ?? items.find(i => i.type === 'Eventhouse')
+    const eh = eventhouseId
+      ? items.find(i => i.type === 'Eventhouse' && i.id === eventhouseId)
+      : find('Eventhouse', eventhouseName) ?? items.find(i => i.type === 'Eventhouse')
+    if (eventhouseId && !eh) throw new Error('The configured Eventhouse was not found in this workspace. Refresh deployment configuration.')
     let eventhouseQueryUri: string | undefined
     let kqlDatabase: string | undefined
     if (eh) {
@@ -176,67 +189,56 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
       if (res.ok) {
         const props = ((await res.json()) as { properties?: { queryServiceUri?: string; databasesItemIds?: string[] } }).properties
         eventhouseQueryUri = props?.queryServiceUri
-        const dbId = props?.databasesItemIds?.[0]
-        kqlDatabase = items.find(i => i.id === dbId)?.displayName ?? eh.displayName
+        const databaseIds = props?.databasesItemIds ?? []
+        const database = kqlDatabaseId || env.kqlDatabase
+          ? items.find(i => i.type === 'KQLDatabase' && databaseIds.includes(i.id)
+            && (kqlDatabaseId ? i.id === kqlDatabaseId : i.displayName === env.kqlDatabase))
+          : items.find(i => i.id === databaseIds[0])
+        if ((kqlDatabaseId || env.kqlDatabase) && !database) {
+          throw new Error('The configured KQL database does not belong to the selected Eventhouse. Refresh deployment configuration.')
+        }
+        kqlDatabase = database?.displayName ?? eh.displayName
       } else {
         // 401/403 here usually means the token lacks Item.Read.All / Eventhouse.Read.All.
         console.warn(`Get Eventhouse failed (${res.status}) — telemetry query URI unresolved.`, (await res.text()).slice(0, 300))
       }
     }
-    // Fabric doesn't expose a GraphQL item's endpoint, but api.fabric.microsoft.com serves
-    // queries directly at this deterministic path — no per-capacity cluster host or env override needed.
-    const gql = items.find(i => i.type === 'GraphQLApi')
-    const graphqlUrl = gql
-      ? `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/graphqlapis/${gql.id}/graphql`
-      : undefined
-    // Published Data Agents are invoked through Fabric's MCP endpoint. The retired Assistants
-    // endpoint can route or execute agent tools differently from the Fabric Data Agent UI.
-    const da = selectDataAgent(items)
+    // Published Data Agents use Fabric's official MCP-over-Streamable-HTTP endpoint.
+    const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
+    const semantic = await discoverOntology(items, configuredOntologyName, {
+      metadata: async id => {
+        const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!response.ok) throw new Error(`Ontology metadata request failed (${response.status}). Check Fabric item read access and refresh.`)
+        return response.json() as Promise<{ properties?: { generation?: number } }>
+      },
+      definition: async id => {
+        const signal = AbortSignal.timeout(30_000)
+        const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${id}/getDefinition`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, signal,
+        })
+        return waitForDefinitionResult(response, token, signal)
+      },
+    })
+    const da = semantic.ontologyGeneration === 2 && !semantic.ontologyError ? selectDataAgent(items) : undefined
     const dataAgentUrl = da
       ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${da.id}/agent`
       : undefined
-    const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
-    const ontology = selectOntology(items, configuredOntologyName)
-    let graphModel = selectGraphModel(items, [], new Map())
-    if (ontology && !graphModel) {
-      const definitionResponse = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${ontology.id}/getDefinition`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const definition = await waitForDefinitionResult(definitionResponse, token)
-      const contract = parseOntologyContract(ontology.id, ontology.displayName, definition)
-      const graphModels = items.filter(item => item.type === 'GraphModel')
-      const labelsByGraphModelId = new Map<string, Set<string>>()
-      await Promise.all(graphModels.map(async candidate => {
-        try {
-          const rows = await executeGraphQuery(candidate.id, token, 'MATCH (n) RETURN to_json_string(n) AS `node` LIMIT 100')
-          const sample = parseOntologyGraph(candidate.id, candidate.displayName, rows, [])
-          labelsByGraphModelId.set(candidate.id, new Set(sample.nodes.flatMap(node => node.labels)))
-        } catch (error) {
-          console.warn(`Graph Model ${candidate.displayName} could not be sampled during discovery.`, error)
-        }
-      }))
-      graphModel = selectGraphModel(items, contract.entityTypes.map(entity => entity.name), labelsByGraphModelId)
-    }
-    if (!ontology && items.some(item => item.type === 'Ontology')) console.warn('Ontology discovery is ambiguous. Configure an exact VITE_RAYFIN_ONTOLOGY_NAME or keep one Ontology in the app workspace.')
-    if (ontology && !graphModel && items.some(item => item.type === 'GraphModel')) console.warn(`No unique Graph Model structurally matches Ontology ${ontology.displayName}.`)
+    if (revision !== configRevision) return null
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
       postseedNotebookId: notebook?.id ?? env.postseedNotebookId,
       eventhouseQueryUri: eventhouseQueryUri ?? env.eventhouseQueryUri,
       kqlDatabase: kqlDatabase ?? env.kqlDatabase,
-      graphqlUrl: graphqlUrl ?? env.graphqlUrl,
       dataAgentUrl,
+      dataAgentId: da?.id,
       kqlDashboardId: dashboard?.id ?? env.kqlDashboardId,
-      ontologyId: ontology?.id,
-      ontologyName: ontology?.displayName,
-      graphModelId: graphModel?.id,
-      graphModelName: graphModel?.displayName,
+      ...semantic,
     }
     return configCache
   } catch (error) {
+    if (revision !== configRevision) return null
     console.warn('Workspace discovery failed; using configured fallback values.', error)
-    return env
+    return { ...env, ontologyError: error instanceof Error ? error.message : 'Workspace discovery failed. Sign in and refresh.' }
   }
 }
 
@@ -269,20 +271,40 @@ export async function fabricEmbedToken(interactive: boolean, requested?: string[
   return popupToken(scopes)
 }
 
-/** A token for the Azure AI Foundry data plane. Silent first; popup only when interactive is allowed. */
-export async function foundryToken(interactive: boolean): Promise<string | null> {
-  // Consent may have been granted after this page loaded. Bypass MSAL's cached token so the
-  // first Foundry turn immediately observes the new grant instead of requiring a hard refresh.
-  const silent = await silentToken(FOUNDRY_SCOPES, true)
+export async function foundryAgentToken(interactive: boolean): Promise<string | null> {
+  const silent = await silentToken(FOUNDRY_AGENT_SCOPES)
   if (silent) return silent
   if (!interactive) return null
-  return popupToken(FOUNDRY_SCOPES)
+  return popupToken(FOUNDRY_AGENT_SCOPES)
+}
+
+export async function hostedSourceTokens() {
+  const config = await ensureConfig(false)
+  const cluster = configuredEventhouseQueryUri ?? config?.eventhouseQueryUri
+  if (!cluster) throw new Error('The hosted source requires the authoritative Eventhouse endpoint.')
+  // A hosted run can remain active for ten minutes, so never submit a lease that could expire during it. Cached
+  // leases with enough remaining life are reused; only near-expiry ones pay an Entra round trip.
+  const [fabric, foundry, graphql, kusto] = await Promise.all([
+    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken([kustoScope(cluster)], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+  ])
+  if (!fabric || !foundry || !graphql || !kusto) {
+    throw new Error('Renew Fabric, Foundry, STID and telemetry access through the existing sign-in/connection controls.')
+  }
+  return { fabric, foundry, graphql, kusto }
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
 export function clearWorkspaceConfigCache() {
+  configRevision++
   configCache = null
   configPromise = undefined
+  invalidateDataAgentVerification()
+  invalidateDataAgentMcpSession()
+  dataAgentMcpTool = undefined
+  dataAgentUserQuestions = []
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -293,24 +315,46 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 type JobInstance = { id?: string; status?: JobStatus; startTimeUtc?: string; failureReason?: { message?: string } }
 const ACTIVE_STATUSES: JobStatus[] = ['NotStarted', 'InProgress']
+function jobStartUtc(value: string): string {
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`
+  if (!Number.isFinite(Date.parse(normalized))) throw new Error('Fabric returned an invalid job start time.')
+  return new Date(normalized).toISOString()
+}
 
-/** Newest job instance started at/after `sinceIso` — used when the 202 Location header is not CORS-exposed. */
+/** Read all job-history pages before deciding whether a new run is safe. */
+async function jobInstances(token: string, itemId: string): Promise<JobInstance[]> {
+  const path = `/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`
+  const base = `https://api.fabric.microsoft.com${path}`
+  let url: string | undefined = base
+  const seen = new Set<string>()
+  const items: JobInstance[] = []
+  while (url) {
+    const parsed = new URL(url, base)
+    if (parsed.origin !== 'https://api.fabric.microsoft.com' || parsed.pathname !== path
+      || parsed.username || parsed.password || parsed.hash || seen.has(parsed.href) || seen.size >= 100) {
+      throw new Error('Fabric returned an invalid job-history continuation; no new job was started.')
+    }
+    seen.add(parsed.href)
+    const res = await fetch(parsed.href, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) throw new Error(`Cannot read Fabric job history (${res.status}); no new job was started.`)
+    const page = await res.json() as { value?: JobInstance[]; continuationUri?: string; continuationToken?: string }
+    if (!Array.isArray(page.value)) throw new Error('Fabric job history did not return an instance list.')
+    items.push(...page.value)
+    url = page.continuationUri ?? (page.continuationToken ? `${base}?continuationToken=${encodeURIComponent(page.continuationToken)}` : undefined)
+  }
+  return items
+}
+
 async function latestInstance(token: string, itemId: string, sinceIso: string): Promise<JobInstance | undefined> {
-  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return undefined
-  const list = ((await res.json()) as { value?: JobInstance[] }).value ?? []
-  return list
-    .filter(i => !i.startTimeUtc || i.startTimeUtc >= sinceIso)
+  return (await jobInstances(token, itemId))
+    .filter(i => !i.startTimeUtc || jobStartUtc(i.startTimeUtc) >= sinceIso)
     .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))[0]
 }
 
 /** Newest still-running (NotStarted/InProgress) instance for an item, so callers can reattach
  *  instead of starting a duplicate run after a refresh or repeated clicks. */
 async function activeInstance(token: string, itemId: string): Promise<JobInstance | undefined> {
-  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return undefined
-  const list = ((await res.json()) as { value?: JobInstance[] }).value ?? []
-  return list
+  return (await jobInstances(token, itemId))
     .filter(i => i.status && ACTIVE_STATUSES.includes(i.status))
     .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))[0]
 }
@@ -324,6 +368,8 @@ async function runJob(
     stopAt?: JobStatus[]
     timeoutMs?: number
     reuseActive?: boolean
+    pipelineParameters?: Record<string, string | number | boolean>
+    onReuseActive?: (startedAt?: string) => void
     parameters?: Array<{
       name: string
       value: string | number | boolean
@@ -331,14 +377,19 @@ async function runJob(
     }>
   },
 ): Promise<JobStatus> {
-  const token = await fabricToken(true)
+  const token = await fabricToken(true, FABRIC_JOB_SCOPES)
   if (!token) throw new Error('Fabric sign-in is required.')
   let startedAt = new Date(Date.now() - 5000).toISOString()
   let location: string | null = null
+  let pollDelayMs = 4000
   // Reattach to an already-running instance instead of starting a duplicate (survives refresh / repeat clicks).
   const active = opts?.reuseActive ? await activeInstance(token, itemId) : undefined
-  if (active?.startTimeUtc) {
-    startedAt = new Date(Date.parse(active.startTimeUtc) - 5000).toISOString()
+  if (active) {
+    const activeStarted = active.startTimeUtc ? jobStartUtc(active.startTimeUtc) : undefined
+    opts?.onReuseActive?.(activeStarted)
+    if (active.id) location = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances/${active.id}`
+    if (activeStarted) startedAt = new Date(Date.parse(activeStarted) - 5000).toISOString()
+    if (!location && !activeStarted) throw new Error('A Fabric job is active but its identity cannot be resolved; no duplicate was started.')
     if (active.status) onStatus?.(active.status)
   } else {
     const isNotebookRun = jobType === 'RunNotebook'
@@ -348,7 +399,7 @@ async function runJob(
 
     const requestBody = isNotebookRun && opts?.parameters?.length
       ? JSON.stringify({ parameters: opts.parameters })
-      : undefined
+      : opts?.pipelineParameters ? JSON.stringify({ executionData: { parameters: opts.pipelineParameters } }) : undefined
 
     const trigger = await fetch(triggerUrl, {
       method: 'POST',
@@ -362,25 +413,45 @@ async function runJob(
       const detail = await trigger.text().catch(() => '')
       throw new Error(`Job start failed (${trigger.status})${detail ? `: ${detail.slice(0, 500)}` : '.'}`)
     }
-    location = trigger.headers.get('Location')
+    const retryAfter = Number(trigger.headers.get('Retry-After'))
+    if (Number.isFinite(retryAfter) && retryAfter > 0) pollDelayMs = Math.max(pollDelayMs, retryAfter * 1000)
+    const candidate = trigger.headers.get('Location')
+    if (candidate) {
+      const parsed = new URL(candidate, 'https://api.fabric.microsoft.com')
+      const prefix = `/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances/`
+      if (parsed.origin === 'https://api.fabric.microsoft.com' && !parsed.username && !parsed.password
+        && !parsed.search && !parsed.hash && parsed.pathname.startsWith(prefix)
+        && /^[0-9a-f-]{36}$/i.test(parsed.pathname.slice(prefix.length))) location = parsed.href
+    }
   }
   const stopAt = opts?.stopAt ?? TERMINAL_STATUSES
   const deadline = Date.now() + (opts?.timeoutMs ?? 10 * 60_000)
-  let last: JobStatus = 'NotStarted'
+  let last: JobStatus = active?.status ?? 'NotStarted'
+  let readFailures = 0
   onStatus?.(last)
   while (Date.now() < deadline) {
-    await delay(4000)
+    await delay(pollDelayMs)
+    pollDelayMs = 4000
+    const pollToken = await fabricToken(false)
+    if (!pollToken) throw new Error('Fabric sign-in expired while monitoring the job. The cloud run is not cancelled; sign in and resume monitoring.')
     let status: JobStatus | undefined
     let failure: string | undefined
     try {
       if (location) {
-        const res = await fetch(location, { headers: { Authorization: `Bearer ${token}` } })
-        if (res.ok) { const body = await res.json() as JobInstance; status = body.status; failure = body.failureReason?.message }
+        const res = await fetch(location, { headers: { Authorization: `Bearer ${pollToken}` } })
+        if (!res.ok) throw new Error(`Fabric job status could not be read (${res.status}).`)
+        const body = await res.json() as JobInstance
+        status = body.status; failure = body.failureReason?.message
       } else {
-        const inst = await latestInstance(token, itemId, startedAt)
+        const inst = await latestInstance(pollToken, itemId, startedAt)
         status = inst?.status; failure = inst?.failureReason?.message
       }
-    } catch { continue }
+      readFailures = 0
+    } catch (error) {
+      console.warn('Fabric job monitoring read failed.', error)
+      if (++readFailures >= 3) throw new Error('Fabric job monitoring was interrupted. The cloud run is not cancelled; reconnect to resume progress.', { cause: error })
+      continue
+    }
     if (!status) continue
     if (status !== last) { last = status; onStatus?.(status) }
     if (status === 'Failed') throw new Error(failure || 'Fabric job failed.')
@@ -390,20 +461,35 @@ async function runJob(
 }
 
 /** Re-attach to the newest instance of an already-triggered job — used to resume progress after a page reload. */
-async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: JobProgress, opts?: { stopAt?: JobStatus[]; timeoutMs?: number }): Promise<JobStatus> {
+async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: JobProgress, opts?: { stopAt?: JobStatus[]; timeoutMs?: number; instanceId?: string }): Promise<JobStatus> {
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
   const stopAt = opts?.stopAt ?? TERMINAL_STATUSES
   const deadline = Date.now() + (opts?.timeoutMs ?? 10 * 60_000)
   let last: JobStatus = 'NotStarted'
+  let readFailures = 0
   onStatus?.(last)
   while (Date.now() < deadline) {
+    const pollToken = await fabricToken(false)
+    if (!pollToken) throw new Error('Fabric sign-in expired while monitoring the job. The cloud run is not cancelled; sign in and resume monitoring.')
     let status: JobStatus | undefined
     let failure: string | undefined
     try {
-      const inst = await latestInstance(token, itemId, sinceIso)
+      let inst: JobInstance | undefined
+      if (opts?.instanceId) {
+        const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances/${opts.instanceId}`, {
+          headers: { Authorization: `Bearer ${pollToken}` },
+        })
+        if (!response.ok) throw new Error(`Fabric job status could not be read (${response.status}).`)
+        inst = await response.json() as JobInstance
+      } else inst = await latestInstance(pollToken, itemId, sinceIso)
       status = inst?.status; failure = inst?.failureReason?.message
-    } catch { await delay(4000); continue }
+      readFailures = 0
+    } catch (error) {
+      console.warn('Fabric job monitoring read failed.', error)
+      if (++readFailures >= 3) throw new Error('Fabric job monitoring was interrupted. The cloud run is not cancelled; reconnect to resume progress.', { cause: error })
+      await delay(4000); continue
+    }
     if (status) {
       if (status !== last) { last = status; onStatus?.(status) }
       if (status === 'Failed') throw new Error(failure || 'Fabric job failed.')
@@ -416,16 +502,26 @@ async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: J
 
 /** Sign in / consent for a resource using a popup; the caller then retries its query. */
 export async function beginInteractiveConnect(target: ConnectTarget) {
-  if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
-  const config = await ensureConfig(true)
   if (target === 'stid') {
-    if (!config?.graphqlUrl) throw new Error('No GraphQL API found in the workspace. Publish the STID GraphQL API (run RTI_011) and try again.')
-    await popupToken([GRAPHQL_SCOPE])
-  } else if (target === 'telemetry') {
-    if (!config?.eventhouseQueryUri) throw new Error('No Eventhouse found in the workspace.')
-    await popupToken([kustoScope(config.eventhouseQueryUri)])
+    lakehouseConnectionKey()
+    await signInToRayfin()
+    return
   }
-  // 'stream' needs only the Fabric token already acquired by ensureConfig.
+  if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
+  const knownConfig = configCache ?? envConfig()
+  if (target === 'telemetry') {
+    if (knownConfig.eventhouseQueryUri) {
+      await popupToken([kustoScope(knownConfig.eventhouseQueryUri)])
+      return
+    }
+  }
+
+  const config = await ensureConfig(true)
+  if (target === 'telemetry') {
+    if (!config?.eventhouseQueryUri) throw new Error('No Eventhouse found in the workspace.')
+    throw new Error('Fabric access is connected. Click Connect telemetry again to authorize the Eventhouse.')
+  }
+  // 'stream' needs only the Fabric token acquired by workspace discovery.
 }
 
 export type Facility = {
@@ -473,104 +569,129 @@ export type System = {
 }
 
 const ONTOLOGY_CONTRACT_TTL_MS = 15 * 60_000
-let ontologyContractCache: { ontologyId: string; expiresAt: number; value: OntologyContract } | null = null
-let ontologyContractPromise: Promise<OntologyContract | null> | undefined
-let ontologyGraphCache: { graphModelId: string; expiresAt: number; value: OntologyGraph } | null = null
-let ontologyGraphPromise: Promise<OntologyGraph | null> | undefined
+const ontologyContractCache = createOntologyCache<OntologyContract>(ONTOLOGY_CONTRACT_TTL_MS)
+const ontologyGraphCache = createOntologyCache<OntologyGraph>(5 * 60_000)
+const configuredGraphBindingValue = import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined
 
-async function waitForDefinitionResult(response: Response, token: string): Promise<OntologyDefinition> {
-  if (response.status === 200) return await response.json() as OntologyDefinition
-  if (response.status !== 202) throw new Error(`Ontology definition request failed (${response.status}).`)
-  const operationUrl = response.headers.get('Location') ?? response.headers.get('Operation-Location')
-  if (!operationUrl) throw new Error('Ontology definition operation did not return a location.')
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const statusResponse = await fetch(operationUrl, { headers: { Authorization: `Bearer ${token}` } })
-    if (!statusResponse.ok) throw new Error(`Ontology definition operation failed (${statusResponse.status}).`)
-    const status = await statusResponse.json() as { status?: string }
-    if (/failed|cancelled/i.test(status.status ?? '')) throw new Error(`Ontology definition operation ${status.status}.`)
-    if (/succeeded|completed/i.test(status.status ?? '')) {
-      const resultResponse = await fetch(`${operationUrl.replace(/\/$/, '')}/result`, { headers: { Authorization: `Bearer ${token}` } })
-      if (!resultResponse.ok) throw new Error(`Ontology definition result failed (${resultResponse.status}).`)
-      return await resultResponse.json() as OntologyDefinition
+async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Promise<T>): Promise<T> {
+  for (;;) {
+    const config = await ensureConfig(false)
+    const revision = configRevision
+    try {
+      const result = await load(config)
+      if (revision === configRevision) return result
+    } catch (error) {
+      if (revision === configRevision && !(error instanceof OntologyCacheInvalidatedError)) throw error
     }
-    await new Promise(resolve => setTimeout(resolve, 500))
   }
-  throw new Error('Ontology definition operation timed out.')
+}
+
+async function readBoundOntologyContract(ontologyId: string, displayName: string, force: boolean): Promise<OntologyContract | null> {
+  return ontologyContractCache.read(`${requireWorkspaceId()}:${ontologyId}`, force, async () => {
+    const token = await fabricToken(false)
+    if (!token) throw new Error('Sign in with Fabric item read access to refresh the Ontology definition.')
+    const signal = AbortSignal.timeout(30_000)
+    const headers = { Authorization: `Bearer ${token}` }
+    const metadataResponse = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${ontologyId}`, {
+      headers, signal,
+    })
+    if (!metadataResponse.ok) throw new Error(`Live ontology generation verification failed (${metadataResponse.status}).`)
+    const metadata = await metadataResponse.json() as { properties?: { generation?: unknown } }
+    requireV2Generation(metadata.properties?.generation)
+    const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${ontologyId}/getDefinition`, {
+      method: 'POST', headers, signal,
+    })
+    const definition = await waitForDefinitionResult(response, token, signal)
+    return parseOntologyContract(ontologyId, displayName, definition, metadata.properties?.generation)
+  })
 }
 
 export async function queryOntologyContract(force = false): Promise<OntologyContract | null> {
-  const config = await ensureConfig(false)
-  if (!config?.ontologyId) return null
-  if (!force && ontologyContractCache?.ontologyId === config.ontologyId && ontologyContractCache.expiresAt > Date.now()) {
-    return ontologyContractCache.value
+  if (configuredGraphBindingValue?.trim()) {
+    const binding = parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId())
+    return readBoundOntologyContract(binding.ontologyId, configuredOntologyName ?? 'Fabric Ontology', force)
   }
-  if (ontologyContractPromise) return ontologyContractPromise
-  ontologyContractPromise = (async () => {
-    const token = await fabricToken(false)
-    if (!token) return null
-    const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}/getDefinition`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+  return withCurrentConfig(async config => {
+    if (config?.ontologyError) {
+      ontologyContractCache.clear()
+      configCache = null
+      throw new Error(config.ontologyError)
+    }
+    if (!config?.ontologyId) { ontologyContractCache.clear(); throw new Error('Sign in and select a verified Ontology v2 before loading governed topology.') }
+    if (!force && config.ontologyContract && config.ontologyReadAt !== undefined
+      && Date.now() - config.ontologyReadAt < ONTOLOGY_CONTRACT_TTL_MS) return config.ontologyContract
+    config.ontologyContract = undefined
+    config.ontologyReadAt = undefined
+    return ontologyContractCache.read(`${requireWorkspaceId()}:${config.ontologyId}`, force, async () => {
+      const token = await fabricToken(false)
+      if (!token) throw new Error('Sign in with Fabric item read access to refresh the Ontology definition.')
+      const signal = AbortSignal.timeout(30_000)
+      const metadataResponse = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}`, {
+        headers: { Authorization: `Bearer ${token}` }, signal,
+      })
+      if (!metadataResponse.ok) throw new Error(`Live ontology generation verification failed (${metadataResponse.status}).`)
+      const metadata = await metadataResponse.json() as { properties?: { generation?: unknown } }
+      requireV2Generation(metadata.properties?.generation)
+      const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}/getDefinition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }, signal,
+      })
+      const definition = await waitForDefinitionResult(response, token, signal)
+      const contract = parseOntologyContract(config.ontologyId!, config.ontologyName ?? 'Fabric Ontology', definition, metadata.properties?.generation)
+      config.ontologyContract = contract
+      config.ontologyReadAt = Date.now()
+      return contract
     })
-    const definition = await waitForDefinitionResult(response, token)
-    const contract = parseOntologyContract(config.ontologyId, config.ontologyName ?? 'Fabric Ontology', definition)
-    ontologyContractCache = { ontologyId: config.ontologyId, expiresAt: Date.now() + ONTOLOGY_CONTRACT_TTL_MS, value: contract }
-    return contract
-  })()
-  try { return await ontologyContractPromise }
-  finally { ontologyContractPromise = undefined }
-}
-
-type GraphQueryResponse = {
-  status?: { code?: string; description?: string }
-  result?: { kind?: string; data?: Array<Record<string, unknown>> }
-}
-
-async function executeGraphQuery(graphModelId: string, token: string, query: string): Promise<Array<Record<string, unknown>>> {
-  const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/GraphModels/${graphModelId}/executeQuery?preview=true`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ query }),
   })
-  if (!response.ok) throw new Error(`Ontology graph query failed (${response.status}).`)
-  const payload = await response.json() as GraphQueryResponse
-  if (payload.status?.code && !/^0[0-3]/.test(payload.status.code)) throw new Error(payload.status.description ?? `Ontology graph query failed (${payload.status.code}).`)
-  return payload.result?.kind === 'TABLE' ? payload.result.data ?? [] : []
+}
+
+async function readBoundOntologyGraph(binding: ReturnType<typeof parseGraphBinding>, force: boolean): Promise<OntologyGraph | null> {
+  const ontology = await queryOntologyContract(force)
+  if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) {
+    throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
+  }
+  return ontologyGraphCache.read(JSON.stringify([binding, ontology]), force, async () => {
+    const token = await fabricToken(false)
+    if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
+    const request = (url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      headers.set('Authorization', `Bearer ${token}`)
+      return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
+    }
+    return queryBoundOntologyGraph(binding, ontology, request)
+  })
 }
 
 export async function queryOntologyGraph(force = false): Promise<OntologyGraph | null> {
-  const config = await ensureConfig(false)
-  if (!config?.graphModelId) return null
-  if (!force && ontologyGraphCache?.graphModelId === config.graphModelId && ontologyGraphCache.expiresAt > Date.now()) return ontologyGraphCache.value
-  if (ontologyGraphPromise) return ontologyGraphPromise
-  ontologyGraphPromise = (async () => {
-    const token = await fabricToken(false)
-    if (!token) return null
-    const [nodeRows, edgeRows] = await Promise.all([
-      executeGraphQuery(config.graphModelId!, token, 'MATCH (n) RETURN to_json_string(n) AS `node` LIMIT 2000'),
-      executeGraphQuery(config.graphModelId!, token, 'MATCH (source)-[`relationship`]->(target) RETURN to_json_string(source) AS `source`, to_json_string(`relationship`) AS `relationship`, to_json_string(target) AS `target` LIMIT 4000'),
-    ])
-    const graph = parseOntologyGraph(config.graphModelId!, config.graphModelName ?? 'Ontology Graph Model', nodeRows, edgeRows)
-    ontologyGraphCache = { graphModelId: config.graphModelId!, expiresAt: Date.now() + ONTOLOGY_CONTRACT_TTL_MS, value: graph }
-    return graph
-  })()
-  try { return await ontologyGraphPromise }
-  finally { ontologyGraphPromise = undefined }
-}
-
-// Fabric API for GraphQL exposes each Lakehouse table under its own name; app-side keys are
-// pinned via GraphQL aliases so the client stays stable regardless of table naming.
-type StidPayload = {
-  data?: {
-    facilities?: { items?: Facility[] }
-    systems?: { items?: System[] }
-    equipment?: { items?: Equipment[] }
-    instruments?: { items?: Instrument[] }
+  if (configuredGraphBindingValue?.trim()) {
+    return readBoundOntologyGraph(parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId()), force)
   }
-  errors?: Array<{ message?: string }>
+  return withCurrentConfig(async config => {
+    if (config?.ontologyError) throw new Error(config.ontologyError)
+    if (!config?.ontologyId) throw new Error('Sign in and select an Ontology v2 before querying its graph.')
+    const binding = parseGraphBinding(
+      import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined,
+      requireWorkspaceId(), config.ontologyId,
+    )
+    const ontology = await queryOntologyContract()
+    if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
+    return ontologyGraphCache.read(JSON.stringify([binding, ontology]), force, async () => {
+      const token = await fabricToken(false)
+      if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
+      const request = (url: string, init?: RequestInit) => {
+        const headers = new Headers(init?.headers)
+        headers.set('Authorization', `Bearer ${token}`)
+        return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
+      }
+      return queryBoundOntologyGraph(binding, ontology, request)
+    })
+  })
 }
 
-export type StidData = { facilities: Facility[]; systems: System[]; equipment: Equipment[]; instruments: Instrument[] }
+export type StidData = {
+  facilities: Facility[]; systems: System[]; equipment: Equipment[]; instruments: Instrument[]
+  inventoryComplete: boolean
+}
 
 export type WeatherLocation = {
   location_id: string
@@ -629,91 +750,100 @@ export type WeatherData = {
   forecasts: WeatherForecast[]
 }
 
-type WeatherPayload = {
-  data?: {
-    locations?: { items?: WeatherLocation[] }
-    areas?: { items?: WeatherArea[] }
-    variables?: { items?: WeatherVariable[] }
-    observations?: { items?: WeatherObservation[] }
-    forecasts?: { items?: WeatherForecast[] }
-  }
-  errors?: Array<{ message?: string }>
+const WEATHER_DATA_CACHE_TTL_MS = 5 * 60_000
+let weatherDataCache: { key: string; expiresAt: number; value: WeatherData } | undefined
+let weatherDataPromise: { key: string; promise: Promise<WeatherData> } | undefined
+
+export function isStidConfigured() {
+  return Boolean(import.meta.env.VITE_RAYFIN_API_URL && import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID)
 }
 
-export function isStidConfigured() { return Boolean(msal) }
-
 export async function queryStid(): Promise<StidData | null> {
-  const config = await ensureConfig(false)
-  if (!config?.graphqlUrl) return null
-  const token = await silentToken([GRAPHQL_SCOPE])
-  if (!token) return null
-  // Aliases map to the real Lakehouse tables exposed by the
-  // GraphQL API. Fabric auto-pluralizes the root field, so the equipment table is `silver_equipments`.
-  const coreQuery = `facilities: silver_facilities(first: 20) { items { facility_id facility_name type country lat lon commissioned_date } }
-    equipment: silver_equipments(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
-    instruments: silver_instruments(first: 500) { items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }`
-  const execute = async (query: string) => {
-    const response = await fetch(config.graphqlUrl!, {
-      method: 'POST', cache: 'no-store',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    })
-    const text = await response.text()
-    if (!response.ok) {
-      console.error('STID GraphQL request failed.', response.status, text.slice(0, 500))
-      throw new Error(`STID query failed (${response.status}).`)
-    }
-    return JSON.parse(text) as StidPayload
-  }
-  let payload = await execute(`query HydroStid { systems: silver_systems(first: 50) { items { system_id facility_id system_name oag_rds_system_code } } ${coreQuery} }`)
-  if (payload.errors?.some(error => /silver_systems/i.test(error.message ?? ''))) {
-    console.warn('The GraphQL definition does not expose silver_systems; rerun RTI_011 to publish the Ontology systems binding.')
-    payload = await execute(`query HydroStidLegacy { ${coreQuery} }`)
-  }
-  if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
-  const equipment = payload.data?.equipment?.items ?? []
-  const systems = payload.data?.systems?.items ?? Array.from(new Map(equipment.map(asset => [asset.system_id, {
-    system_id: asset.system_id, facility_id: asset.facility_id, system_name: asset.system_id,
-  }])).values())
+  const key = lakehouseConnectionKey()
+  const source = connectedLakehouse()
+  if (!source) return null
+  const columns = lakehouseConnectorConfig.entities
+  const [facilities, systems, equipment, instruments] = await Promise.all([
+    collectLakehousePages(cursor => source.SilverFacilities.select([...columns.SilverFacilities]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.SilverSystems.select([...columns.SilverSystems]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.SilverEquipment.select([...columns.SilverEquipment]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.SilverInstruments.select([...columns.SilverInstruments]).first(500).after(cursor).executePaginated()),
+  ])
+  if (lakehouseConnectionKey() !== key) throw new Error('Lakehouse connector identity changed during the STID read.')
   return {
-    facilities: payload.data?.facilities?.items ?? [],
-    systems,
-    equipment,
-    instruments: payload.data?.instruments?.items ?? [],
+    facilities: facilities.map(row => ({ ...row,
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id'),
+      facility_name: requireLakehouseText(row.facility_name, 'facility_name') })),
+    systems: systems.map(row => ({ ...row, system_id: requireLakehouseText(row.system_id, 'system_id'),
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id') })),
+    equipment: equipment.map(row => ({ ...row,
+      equipment_id: requireLakehouseText(row.equipment_id, 'equipment_id'),
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id'),
+      system_id: requireLakehouseText(row.system_id, 'system_id'),
+      install_date: row.install_date ? lakehouseTimestamp(row.install_date, 'install_date') : undefined })),
+    instruments: instruments.map(row => ({ ...row,
+      opcua_node_id: requireLakehouseText(row.opcua_node_id, 'opcua_node_id'),
+      instrument_id: requireLakehouseText(row.instrument_id, 'instrument_id'),
+      equipment_id: requireLakehouseText(row.equipment_id, 'equipment_id'),
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id'),
+      system_id: requireLakehouseText(row.system_id, 'system_id') })),
+    inventoryComplete: true,
   }
 }
 
 export async function queryWeatherData(forceRefresh = false): Promise<WeatherData | null> {
-  const config = await ensureConfig(forceRefresh, forceRefresh)
-  if (!config?.graphqlUrl) return null
-  const token = await silentToken([GRAPHQL_SCOPE], forceRefresh) ?? (forceRefresh ? await popupToken([GRAPHQL_SCOPE]) : null)
-  if (!token) return null
-  // The serving tables hold only the newest issue, pivoted one row per valid time, so the
-  // whole page is a few hundred rows instead of the long tables' unbounded issue history.
-  const values = 'precipitation temperature pressure relative_humidity dew_point solar_radiation wind_speed wind_gust wind_direction'
-  const query = `query HydroWeather {
-    locations: weather_locations(first: 100000) { items { location_id location_name latitude longitude elevation_m } }
-    areas: weather_areas(first: 100000) { items { area_id area_name geometry_geojson crs metadata_json } }
-    variables: weather_variables(first: 100000) { items { variable_id canonical_unit } }
-    observations: weather_latest_observations(first: 100000) { items { source_id location_id observed_at_utc ${values} } }
-    forecasts: weather_latest_forecasts(first: 100000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
-  }`
-  const response = await fetch(config.graphqlUrl, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
-  })
-  const text = await response.text()
-  if (!response.ok) throw new Error(`Weather query failed (${response.status}).`)
-  const payload = JSON.parse(text) as WeatherPayload
-  if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
-  return {
-    locations: payload.data?.locations?.items ?? [],
-    areas: payload.data?.areas?.items ?? [],
-    variables: payload.data?.variables?.items ?? [],
-    observations: payload.data?.observations?.items ?? [],
-    forecasts: payload.data?.forecasts?.items ?? [],
+  const key = lakehouseConnectionKey()
+  const source = connectedLakehouse()
+  if (!source) {
+    weatherDataCache = undefined
+    weatherDataPromise = undefined
+    return null
   }
+  if (forceRefresh) weatherDataCache = undefined
+  if (!forceRefresh && weatherDataCache?.key === key && weatherDataCache.expiresAt > Date.now()) {
+    return weatherDataCache.value
+  }
+  if (!forceRefresh && weatherDataPromise?.key === key) return weatherDataPromise.promise
+  const promise = (async () => {
+  const columns = lakehouseConnectorConfig.entities
+  const [locations, areas, variables, observations, forecasts] = await Promise.all([
+    collectLakehousePages(cursor => source.WeatherLocations.select([...columns.WeatherLocations]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherAreas.select([...columns.WeatherAreas]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherVariables.select([...columns.WeatherVariables]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherLatestObservations.select([...columns.WeatherLatestObservations]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherLatestForecasts.select([...columns.WeatherLatestForecasts]).first(500).after(cursor).executePaginated()),
+  ])
+  const value: WeatherData = {
+    locations: locations.map(row => ({ ...row, location_id: requireLakehouseText(row.location_id, 'location_id'),
+      location_name: requireLakehouseText(row.location_name, 'location_name'),
+      latitude: requireLakehouseNumber(row.latitude, 'latitude'), longitude: requireLakehouseNumber(row.longitude, 'longitude') })),
+    areas: areas.map(row => ({ ...row, area_id: requireLakehouseText(row.area_id, 'area_id'),
+      area_name: requireLakehouseText(row.area_name, 'area_name'), geometry_geojson: requireLakehouseText(row.geometry_geojson, 'geometry_geojson'),
+      crs: requireLakehouseText(row.crs, 'crs') })),
+    variables: variables.map(row => ({ ...row, variable_id: requireLakehouseText(row.variable_id, 'variable_id'),
+      canonical_unit: requireLakehouseText(row.canonical_unit, 'canonical_unit') })),
+    observations: observations.map(row => ({ ...row, source_id: requireLakehouseText(row.source_id, 'source_id'),
+      location_id: requireLakehouseText(row.location_id, 'location_id'), observed_at_utc: lakehouseTimestamp(row.observed_at_utc, 'observed_at_utc') })),
+    forecasts: forecasts.map(row => {
+      if (row.target_kind !== 'location' && row.target_kind !== 'area') throw new Error('Lakehouse forecast target_kind is invalid.')
+      return { ...row, source_id: requireLakehouseText(row.source_id, 'source_id'),
+        target_kind: row.target_kind, target_id: requireLakehouseText(row.target_id, 'target_id'),
+        reference_time_utc: lakehouseTimestamp(row.reference_time_utc, 'reference_time_utc'),
+        valid_time_utc: lakehouseTimestamp(row.valid_time_utc, 'valid_time_utc'),
+        lead_hours: requireLakehouseNumber(row.lead_hours, 'lead_hours') }
+    }),
+  }
+  if (lakehouseConnectionKey() !== key) throw new Error('Lakehouse connector identity changed during the weather read.')
+  weatherDataCache = { key, expiresAt: Date.now() + WEATHER_DATA_CACHE_TTL_MS, value }
+  return value
+  })().catch(error => {
+    weatherDataCache = undefined
+    throw error
+  }).finally(() => {
+    if (weatherDataPromise?.promise === promise) weatherDataPromise = undefined
+  })
+  weatherDataPromise = { key, promise }
+  return promise
 }
 
 export async function startStreamingPipeline(onStatus?: JobProgress) {
@@ -778,7 +908,7 @@ export async function resumeWeatherNotebooks(onStatus: JobProgress | undefined, 
   return runWeatherSequence(onStatus, sinceIso)
 }
 
-/** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),
+/** Run the RTI_011 post-seed notebook (seed shared SQL + Data Agent SQL source),
  *  polling to completion so the caller can show progress. Rediscovers new items on success. */
 export const runPostSeedNotebook = createSingleFlight(async (onStatus?: JobProgress): Promise<JobStatus> => {
   const postseedNotebookId = await resolvePostseedNotebookId()
@@ -791,16 +921,9 @@ export const runPostSeedNotebook = createSingleFlight(async (onStatus?: JobProgr
       // RTI_011 writes shared Delta tables. Reattach to any active instance rather than
       // starting a competing run, even if that run originated outside this browser tab.
       reuseActive: true,
-      parameters: [
-        {
-          name: 'sql_db_item_name',
-          value: 'hydro-operations-ui',
-          type: 'Text',
-        },
-      ],
     },
   )
-  // The notebook publishes new items (GraphQL API, Data Agent source) — force a fresh discovery.
+  // Refresh the Data Agent source publication after the explicit seed operation.
   if (status === 'Completed') clearWorkspaceConfigCache()
   return status
 })
@@ -813,15 +936,6 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
   return status
 }
 
-// MCP intentionally has no server-side conversation threads. Keep a bounded transcript locally
-// and include it only after the first turn; a new conversation still sends the question unchanged.
-type DataAgentTurn = { question: string; answer: string }
-const dataAgentConversation: DataAgentTurn[] = []
-
-export function resetDataAgentConversation() {
-  dataAgentConversation.length = 0
-}
-
 type McpContent = {
   type: string
   text?: string
@@ -830,40 +944,244 @@ type McpContent = {
   resource?: { text?: string; blob?: string; mimeType?: string; uri?: string }
 }
 
-function dataAgentQuestion(question: string): string {
-  if (!dataAgentConversation.length) return question
-  const transcript = dataAgentConversation
-    .slice(-4)
-    .map(turn => `User: ${turn.question}\nAssistant: ${turn.answer}`)
-    .join('\n\n')
-    .slice(-12_000)
-  return `Use this recent conversation only to resolve follow-up references. Re-query the live data when needed.\n\n${transcript}\n\nUser's latest question: ${question}`
+type DataAgentMcpSession = {
+  endpoint: string
+  token: string
+  client: Client
+  toolName: string
+  questionArgument: string
+}
+let dataAgentMcpSession: DataAgentMcpSession | undefined
+let dataAgentMcpSessionPromise: Promise<DataAgentMcpSession> | undefined
+type DataAgentMcpTool = Pick<DataAgentMcpSession, 'endpoint' | 'toolName' | 'questionArgument'>
+let dataAgentMcpTool: DataAgentMcpTool | undefined
+let dataAgentUserQuestions: string[] = []
+type DataAgentVerification = { key: string }
+let dataAgentVerification: DataAgentVerification | undefined
+let dataAgentVerificationPromise: { key: string; value: Promise<void> } | undefined
+
+export function resetDataAgentConversation() {
+  dataAgentUserQuestions = []
 }
 
-export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
+function invalidateDataAgentMcpSession() {
+  const session = dataAgentMcpSession
+  dataAgentMcpSession = undefined
+  dataAgentMcpSessionPromise = undefined
+  if (session) void session.client.close().catch(() => undefined)
+}
+
+function isDisconnectedDataAgentMcpError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /not connected|connection (?:is )?closed|transport (?:is )?closed|failed to fetch|network error|socket hang up|econnreset|connection reset|terminated/i.test(message)
+}
+
+function invalidateDataAgentVerification() {
+  dataAgentVerification = undefined
+  dataAgentVerificationPromise = undefined
+}
+
+async function verifyDataAgentSource(dataAgentId: string, ontologyId: string, generation: unknown, token: string): Promise<void> {
+  const key = `${requireWorkspaceId()}:${dataAgentId}:${ontologyId}:${String(generation)}`
+  if (dataAgentVerification?.key === key) return
+  if (dataAgentVerificationPromise?.key === key) {
+    return dataAgentVerificationPromise.value
+  }
+  const value = invokeVerifiedDataAgent(
+    { generation, workspaceId: requireWorkspaceId(), ontologyId },
+    async () => {
+      const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/dataAgents/${dataAgentId}/getDefinition`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token },
+      })
+      return waitForDefinitionResult(response, token)
+    },
+    async () => undefined,
+  ).then(() => {
+    dataAgentVerification = { key }
+  })
+  dataAgentVerificationPromise = { key, value }
+  try {
+    await value
+  } finally {
+    if (dataAgentVerificationPromise?.value === value) dataAgentVerificationPromise = undefined
+  }
+}
+
+export async function askDataAgent(question: string, onProgress?: (text: string) => void, onSteps?: (steps: AgentStep[]) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
-  const endpoint = config?.dataAgentUrl
-  if (!endpoint) return { text: 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.' }
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  const endpoint = requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
+  if (!config?.ontologyId || !config.dataAgentId) throw new Error('Data Agent source identity is unavailable. Refresh Ontology v2 discovery before asking the agent.')
+  const token = await fabricToken(true, DATA_AGENT_SCOPES)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  const verification = verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token)
+  try {
+    await Promise.all([verification, getDataAgentMcpSession(endpoint, token)])
+  } catch (error) {
+    invalidateDataAgentMcpSession()
+    throw error
+  }
+
+  const contextualizedQuestion = contextualizeDataAgentQuestion(question, dataAgentUserQuestions)
+  const answer = await callDataAgentMcp(endpoint, token, `${contextualizedQuestion}\n\nCurrent UTC time: ${new Date().toISOString()}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`, onProgress, onSteps)
+  dataAgentUserQuestions.push(question)
+  if (dataAgentUserQuestions.length > 4) dataAgentUserQuestions = dataAgentUserQuestions.slice(-4)
+  const visualizations = extractDataAgentVisualizations(answer.text, question)
+  return visualizations.length ? { ...answer, visualizations } : answer
+}
+
+export async function verifyDataAgentForFoundry(): Promise<void> {
+  const config = await ensureConfig(true)
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
+  if (!config?.ontologyId || !config.dataAgentId) throw new Error('Verified Data Agent source identity is unavailable.')
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
-  const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
-    import('@modelcontextprotocol/sdk/client/index.js'),
-    import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
-  ])
-  const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
-  const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
-    requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() } },
+  await verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token)
+}
+
+export async function verifyOntologyForFoundry(): Promise<void> {
+  const config = await ensureConfig(true)
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  if (!config?.ontologyId) throw new Error('Selected Ontology identity is unavailable.')
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}`, {
+    headers: { Authorization: `Bearer ${token}` },
   })
+  if (!response.ok) throw new Error(`Live ontology generation verification failed (${response.status}).`)
+  const metadata = await response.json() as { properties?: { generation?: unknown } }
+  requireV2Generation(metadata.properties?.generation)
+}
+
+export async function warmDataAgentMcp(): Promise<void> {
+  const config = await ensureConfig(false)
+  if (!config || config.ontologyError || !config.dataAgentUrl || !config.dataAgentId || !config.ontologyId) return
+  const endpoint = requireDataAgentEndpoint(config.dataAgentUrl, config.ontologyGeneration)
+  const token = await fabricToken(false, DATA_AGENT_SCOPES)
+  if (!token) return
   try {
-    await client.connect(transport)
-    const tool = (await client.listTools()).tools[0]
-    if (!tool) throw new Error('The published Data Agent exposes no MCP tool.')
-    const questionArgument = Object.keys(tool.inputSchema?.properties ?? {})[0]
-    if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
-    const result = await client.callTool({
-      name: tool.name,
-      arguments: { [questionArgument]: dataAgentQuestion(question) },
-    }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 })
+    await Promise.all([
+      verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token),
+      getDataAgentMcpSession(endpoint, token),
+    ])
+  } catch (error) {
+    invalidateDataAgentMcpSession()
+    throw error
+  }
+}
+
+async function getDataAgentMcpSession(endpoint: string, token: string): Promise<DataAgentMcpSession> {
+  if (dataAgentMcpSession?.endpoint === endpoint && dataAgentMcpSession.token === token) return dataAgentMcpSession
+  if (dataAgentMcpSession && (dataAgentMcpSession.endpoint !== endpoint || dataAgentMcpSession.token !== token)) {
+    invalidateDataAgentMcpSession()
+  }
+  if (!dataAgentMcpSessionPromise) {
+    dataAgentMcpSessionPromise = (async () => {
+      const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
+        import('@modelcontextprotocol/sdk/client/index.js'),
+        import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+      ])
+      const client = new Client({ name: 'hydro-operations-app', version: __APP_VERSION__ })
+      const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+        requestInit: { headers: { Authorization: 'Bearer ' + token, ActivityId: crypto.randomUUID() } },
+      })
+      try {
+        await client.connect(transport)
+        let tool = dataAgentMcpTool?.endpoint === endpoint ? dataAgentMcpTool : undefined
+        if (!tool) {
+          const discovered = (await client.listTools()).tools[0]
+          if (!discovered) throw new Error('The published Data Agent exposes no MCP tool.')
+          const questionArgument = Object.keys(discovered.inputSchema?.properties ?? {})[0]
+          if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
+          tool = { endpoint, toolName: discovered.name, questionArgument }
+          dataAgentMcpTool = tool
+        }
+        const session = { endpoint, token, client, toolName: tool.toolName, questionArgument: tool.questionArgument }
+        client.onclose = () => {
+          if (dataAgentMcpSession === session) {
+            dataAgentMcpSession = undefined
+          }
+        }
+        return session
+      } catch (error) {
+        await client.close().catch(() => undefined)
+        throw error
+      }
+    })()
+  }
+  const pending = dataAgentMcpSessionPromise
+  try {
+    const session = await pending
+    if (dataAgentMcpSessionPromise !== pending) {
+      await session.client.close().catch(() => undefined)
+      return getDataAgentMcpSession(endpoint, token)
+    }
+    dataAgentMcpSession = session
+    return session
+  } finally {
+    if (dataAgentMcpSessionPromise === pending) dataAgentMcpSessionPromise = undefined
+  }
+}
+
+export async function askMapDataAgent(question: string, signal: AbortSignal, onProgress?: (text: string) => void): Promise<AgentAnswer> {
+  signal.throwIfAborted()
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required for map chat.')
+  const agent = selectNamedDataAgent(await listItems(token, signal), mapDataAgentName(eventhouseName, configuredMapAgentName))
+  const endpoint = `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${agent.id}/agent`
+  return callDataAgentMcp(endpoint, token, question, onProgress, undefined, true, signal)
+}
+
+export async function ensureMapChatConnection(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  const config = await ensureConfig(true)
+  signal.throwIfAborted()
+  if (!config?.eventhouseQueryUri) throw new Error('No map Eventhouse was found in this workspace.')
+  const scopes = [kustoScope(config.eventhouseQueryUri)]
+  if (!await silentToken(scopes)) {
+    signal.throwIfAborted()
+    await popupToken(scopes)
+  }
+  signal.throwIfAborted()
+}
+
+async function callDataAgentMcp(
+  endpoint: string,
+  token: string,
+  question: string,
+  onProgress?: (text: string) => void,
+  onSteps?: (steps: AgentStep[]) => void,
+  reconnectOnDisconnect = true,
+  signal?: AbortSignal,
+): Promise<AgentAnswer> {
+  signal?.throwIfAborted()
+  const session = await getDataAgentMcpSession(endpoint, token)
+  signal?.throwIfAborted()
+  const startedAt = Date.now()
+  const steps: AgentStep[] = [{
+    tool: session.toolName,
+    status: 'running',
+    detail: 'Published Fabric Data Agent MCP tool',
+    summary: 'running...',
+    elapsedMs: 0,
+  }]
+  const publishSteps = () => onSteps?.(steps.map(step => ({ ...step })))
+  publishSteps()
+  try {
+    const result = await session.client.callTool({
+      name: session.toolName,
+      arguments: { [session.questionArgument]: question },
+    }, undefined, {
+      timeout: 5 * 60_000,
+      maxTotalTimeout: 5 * 60_000,
+      resetTimeoutOnProgress: true,
+      signal,
+      onprogress: progress => {
+        if (applyDataAgentProgress(steps, progress.message, Date.now())) publishSteps()
+      },
+    })
     const content = result.content as McpContent[]
     const text = content
       .flatMap(part => [part.text, part.resource?.text])
@@ -884,12 +1202,23 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
       }]
     })
     const answer = text || 'The Data Agent returned no answer.'
-    dataAgentConversation.push({ question, answer })
-    if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
+    Object.assign(steps[0], { status: 'done', summary: 'completed', elapsedMs: Date.now() - startedAt })
+    publishSteps()
     onProgress?.(answer)
-    return { text: answer, artifacts }
-  } finally {
-    await client.close().catch(() => undefined)
+    return { text: answer, artifacts, steps }
+  } catch (error) {
+    Object.assign(steps[0], {
+      status: 'error',
+      summary: 'failed',
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : 'The Data Agent MCP call failed.',
+    })
+    publishSteps()
+    if (dataAgentMcpSession === session) invalidateDataAgentMcpSession()
+    if (reconnectOnDisconnect && isDisconnectedDataAgentMcpError(error)) {
+      return callDataAgentMcp(endpoint, token, question, onProgress, onSteps, false, signal)
+    }
+    throw error
   }
 }
 
@@ -911,15 +1240,19 @@ function kqlString(value: string): string {
 export function isTelemetryConfigured() { return Boolean(msal) }
 
 export async function queryLatestTelemetry(): Promise<TelemetryReading[] | null> {
-  const config = await ensureConfig(false)
-  if (!config?.eventhouseQueryUri || !config.kqlDatabase) return null
-  const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
+  const discovered = configuredEventhouseQueryUri && configuredKqlDatabase
+    ? undefined
+    : await ensureConfig(false)
+  const eventhouseQueryUri = configuredEventhouseQueryUri ?? discovered?.eventhouseQueryUri
+  const kqlDatabase = configuredKqlDatabase ?? discovered?.kqlDatabase
+  if (!eventhouseQueryUri || !kqlDatabase) return null
+  const cluster = eventhouseQueryUri.replace(/\/$/, '')
   const token = await silentToken([kustoScope(cluster)])
   if (!token) return null
   const response = await fetch(`${cluster}/v1/rest/query`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ db: config.kqlDatabase, csl: 'OPCUAEvents | where event_time > ago(24h) | summarize arg_max(event_time, value, quality) by opcua_node_id | take 500' }),
+    body: JSON.stringify({ db: kqlDatabase, csl: 'OPCUAEvents | where event_time > ago(24h) | summarize arg_max(event_time, value, quality) by opcua_node_id | take 500' }),
   })
   const text = await response.text()
   if (!response.ok) {
@@ -962,11 +1295,11 @@ export async function queryTelemetryHistory(opcuaNodeId: string, range: Telemetr
   return (payload.Tables?.[0]?.Rows ?? []).map(([eventTime, opcuaNodeId, value, quality]) => ({ opcuaNodeId, eventTime, value, quality }))
 }
 
-export type KustoResult = { columns: string[]; rows: unknown[][] }
+export type KustoResult = { columns: string[]; rows: unknown[][]; sourceKey?: string }
 
 /** Run an already-validated KQL query against the Eventhouse as the signed-in user.
  *  Callers outside the telemetry views must validate the query text first — see copilot/query.ts. */
-export async function runKustoQuery(csl: string, maxRows: number): Promise<KustoResult> {
+export async function runKustoQuery(csl: string, maxRows: number, signal?: AbortSignal): Promise<KustoResult> {
   const config = await ensureConfig(false)
   if (!config?.eventhouseQueryUri || !config.kqlDatabase) throw new Error('No Eventhouse is connected in this workspace.')
   const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
@@ -974,6 +1307,7 @@ export async function runKustoQuery(csl: string, maxRows: number): Promise<Kusto
   if (!token) throw new Error('Eventhouse consent is required. Connect telemetry first.')
   const response = await fetch(`${cluster}/v1/rest/query`, {
     method: 'POST',
+    signal,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     // Server-side caps back up the client-side `| take`, so a runaway query cannot return a huge payload.
     body: JSON.stringify({
@@ -984,10 +1318,67 @@ export async function runKustoQuery(csl: string, maxRows: number): Promise<Kusto
   })
   const text = await response.text()
   if (!response.ok) throw new Error(`Eventhouse query failed (${response.status}): ${text.slice(0, 300)}`)
-  const payload = JSON.parse(text) as { Tables?: Array<{ Columns?: Array<{ ColumnName?: string }>; Rows?: unknown[][] }> }
-  const table = payload.Tables?.[0]
+  const { parseKustoPayload } = await import('./kustoResult')
+  const table = parseKustoPayload(JSON.parse(text))
   return {
-    columns: (table?.Columns ?? []).map((column, index) => column.ColumnName ?? `column_${index}`),
-    rows: table?.Rows ?? [],
+    columns: table.Columns.map(column => column.ColumnName),
+    rows: table.Rows,
+    sourceKey: JSON.stringify([requireWorkspaceId(), cluster, config.kqlDatabase]),
   }
+}
+
+async function resolveEnergyMapPipeline(): Promise<string> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required to refresh map data.')
+  const matches = (await listItems(token)).filter(item =>
+    item.type === 'DataPipeline' && item.displayName === '04_Pipe_EnergyMap')
+  if (matches.length !== 1) throw new Error('The energy-map import pipeline is missing or ambiguous. Run map provisioning.')
+  return matches[0].id
+}
+
+const mapRefreshListeners = new Set<JobProgress>()
+let mapRefreshInFlight: Promise<JobStatus> | undefined
+let mapRefreshStatus: JobStatus = 'NotStarted'
+let mapRefreshStartedAt: string | undefined
+
+export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, onExistingRun?: (startedAt?: string) => void): Promise<JobStatus> {
+  if (onStatus) mapRefreshListeners.add(onStatus)
+  if (mapRefreshInFlight) {
+    onExistingRun?.(mapRefreshStartedAt)
+    onStatus?.(mapRefreshStatus)
+  } else {
+    mapRefreshStatus = 'NotStarted'
+    mapRefreshStartedAt = new Date().toISOString()
+    const publish = (status: JobStatus) => {
+      mapRefreshStatus = status
+      mapRefreshListeners.forEach(listener => listener(status))
+    }
+    const current = (async () => {
+      const pipelineId = await resolveEnergyMapPipeline()
+      return runJob(pipelineId, 'Pipeline', publish, {
+        reuseActive: true, timeoutMs: 3 * 60 * 60_000,
+        pipelineParameters: { refresh_mode: 'all', force_refresh: forceRefresh },
+        onReuseActive: startedAt => {
+          mapRefreshStartedAt = startedAt ?? mapRefreshStartedAt
+          onExistingRun?.(mapRefreshStartedAt)
+        },
+      })
+    })()
+    mapRefreshInFlight = current
+    void current.finally(() => { if (mapRefreshInFlight === current) mapRefreshInFlight = undefined }).catch(() => undefined)
+  }
+  return mapRefreshInFlight.finally(() => { if (onStatus) mapRefreshListeners.delete(onStatus) })
+}
+
+export async function resumeEnergyMapRefresh(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
+  if (mapRefreshInFlight) return refreshEnergyMap(onStatus)
+  const pipelineId = await resolveEnergyMapPipeline()
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required to resume map refresh progress.')
+  const instances = (await jobInstances(token, pipelineId))
+    .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))
+  const instance = instances.find(item => item.status && ACTIVE_STATUSES.includes(item.status))
+    ?? instances.find(item => item.startTimeUtc && jobStartUtc(item.startTimeUtc) >= sinceIso)
+  if (!instance?.id) throw new Error('The recorded map refresh was not found. Check Fabric run history before starting another update.')
+  return pollLatestInstance(pipelineId, sinceIso, onStatus, { timeoutMs: 3 * 60 * 60_000, instanceId: instance.id })
 }

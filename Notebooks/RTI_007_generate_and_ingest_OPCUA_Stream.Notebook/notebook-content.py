@@ -1483,8 +1483,6 @@ update_eventstream_definition(
     fabric_eventstream_name,
     access_token,
 )
-print("⏳ Waiting 10 seconds before reading topology and sending events...")
-time.sleep(10)
 print(f"➡️ Using Eventstream ID: {eventstream_id}")
 print("────────────────────────────────────────\n")
 
@@ -1570,7 +1568,7 @@ def get_eventstream_topology(workspace_id: str, eventstream_id: str, token: str)
     return topology
 
 
-def get_custom_endpoint_connection(
+def _get_custom_endpoint_connection_once(
     workspace_id: str,
     eventstream_id: str,
     token: str,
@@ -1620,6 +1618,40 @@ def get_custom_endpoint_connection(
         "entityPath": info["eventHubName"],
         "connectionString": info["accessKeys"]["primaryConnectionString"],
     }
+
+
+def get_custom_endpoint_connection(
+    workspace_id: str,
+    eventstream_id: str,
+    token: str,
+    source_name: str,
+    max_wait_seconds: int = 300,
+    poll_seconds: int = 5,
+) -> dict:
+    deadline = time.time() + max_wait_seconds
+    last_reason = f"CustomEndpoint source '{source_name}' is not ready."
+    while time.time() <= deadline:
+        try:
+            return _get_custom_endpoint_connection_once(
+                workspace_id,
+                eventstream_id,
+                token,
+                source_name,
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status not in (404, 409, 429) and (status is None or status < 500):
+                raise
+            last_reason = f"Eventstream readiness returned HTTP {status}."
+        except RuntimeError as exc:
+            if "CustomEndpoint source" not in str(exc):
+                raise
+            last_reason = str(exc)
+        print(f"⏳ {last_reason} Retrying in {poll_seconds}s...")
+        time.sleep(poll_seconds)
+    raise TimeoutError(
+        f"Timed out waiting for Eventstream source connection readiness. Last result: {last_reason}"
+    )
 
 
 custom_ep_info = get_custom_endpoint_connection(

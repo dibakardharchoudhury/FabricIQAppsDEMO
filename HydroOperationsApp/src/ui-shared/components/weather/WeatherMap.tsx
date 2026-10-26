@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { geoJSON, LatLngBounds } from 'leaflet'
 import { CircleMarker, GeoJSON, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import type { GeoJsonObject } from 'geojson'
+import 'leaflet/dist/leaflet.css'
 import type { WeatherArea, WeatherLocation } from '../../../services/fabric'
 
 export type WeatherSelection =

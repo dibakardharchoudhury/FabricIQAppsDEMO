@@ -1,10 +1,10 @@
 dependencies:
-  - numpy=1.26.4
-  - pandas=2.1.4
-  - xarray=2024.3.0
-  - shapely=2.0.6
-  - pyproj=3.6.1
+  - numpy=2.4.1
+  - pandas=2.3.3
+  - xarray=2025.10.1
+  - shapely=2.1.2
+  - pyproj=3.7.2
   - pip:
-      - adlfs==2024.7.0
+      - adlfs==2025.8.0
       - zarr==2.18.7
       - numcodecs==0.15.1

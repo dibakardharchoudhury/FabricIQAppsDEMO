@@ -1,7 +1,7 @@
 import type { AgentUsage } from '../assistantStream.ts'
 
 export type ToolCallDraft = { id: string; name: string; arguments: string }
-export type StreamState = { content: string; toolCalls: ToolCallDraft[]; usage?: AgentUsage; finishReason?: string }
+export type StreamState = { content: string; toolCalls: ToolCallDraft[]; usage?: AgentUsage; finishReason?: string; responseId?: string; output?: unknown[]; completed?: boolean }
 
 type ChatChunk = {
   choices?: Array<{
@@ -16,12 +16,17 @@ type ChatChunk = {
 
 type ResponsesEvent = {
   type?: string
+  message?: string
+  error?: { message?: string }
   delta?: string
   output_index?: number
-  item?: { type?: string; call_id?: string; name?: string; arguments?: string; content?: Array<{ type?: string; text?: string }> }
+  item?: { type?: string; call_id?: string; name?: string; arguments?: string; status?: string; error?: unknown; content?: Array<{ type?: string; text?: string }> }
   response?: {
+    id?: string
+    output?: unknown[]
     usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
     error?: { message?: string }
+    incomplete_details?: { reason?: string }
   }
 }
 
@@ -58,6 +63,11 @@ export function applyChunk(state: StreamState, chunk: unknown): StreamState {
 /** Fold one Azure AI Responses API SSE event into the shared agent-loop state. */
 export function applyResponsesEvent(state: StreamState, event: unknown): StreamState {
   const typed = event as ResponsesEvent
+  if (typed.response?.id) state.responseId = typed.response.id
+  if (typed.type === 'response.completed') {
+    state.completed = true
+    state.output = typed.response?.output
+  }
   if (typed.type === 'response.output_text.delta' && typeof typed.delta === 'string') {
     state.content += typed.delta
   }
@@ -137,7 +147,7 @@ export async function readChatStream(body: ReadableStream<Uint8Array>, onText?: 
 }
 
 /** Consume an Azure AI Responses API stream into the state used by the existing tool loop. */
-export async function readResponsesStream(body: ReadableStream<Uint8Array>, onText?: (text: string) => void): Promise<StreamState> {
+export async function readResponsesStream(body: ReadableStream<Uint8Array>, onText?: (text: string) => void, onEvent?: (event: unknown) => void): Promise<StreamState> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   const state = createStreamState()
@@ -145,8 +155,16 @@ export async function readResponsesStream(body: ReadableStream<Uint8Array>, onTe
   const consume = (payload: string) => {
     let event: ResponsesEvent
     try { event = JSON.parse(payload) as ResponsesEvent } catch { return }
-    if (event.type === 'response.failed') {
-      throw new Error(event.response?.error?.message ?? 'Azure AI Foundry response failed.')
+    onEvent?.(event)
+    if (event.type === 'response.failed' || event.type === 'response.incomplete' || event.type === 'error') {
+      throw new Error(event.response?.error?.message ?? event.error?.message ?? event.message
+        ?? (event.response?.incomplete_details?.reason
+          ? `Azure AI Foundry response incomplete: ${event.response.incomplete_details.reason}.`
+          : 'Azure AI Foundry response failed.'))
+    }
+    if (event.type === 'response.output_item.done' && event.item?.type === 'mcp_call'
+      && (event.item.error || event.item.status === 'failed')) {
+      throw new Error(`Foundry native tool ${event.item.name ?? 'unnamed'} failed: ${JSON.stringify(event.item.error ?? event.item.status)}. No source substitution was performed.`)
     }
     const before = state.content
     applyResponsesEvent(state, event)

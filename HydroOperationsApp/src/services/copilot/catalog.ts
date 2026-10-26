@@ -11,6 +11,9 @@ export type CatalogEntity = {
   key: string
   source: 'lakehouse' | 'sql'
   physicalName: string
+  apiName?: string
+  identityColumn: string
+  identityColumns?: string[]
   description: string
   columns: CatalogColumn[]
 }
@@ -20,6 +23,7 @@ export const ASSET_ENTITIES: CatalogEntity[] = [
     key: 'facilities',
     source: 'lakehouse',
     physicalName: 'silver_facilities',
+    identityColumn: 'facility_id',
     description: 'Hydro power stations.',
     columns: [
       { name: 'facility_id' }, { name: 'facility_name' }, { name: 'type' }, { name: 'country' },
@@ -29,7 +33,9 @@ export const ASSET_ENTITIES: CatalogEntity[] = [
   {
     key: 'equipment',
     source: 'lakehouse',
-    physicalName: 'silver_equipments',
+    physicalName: 'silver_equipment',
+    apiName: 'silver_equipments',
+    identityColumn: 'equipment_id',
     description: 'Turbines and other equipment installed at a facility.',
     columns: [
       { name: 'equipment_id' }, { name: 'facility_id' }, { name: 'system_id' },
@@ -43,6 +49,7 @@ export const ASSET_ENTITIES: CatalogEntity[] = [
     key: 'instruments',
     source: 'lakehouse',
     physicalName: 'silver_instruments',
+    identityColumn: 'instrument_id',
     description: 'Sensors attached to equipment. Join to telemetry on opcua_node_id.',
     columns: [
       { name: 'opcua_node_id', description: 'Join key to the OPCUAEvents telemetry table.' },
@@ -57,6 +64,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'work_orders',
     source: 'sql',
     physicalName: 'WorkOrder',
+    identityColumn: 'id',
     description: 'Maintenance work orders raised against equipment.',
     columns: [
       { name: 'id' }, { name: 'workOrderNumber' }, { name: 'equipmentId' }, { name: 'instrumentId' },
@@ -68,6 +76,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'inspections',
     source: 'sql',
     physicalName: 'Inspection',
+    identityColumn: 'id',
     description: 'Completed inspections and their findings.',
     columns: [
       { name: 'id' }, { name: 'equipmentId' }, { name: 'opcuaNodeId' }, { name: 'inspectionType' },
@@ -78,6 +87,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'spare_parts',
     source: 'sql',
     physicalName: 'SparePart',
+    identityColumn: 'id',
     description: 'Spare part stock levels.',
     columns: [
       { name: 'id' }, { name: 'partNumber' }, { name: 'name' }, { name: 'category' },
@@ -89,6 +99,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'notifications',
     source: 'sql',
     physicalName: 'MaintenanceNotification',
+    identityColumn: 'id',
     description: 'Operator-raised maintenance notifications.',
     columns: [
       { name: 'id' }, { name: 'equipmentId' }, { name: 'opcuaNodeId' }, { name: 'summary' },
@@ -99,12 +110,87 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'asset_models',
     source: 'sql',
     physicalName: 'Asset3DModel',
+    identityColumn: 'id',
     description: '3D model files per equipment. Call show_3d_model to render one in the chat.',
     columns: [
       { name: 'id' }, { name: 'equipmentId' }, { name: 'modelName' },
       { name: 'format', description: 'GLB and GLTF render inline; other formats show a link.' },
       { name: 'modelUrl' }, { name: 'thumbnailUrl' }, { name: 'fileSizeMb' },
       { name: 'version' }, { name: 'updatedAt' },
+    ],
+  },
+]
+
+// Every serving row carries all canonical variables; units are fixed per variable (weather_variables).
+const WEATHER_VALUE_COLUMNS: CatalogColumn[] = [
+  { name: 'temperature', description: 'degC' },
+  { name: 'precipitation', description: 'mm accumulated over the hours ending at the row time' },
+  { name: 'pressure', description: 'hPa, mean sea-level' },
+  { name: 'relative_humidity', description: '%' },
+  { name: 'dew_point', description: 'degC' },
+  { name: 'solar_radiation', description: 'W/m2, mean over the interval' },
+  { name: 'wind_speed', description: 'm/s' },
+  { name: 'wind_gust', description: 'm/s, maximum over the interval' },
+  { name: 'wind_direction', description: 'degrees the wind blows from' },
+]
+
+export const WEATHER_ENTITIES: CatalogEntity[] = [
+  {
+    key: 'weather_locations',
+    identityColumn: 'location_id',
+    source: 'lakehouse',
+    physicalName: 'weather_locations',
+    description: 'Weather point for each facility. location_id equals facilities.facility_id.',
+    columns: [
+      { name: 'location_id' }, { name: 'location_name' }, { name: 'latitude' }, { name: 'longitude' },
+      { name: 'elevation_m' },
+    ],
+  },
+  {
+    key: 'weather_areas',
+    identityColumn: 'area_id',
+    source: 'lakehouse',
+    physicalName: 'weather_areas',
+    description: 'Operating area (20 km radius) around each facility, used for area forecasts and rainfall volume.',
+    columns: [
+      { name: 'area_id' }, { name: 'area_name' },
+      { name: 'metadata_json', description: 'JSON with the facility location_id, radius_km and geodesic_area_m2.' },
+    ],
+  },
+  {
+    key: 'weather_forecasts',
+    identityColumn: 'source_id',
+    identityColumns: ['source_id', 'target_kind', 'target_id', 'reference_time_utc', 'valid_time_utc'],
+    source: 'lakehouse',
+    physicalName: 'weather_latest_forecasts',
+    description: 'Newest forecast issue per vendor in 6-hour steps up to 72 hours ahead, one row per vendor, target and valid time. '
+      + 'source_id is the vendor: aurora (Microsoft Aurora) or ukmet (UK Met Office). Never combine vendors into one figure; name the vendor, and compare them side by side when asked. '
+      + 'target_kind "location" rows use a weather_locations.location_id (the facility_id) as target_id; "area" rows use a weather_areas.area_id. '
+      + 'Filter on valid_time_utc with ISO-8601 UTC times to select a window.',
+    columns: [
+      { name: 'source_id', description: 'Vendor: aurora or ukmet.' },
+      { name: 'target_kind', description: 'location or area.' },
+      { name: 'target_id' },
+      { name: 'reference_time_utc', description: 'When the vendor issued this forecast.' },
+      { name: 'valid_time_utc', description: 'End of the interval the row describes.' },
+      { name: 'lead_hours' },
+      { name: 'precipitation_interval_hours', description: 'Hours of source data the precipitation value covers, ending at valid_time_utc.' },
+      { name: 'cumulative_precipitation', description: 'mm running total since the issue; rainfall between two valid times is the difference of their cumulatives.' },
+      { name: 'rainfall_volume_m3', description: 'Area rows: rainfall volume over the area for the interval.' },
+      { name: 'cumulative_rainfall_volume_m3', description: 'Area rows: running total volume since the issue.' },
+      ...WEATHER_VALUE_COLUMNS,
+    ],
+  },
+  {
+    key: 'weather_observations',
+    identityColumn: 'source_id',
+    identityColumns: ['source_id', 'location_id', 'observed_at_utc'],
+    source: 'lakehouse',
+    physicalName: 'weather_latest_observations',
+    description: 'Recently observed conditions at each facility location (ukmet land observations); location_id equals facility_id.',
+    columns: [
+      { name: 'source_id' }, { name: 'location_id' }, { name: 'observed_at_utc' },
+      ...WEATHER_VALUE_COLUMNS,
     ],
   },
 ]
@@ -121,7 +207,7 @@ export const KUSTO_SOURCES = [
   },
   {
     name: 'TelemetryEnriched',
-    description: 'Function with four positional arguments: TelemetryEnriched(startTime, endTime, stations, turbines). Call example: TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)). Never include parameter names or colons in the call. Telemetry is pre-joined to asset master. Case-sensitive columns: event_time, Station, Turbine, Signal, SignalGroup, Unit, value, quality. Pass dynamic(null) for stations/turbines to include all.',
+    description: 'Function with four positional arguments: TelemetryEnriched(startTime, endTime, stations, turbines). Call example: TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)). Never include parameter names or colons in the call. Telemetry is pre-joined to asset master. Case-sensitive columns: event_time, Station, Turbine, Signal, SignalGroup, Unit, value, quality. It does NOT return opcua_node_id or equipment_id. For exact node filters/latest raw rows, use query_telemetry with aggregation latest, not this function. Pass dynamic(null) for stations/turbines to include all.',
   },
 ] as const
 
@@ -129,6 +215,7 @@ export const KUSTO_SOURCE_NAMES: string[] = KUSTO_SOURCES.map(source => source.n
 
 export const ASSET_ENTITY_KEYS = ASSET_ENTITIES.map(entity => entity.key)
 export const OPERATIONS_ENTITY_KEYS = OPERATIONS_ENTITIES.map(entity => entity.key)
+export const WEATHER_ENTITY_KEYS = WEATHER_ENTITIES.map(entity => entity.key)
 
 function describe(entities: CatalogEntity[]): string {
   return entities
@@ -148,10 +235,12 @@ const section = (title: string, body: string) => body ? [title, body, ''] : []
 export function catalogPrompt(settings: CopilotSettings): string {
   const assets = ASSET_ENTITIES.filter(entity => settings.entities[entity.key] !== false)
   const operations = OPERATIONS_ENTITIES.filter(entity => settings.entities[entity.key] !== false)
+  const weather = WEATHER_ENTITIES.filter(entity => settings.entities[entity.key] !== false)
   const kusto = KUSTO_SOURCES.filter(source => settings.kustoSources[source.name] !== false)
   return [
     ...section('Asset metadata (Lakehouse, tool: query_assets):', describe(assets)),
     ...section('Operational records (SQL, tool: query_operations):', describe(operations)),
+    ...section('Weather forecasts and observations (Lakehouse, tool: query_weather):', describe(weather)),
     ...section(
       'Telemetry (Kusto/Eventhouse, tools: query_telemetry and run_kql):',
       kusto.map(source => `- ${source.name}: ${source.description}`).join('\n'),

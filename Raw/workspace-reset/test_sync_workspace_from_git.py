@@ -4,9 +4,15 @@ import io
 import json
 import unittest
 from datetime import datetime
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from sync_workspace_from_git import configure_weather_assets, configure_weather_schedule
+import requests
+
+from sync_workspace_from_git import (
+    Fabric, configure_weather_assets, configure_weather_schedule,
+    ensure_spark_runtime, verify_environment_runtimes,
+    bind_notebook_definition, notebook_definition,
+)
 
 LAKEHOUSE_ID = "lakehouse-id"
 LAKEHOUSE_NAME = "Energy_IQ_LakehouseRTI_V6"
@@ -97,6 +103,12 @@ class FakeFabric:
     def request(self, method, url, **kwargs):
         self.requests.append((method, url))
         self.request_kwargs.append(kwargs)
+        if url.endswith("/spark/settings"):
+            return FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}})
+        if "/items?type=Environment" in url:
+            return FakeResponse(200, {"value": [{"id": "environment-id", "displayName": "Weather"}]})
+        if "/sparkcompute?beta=false" in url:
+            return FakeResponse(200, {"runtimeVersion": "2.0"})
         if "/jobs/Pipeline/schedules" in url and method == "GET":
             return FakeResponse(200, {"value": []})
         if "/getDefinition" in url:
@@ -112,7 +124,141 @@ class FakeFabric:
         )
 
 
+class SparkRuntimeTests(unittest.TestCase):
+    def test_existing_runtime_two_requires_no_write(self):
+        request = Mock(return_value=FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}}))
+        ensure_spark_runtime(request, "workspace-id")
+        request.assert_called_once_with(
+            "GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace-id/spark/settings"
+        )
+
+    def test_upgrade_preserves_other_settings_and_verifies_readback(self):
+        request = Mock(side_effect=[
+            FakeResponse(200, {"environment": {"runtimeVersion": "1.3", "name": ""},
+                               "pool": {"customizeComputeEnabled": True}}),
+            FakeResponse(200),
+            FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}}),
+        ])
+        ensure_spark_runtime(request, "workspace-id")
+        self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "PATCH", "GET"])
+        self.assertEqual(request.call_args_list[1].kwargs["json"],
+                         {"environment": {"runtimeVersion": "2.0"}})
+
+    def test_missing_or_malformed_runtime_fails_without_writing(self):
+        for body in ({}, {"environment": []}, {"environment": {"runtimeVersion": 2}}):
+            with self.subTest(body=body):
+                request = Mock(return_value=FakeResponse(200, body))
+                with self.assertRaisesRegex(SystemExit, "missing environment.runtimeVersion"):
+                    ensure_spark_runtime(request, "workspace-id")
+                self.assertEqual(request.call_count, 1)
+
+    def test_runtime_read_or_update_failure_propagates(self):
+        for responses in (
+            [FakeResponse(403, text="forbidden")],
+            [FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+             FakeResponse(400, text="invalid settings")],
+            [FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+             FakeResponse(200), FakeResponse(503, text="unavailable")],
+        ):
+            with self.subTest(responses=responses):
+                with self.assertRaisesRegex(SystemExit, "failed"):
+                    ensure_spark_runtime(Mock(side_effect=responses), "workspace-id")
+
+    def test_success_response_with_old_readback_is_rejected(self):
+        request = Mock(side_effect=[
+            FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+            FakeResponse(200),
+            FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+        ])
+        with self.assertRaisesRegex(SystemExit, "readback failed"):
+            ensure_spark_runtime(request, "workspace-id")
+
+    def test_all_environment_pages_must_publish_runtime_two(self):
+        request = Mock(side_effect=[
+            FakeResponse(200, {"value": [{"id": "weather"}],
+                               "continuationUri": "https://api.fabric.microsoft.com/v1/workspaces/workspace-id/items?continuationToken=next"}),
+            FakeResponse(200, {"runtimeVersion": "2.0"}),
+            FakeResponse(200, {"value": [{"id": "other"}]}),
+            FakeResponse(200, {"runtimeVersion": "1.3"}),
+        ])
+        with self.assertRaisesRegex(SystemExit, "other requires published Runtime 2.0"):
+            verify_environment_runtimes(request, "workspace-id")
+        self.assertEqual(request.call_count, 4)
+        self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+
+    def test_environment_inventory_and_compute_failures_are_not_suppressed(self):
+        for responses in (
+            [FakeResponse(403, text="forbidden")],
+            [FakeResponse(200, {"wrong": []})],
+            [FakeResponse(200, {"value": [{}]})],
+            [FakeResponse(200, {"value": [{"id": "weather"}]}), FakeResponse(503, text="unavailable")],
+            [FakeResponse(200, {"value": [{"id": "weather"}]}), FakeResponse(200, {})],
+            [FakeResponse(200, {"value": [], "continuationUri": "https://other.invalid/items"})],
+        ):
+            with self.subTest(responses=responses), self.assertRaises(SystemExit):
+                verify_environment_runtimes(Mock(side_effect=responses), "workspace-id")
+
+
+class FabricRequestTests(unittest.TestCase):
+    def test_get_retries_transient_connection_reset(self):
+        fabric = Fabric.__new__(Fabric)
+        fabric._session = Mock()
+        fabric._token = Mock(return_value="token")
+        response = FakeResponse(200, {"status": "Succeeded"})
+        fabric._session.request.side_effect = [
+            requests.ConnectionError("connection reset"),
+            response,
+        ]
+
+        with patch("sync_workspace_from_git.time.sleep") as sleep:
+            actual = fabric.request("GET", "https://example.test/operation")
+
+        self.assertIs(actual, response)
+        self.assertEqual(fabric._session.request.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_post_does_not_retry_ambiguous_transport_failure(self):
+        fabric = Fabric.__new__(Fabric)
+        fabric._session = Mock()
+        fabric._token = Mock(return_value="token")
+        fabric._session.request.side_effect = requests.ConnectionError("connection reset")
+
+        with (
+            patch("sync_workspace_from_git.time.sleep") as sleep,
+            self.assertRaises(requests.ConnectionError),
+        ):
+            fabric.request("POST", "https://example.test/update", json={"value": 1})
+
+        self.assertEqual(fabric._session.request.call_count, 1)
+        sleep.assert_not_called()
+
+
 class WeatherProvisioningTests(unittest.TestCase):
+    def test_native_source_binding_avoids_python_to_ipynb_conversion(self):
+        code = '# Fabric notebook source\n\n# METADATA ********************\n\n# META {\n# META   "dependencies": {}\n# META }\n\n# CELL ********************\nprint("unchanged")\n'
+        part = {"path": "notebook-content.py", "payload": base64.b64encode(code.encode()).decode(), "payloadType": "InlineBase64"}
+        definition = {"parts": [part]}
+        lakehouse = {"default_lakehouse": "target-id"}
+        environment = {"environmentId": "target-env"}
+        self.assertTrue(bind_notebook_definition(definition, lakehouse, environment))
+        self.assertEqual(definition["format"], "fabricGitSource")
+        source = base64.b64decode(part["payload"]).decode()
+        self.assertIn('"default_lakehouse": "target-id"', source)
+        self.assertIn('print("unchanged")', source)
+        self.assertFalse(bind_notebook_definition(definition, lakehouse, environment))
+
+    def test_notebook_result_uses_the_same_canonical_operation_as_polling(self):
+        operation_id = "11111111-1111-4111-8111-111111111111"
+        pending = FakeResponse(202)
+        pending.headers = {"Location": "https://backend.example.invalid/operation", "x-ms-operation-id": operation_id}
+        definition = ipynb_definition({})
+        fabric = Mock()
+        fabric.request.side_effect = [pending, FakeResponse(200, definition)]
+        self.assertEqual(notebook_definition(fabric, "workspace", "notebook"), definition["definition"])
+        self.assertEqual(fabric.request.call_args.args, (
+            "GET", f"https://api.fabric.microsoft.com/v1/operations/{operation_id}/result",
+        ))
+
     def test_weather_schedule_is_created_every_six_hours(self):
         fabric = FakeFabric()
 
@@ -361,12 +507,50 @@ class WeatherProvisioningTests(unittest.TestCase):
 
         self.assertEqual(len(fabric.updates), 4)
         for _, body in fabric.updates:
+            self.assertEqual(body["definition"]["format"], "ipynb")
             part = body["definition"]["parts"][0]
             content = json.loads(base64.b64decode(part["payload"]))
             dependencies = content["metadata"]["dependencies"]
             self.assertEqual(dependencies["lakehouse"]["default_lakehouse"], LAKEHOUSE_ID)
             self.assertEqual(dependencies["lakehouse"]["default_lakehouse_name"], LAKEHOUSE_NAME)
             self.assertEqual(dependencies["environment"]["environmentId"], "environment-id")
+
+    def test_rebinding_preserves_notebook_cells_and_unrelated_metadata(self):
+        fabric = FakeFabric()
+        content = {
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "cells": [{"cell_type": "code", "source": ["print('preserve me')"],
+                       "metadata": {}, "execution_count": None, "outputs": []}],
+            "metadata": {"custom": "preserved", "dependencies": {"custom": {"id": "keep"}}},
+        }
+        platform = {"path": ".platform", "payload": "e30=", "payloadType": "InlineBase64"}
+        original_request = fabric.request
+
+        def request(method, url, **kwargs):
+            if "/getDefinition" in url:
+                definition = ipynb_definition({})
+                parts = definition["definition"]["parts"]
+                parts[0]["payload"] = base64.b64encode(json.dumps(content).encode()).decode()
+                parts.append(dict(platform))
+                return FakeResponse(200, definition)
+            return original_request(method, url, **kwargs)
+
+        fabric.request = request
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_assets(fabric, "workspace-id", git_updated=False)
+
+        self.assertEqual(len(fabric.updates), 4)
+        for _, body in fabric.updates:
+            self.assertEqual(body["definition"]["format"], "ipynb")
+            parts = body["definition"]["parts"]
+            updated = json.loads(base64.b64decode(parts[0]["payload"]))
+            self.assertEqual(updated["cells"], content["cells"])
+            self.assertEqual(updated["nbformat"], content["nbformat"])
+            self.assertEqual(updated["nbformat_minor"], content["nbformat_minor"])
+            self.assertEqual(updated["metadata"]["custom"], "preserved")
+            self.assertEqual(updated["metadata"]["dependencies"]["custom"], {"id": "keep"})
+            self.assertEqual(parts[1], platform)
 
     def test_notebooks_already_bound_are_not_rewritten(self):
         bound = {

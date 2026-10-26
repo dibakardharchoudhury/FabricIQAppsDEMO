@@ -14,7 +14,19 @@ services:
       enabled: false
     fabric:
       enabled: true
+      externalEntraExchange: true
     allowedRedirectUris:
+      - https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net
+      - https://lofty-coast-a9601204e1-swedencentral.webapp.fabricapps.net
+      - https://fair-hill-c529b5e004-swedencentral.webapp.fabricapps.net
+      - https://solar-coral-a2b4bf0aec-swedencentral.webapp.fabricapps.net
+      - https://epic-briar-d1a7b8d6d7-swedencentral.webapp.fabricapps.net
+      - https://fond-rowan-c25c12f3ef-swedencentral.webapp.fabricapps.net
+      - https://new-grove-bd8b040fb6-swedencentral.webapp.fabricapps.net
+      - https://raven-plum-1975d8ccab-swedencentral.webapp.fabricapps.net
+      - https://icy-twist-acc301b27a-swedencentral.webapp.fabricapps.net
+      - https://maple-edge-ce46abd902-swedencentral.webapp.fabricapps.net
+      - https://sweet-flame-e5cdc12fde-swedencentral.webapp.fabricapps.net
       - https://epic-relic-2b1c8691d1-swedencentral.webapp.fabricapps.net
       - https://happy-hedge-c732d41244-swedencentral.webapp.fabricapps.net
       - https://raven-gorge-ba7a09d5b0-swedencentral.webapp.fabricapps.net
@@ -49,6 +61,7 @@ services:
     folder: dist
     buildCommand: npm run build
     indexDocument: index.html
+    assetAccess: protected
   data:
     enabled: true
     dialect: mssql
@@ -58,3 +71,25 @@ services:
     enabled: false
 workspace:
   name: ${FABRIC_WORKSPACE_NAME}
+connectors:
+  - name: hydrooperations
+    type: fabric-sqldatabase
+    config:
+      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
+      itemId: ${RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID}
+    auth:
+      type: delegated
+    operations:
+      - name: read
+      - name: create
+      - name: update
+      - name: delete
+  - name: hydrolakehouse
+    type: fabric-sqlanalytics
+    config:
+      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
+      itemId: ${RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID}
+    auth:
+      type: delegated
+    operations:
+      - name: read

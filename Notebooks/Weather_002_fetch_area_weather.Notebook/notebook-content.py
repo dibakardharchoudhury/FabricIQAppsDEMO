@@ -19,16 +19,25 @@
 
 # # Fetch point and enclosed-area weather
 #
-# Aurora implementation of the source-adapter contract. It reads the latest signed
-# STAC Zarr asset, extracts 72-hour point forecasts, creates operating-area geometry,
-# and merges canonical records into the tables created by Weather_001.
+# Aurora implementation of the source-adapter contract. It finds the newest complete
+# operational issue in the `mai-aurora` STAC collection, extracts 72-hour point
+# forecasts, creates operating-area geometry, and merges canonical records into the
+# tables created by Weather_001.
 #
-# Aurora publishes one-hour totals at each model step. Precipitation is summed, solar
-# radiation averaged, and gusts maximised across every step inside the reporting
+# `mai-aurora` publishes one global NetCDF item per valid hour, named
+# `<stream>_<issue>_<valid>`, with a kerchunk index giving each variable's byte range.
+# The adapter range-reads only the variables it needs from each hourly item.
+# Precipitation and solar radiation are one-hour totals, so precipitation is summed,
+# solar radiation averaged, and gusts maximised across every hour inside the reporting
 # interval; `interval_hours` records how much of that interval the value really covers.
+# Pressure is mean sea-level pressure, matching the UKMet adapter.
 #
-# Configure a Fabric Environment with `xarray`, `zarr<3`, `adlfs`, `shapely`, and
-# `pyproj`. Attach the Weather Lakehouse before running. Store the API key in Key
+# An issue older than `max_issue_age_hours` fails the run instead of silently
+# reloading forecasts that retention would then discard.
+#
+# Use the project Weather Environment on Fabric Runtime 2.0 (Python 3.13), with
+# its pinned NumPy 2, pandas, xarray, Zarr 2, adlfs, shapely and pyproj libraries.
+# Attach the Weather Lakehouse before running. Store the API key in Key
 # Vault; never put it in notebook parameters.
 
 # PARAMETERS CELL ********************
@@ -38,10 +47,14 @@ import json
 table_prefix = "weather"
 endpoint = "https://mai-weather-api.azure-api.net"
 api_version = "2025-04-30-preview"
-collection = "aurora-1p5-zarr-staging"
-asset_key = "data"
+collection = "mai-aurora"
+stream = "oper"  # Operational deterministic run; "enfo" items are ensemble members.
+data_asset_key = "data"
+index_asset_key = "data-kerchunk"
 max_lead_hours = 72
 interval_hours = 6
+max_issue_age_hours = 36
+download_workers = 8
 
 key_vault_uri = ""  # Empty reads key_vault_uri from rti_demo_settings.
 api_key_secret_name = "mai-weather-api-key"
@@ -62,18 +75,20 @@ aggregation_circle_vertices = 72
 
 # CELL ********************
 
+import base64
+import zlib
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 import requests
-import xarray as xr
-from adlfs import AzureBlobFileSystem
 import notebookutils
+from numcodecs import Shuffle
 from pyproj import Geod
 from requests.adapters import HTTPAdapter
 from shapely.geometry import Polygon, mapping
@@ -84,13 +99,12 @@ TABLES = {
     for name in ["locations", "areas", "ingestion_runs", "forecasts"]
 }
 SOURCE_ID = "aurora"
-PRECIPITATION_EPSILON_M = 1e-3
 RUN_SCHEMA = (
     "run_id string, source_id string, source_item_id string, data_kind string, "
     "reference_time_utc timestamp, started_at_utc timestamp, completed_at_utc timestamp, "
     "status string, row_count long, error_message string"
 )
-# Aurora publishes `*_1h_*` totals covering the single hour that ends at each step.
+# Each hourly item's `tp` and `ssrd` are totals over the single hour ending at it.
 ACCUMULATION_SOURCE_HOURS = 1
 # Variables whose reported value covers the whole interval instead of one instant.
 BUCKET_AGGREGATIONS = {"precipitation": "sum", "solar_radiation": "mean", "wind_gust": "max"}
@@ -106,16 +120,10 @@ VARIABLES = {
     "wind_direction": {"unit": "degree", "aggregation": "circular_mean"},
     "precipitation": {"unit": "mm", "aggregation": "sum"},
 }
-SOURCE_VARIABLES = {
-    "surface_pressure_0",
-    "2m_temperature_0",
-    "2m_dewpoint_temperature_0",
-    "surface_solar_radiation_downwards_1h_0",
-    "10m_u_component_of_wind_0",
-    "10m_v_component_of_wind_0",
-    "instantaneous_10m_wind_gust_0",
-    "scaled_total_precipitation_1h_0",
-}
+# ECMWF short names: mean sea-level pressure (Pa), 2 m temperature and dew point (K),
+# hourly downward solar radiation (J/m2), 10 m wind components and gust (m/s), and
+# hourly total precipitation (m).
+SOURCE_VARIABLES = ("msl", "2t", "2d", "ssrd", "10u", "10v", "i10fg", "tp")
 
 
 def service_base(service_endpoint: str) -> str:
@@ -124,7 +132,7 @@ def service_base(service_endpoint: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{prefix}"
 
 
-def retry_session() -> requests.Session:
+def retry_session(pool_size: int = 10) -> requests.Session:
     retry = Retry(
         total=5,
         backoff_factor=1.0,
@@ -133,34 +141,107 @@ def retry_session() -> requests.Session:
         respect_retry_after_header=True,
     )
     session = requests.Session()
-    session.mount("https://", HTTPAdapter(max_retries=retry))
+    session.mount(
+        "https://",
+        HTTPAdapter(max_retries=retry, pool_connections=pool_size, pool_maxsize=pool_size),
+    )
     return session
 
 
-def latest_stac_item(service_endpoint: str, api_key: str) -> dict:
-    response = retry_session().get(
+def to_utc(value) -> datetime:
+    timestamp = pd.Timestamp(value)
+    timestamp = timestamp.tz_localize("UTC") if timestamp.tzinfo is None else timestamp.tz_convert("UTC")
+    return timestamp.to_pydatetime()
+
+
+def stac_search(session: requests.Session, service_endpoint: str, api_key: str, params: dict) -> dict:
+    """Run one STAC search; errors never echo the URL because it carries the API key."""
+    response = session.get(
         f"{service_base(service_endpoint)}/stac/search",
-        params={
-            "api-version": api_version,
-            "key": api_key,
-            "collections": collection,
-            "limit": 1,
-            "sortby": "-datetime",
-            "sign": "true",
-            "duration": 60,
-        },
+        params={"api-version": api_version, "key": api_key, **params},
         timeout=60,
     )
     try:
         response.raise_for_status()
     except requests.HTTPError:
-        raise RuntimeError(
-            f"Aurora STAC search failed with HTTP {response.status_code}"
-        ) from None
-    features = response.json().get("features", [])
-    if not features:
-        raise RuntimeError(f"No STAC items found in {collection}")
-    return features[0]
+        raise RuntimeError(f"Aurora STAC search failed with HTTP {response.status_code}") from None
+    return response.json()
+
+
+def next_page_params(page: dict) -> dict | None:
+    """Decode the `next` link's query once; re-encoding it would corrupt the page token."""
+    link = next((link for link in page.get("links", []) if link.get("rel") == "next"), None)
+    if not link or not link.get("href"):
+        return None
+    return {
+        name: value
+        for name, value in parse_qsl(urlsplit(link["href"]).query)
+        if name not in ("key", "api-version")
+    }
+
+
+def newest_stream_issue(
+    session: requests.Session, service_endpoint: str, api_key: str,
+    max_issues: int = 7, issue_spacing_hours: int = 6,
+) -> datetime:
+    """Probe known operational issue IDs; old long horizons cannot hide a new issue."""
+    now = datetime.now(timezone.utc)
+    newest = now.replace(hour=now.hour - now.hour % issue_spacing_hours, minute=0, second=0, microsecond=0)
+    for offset in range(max_issues):
+        issue = newest - timedelta(hours=offset * issue_spacing_hours)
+        if issue_items(session, service_endpoint, api_key, issue, [1]):
+            return issue
+    raise RuntimeError(f"No recent {stream!r} issues found in {collection}")
+
+
+def issue_items(
+    session: requests.Session,
+    service_endpoint: str,
+    api_key: str,
+    issue: datetime,
+    leads: list[int],
+) -> dict[int, dict]:
+    """Fetch the signed hourly items of one issue by their deterministic IDs, keyed by lead."""
+    prefix = f"{stream}_{issue:%Y%m%d%H%M}_"
+    wanted = {f"{prefix}{issue + timedelta(hours=lead):%Y%m%d%H%M}": lead for lead in leads}
+    names = list(wanted)
+    found = {}
+    for start in range(0, len(names), 50):
+        page = stac_search(
+            session,
+            service_endpoint,
+            api_key,
+            {
+                "collections": collection,
+                "ids": ",".join(names[start:start + 50]),
+                "limit": 100,
+                "sign": "true",
+                "duration": 60,
+            },
+        )
+        for item in page.get("features", []):
+            if item.get("id") in wanted:
+                found[wanted[item["id"]]] = item
+    return found
+
+
+def latest_complete_issue(
+    session: requests.Session,
+    service_endpoint: str,
+    api_key: str,
+    leads: list[int],
+    fallback_issues: int = 4,
+    issue_spacing_hours: int = 6,
+) -> tuple[datetime, dict[int, dict]]:
+    """Pick the newest issue whose every requested lead is published, newest first."""
+    newest = newest_stream_issue(session, service_endpoint, api_key, issue_spacing_hours=issue_spacing_hours)
+    for offset in range(fallback_issues + 1):
+        issue = newest - timedelta(hours=offset * issue_spacing_hours)
+        items = issue_items(session, service_endpoint, api_key, issue, leads)
+        if len(items) == len(leads):
+            return issue, items
+        print(f"Aurora {stream} issue {issue:%Y-%m-%dT%H:%MZ} has {len(items)} of {len(leads)} leads; trying an earlier issue")
+    raise RuntimeError(f"No complete {stream!r} issue with {len(leads)} leads found in {collection}")
 
 
 def sanitize_stac_item(item: dict) -> dict:
@@ -173,31 +254,90 @@ def sanitize_stac_item(item: dict) -> dict:
     return sanitized
 
 
-def open_signed_zarr(asset_href: str) -> xr.Dataset:
-    parsed = urlsplit(asset_href)
-    path_parts = parsed.path.strip("/").split("/", 1)
-    if len(path_parts) != 2 or not parsed.query:
-        raise ValueError("STAC data asset is not a signed Azure Zarr URL")
-    account_name = parsed.netloc.split(".", 1)[0]
-    container, zarr_path = path_parts
-    filesystem = AzureBlobFileSystem(account_name=account_name, sas_token=parsed.query)
-    return xr.open_zarr(
-        filesystem.get_mapper(f"{container}/{zarr_path}"),
-        consolidated=True,
-        decode_timedelta=False,
-    )
+def asset_href(item: dict, key: str) -> str:
+    href = ((item.get("assets") or {}).get(key) or {}).get("href")
+    if not href:
+        raise RuntimeError(f"STAC item {item.get('id')} has no {key!r} asset")
+    return href
 
 
-def lead_hours(values: np.ndarray) -> np.ndarray:
-    if np.issubdtype(values.dtype, np.timedelta64):
-        return values.astype("timedelta64[h]").astype(int)
-    return values.astype(int)
+def kerchunk_refs(session: requests.Session, item: dict) -> dict:
+    response = session.get(asset_href(item, index_asset_key), timeout=60)
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        raise RuntimeError(f"Aurora index read for {item.get('id')} failed with HTTP {response.status_code}") from None
+    document = response.json()
+    return document.get("refs", document)
 
 
-def precipitation_mm(scaled_values):
-    values = np.asarray(scaled_values, dtype=float)
-    metres = np.exp(values + np.log(PRECIPITATION_EPSILON_M)) - PRECIPITATION_EPSILON_M
-    return np.maximum(metres, 0.0) * 1000.0
+def reference_metadata(refs: dict, name: str, part: str) -> dict:
+    value = refs.get(f"{name}/{part}")
+    if value is None:
+        raise KeyError(f"Aurora item is missing {name!r}; available: {sorted({key.split('/')[0] for key in refs if '/' in key})}")
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def read_reference_array(session: requests.Session, data_href: str, refs: dict, name: str) -> np.ndarray:
+    """Range-read and decode one variable stored as a single kerchunk-indexed chunk."""
+    zarray = reference_metadata(refs, name, ".zarray")
+    shape = list(zarray["shape"])
+    if list(zarray.get("chunks", shape)) != shape:
+        raise ValueError(f"Aurora variable {name!r} spans several chunks; expected one per variable")
+    if zarray.get("compressor"):
+        raise ValueError(f"Unsupported compressor for {name!r}: {zarray['compressor']}")
+    reference = refs.get(f"{name}/" + (".".join("0" * len(shape)) if shape else "0"))
+    if isinstance(reference, str):
+        raw = base64.b64decode(reference[len("base64:"):]) if reference.startswith("base64:") else reference.encode("latin-1")
+    elif isinstance(reference, list) and len(reference) == 3:
+        _, offset, length = reference
+        response = session.get(
+            data_href,
+            headers={"Range": f"bytes={int(offset)}-{int(offset) + int(length) - 1}"},
+            timeout=120,
+        )
+        try:
+            response.raise_for_status()
+        except requests.HTTPError:
+            raise RuntimeError(f"Aurora data read for {name!r} failed with HTTP {response.status_code}") from None
+        raw = response.content
+        if len(raw) != int(length):
+            raise RuntimeError(f"Aurora data read for {name!r} returned {len(raw)} of {length} bytes")
+    else:
+        raise ValueError(f"Unsupported kerchunk reference for {name!r}")
+    for codec in reversed(zarray.get("filters") or []):
+        if codec.get("id") == "zlib":
+            raw = zlib.decompress(raw)
+        elif codec.get("id") == "shuffle":
+            raw = Shuffle(int(codec["elementsize"])).decode(raw)
+        else:
+            raise ValueError(f"Unsupported codec for {name!r}: {codec}")
+    array = np.frombuffer(bytes(raw), dtype=zarray["dtype"]).reshape(shape).astype(float)
+    attributes = json.loads(refs[f"{name}/.zattrs"]) if isinstance(refs.get(f"{name}/.zattrs"), str) else refs.get(f"{name}/.zattrs") or {}
+    return array * float(attributes.get("scale_factor", 1.0)) + float(attributes.get("add_offset", 0.0))
+
+
+def read_item_points(
+    session: requests.Session,
+    item: dict,
+    lead: int,
+    grid_shape: tuple[int, int],
+    lat_indices: np.ndarray,
+    lon_indices: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Return each source variable at the selected grid cells for one hourly item."""
+    refs = kerchunk_refs(session, item)
+    data_href = asset_href(item, data_asset_key)
+    step = float(read_reference_array(session, data_href, refs, "step"))
+    if round(step) != lead:
+        raise ValueError(f"Aurora item {item.get('id')} reports step {step}h, expected {lead}h")
+    values = {}
+    for name in SOURCE_VARIABLES:
+        grid = read_reference_array(session, data_href, refs, name)
+        if grid.shape != grid_shape:
+            raise ValueError(f"Aurora variable {name!r} in {item.get('id')} has shape {grid.shape}, expected {grid_shape}")
+        values[name] = grid[lat_indices, lon_indices]
+    return values
 
 
 def relative_humidity_percent(temperature_c, dew_point_c):
@@ -208,47 +348,27 @@ def relative_humidity_percent(temperature_c, dew_point_c):
     return np.clip(100.0 * np.exp(exponent), 0.0, 100.0)
 
 
-def weather_series(
-    dataset: xr.Dataset,
-    step_indices: list[int],
-    lat_indices: list[int],
-    lon_indices: list[int],
-) -> dict[str, np.ndarray]:
-    """Read the selected grid cells only, returning one (step, point) array per variable."""
-    steps = xr.DataArray(np.asarray(step_indices, dtype=int), dims="step")
-    latitudes = xr.DataArray(np.asarray(lat_indices, dtype=int), dims="point")
-    longitudes = xr.DataArray(np.asarray(lon_indices, dtype=int), dims="point")
-
-    def series(name: str) -> np.ndarray:
-        return np.asarray(
-            dataset[name]
-            .isel(time=0, step=steps, latitude=latitudes, longitude=longitudes)
-            .transpose("step", "point")
-            .values,
-            dtype=float,
-        )
-
-    temperature_c = series("2m_temperature_0") - 273.15
-    dew_point_c = series("2m_dewpoint_temperature_0") - 273.15
-    wind_u = series("10m_u_component_of_wind_0")
-    wind_v = series("10m_v_component_of_wind_0")
+def weather_series(source: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Convert (step, point) source arrays to canonical variables and units."""
+    temperature_c = source["2t"] - 273.15
+    dew_point_c = source["2d"] - 273.15
+    wind_u = source["10u"]
+    wind_v = source["10v"]
     wind_speed = np.hypot(wind_u, wind_v)
     wind_direction = np.degrees(np.arctan2(-wind_u, -wind_v)) % 360.0
     wind_direction = np.where(wind_speed < 0.1, np.nan, wind_direction)
 
     return {
-        "pressure": series("surface_pressure_0") / 100.0,
+        "pressure": source["msl"] / 100.0,
         "temperature": temperature_c,
         "relative_humidity": relative_humidity_percent(temperature_c, dew_point_c),
         "dew_point": dew_point_c,
-        "solar_radiation": np.maximum(
-            series("surface_solar_radiation_downwards_1h_0") / 3600.0,
-            0.0,
-        ),
+        # Hourly J/m2 totals become mean W/m2; the model emits small negatives at night.
+        "solar_radiation": np.maximum(source["ssrd"] / 3600.0, 0.0),
         "wind_speed": wind_speed,
-        "wind_gust": np.maximum(series("instantaneous_10m_wind_gust_0"), 0.0),
+        "wind_gust": np.maximum(source["i10fg"], 0.0),
         "wind_direction": wind_direction,
-        "precipitation": precipitation_mm(series("scaled_total_precipitation_1h_0")),
+        "precipitation": np.maximum(source["tp"], 0.0) * 1000.0,
     }
 
 
@@ -437,35 +557,38 @@ spark.createDataFrame(
 ).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
 
 api_key = notebookutils.credentials.getSecret(key_vault_uri, api_key_secret_name)
-item = latest_stac_item(endpoint, api_key)
-source_item_id = str(item.get("id"))
-properties = item.get("properties", {})
-reference_text = properties.get("forecast:reference_datetime") or properties.get("datetime")
-if not reference_text:
-    raise RuntimeError("Latest STAC item has no forecast reference time")
-reference_time = pd.Timestamp(reference_text).to_pydatetime()
-asset_href = item.get("assets", {}).get(asset_key, {}).get("href")
-if not asset_href:
-    raise RuntimeError(f"STAC item has no {asset_key!r} asset")
-
-raw_path = PurePosixPath("Files/weather/bronze/stac") / collection / f"{source_item_id}.json"
-notebookutils.fs.put(str(raw_path), json.dumps(sanitize_stac_item(item), indent=2), True)
-
-dataset = open_signed_zarr(asset_href)
-missing_source_variables = sorted(SOURCE_VARIABLES - set(dataset.data_vars))
-if missing_source_variables:
-    raise KeyError(
-        f"Missing Aurora variables: {missing_source_variables}. "
-        f"Available: {sorted(dataset.data_vars)}"
+if max_lead_hours < interval_hours or interval_hours < 1 or download_workers < 1:
+    raise ValueError("max_lead_hours, interval_hours, and download_workers must be positive and consistent")
+native_hours = list(range(1, max_lead_hours + 1))
+session = retry_session(max(int(download_workers), 1) * 2)
+reference_time, items_by_lead = latest_complete_issue(session, endpoint, api_key, native_hours)
+source_item_id = f"{stream}_{reference_time:%Y%m%d%H%M}"
+issue_age_hours = (started_at - reference_time).total_seconds() / 3600.0
+if issue_age_hours > max_issue_age_hours:
+    raise RuntimeError(
+        f"Newest complete Aurora {stream!r} issue {reference_time:%Y-%m-%dT%H:%MZ} is "
+        f"{issue_age_hours:.0f}h old, beyond max_issue_age_hours={max_issue_age_hours}; "
+        f"the {collection} feed may have stalled"
     )
 
-latitudes = np.asarray(dataset["latitude"].values, dtype=float)
-longitudes = np.asarray(dataset["longitude"].values, dtype=float)
-native_hours = [int(value) for value in lead_hours(dataset["step"].values)]
+raw_path = PurePosixPath("Files/weather/bronze/stac") / collection / f"{source_item_id}.json"
+notebookutils.fs.put(
+    str(raw_path),
+    json.dumps(
+        {
+            "collection": collection,
+            "issue_id": source_item_id,
+            "items": [sanitize_stac_item(items_by_lead[lead]) for lead in native_hours],
+        },
+        indent=2,
+    ),
+    True,
+)
+
 requested_hours = set(range(interval_hours, max_lead_hours + 1, interval_hours))
 bucket_leads = sorted(hour for hour in set(native_hours) if hour in requested_hours)
 if not bucket_leads:
-    raise RuntimeError("No requested forecast lead hours are present in the dataset")
+    raise RuntimeError("No requested forecast lead hours are present in the issue")
 
 # Each reported lead covers the interval that ends at it, so accumulating variables are
 # summed over every native step inside that window instead of sampling one step in six.
@@ -488,9 +611,37 @@ if partial_leads:
         f"{interval_hours}h interval; interval_hours records the shortfall"
     )
 
+# All hourly items share one global grid, so the nearest cells are resolved once.
+first_item = items_by_lead[native_hours[0]]
+first_refs = kerchunk_refs(session, first_item)
+first_data_href = asset_href(first_item, data_asset_key)
+latitudes = read_reference_array(session, first_data_href, first_refs, "latitude")
+longitudes = read_reference_array(session, first_data_href, first_refs, "longitude")
+grid_shape = (len(latitudes), len(longitudes))
+point_cells = []
+for point in points:
+    lat_index, lon_index = nearest_grid_indices(
+        latitudes, longitudes, point["latitude"], point["longitude"]
+    )
+    point_cells.append((point, lat_index, lon_index))
+lat_indices = np.asarray([lat_index for _, lat_index, _ in point_cells], dtype=int)
+lon_indices = np.asarray([lon_index for _, _, lon_index in point_cells], dtype=int)
+
+member_leads = [native_hours[index] for index in member_indices]
+with ThreadPoolExecutor(max_workers=int(download_workers)) as pool:
+    member_values = list(pool.map(
+        lambda lead: read_item_points(session, items_by_lead[lead], lead, grid_shape, lat_indices, lon_indices),
+        member_leads,
+    ))
+source_series = {
+    name: np.vstack([values[name] for values in member_values])
+    for name in SOURCE_VARIABLES
+}
+
 print(
-    f"Run {run_id}: item {source_item_id}, {len(bucket_leads)} lead times from "
-    f"{len(member_indices)} native steps, {len(VARIABLES)} variables"
+    f"Run {run_id}: issue {source_item_id} ({issue_age_hours:.0f}h old), "
+    f"{len(bucket_leads)} lead times from {len(member_indices)} hourly items, "
+    f"{len(VARIABLES)} variables"
 )
 
 # METADATA ********************
@@ -503,12 +654,7 @@ print(
 # CELL ********************
 
 location_rows = []
-point_cells = []
-for point in points:
-    lat_index, lon_index = nearest_grid_indices(
-        latitudes, longitudes, point["latitude"], point["longitude"]
-    )
-    point_cells.append((point, lat_index, lon_index))
+for point, lat_index, lon_index in point_cells:
     location_rows.append({
         "location_id": point["location_id"],
         "location_name": point["location_name"],
@@ -523,12 +669,7 @@ for point in points:
         "updated_at_utc": started_at,
     })
 
-series = weather_series(
-    dataset,
-    member_indices,
-    [lat_index for _, lat_index, _ in point_cells],
-    [lon_index for _, _, lon_index in point_cells],
-)
+series = weather_series(source_series)
 
 forecast_rows = []
 for lead in bucket_leads:

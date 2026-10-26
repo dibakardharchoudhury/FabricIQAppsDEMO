@@ -24,7 +24,7 @@
 //           to the app AND create the tenant-wide consent grant:
 //             - Azure Data Explorer  user_impersonation   (telemetry)
 //             - Power BI Service      GraphQLApi.Execute.All (STID GraphQL)
-//             - Cognitive Services    user_impersonation   (Foundry copilot)
+//             - Foundry Agent Service user_impersonation   (Supervisor and specialists)
 //           Scope ids are resolved live from each resource service principal so
 //           they stay correct across clouds/tenants. Without the permission you
 //           get AADSTS650057 (Invalid resource); without consent, AADSTS65001
@@ -82,7 +82,12 @@ let tenantIdFromEnv = null
 // Delegated permissions the app's two live-data paths need. Scope ids are
 // resolved from each resource SP at runtime (by `value`), so only the stable
 // resource app ids + human-readable scope values are hardcoded here.
-const REQUIRED_DELEGATED = [
+export const REQUIRED_DELEGATED = [
+  {
+    label: 'Microsoft Foundry Agent Service',
+    resourceAppId: '18a66f5f-dbdf-4c17-9dd7-1634712a9cbe',
+    scopeValues: ['user_impersonation'],
+  },
   {
     label: 'Azure Data Explorer (telemetry / Eventhouse)',
     // Resource behind *.kusto.fabric.microsoft.com.
@@ -96,15 +101,7 @@ const REQUIRED_DELEGATED = [
     // GraphQLApi.Execute.All = STID GraphQL query. Workspace.Read.All = List Items.
     // Item.Read.All = Get Eventhouse (telemetry queryServiceUri). Item.Execute.All = run jobs.
     // Fabric.Embed = render the Real-Time Dashboard in the RT Dashboard telemetry view.
-    scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All', 'Fabric.Embed'],
-  },
-  {
-    label: 'Microsoft Cognitive Services (Azure AI Foundry copilot)',
-    // Resource behind *.openai.azure.com / *.services.ai.azure.com. The signed-in user also
-    // needs the `Cognitive Services OpenAI User` Azure role on the Foundry resource itself;
-    // this delegated scope only authorizes the audience, not the data-plane action.
-    resourceAppId: '7d312290-28c8-473c-a0ed-8e53749b6d6d',
-    scopeValues: ['user_impersonation'],
+    scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All', 'DataAgent.Execute.All', 'Fabric.Embed'],
   },
 ]
 
@@ -134,9 +131,15 @@ function parseEnv(file) {
   return out
 }
 
-function az(argv) {
-  // az is a .cmd shim on Windows; execFileSync needs shell:true to resolve it.
-  return execFileSync('az', argv, { encoding: 'utf8', shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
+export function az(argv, options = {}) {
+  const execute = options.execFileSync ?? execFileSync
+  const platform = options.platform ?? process.platform
+  // Only Windows needs a shell for az.cmd. POSIX shells expand JMESPath braces.
+  return execute('az', argv, {
+    encoding: 'utf8',
+    shell: platform === 'win32',
+    stdio: options.stdio ?? ['pipe', 'pipe', 'pipe'],
+  })
 }
 
 const AZURE_CLI_SESSION_ROOT = path.join(os.tmpdir(), 'fabric-demo-azure-cli')
@@ -231,7 +234,7 @@ export function recoverStaleToken(tenantId) {
     '--only-show-errors', '--output', 'none',
   ]
   try {
-    execFileSync('az', loginArgs, { stdio: 'inherit', shell: true })
+    az(loginArgs, { stdio: 'inherit' })
   } catch {
     fail(
       `Re-authentication via \`az login --tenant ${tenantId}\` failed. ` +
@@ -494,21 +497,7 @@ function grantDelegatedPermissions(clientId) {
     return
   }
 
-  // Blanket admin consent first (Graph + Power BI + ADX). It can silently skip
-  // some resources, so we ALSO create each delegated grant directly below.
-  console.log('Granting admin consent for the app...')
-  try {
-    az(['ad', 'app', 'permission', 'admin-consent', '--id', clientId])
-    console.log('\u2713 Admin consent requested for the app.')
-  } catch (err) {
-    console.warn(
-      '\u26a0 Could not grant blanket admin consent (need Privileged Role ' +
-        'Administrator / Global Administrator). Will still try the targeted grants ' +
-        `below. (Underlying error: ${err.message ?? err})`,
-    )
-  }
-
-  // Ensure each delegated grant exists specifically (admin-consent can skip them).
+  // Grant only declared requirements, not unrelated historical app permissions.
   let clientSpId
   try {
     clientSpId = az(['ad', 'sp', 'show', '--id', clientId, '--query', 'id', '-o', 'tsv']).trim()

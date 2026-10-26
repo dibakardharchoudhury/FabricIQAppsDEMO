@@ -1,6 +1,9 @@
 import { AdministrationExperience, type AdministrationStep } from '../../components/AdministrationExperience'
 import { CopilotSettingsPanel } from '../../components/CopilotSettingsPanel'
+import { MapDataRefreshPanel } from '../../components/MapDataRefreshPanel'
 import { fmtElapsed, useHydroOperationsData } from '../hooks/useHydroOperationsData'
+import { ENERGY_MAP_ENABLED } from '../appFeatures'
+import '../styles/map-data-refresh.css'
 
 export function AdministrationPage() {
   const data = useHydroOperationsData()
@@ -16,11 +19,11 @@ export function AdministrationPage() {
     },
     {
       n: 2,
-      title: 'Seed & provision',
-      why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.',
+      title: 'Seed operational demo data',
+      why: 'Adds missing demo records to the independent operational SQL store and refreshes its verified v2 Data Agent source (RTI_011). Does not deploy Foundry agents or create a STID GraphQL API. Use the local launcher for infrastructure and multi-agent setup.',
       done: data.provisionState === 'complete',
       busy: data.provisionState === 'running' || Boolean(data.jobs.seed),
-      action: 'Seed & provision',
+      action: 'Seed demo data',
       run: () => void data.actions.seedAndProvision(),
     },
     {
@@ -35,7 +38,7 @@ export function AdministrationPage() {
     {
       n: 4,
       title: 'Connect STID',
-      why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.',
+      why: 'Loads governed facility & asset metadata through the delegated, read-only Lakehouse connector. No GraphQL API is required.',
       done: data.stidState === 'connected',
       busy: data.stidState === 'loading',
       action: 'Connect STID',
@@ -63,8 +66,11 @@ export function AdministrationPage() {
 
   return <>
     {data.notice && <div className="notice"><span>{data.notice}</span></div>}
-    {Object.entries(data.jobs).map(([key, job]) => <div key={key} className="v2-progress"><div className="v2-progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="v2-progress-track"><div className="v2-progress-bar" style={{ width: `${job.pct}%` }} /></div></div>)}
+    {Object.entries(data.jobs).filter(([, job]) => job.kind !== 'map').map(([key, job]) => <div key={key} className="v2-progress"><div className="v2-progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="v2-progress-track"><div className="v2-progress-bar" style={{ width: `${job.pct}%` }} /></div></div>)}
     <AdministrationExperience steps={steps} />
+    {ENERGY_MAP_ENABLED && <MapDataRefreshPanel state={data.mapRefreshState} status={data.jobs.map?.status}
+      message={data.mapRefreshMessage} elapsed={data.jobs.map ? fmtElapsed(data.now - data.jobs.map.startedAt) : undefined}
+      onStart={() => void data.actions.updateAllMapData()} />}
     <CopilotSettingsPanel />
   </>
 }

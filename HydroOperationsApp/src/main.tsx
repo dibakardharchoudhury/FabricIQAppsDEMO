@@ -1,7 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import AppV1 from './AppV1.tsx'
-import AppV2 from './AppV2.tsx'
+import { RootApp } from './RootApp.tsx'
 
 const url = new URL(window.location.href)
 const ui = url.searchParams.get('ui') === 'v2' ? 'v2' : 'v1'
@@ -11,5 +10,5 @@ if (url.searchParams.get('ui') !== ui) {
 }
 
 createRoot(document.getElementById('root')!).render(
-  ui === 'v2' ? <AppV2 /> : <AppV1 />,
+  <RootApp ui={ui} />,
 )

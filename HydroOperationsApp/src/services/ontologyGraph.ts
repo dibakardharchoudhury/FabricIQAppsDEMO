@@ -2,6 +2,7 @@ export type OntologyGraphNode = {
   oid: string
   labels: string[]
   properties: Record<string, unknown>
+  entityTypeId?: string
 }
 
 export type OntologyGraphEdge = {
@@ -10,26 +11,35 @@ export type OntologyGraphEdge = {
   sourceOid: string
   targetOid: string
   properties: Record<string, unknown>
+  relationshipTypeId?: string
 }
 
 export type OntologyGraph = {
+  ontologyId?: string
   graphModelId: string
   graphModelName: string
   nodes: OntologyGraphNode[]
   edges: OntologyGraphEdge[]
 }
 
-type SerializedGraphElement = {
-  oid?: unknown
-  labels?: unknown
-  properties?: unknown
-  ends?: Array<{ oid?: unknown }>
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function decodeElement(value: unknown): SerializedGraphElement | undefined {
-  if (typeof value !== 'string') return undefined
-  try { return JSON.parse(value) as SerializedGraphElement }
-  catch { return undefined }
+function decodeElement(value: unknown, context: string): OntologyGraphNode {
+  if (typeof value !== 'string') throw new Error(`${context}: expected a serialized graph element.`)
+  let element: unknown
+  try { element = JSON.parse(value) }
+  catch { throw new Error(`${context}: invalid graph JSON.`) }
+  if (!isRecord(element) || typeof element.oid !== 'string' || !element.oid.trim()
+    || !Array.isArray(element.labels) || !element.labels.every(label => typeof label === 'string' && label.trim())) {
+    throw new Error(`${context}: invalid graph identity or labels.`)
+  }
+  const properties = element.properties === undefined ? {} : element.properties
+  if (!isRecord(properties)) {
+    throw new Error(`${context}: invalid graph properties.`)
+  }
+  return { oid: element.oid, labels: element.labels, properties }
 }
 
 export function parseOntologyGraph(
@@ -38,29 +48,19 @@ export function parseOntologyGraph(
   nodeRows: Array<Record<string, unknown>>,
   edgeRows: Array<Record<string, unknown>>,
 ): OntologyGraph {
-  const nodes = nodeRows.flatMap(row => {
-    const element = decodeElement(row.node)
-    if (!element || typeof element.oid !== 'string') return []
-    return [{
-      oid: element.oid,
-      labels: Array.isArray(element.labels) ? element.labels.map(String) : [],
-      properties: element.properties && typeof element.properties === 'object' ? element.properties as Record<string, unknown> : {},
-    }]
+  const nodes = nodeRows.map((row, index) => decodeElement(row.node, `Graph node row ${index + 1}`))
+  const nodeIds = new Set(nodes.map(node => node.oid))
+  if (nodeIds.size !== nodes.length) throw new Error('Graph query returned duplicate node identities.')
+  const edges = edgeRows.map((row, index) => {
+    const context = `Graph relationship row ${index + 1}`
+    const element = decodeElement(row.relationship, context)
+    const source = decodeElement(row.source, `${context} source`)
+    const target = decodeElement(row.target, `${context} target`)
+    if (!nodeIds.has(source.oid) || !nodeIds.has(target.oid)) {
+      throw new Error(`${context}: endpoint missing from node results. Refresh the graph; partial topology will not be displayed.`)
+    }
+    return { ...element, sourceOid: source.oid, targetOid: target.oid }
   })
-  const edges = edgeRows.flatMap(row => {
-    const element = decodeElement(row.relationship)
-    const source = decodeElement(row.source)
-    const target = decodeElement(row.target)
-    const sourceOid = typeof source?.oid === 'string' ? source.oid : element?.ends?.[0]?.oid
-    const targetOid = typeof target?.oid === 'string' ? target.oid : element?.ends?.[1]?.oid
-    if (!element || typeof element.oid !== 'string' || typeof sourceOid !== 'string' || typeof targetOid !== 'string') return []
-    return [{
-      oid: element.oid,
-      labels: Array.isArray(element.labels) ? element.labels.map(String) : [],
-      sourceOid,
-      targetOid,
-      properties: element.properties && typeof element.properties === 'object' ? element.properties as Record<string, unknown> : {},
-    }]
-  })
+  if (new Set(edges.map(edge => edge.oid)).size !== edges.length) throw new Error('Graph query returned duplicate relationship identities.')
   return { graphModelId, graphModelName, nodes, edges }
 }

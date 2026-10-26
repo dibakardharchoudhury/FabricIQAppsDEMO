@@ -19,4 +19,11 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // The hosted backend's source logic (including work-order approval) lives in these Node modules; an undefined
+    // variable there only fails at runtime, after a write may already have happened.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: globals.node, sourceType: 'module' },
+    rules: { 'no-undef': 'error' },
+  },
 ])

@@ -1,5 +1,32 @@
 # Copilot instructions — FabricIQAppsDEMO
 
+## Ontology v2 only
+
+Use the [v2-only contract](../README.md#ontology-generations-and-optional-agents) for code and docs.
+Require live numeric generation 2, explicit TMDL authoring, safe binding preservation, and verified
+readback. Never restore generation-1 ontology or agent-source fallbacks. Retain the original
+Operations Agent playbook/actions capabilities against the verified v2 ontology. REST `/v1`, app layout names,
+and environment suffixes are not ontology generations.
+
+Always provision the Data Agent and the ontology-backed Operations Agent; there are no agent mode flags or skip
+branches. Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10 removes it only
+after verifying the retained ontology agent and the retired folder/source identity, then clears
+its obsolete settings. Preserve the shared Eventhouse and SQL/KQL grounding.
+Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
+binding. Data Agent sources require matching verified v2 identity. NB09 reports the exact temporary
+Fabric response `This API version is not supported for the specified Ontology item` as a known
+product limitation after verified v2 publication; every other deployment, publication, runtime, and
+readback failure propagates. NB11 preserves compatible added SQL/custom content. The bounded smoke
+does not attest execution provenance or certify SQL/combined-source answers. Configuration or
+hosted-page success does not certify agent execution or delivery. The app's native graph
+requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
+→ Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON generated from
+authoritative Ontology-to-GraphIndex item lineage or supplied as an operator-verified fallback.
+No ownership is inferred from names, sole-graph discovery, or structure. Native topology is authoritative; KQL/SQL only enrich
+actual native entities. GraphQL/STID is not a canvas/tree/scope dependency or topology fallback.
+No published ontology-owned materialization REST endpoint is established; keep this portal
+prerequisite separate from automated deployment and agent runtime readiness.
+
 ## Deploying HydroOperationsApp (Rayfin) — don't reinvent the wheel
 This repo already automates deployment. Before doing ANY deploy / new-tenant / redeploy work:
 - From the repository root, use this as the **only agent deployment command**:
@@ -31,12 +58,25 @@ This repo already automates deployment. Before doing ANY deploy / new-tenant / r
   report success from the hosted HTML page alone.
 - Treat an explicit `--client-id` that cannot be verified in the target tenant as a hard
   pre-deployment failure. Never publish a bundle with an unverified SPA GUID.
-- The only genuinely manual step is creating the SPA app registration (`az ad app create`), because
-  an app registration is tenant-scoped.
+- SPA app registration is tenant-scoped and may require administrator action. Ontology-managed
+  graph materialization is a separate manual portal prerequisite; do not promise unattended graph deployment.
 
 ## Node 24 wrapper (Windows)
 The one-shot Python orchestrator resolves/downloads Node 24 and invokes the repository-local Rayfin
 CLI itself. Agents must not wrap or reconstruct those commands.
+
+## Hydro Operations runtime data caching
+
+- Never persist Lakehouse STID, Eventhouse telemetry, weather, Ontology definitions, or native graph
+  results in `localStorage`, IndexedDB, a service worker, or a bundled fallback.
+- Performance caches for analytical data must remain in memory inside the active SPA, be keyed by
+  authoritative workspace/source identity, use polling or a bounded TTL, coalesce concurrent reads,
+  and invalidate on missing sources, identity/configuration changes, or failed refreshes. Never
+  report a failed source as connected or render its previous values after a failed read.
+- Keep Rayfin SQL operational state independent. SQL-backed work orders, inspections, notifications,
+  spare parts, and 3D models may remain queryable when Lakehouse/Eventhouse sources are unavailable.
+- This runtime policy adds no local-deployer parameters and does not change notebook, Data Agent, or
+  Operations Agent provisioning.
 
 ## Git
 `main` is wired to Fabric git integration — `git fetch` and merge any Fabric commit-back before
