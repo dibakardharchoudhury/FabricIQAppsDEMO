@@ -46,7 +46,61 @@ The app-host/connector session and direct Fabric ontology-read consent are disti
 `Workspace.Read.All` and `Item.Read.All`; it does not request Eventhouse or connector scopes.
 Automatic/background graph reads never open a consent popup.
 
-### FEATURE hosted acceptance: October 26, 2026
+### FEATURE coverage completion acceptance: October 26, 2026
+
+The canonical deployment completed at `2026-10-26T19:46:44Z` with `SUCCESS`.
+Authenticated acceptance confirmed build **1.0.1110 / 9b67be9** at
+[the FEATURE application](https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net/?ui=v1&tab=knowledge-graph).
+
+All **18/18 primary entity bindings and 17/17 declared relationship types** are
+included. The actual JSON export contains **309 instances / 322 directed links**.
+Every exported node has a verified entity type and unique identity; every edge
+has a unique identity and matches its declared relationship's directed endpoints.
+Source evidence identifies only the verified FEATURE Core Lakehouse and independent
+operational SQL database, with contract signature
+`f9aa128ec368019bdcc8593952ea917b6d45b40d51572f2d771552515f82c4b0`.
+The result is source-backed, non-atomic and has no GraphModel identity.
+
+Added coverage includes 90 signals, three weather sources, nine weather variables,
+six ingestion runs and 15 instrument classifications. Weather locations, areas,
+latest observations and latest forecasts are readable but contain zero rows.
+Their relationships are supported with zero matching instances, not fabricated.
+Only ten inspection rows have a signal reference, so `Inspection_for_signal` has
+ten links, not thirty. Live counts supersede the earlier preflight prediction.
+
+The All-scope canvas has **219 nodes / 232 links**, with 219 distinct finite
+positions. The existing presentation combines each verified one-to-one signal
+and instrument into one node and removes its resulting self-link; the export
+retains all 309 instances and 322 relationships. The earlier stroke/arrow styling,
+compact header and JSON control are restored. Graph details and execution selection
+remain available in a collapsed footer below the canvas.
+
+| Hosted check | Observed result |
+| --- | --- |
+| Full reload with cold application-memory caches, including opening Graph details | 7.728 s; graph loader 4.67 s |
+| Explicit refresh through successful new observation | 5.508 s; graph loader 5.44 s |
+| Immediate return from Overview | 181 ms; original observation timestamp retained |
+| Actual telemetry | 90 loaded signals; 108 telemetry-bearing edges in All scope |
+| Selected T001 canvas | 14 nodes / 17 links; eight telemetry-bearing edges |
+| Selected telemetry animation | Dash offset changed from -0.536 to -1.0704; 3.2 px stroke, 10/12 dashes |
+| Administration | No browser seed action; guided steps 1-5; STID/telemetry chips 3/4 |
+| Page-only synthetic ontology HTTP 403 | Canvas removed; explicit failure and Connect Fabric and retry |
+| Recovery after removing the test route | 5.225 s through explicit authorization/retry |
+| Separate native execution | HTTP 204 rejected in 2.951 s; no canvas or source fallback |
+
+No stream was started and no browser seeding or notebook-start action was clicked
+during these checks. The app loaded existing telemetry. Large graphs retain bounded
+animation: above 150 edges, only the selected node's immediate telemetry neighborhood
+animates; with no selection, moving dashes are paused. Visibility and reduced-motion
+guards remain enabled.
+
+These are single-session observations, not cleared HTTP-cache, multi-user load or
+production certification. All primary bindings are supported, but complex/time-series
+properties, rules and metrics are not executed. Native materialization remains blocked.
+Local validation passed 135 distinct focused tests, scoped ESLint, TypeScript and
+the production build.
+
+### Historical FEATURE hosted acceptance: October 26, 2026
 
 The canonical deployment completed at `2026-10-26T18:11:33Z` with `SUCCESS`.
 Authenticated acceptance used build **1.0.1107 / f499dc4** at

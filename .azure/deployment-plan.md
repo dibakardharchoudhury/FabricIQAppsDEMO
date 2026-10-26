@@ -1,12 +1,12 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Knowledge Graph live-source publication
 
 ### Coverage completion and visual restoration follow-up
 
-The next publication expands the existing read-only Lakehouse connector, not
+The completed publication expands the existing read-only Lakehouse connector, not
 permissions or graph resources: signal master, weather sources/ingestion history,
 classification and all missing primary scalar/identity columns. It removes the
 duplicate browser seeding action from every layout, retains monitoring for older
@@ -23,8 +23,49 @@ support and must not be filled with synthetic graph instances.
 The safely restored FEATURE ontology definition was checked against the updated
 server/client projections: all 18 primary entity bindings and all 17 declared
 relationships are compatible. This local check used synthetic empty readers;
-actual signed-in connector acceptance remains required after publication.
-No SQL seed, data deletion, new role assignment or manual Entra changes are planned.
+actual signed-in connector acceptance passed as recorded below.
+No SQL seed, data deletion, new role assignment or manual Entra changes were performed.
+
+#### Coverage completion publication and authenticated acceptance
+
+The canonical orchestrator completed at `2026-10-26T19:46:44Z` in 874.454 seconds,
+printing `SUCCESS` and
+`DEPLOYED_APP_URL=https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+Authenticated acceptance confirmed build `1.0.1110` / `9b67be9`.
+Five specialists were reused; the changed shared source fingerprint required
+supervisor image `src-c1bce63d8dac1277`, with version 15 active. All three connectors,
+runtime/CORS preflights and POST readiness checks passed; 42 SPA redirects were
+preserved. No NB11 execution or seed DML ran.
+
+- All 18 entity bindings and 17 declared relationship types are included.
+  Actual export: 309 unique instances / 322 unique directed links. Every entity
+  type and relationship direction matches the selected contract. Source evidence
+  identifies the verified Core Lakehouse and operational SQL; no GraphModel
+  identity or atomic-snapshot claim is present.
+- Four weather tables are readable but empty. Six ingestion runs were observed,
+  rather than five at preflight. Ten inspections have signal references; no
+  missing weather instances or inspection links were invented.
+- The existing combined instrument/signal presentation yields 219 All-scope
+  nodes / 232 links, with 219 distinct finite positions. Full export is retained.
+  Earlier fluid strokes/arrows and compact controls are restored; detailed
+  execution/coverage controls are collapsed below the canvas.
+- Full reload plus opening Graph details: 7.728 s; loader 4.67 s.
+  Explicit refresh: 5.508 s; loader 5.44 s. Warm return: 181 ms with the
+  original observation timestamp. These are single-session measurements.
+- Existing telemetry loaded 90 signals without starting a stream. All scope
+  had 108 telemetry-bearing edges; selected T001 had eight, with verified
+  changing dash offset, 3.2 px width and 10/12 dash pattern. Above 150 edges,
+  animation remains bounded to the selected immediate neighborhood.
+- Administration has no seed action and uses steps 1-5, with STID/telemetry
+  chips 3/4. No notebook-start controls were clicked.
+- Page-only ontology HTTP 403 removed the canvas and exposed the explicit
+  retry control. Removing the route and retrying recovered in 5.225 s.
+- Native mode rejected HTTP 204 in 2.951 s, with no canvas or silent source
+  fallback. Live mode was explicitly restored afterward.
+
+Full current receipts are in [Knowledge Graph documentation](../docs/knowledge-graph.md).
+Native eligibility is still blocked; complete primary binding coverage does not
+certify rule/time-series execution, atomic reads, per-user SQL RLS or production readiness.
 
 #### Section 7: Follow-up validation proof
 
