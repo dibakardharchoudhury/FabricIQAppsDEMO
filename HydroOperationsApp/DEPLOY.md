@@ -29,7 +29,7 @@ Entra or SQL deployment sequence.
 | Repository / branch | Filled from this checkout. |
 | Key Vault URI / Teams destinations | Restored from saved values for this target, or configured defaults. Otherwise ask the resource owner; the app does not invent destinations. |
 | Alert email | Suggests the signed-in user's email when the tenant GUID matches. Confirm or replace it. |
-| Notebook credentials / runtime | Uses secret **names** `tenantid`, `clientid`, `clientsecret`, the signed-in deploying user, and 3600 seconds. Current settings are summarized above **Change notebook defaults (optional)**. |
+| Notebook credentials / runtime | An existing Key Vault with the service principal's tenant ID, client ID and client secret is required, with notebook read access. Default secret **names** are `tenantid`, `clientid`, `clientsecret`. Review **Key Vault secret names and notebook settings**; keep those names only if they match the vault. Run-as defaults to the signed-in deploying user and timeout to 3600 seconds. |
 | Azure subscription | Auto-selected only when it matches the target tenant and is the active signed-in subscription or the sole match. Otherwise choose from the loaded list. |
 | Foundry project / model | Reuses saved settings for this target, then verified discovery. Supply the project resource ID or deployment name only when needed. |
 | SPA / registry / project endpoint | Automatic discovery; optional overrides are grouped together. |
@@ -188,8 +188,10 @@ For an empty workspace, use **Full Deploy**. Supply:
   only when creating a connection. The PAT is not stored on disk.
 - Environment suffix, your Key Vault URI, target Teams team/channel and alert
   email recipient. The workspace is shown directly; notebook settings summarize
-  secret names, run-as identity and timeout. Use **Change notebook defaults
-  (optional)** only to override them. Blank run-as means the signed-in deploying user.
+  secret names, run-as identity and timeout. **Key Vault secret names and notebook
+  settings** contains the required SPN secret names. The vault and all three secrets
+  must already exist and be readable; setup does not create them. Only changing
+  matching default names is unnecessary. Blank run-as means the signed-in deploying user.
 - Existing Foundry settings, or explicit opt-in to new billable resources
   with a region-supported model/version/SKU/capacity. First-time creation settings
   appear directly when you opt in; they are not hidden under Advanced.

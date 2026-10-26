@@ -100,31 +100,13 @@ class WorkspaceActionTests(unittest.TestCase):
         with patch.object(SERVER.subprocess, "run", side_effect=subprocess.TimeoutExpired("az", 40)):
             self.assertEqual(self.client.get("/api/subscriptions").status_code, 503)
 
-    def test_timing_renderer_handles_success_failure_escaping_and_invalid_receipts(self):
+    def test_progress_keeps_overall_elapsed_without_partial_module_timing_table(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        functions = (
-            page[page.index("function renderDeploymentTimings("):page.index("let subscriptionLoad =")]
-            + page[page.index("function escapeHtml("):page.index("// mm:ss")]
-            + page[page.index("function formatElapsed("):page.index("// Starts a job")]
-        )
-        script = functions + """
-const assert = require("node:assert/strict");
-assert.equal(renderDeploymentTimings([]), "");
-const receipt = {status:"succeeded", total_seconds:65, steps:[
-  {section:1, label:"<b>Identity</b>", seconds:65, status:"completed"}
-]};
-const render = (value) => renderDeploymentTimings(["[deploy] DEPLOY_TIMINGS=" + JSON.stringify(value)]);
-const html = render(receipt);
-assert.ok(html.includes("01:05"));
-assert.ok(html.includes("&lt;b&gt;Identity&lt;/b&gt;"));
-assert.ok(!html.includes("<b>Identity</b>"));
-assert.ok(render({...receipt,status:"failed"}).includes("(failed)"));
-assert.ok(render({steps:"invalid"}).includes('role="alert"'));
-assert.ok(render({...receipt,total_seconds:-1}).includes('role="alert"'));
-assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"'));
-"""
-        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("renderDeploymentTimings", page)
+        self.assertNotIn("Module timings", page)
+        self.assertNotIn('aria-label="Deployment timings"', page)
+        self.assertIn('class="elapsed" title="Elapsed time"', page)
+        self.assertIn('escapeHtml((job.lines || []).join("\\n")', page)
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
         starter = "_start_workflow" if endpoint in ("/api/full-workflow", "/api/run-pipeline") else "_start"
@@ -734,6 +716,12 @@ for(const prefix of ["pp_","wf_pp_"]){
   const html=renderPipelineFields(prefix);
   assert.equal(html.split("How to find this ID (Microsoft Learn)").length-1,2);
   assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
+  assert.ok(html.includes("Required before Core setup:"));
+  assert.ok(html.includes("existing Azure Key Vault"));
+  assert.ok(html.includes("tenant ID, client ID and client secret"));
+  assert.ok(html.includes("does not create the vault or its secrets"));
+  assert.ok(html.includes("<summary>Key Vault secret names and notebook settings</summary>"));
+  assert.ok(!html.includes("Change notebook defaults (optional)"));
 }
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)

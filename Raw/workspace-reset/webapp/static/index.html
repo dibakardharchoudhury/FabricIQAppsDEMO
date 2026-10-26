@@ -651,7 +651,6 @@ function renderPanel(el, job) {
        <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
        ${phaseProgress}
-       ${renderDeploymentTimings(job.lines || [])}
        <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
      </div>`;
   el.querySelectorAll(".workflow-phase-group").forEach((group) => {
@@ -664,25 +663,6 @@ function renderPanel(el, job) {
   if (stick) {
     const out = el.querySelector(".output");
     if (out) out.scrollTop = out.scrollHeight;
-  }
-}
-
-function renderDeploymentTimings(lines) {
-  const raw = [...lines].reverse().find((line) => line.includes("DEPLOY_TIMINGS="));
-  if (!raw) return "";
-  try {
-    const data = JSON.parse(raw.slice(raw.indexOf("DEPLOY_TIMINGS=") + "DEPLOY_TIMINGS=".length));
-    if (!data || !Array.isArray(data.steps) || !Number.isFinite(data.total_seconds) || data.total_seconds < 0 ||
-        !["succeeded", "failed"].includes(data.status) || data.steps.some((step) =>
-          !step || typeof step.label !== "string" || !Number.isFinite(step.seconds) || step.seconds < 0 ||
-          !Number.isInteger(step.section) || step.section < 1 || step.section > 8 ||
-          !["completed", "failed"].includes(step.status))) {
-      throw new Error("Invalid deployment timing receipt");
-    }
-    const rows = data.steps.map((step) => `<tr><td>${step.section}. ${escapeHtml(step.label)}</td><td>${formatElapsed(step.seconds * 1000)}</td><td>${escapeHtml(step.status)}</td></tr>`).join("");
-    return `<section aria-label="Deployment timings"><h3>Module timings (${escapeHtml(data.status)})</h3><table><thead><tr><th>Section</th><th>Elapsed</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table><p>Total: ${formatElapsed(data.total_seconds * 1000)}. Other modules and setup-pipeline time are separate.</p></section>`;
-  } catch (error) {
-    return `<p class="error" role="alert">Could not read deployment timings: ${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -1334,9 +1314,11 @@ function renderPipelineFields(prefix) {
     </div>`;
     return { advanced, html };
   });
-  return `<div class="params">${fields.filter(p => !p.advanced).map(p => p.html).join("")}</div>
+  return `<p class="phelp"><strong>Required before Core setup:</strong> an existing Azure Key Vault containing the service principal's tenant ID, client ID and client secret. The notebook identity must be able to read them. This setup does not create the vault or its secrets.</p>
+    <div class="params">${fields.filter(p => !p.advanced).map(p => p.html).join("")}</div>
     <p id="${prefix}defaultsSummary" class="phelp"></p>
-    <details class="foundry-block"><summary>Change notebook defaults (optional)</summary>
+    <details class="foundry-block"><summary>Key Vault secret names and notebook settings</summary>
+    <p class="phelp">The three Key Vault secrets are required. Keep the prefilled secret names if they match your vault; otherwise change them below. Enter names only, never secret values.</p>
     <div class="params">${fields.filter(p => p.advanced).map(p => p.html).join("")}</div></details>`;
 }
 function updatePipelineDefaultsSummary() {
@@ -1344,9 +1326,9 @@ function updatePipelineDefaultsSummary() {
     const summary = $(prefix + "defaultsSummary");
     if (!summary) continue;
     const value = name => $(prefix + name)?.value || "";
-    summary.textContent = `Notebook settings: ${value("ops_agent_run_as_user") || "signed-in deploying user"}; secret names: ${
+    summary.textContent = `Required Key Vault secrets: ${
       ["key_vault_tenant_id_secret_name", "key_vault_client_id_secret_name", "key_vault_client_secret_name"].map(value).join(", ")
-    }; timeout: ${value("per_notebook_timeout_secs")} seconds. These are names, not secret values.`;
+    }. Notebook identity: ${value("ops_agent_run_as_user") || "signed-in deploying user"}; timeout: ${value("per_notebook_timeout_secs")} seconds. These are names, not secret values.`;
   }
 }
 function syncPipelineWorkspace() {
