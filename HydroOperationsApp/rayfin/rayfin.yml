@@ -57,6 +57,7 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
+      - https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
@@ -90,6 +91,15 @@ connectors:
     config:
       workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
       itemId: ${RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID}
+    auth:
+      type: delegated
+    operations:
+      - name: read
+  - name: hydrogeo
+    type: fabric-sqlanalytics
+    config:
+      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
+      itemId: ${RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID}
     auth:
       type: delegated
     operations:

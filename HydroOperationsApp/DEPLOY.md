@@ -183,7 +183,23 @@ silently replaced.
 Choose **Deploy app**. It verifies prepared agents, publishes the website and checks
 runtime/CORS, SQL and authentication. It does not rebuild agents or seed data.
 Readiness requires browser-equivalent preflights and POST checks for `/graphql`
-and `/api/auth/v1/token`; missing CORS headers or token HTTP 5xx fails deployment.
+and `/api/auth/v1/token`, plus `/connectors/hydrolakehouse/graphql`,
+`/connectors/hydrooperations/graphql` and, with energy enabled,
+`/connectors/hydrogeo/graphql`; missing CORS headers or token HTTP 5xx fails deployment.
+
+Both Lakehouses use separate delegated, read-only `fabric-sqlanalytics` connectors.
+Operational SQL uses the delegated `fabric-sqldatabase` connector. The deployer
+resolves both Lakehouse SQL endpoint IDs from live workspace metadata, validates
+their distinct identities, and applies each connector with an explicit success receipt.
+Energy-disabled targets omit the GeoContext connector declaration.
+
+No standalone `Hydro_STID_API` setup or legacy GraphQL source-rebinding is performed.
+Existing standalone items are not automatically modified or deleted. Rayfin's managed
+GraphQL transport is still part of its connector implementation, not the retired API.
+The automated Entra SPA setup remains necessary for direct Eventhouse/live-frequency,
+Fabric ontology/jobs/Data Agent and Foundry calls; it cannot be removed merely by
+switching the Lakehouse transport. GeoContext external aliases are retained for
+optional map Data Agent access, not browser map queries.
 
 Canonical agent/CLI command, from the repository root:
 

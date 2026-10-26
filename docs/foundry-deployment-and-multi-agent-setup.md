@@ -4,6 +4,15 @@
 This page covers agent architecture and configuration.
 Both UI and CLI use [`deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py).
 
+The app reads Core/Weather and GeoContext through separate read-only Rayfin
+`fabric-sqlanalytics` connectors; operational SQL uses `fabric-sqldatabase`.
+Eventhouse telemetry/live frequency remains delegated KQL. Optional map Data Agent
+external aliases remain available, but browser GeoContext reads do not depend on them.
+No standalone STID GraphQL API is provisioned or rebound. Rayfin's managed connector
+transport still uses GraphQL internally. The automatically resolved Entra SPA remains
+required for Eventhouse, Fabric ontology/jobs/Data Agent and Foundry's delegated-user
+authorization; connector migration does not replace those identities.
+
 ### Finding Weather in Foundry
 
 Open the project's **Agents → hydro-weather-agent**. It is a prompt specialist

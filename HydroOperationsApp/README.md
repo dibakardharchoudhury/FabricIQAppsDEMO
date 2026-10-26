@@ -2,7 +2,7 @@
 
 A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
-**three independent data stores** — plus an in‑browser 3D digital‑twin viewer.
+**independent Fabric data stores** — plus an in‑browser 3D digital‑twin viewer.
 
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
 > The local launcher separates Fabric/energy source setup, Foundry multi-agent
@@ -35,7 +35,7 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 | **Lakehouse (STID/weather)** | Engineering master data and weather serving tables | Read-only delegated Rayfin `hydrolakehouse` connector (`fabric-sqlanalytics`) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | KQL query |
 | **Independent Fabric SQL (`RTI_Demo_SQLDatabase_<env_suffix>`)** | Work orders, notifications, inspections, spare parts, 3D models | Writable delegated Rayfin `hydrooperations` connector (`fabric-sqldatabase`) |
-| **GeoContext Lakehouse (optional)** | Imported public energy features and source-health snapshots | Bounded Eventhouse queries over `HydroGeoFeatures` / `HydroGeoStatus` Delta external tables |
+| **GeoContext Lakehouse (optional)** | Imported public energy features, boundaries, revision-qualified links and source-health snapshots | Read-only delegated Rayfin `hydrogeo` connector (`fabric-sqlanalytics`) |
 
 The stores are **never merged server‑side** — the app queries each independently and joins in the
 browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows its source. Demo
@@ -65,9 +65,19 @@ a persisted snapshot.
 NB11 does not provision a separate GraphQL API. SPA and hosted reads use the source-bound
 Lakehouse and independent SQL connectors; `Hydro_STID_API` is retired.
 The retained AppBackend-managed SQL/GraphQL children are not the active operational store.
-This does not change Eventhouse telemetry or ontology-owned native graph topology.
+The deployer applies and checks all three source connectors, including each Lakehouse's
+distinct SQL analytics endpoint. GeoContext reads do not fall back to Eventhouse.
+External GeoContext aliases remain available for the optional Fabric map Data Agent;
+they are not the browser map's transport.
+This does not change Eventhouse telemetry/live frequency or ontology-owned native graph topology.
 The connector reads SQL-visible tables, not OneLake files,
 and is unrelated to ontology generation. See [Rayfin connectors](https://microsoft.github.io/rayfin/docs/guide/cli/connectors/).
+
+The Entra SPA is retained for direct Eventhouse access, Fabric jobs/ontology/Data Agent
+calls and the Foundry supervisor's delegated-user checks. Connector migration does
+not replace those token flows. Setup remains automatic; no standalone STID GraphQL
+API or separate legacy GraphQL setup is required. Rayfin's own GraphQL-backed
+connector transport and its delegated permission remain required.
 
 The initial HTML stays small and references browser-compressible, cacheable application JavaScript
 and CSS. Each layout loads only the selected navigation page; graph, map, telemetry embed,

@@ -209,7 +209,7 @@ export function createToolRuntime(
         validateFilters(args.where, entity.columns.map(column => column.name))
         stid ??= queryStid()
         const data = await stid
-        if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
+        if (!data) throw new Error('Asset metadata is not connected. Sign in to the Rayfin Lakehouse connector first.')
         const rows = (entity.key === 'facilities' ? data.facilities : entity.key === 'equipment' ? data.equipment : data.instruments) as unknown as Record<string, unknown>[]
         return shape(entity, rows, args, !data.inventoryComplete)
       }
@@ -256,7 +256,7 @@ export function createToolRuntime(
           stid,
           loadOperations('work_orders'),
         ])
-        if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
+        if (!data) throw new Error('Asset metadata is not connected. Sign in to the Rayfin Lakehouse connector first.')
         return { ...shapeFleetSnapshot(temperature, args, {
           equipment: data.equipment, instruments: data.instruments, inventoryComplete: data.inventoryComplete,
           telemetryRows: kustoRowsToObjects(telemetryResult.columns, telemetryResult.rows), workOrders,

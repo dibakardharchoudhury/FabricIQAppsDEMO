@@ -1,5 +1,5 @@
 import {
-  buildEnergyMapQuery, isAssetLayer, isEnergyLayer, visiblePlantCapacity,
+  validateEnergyMapRequest, isAssetLayer, isEnergyLayer, visiblePlantCapacity,
   type EnergyFeature, type EnergyLayerId, type EnergySourceStatus, type MapViewport, type ReservoirAreaSelection,
 } from './energyMapModel'
 import type { EnergyPropertyFilters } from './energyMapFilters'
@@ -52,7 +52,7 @@ export function navigationLayer(question: string): EnergyLayerId | undefined {
   return undefined
 }
 
-function validReference(value: unknown): value is MapPlaceReference {
+export function validReference(value: unknown): value is MapPlaceReference {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const row = value as Record<string, unknown>
   return typeof row.feature_id === 'string' && row.feature_id.length > 0 && row.feature_id.length <= 2048
@@ -79,31 +79,11 @@ export function parseMapChatAnswer(raw: string): { text: string; focus?: MapPlac
   }
 }
 
-export function buildMapPlaceQuery(search: string, layer?: EnergyLayerId): string {
+export function validateMapPlaceSearch(search: string, layer?: EnergyLayerId): string {
   const term = search.trim()
   if (!term || term.length > 180) throw new Error('Enter a specific asset or area name.')
   if (layer && (!isEnergyLayer(layer) || (!isAssetLayer(layer) && layer !== 'reservoirs'))) throw new Error('Invalid map place type.')
-  const literal = JSON.stringify(term)
-  return `union
-(external_table('HydroGeoFeatures') | where layer_id in ('hydro-plants','transformers','transmission','regional','distribution','sea-cables','masts')),
-(external_table('HydroGeoReservoirAreas'))
-${layer ? `| where layer_id == ${JSON.stringify(layer)}\n` : ''}| where label contains ${literal} or feature_id == ${literal} or tostring(parse_json(properties_json).area_code) =~ ${literal}
-| extend exact_match = label =~ ${literal} or feature_id == ${literal} or tostring(parse_json(properties_json).area_code) =~ ${literal}
-| order by exact_match desc, label asc, feature_id asc
-| take 11
-| project feature_id, layer_id, label, owner=tostring(parse_json(properties_json).owner),
-    price_area=tostring(parse_json(properties_json).price_area), exact_match, min_lon, min_lat, max_lon, max_lat`
-}
-
-export function buildMapPlaceResolveQuery(reference: MapPlaceReference): string {
-  if (!validReference(reference)) throw new Error('Invalid map asset reference.')
-  const table = reference.layer_id === 'reservoirs' ? 'HydroGeoReservoirAreas' : 'HydroGeoFeatures'
-  return `external_table('${table}')
-| where feature_id == ${JSON.stringify(reference.feature_id)} and layer_id == ${JSON.stringify(reference.layer_id)}
-| take 2
-| project feature_id, layer_id, label, geometry_json,
-    properties_json=tostring(bag_remove_keys(parse_json(properties_json),dynamic(['source_properties','gis_properties','source_message']))),
-    observed_at, ingested_at, source_url, min_lon, min_lat, max_lon, max_lat`
+  return term
 }
 
 export function parseMapPlace(row: Record<string, unknown>): MapPlace {
@@ -144,7 +124,7 @@ export function mapChatPrompt(question: string, context: MapChatContext, history
   }
   const serializedView = JSON.stringify(view)
   if (serializedView.length > 24_000) throw new Error('The current filter selection is too large for map chat. Narrow the selection and try again.')
-  buildEnergyMapQuery(context.viewport, context.layers, context.propertyFilters, context.areaSelection)
+  validateEnergyMapRequest(context.viewport, context.layers, context.propertyFilters, context.areaSelection)
   return [
     'Answer the final user question using the selected Lakehouse tables. The map context below describes the browser view; it is not a SQL query or a replacement for querying the complete dataset.',
     `SQL schema hints:

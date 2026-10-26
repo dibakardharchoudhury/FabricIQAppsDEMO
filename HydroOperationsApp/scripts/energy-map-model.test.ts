@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  asFeatureCollection, buildAssetMarketMessagesQuery, buildEnergyMapQuery, capacityRadius, DEFAULT_LAYERS, FEATURE_LIMIT, INITIAL_VIEW,
+  asFeatureCollection, validateMarketMessageAsset, validateEnergyMapRequest, capacityRadius, DEFAULT_LAYERS, INITIAL_VIEW,
   isMapGeometry, MAP_LAYERS, MAP_VISIBLE_LAYERS, parseEnergyFeature, renderLayerSignature, safeSourceUrl, sourceIsStale, visibleLayerIds,
 } from '../src/ui-shared/energyMapModel.ts'
 
@@ -17,11 +17,9 @@ test('dense nationwide layers are only queried after zooming in', () => {
   assert.equal(visibleLayerIds(all, 4).includes('masts'), false)
   assert.equal(visibleLayerIds(all, 10).includes('distribution'), false)
   assert.equal(visibleLayerIds(all, 12).includes('masts'), true)
-  const query = buildEnergyMapQuery(INITIAL_VIEW, all)
-  assert.ok(query.includes(`take ${FEATURE_LIMIT + 1}`))
-  assert.ok(!query.includes("'masts'"))
-  assert.ok(query.includes('max_lon >= 3'))
-  assert.ok(query.includes('min_lat <= 72'))
+  const selected = validateEnergyMapRequest(INITIAL_VIEW, all)
+  assert.ok(!selected.includes('masts'))
+  assert.ok(selected.includes('hydro-plants'))
 })
 
 test('map queries reject malformed or injected bounds', () => {
@@ -29,8 +27,8 @@ test('map queries reject malformed or injected bounds', () => {
     { ...INITIAL_VIEW, west: NaN }, { ...INITIAL_VIEW, east: 200 },
     { ...INITIAL_VIEW, north: 100 }, { ...INITIAL_VIEW, zoom: Infinity },
     { ...INITIAL_VIEW, west: 40 },
-  ]) assert.throws(() => buildEnergyMapQuery(view, DEFAULT_LAYERS), /Invalid/)
-  assert.match(buildEnergyMapQuery(INITIAL_VIEW, []), /where false/)
+  ]) assert.throws(() => validateEnergyMapRequest(view, DEFAULT_LAYERS), /Invalid/)
+  assert.deepEqual(validateEnergyMapRequest(INITIAL_VIEW, []), [])
 })
 
 test('map geometry preserves longitude-latitude order and rejects invalid coordinates', () => {
@@ -66,7 +64,7 @@ test('frequency, country balance and messages are not global map markers', () =>
   assert.equal(MAP_VISIBLE_LAYERS.length, 9)
   assert.ok(!DEFAULT_LAYERS.includes('umm') && !DEFAULT_LAYERS.includes('grid-frequency'))
   assert.ok(!visibleLayerIds(['power-balance'], 12).length)
-  assert.match(buildEnergyMapQuery(INITIAL_VIEW, ['power-balance']), /where false/)
+  assert.deepEqual(validateEnergyMapRequest(INITIAL_VIEW, ['power-balance']), [])
 })
 
 test('cancelled and undatable UMMs are never plotted even when their area is known', () => {
@@ -78,7 +76,7 @@ test('cancelled and undatable UMMs are never plotted even when their area is kno
   for (const properties of ['{}', '{"map_eligible":false}', '{"map_eligible":"true"}']) {
     assert.equal(asFeatureCollection([parseEnergyFeature({ ...row, properties_json: properties })]).features.length, 0)
   }
-  assert.match(buildEnergyMapQuery(INITIAL_VIEW, ['umm']), /where false/)
+  assert.deepEqual(validateEnergyMapRequest(INITIAL_VIEW, ['umm']), [])
 })
 
 test('plant capacity scaling stays monotonic through the global maximum', () => {
@@ -105,20 +103,11 @@ test('unchanged source snapshots do not require full GeoJSON worker rebuilds', (
   assert.notEqual(renderLayerSignature([feature]), renderLayerSignature([{ ...feature, ingestedAt: '2026-09-25T09:00:00Z' }]))
 })
 
-test('viewport payloads defer bulky raw properties to selected-feature reads', () => {
-  const query = buildEnergyMapQuery(INITIAL_VIEW, DEFAULT_LAYERS)
-  assert.match(query, /bag_remove_keys/)
-  assert.ok(query.indexOf('bag_remove_keys') > query.indexOf('| take 4001'))
-})
-
-test('asset messages require an explicit asset and join the exact UMM revision', () => {
+test('asset messages require an explicit asset identity', () => {
   const id = 'asset"\\quoted'
-  const query = buildAssetMarketMessagesQuery({ id, layerId: 'hydro-plants' })
-  assert.ok(query.includes(`asset_feature_id == ${JSON.stringify(id)}`))
-  assert.ok(query.includes('asset_layer_id == "hydro-plants"'))
-  assert.match(query, /join kind=inner links on \$left.feature_id == \$right.message_feature_id, message_version/)
-  assert.throws(() => buildAssetMarketMessagesQuery({ id: '', layerId: 'hydro-plants' }), /Invalid/)
-  assert.throws(() => buildAssetMarketMessagesQuery({ id: 'NO1', layerId: 'reservoirs' }), /Invalid/)
+  assert.doesNotThrow(() => validateMarketMessageAsset({ id, layerId: 'hydro-plants' }))
+  assert.throws(() => validateMarketMessageAsset({ id: '', layerId: 'hydro-plants' }), /Invalid/)
+  assert.throws(() => validateMarketMessageAsset({ id: 'NO1', layerId: 'reservoirs' }), /Invalid/)
 })
 
 test('source age does not call old snapshots live', () => {

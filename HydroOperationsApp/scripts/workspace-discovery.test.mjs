@@ -140,7 +140,7 @@ test('Data Agent MCP runtime preserves bounded follow-up context without changin
   assert.match(source, /client\.onclose = \(\) =>/)
   assert.match(source, /isDisconnectedDataAgentMcpError\(error\)/)
   assert.match(source, /failed to fetch\|network error\|socket hang up\|econnreset\|connection reset\|terminated/)
-  assert.match(source, /callDataAgentMcp\(endpoint, token, question, onProgress, onSteps, false\)/)
+  assert.match(source, /callDataAgentMcp\(endpoint, token, question, onProgress, onSteps, false, signal\)/)
   assert.match(source, /Promise\.all\(\[verification, getDataAgentMcpSession\(endpoint, token\)\]\)/)
   assert.match(source, /dataAgentVerification\?\.key === key/)
   assert.match(source, /dataAgentMcpTool\?\.endpoint === endpoint/)

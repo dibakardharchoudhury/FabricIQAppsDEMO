@@ -817,15 +817,18 @@ so otherwise each person consents for themselves at first sign-in and the app wo
   `https://<host>.webapp.fabricapps.net` origin plus `http://localhost:5173`. CLI equivalent for
   the missing enterprise application: `az ad sp create --id <spa-client-id>`.
 2. **Application Administrator / Cloud Application Administrator:** add delegated Azure Data
-  Explorer `user_impersonation` and Power BI Service `GraphQLApi.Execute.All`,
-  `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
+  Explorer `user_impersonation`, Foundry Agent Service `user_impersonation`, and
+  Power BI Service `GraphQLApi.Execute.All` (Rayfin managed connector transport),
+  `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`, `DataAgent.Execute.All`
+  and `Fabric.Embed`. No standalone STID GraphQL API is required.
 3. **Application Administrator / Cloud Application Administrator:** select **Grant admin consent
   for the directory**. None of these scopes is directory-privileged, so Global Administrator and
   Privileged Role Administrator are not required. Per-user `Principal` consent works only for that
   user; suppressing the prompt for everyone requires tenant-wide `AllPrincipals` consent.
 4. Enter the administrator-provided Application (client) ID in the local app's optional **SPA
-  client id** field and redeploy, or put it in `rayfin/.env` and run `npm run setup-live-auth`.
-  The workflow is idempotent and validates redirects, scopes, and consent after redeployment.
+  client id** field only if automatic discovery cannot select it, then rerun the
+  canonical deployer. Do not hand-edit generated environment files. The workflow
+  configures and validates redirects, scopes, and consent automatically.
 
 KQL Database Viewer is granted to the signed-in **user**, not this service principal. Eventhouse
 CORS separately allows the deployed hosting origin; neither setting is an OAuth consent grant.

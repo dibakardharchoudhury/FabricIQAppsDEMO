@@ -46,7 +46,7 @@ const msal = clientId && tenantId ? new PublicClientApplication({
   cache: { cacheLocation: 'localStorage' },
 }) : undefined
 
-const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
+const CONNECTOR_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
 const POWER_BI_ITEM_EXECUTE_SCOPE = 'https://analysis.windows.net/powerbi/api/Item.Execute.All'
 const HOSTED_RUN_TOKEN_LIFETIME_MS = 12 * 60_000
 // A named scope, not `.default`: `.default` only returns permissions already statically configured
@@ -287,7 +287,7 @@ export async function hostedSourceTokens() {
   const [fabric, foundry, graphql, kusto] = await Promise.all([
     silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
     silentToken(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken([CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
     silentToken([kustoScope(cluster)], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
   ])
   if (!fabric || !foundry || !graphql || !kusto) {

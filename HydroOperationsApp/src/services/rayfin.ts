@@ -2,6 +2,7 @@ import { initEmbeddedAuth, ensureSignedInWithFabric } from '@microsoft/rayfin-au
 import { ConnectorsRayfinClient } from '@microsoft/rayfin-client'
 import { lakehouseConnectorConfig, type LakehouseConnectors } from './lakehouseConnector'
 import { operationalConnectorConfig, type OperationalConnectors } from './operationalConnector'
+import { geoConnectorConfig, type GeoConnectors } from './geoConnector'
 import {
   seedWorkOrders, seedNotifications, seedInspections, seedSpareParts, seedAsset3DModels,
 } from './seedData'
@@ -90,12 +91,12 @@ const fabricPortalUrl = (import.meta.env.VITE_FABRIC_PORTAL_URL ?? import.meta.e
 
 const configured = Boolean(apiUrl && publishableKey && workspaceId && projectId)
 const WORK_ORDERS_CHANGED_EVENT = 'hydro:work-orders-changed'
-const client = configured ? new ConnectorsRayfinClient<HydroSchema, Record<string, never>, LakehouseConnectors & OperationalConnectors>({
+const client = configured ? new ConnectorsRayfinClient<HydroSchema, Record<string, never>, LakehouseConnectors & OperationalConnectors & GeoConnectors>({
   baseUrl: apiUrl!.endsWith('/') ? apiUrl! : `${apiUrl}/`,
   publishableKey: publishableKey!,
   useProxy: false,
   authStorage: true,
-  connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig },
+  connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig, hydrogeo: geoConnectorConfig },
 }) : undefined
 
 function options() {
@@ -123,6 +124,16 @@ export function lakehouseConnectionKey(): string {
 export function connectedLakehouse() {
   lakehouseConnectionKey()
   return isRayfinSignedIn() ? client!.connectors.hydrolakehouse : undefined
+}
+
+export function connectedGeo() {
+  const lakehouseId = import.meta.env.VITE_RAYFIN_GEO_LAKEHOUSE_ID as string | undefined
+  const endpointId = import.meta.env.VITE_RAYFIN_GEO_SQL_ENDPOINT_ID as string | undefined
+  if (!configured || !lakehouseId || !endpointId) {
+    throw new Error('GeoContext connector identity is not configured. Run the canonical app deployer.')
+  }
+  if (!isRayfinSignedIn()) throw new Error('Sign in to Fabric to read the GeoContext Lakehouse.')
+  return client!.connectors.hydrogeo
 }
 
 export function subscribeWorkOrdersChanged(listener: () => void): () => void {

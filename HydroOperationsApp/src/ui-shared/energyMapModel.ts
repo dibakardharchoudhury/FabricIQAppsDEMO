@@ -1,5 +1,5 @@
 import type { Feature, FeatureCollection, Geometry } from 'geojson'
-import { buildEnergyPropertyPredicate, createEnergyPropertyFilters, type EnergyPropertyFilters } from './energyMapFilters'
+import { validateEnergyPropertyFilters, createEnergyPropertyFilters, type EnergyPropertyFilters } from './energyMapFilters'
 
 export const MAP_LAYERS = [
   { id: 'transmission', label: 'Transmission lines', source: 'NVE grid', color: '#0f766e', minZoom: 3, defaultVisible: true },
@@ -93,6 +93,96 @@ export function isMapGeometry(value: unknown): value is Geometry {
   return hasDepth(value.coordinates, depth)
 }
 
+type XY = number[]
+type Ring = XY[]
+type Edge = { a: XY; b: XY; polygon: number; ring: number; index: number; length: number; minX: number; maxX: number; minY: number; maxY: number }
+const cross = (a: XY, b: XY, p: XY) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+const samePoint = (a: XY, b: XY) => a[0] === b[0] && a[1] === b[1]
+function onSegment(a: XY, b: XY, p: XY): boolean {
+  return Math.abs(cross(a, b, p)) <= 1e-12
+    && p[0] >= Math.min(a[0], b[0]) && p[0] <= Math.max(a[0], b[0])
+    && p[1] >= Math.min(a[1], b[1]) && p[1] <= Math.max(a[1], b[1])
+}
+function ringContains(ring: Ring, point: XY): -1 | 0 | 1 {
+  let inside = false
+  for (let i = 1; i < ring.length; i++) {
+    const a = ring[i - 1], b = ring[i]
+    if (onSegment(a, b, point)) return 0
+    if ((a[1] > point[1]) !== (b[1] > point[1])
+      && point[0] < (b[0] - a[0]) * (point[1] - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside
+  }
+  return inside ? 1 : -1
+}
+
+export function prepareAreaGeometry(geometry: Geometry | null): (point: XY) => boolean {
+  const invalid = () => { throw new Error('Selected area geometry is unavailable or invalid. Reload the map or reset areas.') }
+  if (!geometry || !isMapGeometry(geometry) || (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon')) return invalid()
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates
+  const edges: Edge[] = []
+  let ringNumber = 0
+  for (let polygonNumber = 0; polygonNumber < polygons.length; polygonNumber++) {
+    const polygon = polygons[polygonNumber]
+    for (const ring of polygon) {
+      if (ring.length < 4 || !samePoint(ring[0], ring[ring.length - 1])) return invalid()
+      let area = 0
+      for (let i = 1; i < ring.length; i++) {
+        const a = ring[i - 1], b = ring[i]
+        if (samePoint(a, b)) return invalid()
+        const next = ring[i === ring.length - 1 ? 1 : i + 1]
+        if (cross(a, b, next) === 0
+          && (b[0] - a[0]) * (next[0] - b[0]) + (b[1] - a[1]) * (next[1] - b[1]) < 0) return invalid()
+        area += (a[0] - ring[0][0]) * (b[1] - ring[0][1]) - (b[0] - ring[0][0]) * (a[1] - ring[0][1])
+        edges.push({ a, b, polygon: polygonNumber, ring: ringNumber, index: i - 1, length: ring.length - 1,
+          minX: Math.min(a[0], b[0]), maxX: Math.max(a[0], b[0]), minY: Math.min(a[1], b[1]), maxY: Math.max(a[1], b[1]) })
+      }
+      if (!Number.isFinite(area) || Math.abs(area) < 1e-12) return invalid()
+      ringNumber++
+    }
+    for (let i = 1; i < polygon.length; i++) {
+      if (ringContains(polygon[0], polygon[i][0]) !== 1) return invalid()
+      for (let j = 1; j < i; j++) {
+        if (ringContains(polygon[j], polygon[i][0]) !== -1 || ringContains(polygon[i], polygon[j][0]) !== -1) return invalid()
+      }
+    }
+  }
+  edges.sort((a, b) => a.minX - b.minX)
+  for (let i = 0; i < edges.length; i++) {
+    const a = edges[i]
+    for (let j = i + 1; j < edges.length && edges[j].minX <= a.maxX; j++) {
+      const b = edges[j]
+      if (b.minY > a.maxY || b.maxY < a.minY) continue
+      if (a.ring === b.ring && (Math.abs(a.index - b.index) === 1 || Math.abs(a.index - b.index) === a.length - 1)) continue
+      const ab = cross(a.a, a.b, b.a), ac = cross(a.a, a.b, b.b)
+      const ba = cross(b.a, b.b, a.a), bc = cross(b.a, b.b, a.b)
+      const crossing = ab * ac < 0 && ba * bc < 0
+      const touching = onSegment(a.a, a.b, b.a) || onSegment(a.a, a.b, b.b)
+        || onSegment(b.a, b.b, a.a) || onSegment(b.a, b.b, a.b)
+      const sharedLine = ab === 0 && ac === 0
+        && (Math.min(a.maxX, b.maxX) > Math.max(a.minX, b.minX)
+          || Math.min(a.maxY, b.maxY) > Math.max(a.minY, b.minY))
+      if (crossing || (touching && (a.polygon === b.polygon || sharedLine))) return invalid()
+    }
+  }
+  const contains = (polygon: Ring[], point: XY) => ringContains(polygon[0], point) >= 0
+    && !polygon.slice(1).some(hole => ringContains(hole, point) === 1)
+  const interior = (polygon: Ring[], point: XY) => ringContains(polygon[0], point) === 1
+    && polygon.slice(1).every(hole => ringContains(hole, point) === -1)
+  const samples = (ring: Ring) => ring.slice(1).flatMap((point, index) =>
+    [point, [(point[0] + ring[index][0]) / 2, (point[1] + ring[index][1]) / 2]])
+  const bounds = polygons.map(polygon => polygon[0].reduce((box, point) => [
+    Math.min(box[0], point[0]), Math.min(box[1], point[1]), Math.max(box[2], point[0]), Math.max(box[3], point[1]),
+  ], [Infinity, Infinity, -Infinity, -Infinity]))
+  for (let i = 0; i < polygons.length; i++) {
+    for (let j = 0; j < i; j++) {
+      const a = bounds[i], b = bounds[j]
+      if (a[0] >= b[2] || b[0] >= a[2] || a[1] >= b[3] || b[1] >= a[3]) continue
+      if (samples(polygons[i][0]).some(point => interior(polygons[j], point))
+        || samples(polygons[j][0]).some(point => interior(polygons[i], point))) return invalid()
+    }
+  }
+  return point => point.length >= 2 && point.every(Number.isFinite) && polygons.some(polygon => contains(polygon, point))
+}
+
 function parseObject(value: unknown, name: string): Record<string, unknown> {
   const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
   if (!record(parsed)) throw new Error(`Invalid ${name} in Fabric map data.`)
@@ -144,9 +234,7 @@ export function visibleLayerIds(selected: EnergyLayerId[], zoom: number): Energy
   return MAP_VISIBLE_LAYERS.filter(layer => selected.includes(layer.id) && zoom >= layer.minZoom).map(layer => layer.id)
 }
 
-export const UMM_MAP_PREDICATE = "tobool(parse_json(properties_json).map_eligible) == true"
-
-export function buildEnergyMapQuery(view: MapViewport, layers: EnergyLayerId[], properties: EnergyPropertyFilters = createEnergyPropertyFilters(), areaSelection: ReservoirAreaSelection = null): string {
+export function validateEnergyMapRequest(view: MapViewport, layers: EnergyLayerId[], properties: EnergyPropertyFilters = createEnergyPropertyFilters(), areaSelection: ReservoirAreaSelection = null): EnergyLayerId[] {
   const values = [view.west, view.south, view.east, view.north, view.zoom]
   if (!values.every(Number.isFinite) || view.west >= view.east || view.south >= view.north
     || view.west < -180 || view.east > 180 || view.south < -90 || view.north > 90
@@ -154,32 +242,11 @@ export function buildEnergyMapQuery(view: MapViewport, layers: EnergyLayerId[], 
     throw new Error('Invalid map viewport or layer selection.')
   }
   const selected = visibleLayerIds(layers, view.zoom).filter(layer => layer !== 'reservoirs')
-  const filter = selected.length ? `layer_id in (${selected.map(id => `'${id}'`).join(',')})` : 'false'
-  const propertyPredicate = buildEnergyPropertyPredicate(properties)
+  validateEnergyPropertyFilters(properties)
   if (areaSelection !== null && (!Array.isArray(areaSelection) || areaSelection.some(code => !isReservoirAreaCode(code)))) {
     throw new Error('Invalid reservoir-area selection.')
   }
-  const codes = areaSelection === null ? null : [...new Set(areaSelection)]
-  const areaPrefix = codes?.length ? `let selected_area_rows = materialize(external_table('HydroGeoReservoirAreas')
-| where tostring(parse_json(properties_json).area_code) in (${codes.map(code => JSON.stringify(code)).join(', ')})
-| project polygon = parse_json(geometry_json));
-let selected_region = toscalar(selected_area_rows | summarize polygons = make_list(polygon) | project geo_union_polygons_array(polygons));
-let region_valid = toscalar(selected_area_rows | count) == ${codes.length} and isnotnull(selected_region);
-` : ''
-  const areaPredicate = codes === null ? '' : codes.length
-    ? "| where region_valid\n| where layer_id !in ('hydro-plants', 'transformers') or (tostring(parse_json(geometry_json).type) == 'Point' and geo_point_in_polygon(min_lon, min_lat, selected_region))\n"
-    : "| where layer_id !in ('hydro-plants', 'transformers')\n"
-  const query = `external_table('HydroGeoFeatures')
-| where ${filter}
-| where max_lon >= ${view.west} and min_lon <= ${view.east} and max_lat >= ${view.south} and min_lat <= ${view.north}
-${propertyPredicate ? `| extend map_properties = parse_json(iff(layer_id in ('hydro-plants', 'transformers'), properties_json, '{}'))\n| where ${propertyPredicate}\n` : ''}${areaPredicate}| extend layer_order = case(layer_id == 'umm', 0, layer_id == 'reservoirs', 1, layer_id == 'power-flows', 2, layer_id == 'power-balance', 3, layer_id == 'grid-frequency', 4, layer_id == 'hydro-plants', 5, layer_id == 'transformers', 6, 7)
-| order by layer_order asc, layer_id asc, feature_id asc
-| take ${FEATURE_LIMIT + 1}
-| project feature_id, layer_id, label, geometry_json,
-    properties_json = tostring(bag_remove_keys(parse_json(properties_json), dynamic(['source_properties', 'gis_properties', 'source_message']))),
-    observed_at, ingested_at, source_url`
-  return areaPrefix ? `${areaPrefix}union (${query}),
-(print area_filter_error = 'Selected area geometry is unavailable or invalid. Reload the map or reset areas.' | where not(region_valid))` : query
+  return selected
 }
 
 export function visiblePlantCapacity(features: EnergyFeature[]) {
@@ -215,22 +282,10 @@ export function formatCapacityPower(totalMw: number): { value: string; unit: 'MW
   }
 }
 
-export function buildAssetMarketMessagesQuery(asset: Pick<EnergyFeature, 'id' | 'layerId'>): string {
+export function validateMarketMessageAsset(asset: Pick<EnergyFeature, 'id' | 'layerId'>): void {
   if (!isAssetLayer(asset.layerId) || typeof asset.id !== 'string' || !asset.id || asset.id.length > 2048) {
     throw new Error('Invalid market-message asset selection.')
   }
-  return `let links = external_table('HydroGeoMarketAssetLinks')
-| where asset_feature_id == ${JSON.stringify(asset.id)} and asset_layer_id == ${JSON.stringify(asset.layerId)}
-| project message_feature_id, message_version, match_method, match_evidence_json;
-external_table('HydroGeoFeatures')
-| where layer_id == 'umm'
-| extend message_version = tolong(parse_json(properties_json).version)
-| join kind=inner links on $left.feature_id == $right.message_feature_id, message_version
-| order by observed_at desc
-| take 101
-| project feature_id, layer_id, label, geometry_json,
-    properties_json = tostring(bag_merge(parse_json(properties_json), bag_pack('asset_match_method', match_method, 'asset_match_evidence', parse_json(match_evidence_json)))),
-    observed_at, ingested_at, source_url`
 }
 
 export function capacityRadius(capacity: unknown, maximum: number | null | undefined): number {

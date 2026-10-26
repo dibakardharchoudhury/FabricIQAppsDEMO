@@ -329,17 +329,22 @@ execution, and Teams/email delivery have not been verified.
 | Identity | Credential model | Used by | Data/actions |
 |---|---|---|---|
 | Setup service principal | Client credentials, secret names resolved from Azure Key Vault | Pipelines and notebooks | Create/configure Fabric artifacts, seed SQL, publish a Data Agent only when policy and platform support permit |
-| Signed-in SPA user | MSAL delegated tokens, browser `localStorage` cache | GraphQL, Eventhouse, Fabric REST, Data Agent | Read STID/telemetry, discover items, execute notebook/pipeline jobs, ask agent |
-| Rayfin embedded user session | Fabric embedded authentication | Rayfin data client | Read and mutate operational SQL records |
+| Signed-in SPA user | MSAL delegated tokens, browser `localStorage` cache | Eventhouse, Fabric REST, Data Agent and Foundry | Read telemetry/live frequency, discover items, execute notebook/pipeline jobs, ask agents |
+| Rayfin embedded user session | Fabric embedded authentication | Rayfin source connectors | Read Core/Weather and GeoContext Lakehouses; read and mutate independent operational SQL |
 | Outlook connection user | Fabric-managed OAuth2 connection | `Pipe_SendEmailAlert`, provisioned/wired by RTI_010 | Send email from a mailbox |
 
 The SPA requests resource-specific delegated tokens:
 
-- Fabric GraphQL: `GraphQLApi.Execute.All`.
+- Rayfin managed connector transport: `GraphQLApi.Execute.All` (not a standalone STID API).
 - Fabric item discovery and execution: `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
 - Eventhouse: `<query-service-uri>/user_impersonation`.
 
-Most artifact IDs and service URIs are discovered at runtime by display name or item type and cached for the browser session. The native GraphModel is an exception: its ontology association requires the explicit operator binding, never name/type discovery. Build-time environment values are last-known-good fallbacks for pipeline IDs, notebook IDs, Eventhouse details, and an optional GraphQL URL. Discovery cache is cleared after RTI_011 so newly created artifacts can be found.
+The deployer resolves each Lakehouse's distinct SQL analytics endpoint from live
+workspace metadata and applies its read-only connector. Operational SQL is independently
+bound through its writable connector. There is no optional standalone GraphQL URL.
+Other artifact IDs and service URIs are discovered at runtime by display name or item type
+and cached for the browser session. The native GraphModel's ontology association requires
+verified lineage or an explicit operator binding, never name/type guessing.
 
 ## Refresh, Caching, and Consistency
 
@@ -436,4 +441,4 @@ NB11 execution, or full setup execution is claimed for that bounded validation.
 - [Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json](Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json): setup pipeline dependencies and parameters.
 - [Orchestrator_Pipelines/02_Pipe_Stream.DataPipeline/pipeline-content.json](Orchestrator_Pipelines/02_Pipe_Stream.DataPipeline/pipeline-content.json): on-demand telemetry generator.
 - [Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py](Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py): stage-two notebook execution order.
-- [Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py](Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py): post-seed SQL, GraphQL, and Data Agent wiring.
+- [Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py](Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py): shared operational SQL preparation, additive ontology extension and Data Agent SQL source publication. Its filename is historical; it does not create a GraphQL API.

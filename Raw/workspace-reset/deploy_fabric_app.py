@@ -1093,7 +1093,7 @@ def validate_rayfin_publishable_key() -> str:
 
 
 def validate_appbackend_cors(
-    api_url: str, hosting_url: str, publishable_key: str
+    api_url: str, hosting_url: str, publishable_key: str, *, energy_enabled: bool = False
 ) -> None:
     origin = urlparse(hosting_url).scheme + "://" + str(urlparse(hosting_url).netloc)
     preflight_headers = {
@@ -1112,8 +1112,12 @@ def validate_appbackend_cors(
         "/connectors/hydrolakehouse/graphql": {"query": "query { __typename }"},
         "/connectors/hydrooperations/graphql": {"query": "query { __typename }"},
     }
+    paths = APPBACKEND_CORS_PATHS
+    if energy_enabled:
+        paths = (*paths, "/connectors/hydrogeo/graphql")
+        post_bodies["/connectors/hydrogeo/graphql"] = {"query": "query { __typename }"}
     failures: list[str] = []
-    for path in APPBACKEND_CORS_PATHS:
+    for path in paths:
         last_failure = "no response"
         for delay in APPBACKEND_READINESS_DELAYS:
             if delay:
@@ -1438,7 +1442,30 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
         "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "",
+        "RAYFIN_PUBLIC_GEO_LAKEHOUSE_NAME": "",
+        "RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID": "",
+        "RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID": "",
     }
+    geo_name = str(lakehouse["displayName"]).replace("Energy_IQ_LakehouseRTI", "Hydro_GeoContext", 1)
+    geo_matches = [item for item in items if item["type"] == "Lakehouse" and item["displayName"] == geo_name]
+    if len(geo_matches) > 1:
+        raise DeployError("Multiple GeoContext Lakehouses match the selected Core Lakehouse suffix.")
+    geo = geo_matches[0] if geo_matches else None
+    if geo is not None:
+        geo_detail = fabric_get(f"workspaces/{workspace_id}/lakehouses/{geo['id']}", headers)
+        geo_properties = geo_detail.get("properties")
+        geo_endpoint = geo_properties.get("sqlEndpointProperties") if isinstance(geo_properties, dict) else None
+        geo_endpoint_id = str(geo_endpoint.get("id") or "") if isinstance(geo_endpoint, dict) else ""
+        if (geo_detail.get("id") != geo["id"]
+                or geo_detail.get("workspaceId", workspace_id) != workspace_id
+                or not GUID_RE.fullmatch(geo_endpoint_id)
+                or geo_endpoint_id.casefold() == sql_endpoint_id.casefold()):
+            raise DeployError("The selected GeoContext Lakehouse has no distinct verified SQL analytics endpoint.")
+        values.update({
+            "RAYFIN_PUBLIC_GEO_LAKEHOUSE_NAME": str(geo["displayName"]),
+            "RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID": str(geo["id"]),
+            "RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID": geo_endpoint_id,
+        })
     from operational_store_support import active_operational_items, OPERATIONAL_STORE_DESCRIPTION
     stores = active_operational_items(items)
     if len(stores) > 1:
@@ -1862,118 +1889,34 @@ def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydro
             raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
 
 
-def operational_graphql_rebind_plan(parts, workspace_id, archived_ids, target_id):
-    from copy import deepcopy
-    from operational_store_support import OPERATIONAL_COLUMNS
-
-    matches = [part for part in parts if part["path"] == "graphql-definition.json"]
-    if len(matches) != 1 or len({part["path"] for part in parts}) != len(parts):
-        raise DeployError("Operational GraphQL reconciliation requires one unambiguous definition.")
-    original = json.loads(base64.b64decode(matches[0]["payload"]))
-    detached = deepcopy(original)
-    sources = detached.get("datasources")
-    if not isinstance(sources, list):
-        raise DeployError("GraphQL definition has no explicit data-source list.")
-    moved = []
-    metadata = None
-    for source in list(sources):
-        if source.get("sourceItemId") not in archived_ids:
-            continue
-        if source.get("sourceWorkspaceId") != workspace_id or source.get("sourceType") != "SqlDbNative":
-            raise DeployError("Archived GraphQL SQL source has a conflicting workspace or source type.")
-        objects = source.get("objects")
-        if not isinstance(objects, list):
-            raise DeployError("Archived GraphQL SQL source has no explicit object list.")
-        managed = [node for node in objects if node.get("sourceObjectType") == "Table"
-                   and node.get("sourceObject") in {f"[dbo].[{table}]" for table in OPERATIONAL_COLUMNS}]
-        if not managed:
-            continue
-        candidate = {key: value for key, value in source.items() if key != "objects"}
-        candidate["sourceItemId"] = target_id
-        if metadata is not None and metadata != candidate:
-            raise DeployError("Archived GraphQL SQL sources have conflicting custom metadata.")
-        metadata = candidate
-        moved.extend(managed)
-        source["objects"] = [node for node in objects if node not in managed]
-        if not source["objects"]:
-            sources.remove(source)
-    if metadata is None:
-        return None
-    rebound = deepcopy(detached)
-    targets = [source for source in rebound["datasources"] if source.get("sourceItemId") == target_id]
-    if len(targets) > 1:
-        raise DeployError("GraphQL definition contains duplicate replacement SQL sources.")
-    target = targets[0] if targets else {**metadata, "objects": []}
-    if target.get("sourceWorkspaceId") != workspace_id or target.get("sourceType") != "SqlDbNative":
-        raise DeployError("GraphQL replacement SQL source has a conflicting identity.")
-    for key, value in metadata.items():
-        if key in target and target[key] != value:
-            raise DeployError("GraphQL replacement would overwrite custom source metadata.")
-        target[key] = value
-    by_type = {node["graphqlType"]: node for node in target["objects"]}
-    for node in moved:
-        existing = by_type.get(node["graphqlType"])
-        if existing is not None and existing != node:
-            raise DeployError("GraphQL replacement would overwrite a custom operational object.")
-        if existing is None:
-            target["objects"].append(node)
-            by_type[node["graphqlType"]] = node
-    if not targets:
-        rebound["datasources"].append(target)
-    def encode(body):
-        return [{**part, "payload": base64.b64encode(json.dumps(body).encode()).decode()}
-                if part["path"] == "graphql-definition.json" else part for part in parts]
-    return encode(detached), encode(rebound)
-
-
-def reconcile_archived_operational_graphql(workspace_id, tenant) -> None:
-    from operational_store_support import OPERATIONAL_ARCHIVE_PREFIX, OPERATIONAL_STORE_DESCRIPTION
-    from provision_foundry_agents import read_data_agent_definition
-    from sync_workspace_from_git import FABRIC_BASE, Fabric
-
-    values, _ = current_rayfin_target()
-    target_id = _public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")
-    headers = fabric_headers(tenant)
-    items = _workspace_artifacts(workspace_id, headers)
-    target = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{target_id}", headers)
-    if target.get("id") != target_id or target.get("description") != OPERATIONAL_STORE_DESCRIPTION:
-        raise DeployError("GraphQL source reconciliation requires the verified active operational SQL item.")
-    archived_ids = {item["id"] for item in items if item["type"] == "SQLDatabase"
-                    and item.get("description") == OPERATIONAL_ARCHIVE_PREFIX + target_id + "."}
-    if not archived_ids:
-        raise DeployError("Duplicate GraphQL nodes have no explicitly archived operational SQL replacement.")
-    fabric = Fabric(tenant)
-    changed = 0
-    def contents(parts):
-        return {part["path"]: json.loads(base64.b64decode(part["payload"]))
-                if part["path"].endswith(".json") or part["path"] == ".platform"
-                else base64.b64decode(part["payload"]) for part in parts}
-    for item in items:
-        if item["type"] != "GraphQLApi":
-            continue
-        before = read_data_agent_definition(
-            sys.modules[__name__], workspace_id, item["id"], headers, collection="items")["definition"]["parts"]
-        plan = operational_graphql_rebind_plan(before, workspace_id, archived_ids, target_id)
-        if plan is None:
-            continue
-        backup = Path(tempfile.mkdtemp(prefix="fabric-operational-graphql-")) / f"{item['id']}.json"
-        backup.write_text(json.dumps({"definition": {"parts": before}}), encoding="utf-8")
-        print(f"Rebinding archived operational GraphQL source {item['id']}; backup: {backup}", flush=True)
-        for parts in plan:
-            response = fabric.request(
-                "POST", f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item['id']}/updateDefinition",
-                json={"definition": {"parts": parts}},
-            )
-            response.raise_for_status()
-            fabric.poll_lro(response)
-            actual = read_data_agent_definition(
-                sys.modules[__name__], workspace_id, item["id"], headers, collection="items")["definition"]["parts"]
-            if contents(actual) != contents(parts):
-                raise DeployError("Operational GraphQL source replacement failed exact preservation readback.")
-        changed += 1
-    if not changed:
-        raise DeployError("Duplicate GraphQL nodes were not caused by the verified archived operational sources.")
-    print(f"Verified operational SQL source replacement in {changed} GraphQL definition(s).", flush=True)
+def configure_geo_connector(*, enabled: bool) -> None:
+    """Keep the optional connector declaration consistent with the target's source flag."""
+    config = RAYFIN_DIR / "rayfin.yml"
+    text = config.read_text(encoding="utf-8")
+    block = (
+        "  - name: hydrogeo\n"
+        "    type: fabric-sqlanalytics\n"
+        "    config:\n"
+        "      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}\n"
+        "      itemId: ${RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID}\n"
+        "    auth:\n"
+        "      type: delegated\n"
+        "    operations:\n"
+        "      - name: read\n"
+    )
+    matches = list(re.finditer(r"(?ms)^  - name: hydrogeo\r?\n.*?(?=^  - name: |^\S|\Z)", text))
+    if len(matches) > 1:
+        raise DeployError("Duplicate hydrogeo connector declarations.")
+    if matches and matches[0].group().strip() != block.strip():
+        raise DeployError("The hydrogeo declaration differs from the managed read-only connector.")
+    if matches and not enabled:
+        text = text[:matches[0].start()] + text[matches[0].end():]
+    elif enabled and not matches:
+        if not re.search(r"(?m)^connectors:\s*$", text):
+            raise DeployError("rayfin.yml is missing its connector list.")
+        text = text.rstrip() + "\n" + block
+    if text != config.read_text(encoding="utf-8"):
+        config.write_text(text, encoding="utf-8", newline="\n")
 
 
 def current_git_push_target() -> tuple[str, str]:
@@ -2532,6 +2475,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             raise DeployError(str(exc)) from exc
 
     timings.stage(3, "Preparing target configuration and checking deployment prerequisites")
+    if stage == "all" and energy_setting == "enabled" and not feature_workspace:
+        from feature_workspace import FeatureWorkspaceError
+
+        try:
+            energy_workspace(tenant_id, workspace_id).prepare_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
     reuse_deployment = prepare_rayfin_env(
         tenant_id,
         workspace_id,
@@ -2542,15 +2492,12 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     )
     if feature_workspace:
         feature_workspace.configure_app(RAYFIN_DIR / ".env")
+    values, _ = current_rayfin_target()
+    configure_geo_connector(
+        enabled=_public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true",
+    )
     ensure_deploy_dependencies()
     run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
-    if stage == "all" and energy_setting == "enabled" and not feature_workspace:
-        from feature_workspace import FeatureWorkspaceError
-
-        try:
-            energy_workspace(tenant_id, workspace_id).prepare_energy()
-        except FeatureWorkspaceError as exc:
-            raise DeployError(str(exc)) from exc
     if stage == "app":
         if not reuse_deployment:
             raise DeployError("Run the local Foundry setup module first to prepare this target's AppBackend and agents.")
@@ -2618,17 +2565,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     operational_output = run_rayfin_deployment(
         rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
     )
-    try:
-        validate_lakehouse_connector_apply(operational_output, "hydrooperations")
-    except DeployError:
-        if "Cannot add or update source as duplicate node detected in GraphQL schema" not in operational_output:
-            raise
-        print("Fabric retained the archived SQL attachment; reconciling its verified replacement.", flush=True)
-        reconcile_archived_operational_graphql(workspace_id, args.tenant)
-        operational_output = run_rayfin_deployment(
-            rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
+    validate_lakehouse_connector_apply(operational_output, "hydrooperations")
+    energy_enabled = _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
+    if energy_enabled:
+        geo_output = run_rayfin_deployment(
+            rayfin24("up", "connector", "apply", "--name", "hydrogeo", "--json"), args.tenant,
         )
-        validate_lakehouse_connector_apply(operational_output, "hydrooperations")
+        validate_lakehouse_connector_apply(geo_output, "hydrogeo")
 
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
@@ -2656,7 +2599,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
     publishable_key = validate_rayfin_publishable_key()
-    validate_appbackend_cors(api_url, hosting_url, publishable_key)
+    validate_appbackend_cors(api_url, hosting_url, publishable_key, energy_enabled=energy_enabled)
     print(
         "LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed "
         "(use normal Fabric browser sign-in to verify all nine entities; "
