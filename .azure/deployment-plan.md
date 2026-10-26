@@ -80,6 +80,38 @@ not an all-repository test claim. All six affected live notebook definitions
 have exact repaired-source readback with their other content and metadata
 preserved. Retry the same V12 core job before attempting app deployment.
 
+### Second live recovery result: Data Agent execution blocker
+
+Local Core job `2e770791b13b4d7daa2f0a721477ce0a` started Fabric pipeline
+`29600eea-abf9-4884-a988-855072319a40`. It progressed beyond the prior
+NB05 namespace failure but failed in Stage 2 notebook run
+`849742ae-7849-46a2-8c00-bf0db5fa080b`:
+
+> NB09_dataagent: Data Agent published but ontology runtime failed: The
+> associated Lakehouse source cannot be queried because no SQL/Lakehouse
+> query tool is available in this session.
+
+NB11 was blocked by NB09, and the local workflow correctly stopped before
+energy, Foundry or final app publication. Deployment is not complete.
+
+Read-only checks after the failure verified:
+
+- The V12 agent `19547f30-0cf9-484a-9e1c-0c4d39ac97c2` has both draft and
+  published selected Lakehouse tables, Eventhouse telemetry, and the correct
+  V12 ontology context. The Lakehouse artifact and workspace IDs match the
+  target; required static tables are selected.
+- The V12 Lakehouse SQL endpoint reports provisioning status `Success`.
+- The selected generation-2 ontology has a downstream CascadeDelete graph
+  association. A missing graph binding has not been established as this
+  failure's cause; graph query/node readiness is not attested by lineage.
+- A fresh delegated MCP session independently reproduced the failure: the
+  agent says only the Eventhouse telemetry query tool is exposed, not a
+  Lakehouse/SQL tool. HTTP success and publication therefore do not establish
+  source execution readiness. No smoke-test gate was weakened.
+- A Fabric portal browser opened to the target agent requires interactive
+  sign-in. Inspect its source/runtime diagnostics after signing in before
+  guessing a configuration change or rerunning the whole setup pipeline.
+
 ## Current SQL rollout validation (October 25, 2026)
 
 This section supersedes the historical validation below for the pending SQL
