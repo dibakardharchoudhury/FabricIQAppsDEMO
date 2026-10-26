@@ -579,12 +579,14 @@ component. **Refresh energy sources** updates only energy data without rerunning
 core setup or Foundry. No separate energy opt-in is needed during core setup or
 Full Deploy.
 
-Connection testing is manual only: select **Sync from GitHub**, then click
-**Test connection**. Loading the page, signing in, editing/blurring fields,
+Connection testing is manual only: click **Test connection** in either the
+**Full Deploy** GitHub section or **Sync from GitHub**. Each tests its own source
+settings and displays results inline without navigating away or copying values
+between screens. Loading the page, signing in, editing/blurring fields,
 switching modules, and changing **Reuse existing connection** never start a
-connection-test job. Full Deploy's **Open Sync from GitHub to test** button copies
-its source settings into that screen without starting a test. Running sync or
-Full Deploy still validates Git connectivity as part of the action you explicitly start.
+connection-test job. Only one explicit connection test can run at a time.
+Running sync or Full Deploy still validates Git connectivity as part of the action
+you explicitly start.
 
 The steps run strictly in order under one exclusive job. Each child keeps its
 existing validation, timeout, environment-only secrets, and live output. If a

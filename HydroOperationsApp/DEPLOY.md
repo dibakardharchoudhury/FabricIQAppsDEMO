@@ -44,9 +44,11 @@ No PAT, token or credential secret value is saved by these forms.
 **Deployment Actions** for individual modules and maintenance actions.
 Use **Hide sidebar** to give the form the full content width; **Show sidebar**
 remains available above it. The sidebar preference is remembered in this browser.
-Connection tests are never automatic. To test without deploying, select
-**Sync from GitHub** and click **Test connection**. Editing target/source fields,
-signing in, or selecting a module cannot start a background connection test.
+Connection tests are never automatic. Click **Test connection** either in
+**Full Deploy → GitHub sync** or **Sync from GitHub** to test in place without
+deploying. Each uses its own source fields and shows its own results.
+Editing target/source fields, signing in, or selecting a module cannot start
+a background connection test.
 
 **One unavoidable manual prerequisite:** after core ontology setup, materialize
 the selected ontology's graph in Fabric (**Manage graph → select eligible

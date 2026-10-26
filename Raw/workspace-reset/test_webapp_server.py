@@ -238,10 +238,10 @@ assert.match(elements.sidebarPreferenceStatus.textContent,/Could not save.*block
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_connection_test_only_starts_from_explicit_sync_test_button(self):
+    def test_connection_tests_only_start_from_explicit_buttons_in_their_own_panes(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("maybeAutoTest", page)
-        self.assertNotIn("runWorkflowTest", page)
+        self.assertNotIn("openSyncForConnectionTest", page)
         self.assertEqual(page.count('runJob("/api/test-connection"'), 1)
         code = page[
             page.index('document.querySelectorAll("input").forEach'):
@@ -250,11 +250,11 @@ assert.match(elements.sidebarPreferenceStatus.textContent,/Could not save.*block
         script = """
 const assert = require("node:assert/strict");
 const fields = new Map();
-let activeSync=false, connTestState=null;
+let activePane="", connTestState=null, workflowConnTestState=null;
 const $ = id => {
   if(!fields.has(id)) fields.set(id,{
     value:id, checked:true, disabled:false, open:false, listeners:{},
-    classList:{contains:()=>activeSync}, focus(){},
+    classList:{contains:()=>id===activePane}, focus(){},
     addEventListener(type,handler){(this.listeners[type]??=[]).push(handler)},
     dispatchEvent(event){for(const handler of this.listeners[event.type]||[])handler(event)},
   });
@@ -263,12 +263,14 @@ const $ = id => {
 const inputs=["tenant","workspace","repository","branch","directory","pat","reuseConn",
               "workflowRepository","workflowBranch","workflowDirectory","workflowPat","workflowReuseConn"].map($);
 const document={querySelectorAll:()=>inputs};
-const refresh=()=>{}, setTestResult=()=>{}, testValid=()=>true;
+const results=new Map();
+const refresh=()=>{}, setTestResult=(cls,text,id="connTestResult")=>results.set(id,cls);
+const testValid=()=>true, workflowTestValid=()=>true;
 const connValue=()=>"yes", workflowReuseChecked=()=>$("workflowReuseConn").checked;
-const activateTab=name=>{activeSync=name==="sync"};
+const workflowConnValue=()=>"yes";
 const requests=[];
 let complete;
-const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload});complete=onDone};
+const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel});complete=onDone};
 """ + code + """
 (async()=>{
   for(const field of inputs) {
@@ -277,21 +279,37 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload});comp
   }
   assert.equal(requests.length,0,"Edits and reuse toggles started a test");
   await runTest();
+  await runTest(true);
   assert.equal(requests.length,0,"Hidden Sync pane started a test");
-  $("workflowTestBtn").dispatchEvent(new Event("click"));
-  assert.equal(activeSync,true);
-  assert.equal($("repository").value,$("workflowRepository").value);
-  assert.equal($("pat").value,$("workflowPat").value);
-  assert.equal(requests.length,0,"Opening Sync from Full Deploy started a test");
-  await $("testBtn").listeners.click[0]();
+  activePane="paneWorkflow";
+  await $("workflowTestBtn").listeners.click[0]();
   assert.equal(requests.length,1);
   assert.equal(requests[0].url,"/api/test-connection");
+  assert.equal(requests[0].payload.repository,"workflowRepository");
+  assert.equal(requests[0].payload.pat,"workflowPat");
+  assert.equal(requests[0].panel,$("workflowTestPanel"));
+  assert.equal(activePane,"paneWorkflow","Full Deploy test navigated away");
+  assert.equal($("repository").value,"repository","Full Deploy copied values into Sync");
+  await $("workflowTestBtn").listeners.click[0]();
   await $("testBtn").listeners.click[0]();
   assert.equal(requests.length,1,"Duplicate in-flight test started");
   complete({returncode:0});
-  activeSync=false;
+  assert.equal(workflowConnTestState,"ok");
+  assert.equal(results.get("workflowConnTestResult"),"ok");
+  assert.equal(connTestState,null);
+  activePane="paneSync";
+  await $("testBtn").listeners.click[0]();
+  assert.equal(requests.length,2);
+  assert.equal(requests[1].payload.repository,"repository");
+  assert.equal(requests[1].panel,$("testPanel"));
+  complete({returncode:1});
+  assert.equal(connTestState,"fail");
+  assert.equal(results.get("connTestResult"),"error");
+  assert.equal(workflowConnTestState,"ok");
+  activePane="paneDeploy";
   await runTest();
-  assert.equal(requests.length,1,"Test started after leaving Sync");
+  await runTest(true);
+  assert.equal(requests.length,2,"Test started outside the source pane");
 })().catch(error=>{console.error(error);process.exitCode=1});
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
