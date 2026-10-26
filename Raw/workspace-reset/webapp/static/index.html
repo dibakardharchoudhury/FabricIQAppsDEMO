@@ -66,7 +66,7 @@
   label { display:flex; flex-direction:column; font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); gap:.42rem; }
   label.check { flex-direction:row; align-items:center; gap:.6rem; color:var(--text); text-transform:none; letter-spacing:normal; font-weight:500; font-size:.9rem; }
   #patNote { text-transform:none; letter-spacing:normal; font-weight:500; color:#7c8ab0; }
-  input[type=text],input[type=password],input:not([type]) { background:var(--field); border:1px solid var(--border); color:var(--text);
+  input[type=text],input[type=password],input[type=number],input:not([type]),textarea { background:var(--field); border:1px solid var(--border); color:var(--text);
     border-radius:10px; padding:.62rem .78rem; font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal;
     width:100%; min-width:0;
     transition:border-color .15s, box-shadow .15s, background .15s; }
@@ -398,7 +398,7 @@
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Foundry multi-agent setup</strong><span>Separate from core data setup. Reuse existing resources by default. Create new resources only if you explicitly choose to.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Foundry agents</strong><span>Uses your existing project and model. No new project is created by default.</span></div></div>
           <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
@@ -471,21 +471,12 @@
     <div class="card">
       <div class="card-head">
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
-        <h2>Set up Foundry multi-agent runtime</h2>
+        <h2>Set up Foundry agents</h2>
       </div>
-      <p class="hint">Independent of final app publication. Reuses the selected Foundry project, verifies Fabric sources, prepares an AppBackend gateway only when needed, and converges the five specialists (including Weather) and Hosted coordinator. This stage does not publish the website. Creating a new project is opt-in below.</p>
-      <aside class="notice" aria-label="Browser sign-in setup">
-        <strong>Before you run</strong>
-        <ul>
-          <li>Complete core setup and manually materialize the selected ontology graph in Fabric.</li>
-          <li>Use an existing Foundry project and model unless you explicitly approve creating billable resources.</li>
-          <li>After this finishes, choose <strong>Deploy app</strong>. Foundry setup does not publish the website or prove agent execution/alert delivery.</li>
-        </ul>
-        If setup reports a permission or consent prerequisite, give that exact message to the resource owner.
-        <a href="/deploy-guide" target="_blank" rel="noopener">Deployment steps and access checklist</a>.
-      </aside>
+      <p class="hint">Complete Core setup and manually materialize its ontology graph in Fabric first. This step sets up or updates the specialist agents and their coordinator; it does not publish the website.</p>
       <div id="deployFoundryFields"></div>
       <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
+      <p class="hint">After setup, choose <strong>Deploy app</strong>. If setup stops, follow its named prerequisite. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide and access checklist</a>.</p>
       <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
     </div>
   </section>
@@ -560,32 +551,48 @@ try {
 }
 
 function renderFoundryFields(prefix, clientId) {
-  return `<p class="phelp"><strong>Defaults:</strong> reuse this target's project and ready chat model; discover the SPA and registry; preserve work-order write permissions. Requires Azure Developer CLI (<code>azd</code>). No new project is created unless you opt in.</p>
+  return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Use existing resources (recommended).</strong> We find this target's project, model and supporting resources when you run setup.</p>
     <div class="grid">
       <label>Azure subscription
         <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
-      <label>Existing project resource ID (optional)
-        <input id="${prefix}FoundryProjectResourceId" type="text" placeholder="Automatic: saved project or the only accessible project" /></label>
-      <label>Model deployment (optional for an existing project)
-        <input id="${prefix}FoundryModel" type="text" placeholder="Automatic: saved model or the only ready chat deployment" /></label>
     </div>
     <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
-    <p id="${prefix}FoundryStatus" class="phelp" role="status">Choose a project only if discovery is ambiguous or your access is limited to one resource.</p>
-    <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
-      <span>I need a new Foundry project (creates billable Azure resources).</span></label>
-    <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
-      <strong>New project: choose your model</strong>
-      <p class="hint">This creates an account, project, model deployment, container registry and Application Insights. Region defaults to the Fabric capacity's region; model catalog name defaults to the deployment name. Enter a version, SKU and capacity approved for that subscription/region. They are not guessed.</p>
+    <p id="${prefix}FoundryStatus" class="phelp" role="status">Confirm the subscription, then run setup. Project and model are automatic unless setup asks you to choose.</p>
+    <details id="${prefix}FoundryOverrides" class="foundry-block">
+      <summary>Choose a specific project or model (optional)</summary>
+      <p class="hint">Only needed if automatic discovery finds more than one suitable resource. Existing-project choices are ignored when creating a new project.</p>
       <div class="grid">
-        <label>Model version <input id="${prefix}FoundryModelVersion" type="text" placeholder="Approved version for your model" disabled /></label>
-        <label>Model SKU <input id="${prefix}FoundryModelSku" type="text" placeholder="Approved deployment SKU" disabled /></label>
-        <label>Model capacity <input id="${prefix}FoundryModelCapacity" type="number" min="1" step="1" placeholder="Approved capacity within your quota" disabled /></label>
+        <label>Existing project resource ID
+          <input id="${prefix}FoundryProjectResourceId" type="text" placeholder="Automatic: saved project or the only accessible project" /></label>
+        <label>Existing model deployment
+          <input id="${prefix}FoundryModel" type="text" placeholder="Automatic: saved model or the only ready chat deployment" /></label>
       </div>
-      <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
-    </section>
+    </details>
+    <details id="${prefix}FoundryNewProjectOptions" class="foundry-block">
+      <summary id="${prefix}FoundryNewProjectSummary">Create a new project instead (billable)</summary>
+      <p class="hint">Only use this if you do not have a suitable project. Opening this section does not authorize creation.</p>
+      <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
+        <span>I approve creating a new Foundry project and billable Azure resources.</span></label>
+      <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
+        <p class="hint">Use model settings approved for this subscription's quota. Region follows the Fabric capacity; model catalog name follows the deployment name unless changed below. Availability is checked during setup.</p>
+        <div class="grid">
+          <label>New model deployment name <input id="${prefix}FoundryNewModel" type="text" placeholder="Your approved model deployment name" disabled /></label>
+          <label>Model version <input id="${prefix}FoundryModelVersion" type="text" placeholder="Approved model version" disabled /></label>
+          <label>Deployment SKU <input id="${prefix}FoundryModelSku" type="text" placeholder="Approved deployment SKU" disabled /></label>
+          <label>Model capacity <input id="${prefix}FoundryModelCapacity" type="number" min="1" step="1" placeholder="Approved capacity within your quota" disabled /></label>
+        </div>
+        <details class="foundry-block"><summary>Change new-project defaults (optional)</summary>
+          <div class="grid">
+            <label>Region <input id="${prefix}FoundryLocation" type="text" placeholder="Automatic: Fabric capacity region" disabled /></label>
+            <label>Model catalog name <input id="${prefix}FoundryModelName" type="text" placeholder="Automatic: new deployment name" disabled /></label>
+          </div>
+        </details>
+        <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
+      </section>
+    </details>
     <details class="foundry-block">
-      <summary>Change automatic settings (optional)</summary>
-      <p class="hint">Leave these unchanged for normal setup. Only override a value when discovery cannot identify the correct resource. Manual graph materialization is still required; this field cannot replace it.</p>
+      <summary>Troubleshooting overrides (normally leave closed)</summary>
+      <p class="hint">Not needed for normal setup. Supporting resources are discovered automatically and work-order write permissions stay unchanged. Endpoint and registry overrides apply to existing resources only. Requires Azure Developer CLI (<code>azd</code>). Graph lineage overrides cannot replace manual graph materialization.</p>
       <div class="grid">
         <label>SPA client ID <input id="${clientId}" type="text" placeholder="Automatic: verify the target tenant's SPA" /></label>
         <label>Project endpoint <input id="${prefix}FoundryEndpoint" type="text" placeholder="Automatic: selected project's endpoint" /></label>
@@ -595,8 +602,6 @@ function renderFoundryFields(prefix, clientId) {
           <option value="true">Enabled (human approval required)</option>
           <option value="false">Disabled</option>
         </select></label>
-        <label>Region for a new project <input id="${prefix}FoundryLocation" type="text" placeholder="Automatic: Fabric capacity region" disabled /></label>
-        <label>Model catalog name for a new project <input id="${prefix}FoundryModelName" type="text" placeholder="Automatic: deployment name" disabled /></label>
         <label>Verified ontology graph binding (JSON)
           <textarea id="${prefix}OntologyGraphBinding" rows="3" placeholder="Automatic: authoritative ontology-to-graph lineage. Override only with verified workspaceId, ontologyId and graphModelId."></textarea></label>
       </div>
@@ -993,10 +998,10 @@ function foundryPayload(prefix) {
   return {
     azureSubscriptionId: value("AzureSubscriptionId"),
     ontologyGraphBinding: value("OntologyGraphBinding"),
-    foundryEndpoint: value("FoundryEndpoint"),
-    foundryProjectResourceId: value("FoundryProjectResourceId"),
-    foundryModel: value("FoundryModel"),
-    acrName: value("AcrName"),
+    foundryEndpoint: creating ? "" : value("FoundryEndpoint"),
+    foundryProjectResourceId: creating ? "" : value("FoundryProjectResourceId"),
+    foundryModel: creating ? value("FoundryNewModel") : value("FoundryModel"),
+    acrName: creating ? "" : value("AcrName"),
     foundryLocation: creating ? value("FoundryLocation") : "",
     foundryModelName: creating ? value("FoundryModelName") : "",
     foundryModelVersion: creating ? value("FoundryModelVersion") : "",
@@ -1008,7 +1013,7 @@ function foundryPayload(prefix) {
 }
 function foundryValid(prefix) {
   if (!$(prefix + "FoundryCreate").checked) return true;
-  const required = ["FoundryModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"];
+  const required = ["FoundryNewModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"];
   const missing = required.filter(suffix => !$(prefix + suffix).value.trim());
   const capacity = $(prefix + "FoundryModelCapacity").value.trim();
   const valid = !missing.length && /^[1-9][0-9]*$/.test(capacity);
@@ -1017,16 +1022,29 @@ function foundryValid(prefix) {
     : "To create a project, enter the model deployment name, version, SKU and a positive whole-number capacity.";
   return valid;
 }
+function updateFoundryMode(prefix) {
+  const creating = $(prefix + "FoundryCreate").checked;
+  $(prefix + "FoundryCreation").hidden = !creating;
+  $(prefix + "FoundryNewProjectOptions").open = creating;
+  $(prefix + "FoundryNewProjectSummary").textContent = creating
+    ? "New project selected (billable)" : "Create a new project instead (billable)";
+  $(prefix + "FoundryModeSummary").textContent = creating
+    ? "Create new resources (billable). Complete the approved model settings below before running."
+    : "Use existing resources (recommended). Project, model and supporting resources are found automatically when you run setup.";
+  for (const suffix of ["FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+    $(prefix + suffix).disabled = !creating;
+  }
+  for (const suffix of ["FoundryProjectResourceId", "FoundryModel", "FoundryEndpoint", "AcrName"]) {
+    $(prefix + suffix).disabled = creating;
+  }
+}
 for (const prefix of ["deploy", "workflow"]) {
   const create = $(prefix + "FoundryCreate");
   create.addEventListener("change", () => {
-    $(prefix + "FoundryCreation").hidden = !create.checked;
-    for (const suffix of ["FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
-      $(prefix + suffix).disabled = !create.checked;
-    }
+    updateFoundryMode(prefix);
     refresh();
   });
-  for (const suffix of ["FoundryModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+  for (const suffix of ["FoundryNewModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
     $(prefix + suffix).addEventListener("input", refresh);
   }
 }
@@ -1150,7 +1168,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryProjectResourceId", "FoundryModel", "FoundryEndpoint",
+  "AzureSubscriptionId", "FoundryProjectResourceId", "FoundryModel", "FoundryNewModel", "FoundryEndpoint",
   "AcrName", "ProductionWrites", "FoundryLocation", "FoundryModelName",
   "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "OntologyGraphBinding",
 ];

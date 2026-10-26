@@ -19,7 +19,7 @@ Entra or SQL deployment sequence.
 | Update an already prepared app | **Deploy app**. Normally no other inputs are needed. |
 | Update agents | **Set up Foundry agents**, then **Deploy app**. |
 | Initialize an empty workspace | **Full Deploy**. Review the source, supply Key Vault URI, Teams team/channel and alert email, then run. Core setup includes Weather and energy sources. Existing Foundry resources are reused by default. |
-| Create Foundry resources for the first time | In the Foundry section, explicitly check **I need a new Foundry project**. Enter your approved model deployment name, version, SKU and capacity. Creation is billable. |
+| Create Foundry resources for the first time | Expand **Create a new project instead (billable)** and explicitly approve creation. Enter your approved new model deployment name, version, SKU and capacity. |
 
 ### What you actually need to enter
 
@@ -36,6 +36,13 @@ Entra or SQL deployment sequence.
 | New-project region / model catalog name | Defaults to the Fabric capacity's region / deployment name. Version, SKU and capacity must be approved for your subscription and region; they are not guessed. |
 
 The two Foundry forms share remembered non-secret overrides for each target.
+The normal Foundry form shows only **Azure subscription**: confirm its automatic
+selection, then run setup. Existing project/model selection and troubleshooting
+overrides stay collapsed unless discovery asks you to choose a resource.
+New-project creation is a separate, collapsed path; opening it does not authorize
+spending. Its model settings are separate from existing-project choices. While
+creation is selected, saved existing project, endpoint and registry overrides are
+not sent to provisioning. Switching back restores those choices.
 **Create new resources is always off again after changing targets or reloading**;
 it is never a remembered spending authorization.
 No PAT, token or credential secret value is saved by these forms.

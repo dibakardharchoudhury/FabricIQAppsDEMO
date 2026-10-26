@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -1059,14 +1060,20 @@ console.log(JSON.stringify([
         forms = json.loads(result.stdout)
         for prefix, form in zip(("deploy", "workflow"), forms):
             for suffix in ("AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryModel", "AcrName", "ProductionWrites",
-                           "FoundryCreate", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
+                           "FoundryCreate", "FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
                            "FoundryModelSku", "FoundryModelCapacity"):
                 self.assertIn(f'id="{prefix}{suffix}"', form)
             self.assertIn(f'foundryPayload("{prefix}")', page)
             self.assertIn(f'id="{prefix}FoundryCreation" class="foundry-block" hidden', form)
-            normal_fields = form[:form.index('<section')]
-            self.assertEqual(normal_fields.count('type="text"'), 3)
-            self.assertIn("Change automatic settings (optional)", form)
+            normal_fields = form[:form.index('<details')]
+            self.assertEqual(normal_fields.count('type="text"'), 1)
+            self.assertNotIn("FoundryCreate", normal_fields)
+            self.assertIn("Use existing resources (recommended)", normal_fields)
+            self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
+            self.assertIn(f'<details id="{prefix}FoundryNewProjectOptions" class="foundry-block">', form)
+            self.assertIn("Troubleshooting overrides (normally leave closed)", form)
+            identifiers = re.findall(r'\bid="([^"]+)"', form)
+            self.assertEqual(len(identifiers), len(set(identifiers)))
         self.assertIn("billable Azure resources", page)
         self.assertNotIn('placeholder="gpt-5.6-sol"', page)
         self.assertNotIn("Advanced / first-time", page)
@@ -1082,20 +1089,87 @@ console.log(JSON.stringify([
 const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
-for (const suffix of ["FoundryCreate", "FoundryModel", "FoundryModelVersion", "FoundryModelSku",
+for (const suffix of ["FoundryCreate", "FoundryNewModel", "FoundryModelVersion", "FoundryModelSku",
                      "FoundryModelCapacity", "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
 """ + function + """
 assert.equal(foundryValid("deploy"), true);
 fields.deployFoundryCreate.checked = true;
 assert.equal(foundryValid("deploy"), false);
 assert.match(fields.deployFoundryCreationStatus.textContent, /enter the model/);
-for (const suffix of ["FoundryModel", "FoundryModelVersion", "FoundryModelSku"]) fields["deploy"+suffix].value="approved";
+for (const suffix of ["FoundryNewModel", "FoundryModelVersion", "FoundryModelSku"]) fields["deploy"+suffix].value="approved";
 for (const invalid of ["", "0", "-1", "1.5"]) {
   fields.deployFoundryModelCapacity.value=invalid;
   assert.equal(foundryValid("deploy"), false);
 }
 fields.deployFoundryModelCapacity.value="12";
 assert.equal(foundryValid("deploy"), true);
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_foundry_modes_keep_reuse_automatic_and_creation_explicit(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        start = page.index("function foundryPayload(")
+        functions = page[start:page.index('for (const prefix of ["deploy", "workflow"])', start)]
+        script = """
+const assert = require("node:assert/strict");
+const fields = {};
+const $ = id => fields[id];
+const suffixes = [
+  "AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryProjectResourceId",
+  "FoundryModel", "FoundryNewModel", "AcrName", "FoundryLocation", "FoundryModelName",
+  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "ProductionWrites",
+  "FoundryCreate", "FoundryCreation", "FoundryNewProjectOptions", "FoundryNewProjectSummary",
+  "FoundryModeSummary", "FoundryCreationStatus",
+];
+""" + functions + """
+for (const prefix of ["deploy", "workflow"]) {
+  for (const suffix of suffixes) {
+    fields[prefix + suffix] = {value:"", checked:false, disabled:false, hidden:false, open:false, textContent:""};
+  }
+  updateFoundryMode(prefix);
+  assert.equal($(prefix+"FoundryCreation").hidden, true);
+  assert.equal($(prefix+"FoundryNewProjectOptions").open, false);
+  assert.equal($(prefix+"FoundryNewModel").disabled, true);
+  assert.equal(foundryPayload(prefix).createFoundry, false);
+  assert.equal(foundryPayload(prefix).foundryModel, "");
+  assert.equal(foundryValid(prefix), true);
+  $(prefix+"FoundryProjectResourceId").value = "existing-project";
+  $(prefix+"FoundryModel").value = "existing-model";
+  $(prefix+"FoundryEndpoint").value = "existing-endpoint";
+  $(prefix+"AcrName").value = "existing-registry";
+  assert.equal(foundryPayload(prefix).foundryProjectResourceId, "existing-project");
+  assert.equal(foundryPayload(prefix).foundryModel, "existing-model");
+  $(prefix+"FoundryCreate").checked = true;
+  updateFoundryMode(prefix);
+  assert.equal(foundryValid(prefix), false);
+  assert.equal($(prefix+"FoundryCreation").hidden, false);
+  assert.equal($(prefix+"FoundryNewProjectOptions").open, true);
+  assert.equal($(prefix+"FoundryNewModel").disabled, false);
+  assert.equal($(prefix+"FoundryProjectResourceId").disabled, true);
+  assert.match($(prefix+"FoundryModeSummary").textContent, /billable/);
+  $(prefix+"FoundryNewModel").value = "approved-new-model";
+  $(prefix+"FoundryModelVersion").value = "approved-version";
+  $(prefix+"FoundryModelSku").value = "approved-sku";
+  $(prefix+"FoundryModelCapacity").value = "4";
+  assert.equal(foundryValid(prefix), true);
+  const creating = foundryPayload(prefix);
+  assert.equal(creating.createFoundry, true);
+  assert.equal(creating.foundryModel, "approved-new-model");
+  assert.equal(creating.foundryProjectResourceId, "");
+  assert.equal(creating.foundryEndpoint, "");
+  assert.equal(creating.acrName, "");
+  $(prefix+"FoundryCreate").checked = false;
+  updateFoundryMode(prefix);
+  const reused = foundryPayload(prefix);
+  assert.equal(reused.createFoundry, false);
+  assert.equal(reused.foundryModel, "existing-model");
+  assert.equal(reused.foundryProjectResourceId, "existing-project");
+  assert.equal(reused.foundryEndpoint, "existing-endpoint");
+  assert.equal(reused.acrName, "existing-registry");
+  assert.equal(reused.foundryModelVersion, "");
+  assert.equal(reused.foundryModelCapacity, "");
+}
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
