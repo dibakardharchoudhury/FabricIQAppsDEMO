@@ -46,6 +46,43 @@ The app-host/connector session and direct Fabric ontology-read consent are disti
 `Workspace.Read.All` and `Item.Read.All`; it does not request Eventhouse or connector scopes.
 Automatic/background graph reads never open a consent popup.
 
+### FEATURE hosted acceptance: October 26, 2026
+
+The canonical deployment completed at `2026-10-26T18:11:33Z` with `SUCCESS`.
+Authenticated acceptance used build **1.0.1107 / f499dc4** at
+[the FEATURE application](https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net/?ui=v1&tab=knowledge-graph).
+
+The live-source view returned **186 nodes / 183 declared directed relationships**:
+three facilities, three systems, 15 equipment, 90 instruments, 12 work orders,
+30 inspections, 12 spare parts, 15 models and six notifications. Coverage is
+explicitly **9/18 entity types and 8/17 relationship types**, not the entire ontology.
+The exported payload was checked against the actual ontology relationship IDs
+and directed endpoints, verified Core Lakehouse/operational SQL identities and
+contract signature; it has no fabricated GraphModel identity.
+
+| Hosted check | Observed result |
+| --- | --- |
+| Full browser reload, cold application-memory caches | 5.804 s to rendered graph; 4.76 s graph loader |
+| Explicit refresh | 5.479 s browser wait; 5.40 s graph loader |
+| Immediate return from Overview | 192 ms; zero connector requests; original observation timestamp |
+| Actual All-scope canvas | 186 nodes, 183 edges, 186 distinct finite positions |
+| Selected / Facility / All scopes for T001 | 14 / 58 / 186 visible nodes |
+| Exact equipment-ID search | Correct inspector in 306 ms; six matching/reference-bearing records |
+| Synthetic ontology-metadata HTTP 403 | Canvas removed; explicit error and Connect Fabric and retry |
+| Recovery after removing the page-only test route | 4.843 s through the graph authorization/retry control |
+| Separate native execution | HTTP 204 rejected in 2.434 s; zero executeQuery requests; no source fallback |
+
+These are single-session browser observations, not cleared HTTP-cache,
+multi-user load, availability or production certification results. Final local
+validation passed 100 graph/ontology tests, 26 service tests, scoped ESLint and
+TypeScript checks; the canonical deployer built the published source.
+
+**Remaining platform limitation:** FEATURE's native graph is still not
+materialized because Fabric reports ineligible sources. Live mode does not
+repair that eligibility or claim full entity coverage, atomic cross-source reads
+or per-user SQL impersonation. Its coverage, provenance and consistency limits
+remain visible rather than replacing missing ontology instances with synthetic data.
+
 For a native cold read or explicit refresh, the app checks GraphModel metadata and queryable schema
 before fetching the ontology definition or executing graph queries. Readiness network checks
 have a shared ten-second deadline, separate from the native query budget. HTTP 204, missing
