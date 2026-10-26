@@ -100,7 +100,7 @@ class WorkspaceActionTests(unittest.TestCase):
     def test_timing_renderer_handles_success_failure_escaping_and_invalid_receipts(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         functions = (
-            page[page.index("function renderDeploymentTimings("):page.index('document.querySelectorAll("[data-load-subscriptions]")')]
+            page[page.index("function renderDeploymentTimings("):page.index("let subscriptionLoad =")]
             + page[page.index("function escapeHtml("):page.index("// mm:ss")]
             + page[page.index("function formatElapsed("):page.index("// Starts a job")]
         )
@@ -205,6 +205,138 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             "tenant": "tenant.example", "workspace": "Demo", "parameters": PIPELINE_PARAMS,
         })
         self.assertEqual(json.loads(env["FABRIC_PIPELINE_PARAMS"])["ops_agent_run_as_user"], "")
+
+    def test_parameter_defaults_are_target_scoped_and_allowlisted(self):
+        config = {
+            "FABRIC_TENANT": "tenant.example",
+            "FABRIC_WORKSPACE": "Demo",
+            "FABRIC_PIPELINE_PARAMS": json.dumps({
+                **PIPELINE_PARAMS, "env_suffix": "V12", "per_notebook_timeout_secs": 7200,
+                "workspace_id": "wrong-workspace", "pat": "must-not-be-returned",
+            }),
+        }
+        with patch.dict(os.environ, config):
+            for target, expected in (
+                ("?tenant=TENANT.example&workspace=demo", "V12"),
+                ("?tenant=other.example&workspace=Demo", "V6"),
+                ("?tenant=tenant.example&workspace=Other", "V6"),
+                ("", "V6"),
+            ):
+                with self.subTest(target=target):
+                    response = self.client.get("/api/pipeline-params" + target)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.headers["Cache-Control"], "no-store")
+                    specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                    self.assertEqual(specs["env_suffix"]["default"], expected)
+                    self.assertNotIn("pat", specs)
+                    self.assertNotIn("must-not-be-returned", response.get_data(as_text=True))
+                    self.assertEqual(specs["workspace_id"]["default"], "")
+                    if expected == "V12":
+                        self.assertEqual(specs["per_notebook_timeout_secs"]["default"], "7200")
+                        self.assertEqual(specs["key_vault_uri"]["source"], "server configuration")
+        self.assertEqual(SERVER.PIPELINE_PARAM_SPEC[0]["default"], "V6")
+
+    def test_parameter_defaults_report_invalid_configuration(self):
+        for raw in ("{", "[]", '{"env_suffix":true}', '{"alert_email_to":{}}',
+                    '{"per_notebook_timeout_secs":"not a number"}'):
+            with self.subTest(raw=raw), patch.dict(os.environ, {
+                "FABRIC_TENANT": "tenant.example", "FABRIC_WORKSPACE": "Demo",
+                "FABRIC_PIPELINE_PARAMS": raw,
+            }):
+                response = self.client.get("/api/pipeline-params")
+                self.assertEqual(response.status_code, 400)
+                self.assertTrue(response.get_json()["error"])
+        with patch.dict(os.environ, {
+            "FABRIC_TENANT": "", "FABRIC_WORKSPACE": "", "FABRIC_PIPELINE_PARAMS": "{}",
+        }):
+            response = self.client.get("/api/pipeline-params")
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("FABRIC_TENANT", response.get_json()["error"])
+
+    def test_browser_parameter_storage_and_identity_suggestions(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        functions = (
+            page[page.index("let pipelineSpec ="):page.index("function renderPipelineFields(")]
+            + page[page.index("function updatePipelineDefaultsSummary("):page.index("async function loadPipelineParams(")]
+        )
+        script = """
+const assert = require("node:assert/strict");
+const fields = new Map();
+const $ = id => fields.get(id);
+for (const id of ["tenant", "workspace", "pp_alert_email_to", "wf_pp_alert_email_to",
+  "pp_env_suffix", "wf_pp_env_suffix", "pipelineSettingsStatus", "workflowPipelineSettingsStatus"]) {
+  fields.set(id, {value:"", textContent:""});
+}
+const stored = new Map();
+const localStorage = {
+  getItem:key => stored.get(key) ?? null,
+  setItem:(key,value) => stored.set(key,value),
+};
+""" + functions + """
+$("tenant").value = " tenant-A ";
+$("workspace").value = " Demo ";
+pipelineTarget = pipelineTargetKey();
+pipelineSpec = [{name:"env_suffix"}, {name:"alert_email_to"}, {name:"workspace_id"}];
+savePipelineField("env_suffix", "V12");
+assert.equal($("wf_pp_env_suffix").value, "V12");
+assert.equal(readPipelineSettings().env_suffix, "V12");
+savePipelineField("workspace_id", "must-not-save");
+assert.equal(readPipelineSettings().workspace_id, undefined);
+pipelineIdentity = {userType:"user", tenantId:"TENANT-A", user:"admin@example.test"};
+suggestPipelineEmail();
+assert.equal($("pp_alert_email_to").value, "admin@example.test");
+assert.equal($("wf_pp_alert_email_to").value, "admin@example.test");
+savePipelineField("alert_email_to", "");
+suggestPipelineEmail();
+assert.equal($("pp_alert_email_to").value, "");
+$("workspace").value = "Other";
+savePipelineField("env_suffix", "must-not-leak");
+pipelineTarget = pipelineTargetKey();
+pipelineSavedValues = readPipelineSettings();
+assert.deepEqual(pipelineSavedValues, {});
+pipelineIdentity.tenantId = "different-tenant";
+suggestPipelineEmail();
+assert.equal($("pp_alert_email_to").value, "");
+pipelineIdentity.tenantId = "tenant-a";
+pipelineIdentity.userType = "servicePrincipal";
+suggestPipelineEmail();
+assert.equal($("pp_alert_email_to").value, "");
+$("workspace").value = "DEMO";
+pipelineTarget = pipelineTargetKey();
+assert.equal(readPipelineSettings().env_suffix, "V12");
+assert.equal(readPipelineSettings().alert_email_to, "");
+localStorage.getItem = () => "{";
+assert.deepEqual(readPipelineSettings(), {});
+assert.match($("pipelineSettingsStatus").textContent, /Could not restore/);
+localStorage.setItem = () => { throw new Error("blocked"); };
+savePipelineField("env_suffix", "V13");
+assert.match($("pipelineSettingsStatus").textContent, /Could not save.*blocked/);
+localStorage.getItem = key => stored.get(key) ?? null;
+localStorage.setItem = (key,value) => stored.set(key,value);
+for (const prefix of ["deploy", "workflow"]) {
+  for (const suffix of [...foundrySettingSuffixes, "FoundryCreate", "FoundryStatus"]) {
+    fields.set(prefix + suffix, {value:"",checked:false,dispatchEvent(){}});
+  }
+}
+fields.set("foundryClientId", {value:""});
+fields.set("workflowDeployClientId", {value:""});
+restoreFoundrySettings();
+$("workflowFoundryModel").value="approved-model";
+$("workflowFoundryCreate").checked=true;
+saveFoundrySettings("workflow");
+assert.equal($("deployFoundryModel").value, "approved-model");
+assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryCreate, undefined);
+$("workspace").value="Other";
+restoreFoundrySettings();
+assert.equal($("workflowFoundryModel").value, "");
+assert.equal($("workflowFoundryCreate").checked, false);
+$("workspace").value="Demo";
+restoreFoundrySettings();
+assert.equal($("workflowFoundryModel").value, "approved-model");
+assert.equal($("workflowFoundryCreate").checked, false);
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_pipeline_rejects_blank_alert_recipient(self):
         with patch.object(SERVER, "_start") as start:
@@ -538,17 +670,58 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
 
     def test_both_deploy_forms_collect_foundry_settings_and_warn_about_cost(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        for prefix in ("deploy", "workflow"):
+        renderer = page[page.index("function renderFoundryFields("):page.index('$("workflowFoundryFields").innerHTML')]
+        script = renderer + """
+console.log(JSON.stringify([
+  renderFoundryFields("deploy", "foundryClientId"),
+  renderFoundryFields("workflow", "workflowDeployClientId"),
+]));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        forms = json.loads(result.stdout)
+        for prefix, form in zip(("deploy", "workflow"), forms):
             for suffix in ("AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryModel", "AcrName", "ProductionWrites",
                            "FoundryCreate", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
                            "FoundryModelSku", "FoundryModelCapacity"):
-                self.assertIn(f'id="{prefix}{suffix}"', page)
+                self.assertIn(f'id="{prefix}{suffix}"', form)
             self.assertIn(f'foundryPayload("{prefix}")', page)
+            self.assertIn(f'id="{prefix}FoundryCreation" class="foundry-block" hidden', form)
+            normal_fields = form[:form.index('<section')]
+            self.assertEqual(normal_fields.count('type="text"'), 3)
+            self.assertIn("Change automatic settings (optional)", form)
         self.assertIn("billable Azure resources", page)
         self.assertNotIn('placeholder="gpt-5.6-sol"', page)
-        self.assertIn('id="deployFoundryLocation" type="text" placeholder="Blank: the Fabric capacity\'s region" disabled', page)
+        self.assertNotIn("Advanced / first-time", page)
+        self.assertNotIn("Advanced: secret names", page)
         handler = page[page.index('$("deployBtn").addEventListener'):page.index('$("workflowBtn").addEventListener')]
         self.assertNotIn("workflow", handler)
+
+    def test_foundry_creation_requires_complete_explicit_model_settings(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        start = page.index("function foundryValid(")
+        function = page[start:page.index('for (const prefix of ["deploy", "workflow"])', start)]
+        script = """
+const assert = require("node:assert/strict");
+const fields = {};
+const $ = id => fields[id];
+for (const suffix of ["FoundryCreate", "FoundryModel", "FoundryModelVersion", "FoundryModelSku",
+                     "FoundryModelCapacity", "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
+""" + function + """
+assert.equal(foundryValid("deploy"), true);
+fields.deployFoundryCreate.checked = true;
+assert.equal(foundryValid("deploy"), false);
+assert.match(fields.deployFoundryCreationStatus.textContent, /enter the model/);
+for (const suffix of ["FoundryModel", "FoundryModelVersion", "FoundryModelSku"]) fields["deploy"+suffix].value="approved";
+for (const invalid of ["", "0", "-1", "1.5"]) {
+  fields.deployFoundryModelCapacity.value=invalid;
+  assert.equal(foundryValid("deploy"), false);
+}
+fields.deployFoundryModelCapacity.value="12";
+assert.equal(foundryValid("deploy"), true);
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_full_workflow_progress_groups_detailed_phases(self):
         html = (MODULE_PATH.parent / "static" / "index.html").read_text(encoding="utf-8")
@@ -749,12 +922,13 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
             "workflowPat",
             "workflowTestBtn",
             "workflowPipelineFields",
-            "workflowDeployClientId",
+            "workflowFoundryFields",
         ):
             self.assertIn(f'id="{field_id}"', workflow_pane)
-        self.assertIn("Only the tenant and workspace are shared", workflow_pane)
+        self.assertIn("Set your tenant and workspace on the left", workflow_pane)
         self.assertNotIn("Configure all required fields in the other tabs", workflow_pane)
         self.assertIn('renderPipelineFields("wf_pp_")', page)
+        self.assertIn('renderFoundryFields("workflow", "workflowDeployClientId")', page)
 
     def test_full_workflow_submission_uses_only_its_own_fields(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")

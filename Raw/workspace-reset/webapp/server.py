@@ -622,7 +622,40 @@ PIPELINE_PARAM_NAMES = {p["name"] for p in PIPELINE_PARAM_SPEC}
 @app.get("/api/pipeline-params")
 def api_pipeline_params():
     """Expose the pipeline's parameter spec so the UI can render labelled fields."""
-    return jsonify(pipeline="01_Pipe_Setup", parameters=PIPELINE_PARAM_SPEC)
+    parameters = [dict(spec) for spec in PIPELINE_PARAM_SPEC]
+    configured = os.environ.get("FABRIC_PIPELINE_PARAMS", "").strip()
+    if configured:
+        tenant = os.environ.get("FABRIC_TENANT", "").strip()
+        workspace = os.environ.get("FABRIC_WORKSPACE", "").strip()
+        if not tenant or not workspace:
+            return jsonify(error="FABRIC_PIPELINE_PARAMS defaults require FABRIC_TENANT and FABRIC_WORKSPACE."), 400
+        try:
+            values = json.loads(configured)
+        except json.JSONDecodeError:
+            return jsonify(error="FABRIC_PIPELINE_PARAMS must be a JSON object."), 400
+        if not isinstance(values, dict):
+            return jsonify(error="FABRIC_PIPELINE_PARAMS must be a JSON object."), 400
+        matching_target = (
+            request.args.get("tenant", "").strip().casefold() == tenant.casefold()
+            and request.args.get("workspace", "").strip().casefold() == workspace.casefold()
+        )
+        for spec in parameters:
+            if spec["name"] == "workspace_id" or spec["name"] not in values:
+                continue
+            value = values[spec["name"]]
+            if not isinstance(value, (str, int)) or isinstance(value, bool):
+                return jsonify(error=f"Configured {spec['label']} must be a string or integer."), 400
+            if spec["type"] == "int":
+                try:
+                    int(str(value).strip())
+                except ValueError:
+                    return jsonify(error=f"Configured {spec['label']} must be a whole number."), 400
+            if matching_target:
+                spec["default"] = str(value).strip()
+                spec["source"] = "server configuration"
+    response = jsonify(pipeline="01_Pipe_Setup", parameters=parameters)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _pipeline_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
@@ -1067,6 +1100,7 @@ def api_whoami():
         userType=user.get("type"),
         tenantId=acct.get("tenantId"),
         subscription=acct.get("name"),
+        subscriptionId=acct.get("id"),
     )
 
 

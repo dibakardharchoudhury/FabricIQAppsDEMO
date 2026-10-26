@@ -91,6 +91,39 @@ use **Initialize everything** when Git sync and data setup are actually needed.
 it owns project/model/registry settings and explicitly billable first-time
 provisioning. Blank overrides use verified discovery, never another tenant's saved target.
 
+The **Run pipeline** and **Full workflow** setup forms share non-secret parameter
+values and remember edits in this browser, separately for each tenant/workspace
+pair. This includes the environment suffix, Key Vault URI and secret *names*,
+Teams destinations, alert recipient, run-as guard, and timeout. It never saves
+PATs, tokens, or secret values. Changing targets clears the previous target's
+fields; returning restores that target's entries, including intentionally blank
+values. The workspace field always follows the sidebar. Clearing this site's
+browser storage removes remembered values.
+
+When the target tenant GUID matches the signed-in user, an otherwise unset alert
+recipient is suggested from that user's email. Review it before running; it is
+independent of the optional run-as guard. Unknown Key Vault and Teams destinations
+remain blank rather than being guessed.
+
+For preconfigured local installations, start the server with `FABRIC_TENANT`,
+`FABRIC_WORKSPACE`, and `FABRIC_PIPELINE_PARAMS` (a JSON object using the pipeline
+parameter names). Only declared non-secret parameters are exposed, and these
+defaults apply only when both target fields match the configured values
+(case-insensitively). Saved browser edits take precedence. Invalid configured
+defaults produce a visible error, not a silently empty form. Restart the server
+after changing its environment.
+
+Foundry setup now shows just subscription, optional existing project resource ID,
+and optional model deployment for the normal reuse path. A verified matching
+subscription is selected automatically when unambiguous. SPA, endpoint, registry,
+graph-binding and write-policy overrides are under **Change automatic settings
+(optional)**. The creation checkbox is always visible; checking it reveals the
+required model version/SKU/capacity directly. No model availability or quota is
+guessed. Creation remains an explicit billable opt-in and is never remembered.
+Other Foundry overrides are shared between the standalone and full-workflow
+forms and saved separately per tenant/workspace. See the
+[three-step quick start and defaults table](../../HydroOperationsApp/DEPLOY.md#quick-start-one-path-for-each-job).
+
 For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
 checkout and explicitly select **Branch = `feat/dibakar`** when using Git sync or
 **Initialize everything**; those branch fields prefill from the current local checkout. **Deploy app**

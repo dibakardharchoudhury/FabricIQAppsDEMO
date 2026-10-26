@@ -13,6 +13,7 @@
     --radius:16px; --shadow:0 18px 48px -20px rgba(0,0,0,.75);
   }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   html { scroll-behavior:smooth; }
   body {
     margin:0; min-height:100vh; color:var(--text);
@@ -340,7 +341,7 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>New workspace: guided deployment</h2>
       </div>
-      <p class="hint">Configure the complete workflow here. Only the tenant and workspace are shared from the target card on the left. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
+      <p class="hint">Set your tenant and workspace on the left, then review the steps below. Setup values are shared with the individual modules and remembered for this target. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
       <aside class="notice">
         <strong>Already deployed? Use Deploy app instead.</strong> Do not import Git or rerun setup to update the website.
         For a new target, reuse an administrator-prepared SPA, Key Vault and Foundry project.
@@ -382,58 +383,16 @@
           <label class="check"><input id="workflowEnableEnergy" type="checkbox" checked /> Prepare and enable the energy map after core setup (no hidden bootstrap profile required).</label>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">4. Foundry multi-agent setup</strong><span>Separate from app publication. The tenant SPA is discovered automatically; its verified client ID is also used by the final app stage.</span></div></div>
-          <div class="grid">
-            <label>SPA client id (optional)
-              <input id="workflowDeployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
-            <label>Azure subscription ID
-              <input id="workflowAzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Choose a signed-in subscription or enter its ID" /></label>
-          </div>
-          <button type="button" data-load-subscriptions>Load signed-in subscriptions</button>
-          <details class="foundry-block">
-            <summary>Advanced / first-time Foundry setup</summary>
-            <p class="hint">Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires the Azure Developer CLI (<code>azd</code>).</p>
-            <div class="grid">
-              <label>Operator-verified ontology graph binding (JSON)
-                <textarea id="workflowOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
-              <label>Foundry project endpoint
-                <input id="workflowFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
-              <label>Foundry project ARM resource ID (recommended)
-                <input id="workflowFoundryProjectResourceId" type="text" placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/.../projects/..." /></label>
-              <label>Model deployment
-                <input id="workflowFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
-              <label>Container registry
-                <input id="workflowAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
-              <label>Work-order writes
-                <select id="workflowProductionWrites">
-                  <option value="">Keep the current setting (default)</option>
-                  <option value="true">Enabled (every write needs human approval)</option>
-                  <option value="false">Disabled</option>
-                </select></label>
-            </div>
-            <label class="check"><input id="workflowFoundryCreate" type="checkbox" />
-              <span>Create/reuse a target-specific Foundry project when none is selected. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights. Unrelated projects are not reused.</span></label>
-            <div class="grid" style="margin-top:.85rem">
-              <label>Region for the new project (only when creating)
-                <input id="workflowFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
-              <label>Model catalog name (only when creating)
-                <input id="workflowFoundryModelName" type="text" placeholder="Blank: use the deployment name" disabled /></label>
-              <label>Model version (required when creating)
-                <input id="workflowFoundryModelVersion" type="text" placeholder="Available version in the selected region" disabled /></label>
-              <label>Model SKU (required when creating)
-                <input id="workflowFoundryModelSku" type="text" placeholder="Available deployment SKU" disabled /></label>
-              <label>Model capacity (required when creating)
-                <input id="workflowFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
-            </div>
-          </details>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">4. Foundry multi-agent setup</strong><span>Reuse existing resources by default. Create new resources only if you explicitly choose to.</span></div></div>
+          <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
           <div class="workflow-config-head"><div><strong>5. Final Fabric app deployment</strong><span>No Foundry project discovery, agent builds or publication. Verifies prepared source/runtime identities, publishes the SPA, and checks connectors, browser sign-in and CORS.</span></div></div>
         </section>
       </div>
       <aside class="notice">
-        Tenant and workspace come from the target card. The GitHub PAT and pipeline parameters remain
-        environment-only, and deployment uses <code>deploy_fabric_app.py</code>.
+        Tenant and workspace come from the target card. Non-secret setup values are remembered in this browser.
+        The GitHub PAT is never saved. Deployment uses <code>deploy_fabric_app.py</code>.
       </aside>
       <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Initialize sources, set up Foundry &amp; deploy app last</button>
       <div id="workflowPanel"><pre class="output muted">Combined progress and phase-tagged output will appear here.</pre></div>
@@ -500,62 +459,16 @@
       </div>
       <p class="hint">Independent of final app publication. Reuses the selected Foundry project, verifies Fabric sources, prepares an AppBackend gateway only when needed, and converges the five specialists (including Weather) and Hosted coordinator. This stage does not publish the website. Creating a new project is opt-in below.</p>
       <aside class="notice" aria-label="Browser sign-in setup">
-        <strong>Source and identity prerequisites</strong>
+        <strong>Before you run</strong>
         <ul>
-          <li>Workspace or capacity changes are detected automatically; generated API URLs are never copied between targets.</li>
-          <li>Complete core Fabric setup, operational SQL publication and the ontology's manual Manage graph materialization first.</li>
-          <li>This stage verifies configuration readback, not agent execution or alert delivery.</li>
-          <li>The final app stage owns hosting, browser permission/consent setup and endpoint/CORS verification.</li>
-          <li>A tenant administrator may need to approve browser permissions; no tenant-wide administrator role is assumed.</li>
-          <li>If no usable SPA client ID can be resolved, deployment stops before changing local Rayfin state.</li>
+          <li>Complete core setup and manually materialize the selected ontology graph in Fabric.</li>
+          <li>Use an existing Foundry project and model unless you explicitly approve creating billable resources.</li>
+          <li>After this finishes, choose <strong>Deploy app</strong>. Foundry setup does not publish the website or prove agent execution/alert delivery.</li>
         </ul>
-        <strong>Next step if stopped:</strong> ask your Entra administrator for the SPA client ID,
-        enter it below, and redeploy.
-        Technical details: <code>HydroOperationsApp/DEPLOY.md</code>.
+        If setup reports a permission or consent prerequisite, give that exact message to the resource owner.
+        <a href="/deploy-guide" target="_blank" rel="noopener">Deployment steps and access checklist</a>.
       </aside>
-      <div class="grid">
-        <label>SPA client id (optional)
-          <input id="foundryClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
-        <label>Azure subscription ID
-          <input id="deployAzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Choose a signed-in subscription or enter its ID" /></label>
-      </div>
-      <button type="button" data-load-subscriptions>Load signed-in subscriptions</button>
-      <details class="foundry-block">
-        <summary>Advanced / first-time Foundry setup</summary>
-        <p class="hint">This setup module converges connections, five specialists and the <code>hydro-orchestrator</code> Hosted Agent; final app publication does not. Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires <code>azd</code>; missing Foundry extensions are installed for you.</p>
-        <div class="grid">
-          <label>Operator-verified ontology graph binding (JSON)
-            <textarea id="deployOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
-          <label>Foundry project endpoint
-            <input id="deployFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
-          <label>Foundry project ARM resource ID (recommended)
-            <input id="deployFoundryProjectResourceId" type="text" placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/.../projects/..." /></label>
-          <label>Model deployment
-            <input id="deployFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
-          <label>Container registry
-            <input id="deployAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
-          <label>Work-order writes
-            <select id="deployProductionWrites">
-              <option value="">Keep the current setting (default)</option>
-              <option value="true">Enabled (every write needs human approval)</option>
-              <option value="false">Disabled</option>
-            </select></label>
-        </div>
-        <label class="check"><input id="deployFoundryCreate" type="checkbox" />
-          <span>Create/reuse a target-specific Foundry project when none is selected. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights. Unrelated projects are not reused.</span></label>
-        <div class="grid" style="margin-top:.85rem">
-          <label>Region for the new project (only when creating)
-            <input id="deployFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
-          <label>Model catalog name (only when creating)
-            <input id="deployFoundryModelName" type="text" placeholder="Blank: use the deployment name" disabled /></label>
-          <label>Model version (required when creating)
-            <input id="deployFoundryModelVersion" type="text" placeholder="Available version in the selected region" disabled /></label>
-          <label>Model SKU (required when creating)
-            <input id="deployFoundryModelSku" type="text" placeholder="Available deployment SKU" disabled /></label>
-          <label>Model capacity (required when creating)
-            <input id="deployFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
-        </div>
-      </details>
+      <div id="deployFoundryFields"></div>
       <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
       <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
     </div>
@@ -565,7 +478,7 @@
     <div class="card">
       <div class="card-head"><h2>Deploy Fabric app last</h2></div>
       <p class="hint">Use after source and Foundry setup. Publishes the app without provisioning Foundry, running ingestion or seeding SQL. Missing or stale agent/source configuration stops publication and directs you to the setup module. Existing backend state is reused; runtime/CORS, SQL connector and browser-auth checks are still required.</p>
-      <p class="hint">Success requires CORS preflights and POST probes for <code>/graphql</code> and <code>/api/auth/v1/token</code>, with the current app origin and all existing Entra redirects preserved.</p>
+      <p class="hint">Workspace or capacity changes are detected automatically. Success requires CORS preflights and POST probes for <code>/graphql</code> and <code>/api/auth/v1/token</code>, with the current app origin and all existing Entra redirects preserved.</p>
       <div class="grid">
         <label>SPA client id (optional)
           <input id="deployClientId" type="text" placeholder="Blank: discover the target tenant SPA" /></label>
@@ -608,6 +521,52 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+function renderFoundryFields(prefix, clientId) {
+  return `<p class="phelp"><strong>Defaults:</strong> reuse this target's project and ready chat model; discover the SPA and registry; preserve work-order write permissions. Requires Azure Developer CLI (<code>azd</code>). No new project is created unless you opt in.</p>
+    <div class="grid">
+      <label>Azure subscription
+        <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
+      <label>Existing project resource ID (optional)
+        <input id="${prefix}FoundryProjectResourceId" type="text" placeholder="Automatic: saved project or the only accessible project" /></label>
+      <label>Model deployment (optional for an existing project)
+        <input id="${prefix}FoundryModel" type="text" placeholder="Automatic: saved model or the only ready chat deployment" /></label>
+    </div>
+    <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
+    <p id="${prefix}FoundryStatus" class="phelp" role="status">Choose a project only if discovery is ambiguous or your access is limited to one resource.</p>
+    <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
+      <span>I need a new Foundry project (creates billable Azure resources).</span></label>
+    <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
+      <strong>New project: choose your model</strong>
+      <p class="hint">This creates an account, project, model deployment, container registry and Application Insights. Region defaults to the Fabric capacity's region; model catalog name defaults to the deployment name. Enter a version, SKU and capacity approved for that subscription/region. They are not guessed.</p>
+      <div class="grid">
+        <label>Model version <input id="${prefix}FoundryModelVersion" type="text" placeholder="Approved version for your model" disabled /></label>
+        <label>Model SKU <input id="${prefix}FoundryModelSku" type="text" placeholder="Approved deployment SKU" disabled /></label>
+        <label>Model capacity <input id="${prefix}FoundryModelCapacity" type="number" min="1" step="1" placeholder="Approved capacity within your quota" disabled /></label>
+      </div>
+      <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
+    </section>
+    <details class="foundry-block">
+      <summary>Change automatic settings (optional)</summary>
+      <p class="hint">Leave these unchanged for normal setup. Only override a value when discovery cannot identify the correct resource. Manual graph materialization is still required; this field cannot replace it.</p>
+      <div class="grid">
+        <label>SPA client ID <input id="${clientId}" type="text" placeholder="Automatic: verify the target tenant's SPA" /></label>
+        <label>Project endpoint <input id="${prefix}FoundryEndpoint" type="text" placeholder="Automatic: selected project's endpoint" /></label>
+        <label>Container registry <input id="${prefix}AcrName" type="text" placeholder="Automatic: project's registry connection" /></label>
+        <label>Work-order writes <select id="${prefix}ProductionWrites">
+          <option value="">Keep this target's current setting</option>
+          <option value="true">Enabled (human approval required)</option>
+          <option value="false">Disabled</option>
+        </select></label>
+        <label>Region for a new project <input id="${prefix}FoundryLocation" type="text" placeholder="Automatic: Fabric capacity region" disabled /></label>
+        <label>Model catalog name for a new project <input id="${prefix}FoundryModelName" type="text" placeholder="Automatic: deployment name" disabled /></label>
+        <label>Verified ontology graph binding (JSON)
+          <textarea id="${prefix}OntologyGraphBinding" rows="3" placeholder="Automatic: authoritative ontology-to-graph lineage. Override only with verified workspaceId, ontologyId and graphModelId."></textarea></label>
+      </div>
+    </details>`;
+}
+$("workflowFoundryFields").innerHTML = renderFoundryFields("workflow", "workflowDeployClientId");
+$("deployFoundryFields").innerHTML = renderFoundryFields("deploy", "foundryClientId");
 
 async function postJson(url, body) {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -685,9 +644,12 @@ function renderDeploymentTimings(lines) {
   }
 }
 
-document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
-  button.addEventListener("click", async () => {
-    button.disabled = true;
+let subscriptionLoad = null;
+async function loadSubscriptions() {
+  if (subscriptionLoad) return subscriptionLoad;
+  subscriptionLoad = (async () => {
+    const buttons = [...document.querySelectorAll("[data-load-subscriptions]")];
+    buttons.forEach(button => { button.disabled = true; });
     const status = $("subscriptionDiscoveryStatus");
     status.textContent = "Loading signed-in Azure subscriptions...";
     try {
@@ -701,15 +663,33 @@ document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
         option.label = `${subscription.name} (tenant ${subscription.tenantId})`;
         return option;
       }));
+      const tenant = $("tenant").value.trim().toLowerCase();
+      const matching = data.subscriptions.filter(subscription => subscription.tenantId.toLowerCase() === tenant);
+      const selected = matching.find(subscription => subscription.id === pipelineIdentity?.subscriptionId)
+        || (matching.length === 1 ? matching[0] : null);
+      for (const prefix of ["deploy", "workflow"]) {
+        const field = $(prefix + "AzureSubscriptionId");
+        if (selected && !field.value.trim()) field.value = selected.id;
+        $(prefix + "FoundryStatus").textContent = selected && field.value === selected.id
+          ? `Subscription: ${selected.name}. Project and model are verified during setup; no resources have been created.`
+          : "Choose a subscription belonging to the target tenant. Project and model can be left automatic.";
+      }
       status.textContent = data.subscriptions.length
         ? "Subscriptions loaded. Choose one belonging to your target tenant; deployment verifies the match."
         : "No enabled subscriptions found. Sign in to the target tenant or request access from its Azure administrator.";
     } catch (error) {
       status.textContent = `Subscription discovery failed: ${error.message}`;
+      for (const prefix of ["deploy", "workflow"]) {
+        $(prefix + "FoundryStatus").textContent = status.textContent;
+      }
     } finally {
-      button.disabled = false;
+      buttons.forEach(button => { button.disabled = false; });
     }
-  });
+  })();
+  try { await subscriptionLoad; } finally { subscriptionLoad = null; }
+}
+document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
+  button.addEventListener("click", loadSubscriptions);
 });
 
 const WORKFLOW_PHASE_GROUPS = [
@@ -759,7 +739,7 @@ function renderWorkflowPhaseGroups(el, job) {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 // mm:ss, or h:mm:ss once a job runs past an hour.
@@ -894,9 +874,9 @@ function refresh() {
   $("workflowTestBtn").disabled = !workflowTestValid();
   $("deleteBtn").disabled = !deleteValid();
   $("deployBtn").disabled = !deployValid();
-  $("foundryBtn").disabled = !deployValid();
+  $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy"));
   $("energyBtn").disabled = !deployValid();
-  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid());
+  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow"));
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -1028,13 +1008,29 @@ function foundryPayload(prefix) {
     createFoundry: creating,
   };
 }
+function foundryValid(prefix) {
+  if (!$(prefix + "FoundryCreate").checked) return true;
+  const required = ["FoundryModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"];
+  const missing = required.filter(suffix => !$(prefix + suffix).value.trim());
+  const capacity = $(prefix + "FoundryModelCapacity").value.trim();
+  const valid = !missing.length && /^[1-9][0-9]*$/.test(capacity);
+  $(prefix + "FoundryCreationStatus").textContent = valid
+    ? "Creation is enabled with these model settings. Azure validates availability and quota during provisioning."
+    : "To create a project, enter the model deployment name, version, SKU and a positive whole-number capacity.";
+  return valid;
+}
 for (const prefix of ["deploy", "workflow"]) {
   const create = $(prefix + "FoundryCreate");
   create.addEventListener("change", () => {
+    $(prefix + "FoundryCreation").hidden = !create.checked;
     for (const suffix of ["FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
       $(prefix + suffix).disabled = !create.checked;
     }
+    refresh();
   });
+  for (const suffix of ["FoundryModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+    $(prefix + suffix).addEventListener("input", refresh);
+  }
 }
 
 $("deployBtn").addEventListener("click", async () => {
@@ -1143,10 +1139,120 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 // The parameter spec (labels, help, defaults, types) is served by the backend so
 // the form stays in sync with the pipeline without duplicating it in the page.
 let pipelineSpec = [];
+let pipelineIdentity = null;
+let pipelineTarget = "";
+let pipelineLoadSequence = 0;
+let pipelineSavedValues = {};
+let foundryTarget = "";
+const foundrySettingSuffixes = [
+  "AzureSubscriptionId", "FoundryProjectResourceId", "FoundryModel", "FoundryEndpoint",
+  "AcrName", "ProductionWrites", "FoundryLocation", "FoundryModelName",
+  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "OntologyGraphBinding",
+];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
+function targetSettingsKey(section) {
+  const tenant = $("tenant").value.trim().toLowerCase();
+  const workspace = $("workspace").value.trim().toLowerCase();
+  return tenant && workspace ? `fabric-demo.${section}.v1:${JSON.stringify([tenant, workspace])}` : "";
+}
+function pipelineTargetKey() {
+  return targetSettingsKey("pipeline");
+}
+function restoreFoundrySettings() {
+  const target = targetSettingsKey("foundry");
+  if (target === foundryTarget) return;
+  foundryTarget = target;
+  let values = {};
+  let errorMessage = "";
+  try {
+    values = target ? JSON.parse(localStorage.getItem(target) || "{}") : {};
+    if (!values || typeof values !== "object" || Array.isArray(values)) throw new Error("Invalid saved parameter object");
+  } catch (error) {
+    values = {};
+    errorMessage = `Could not restore Foundry settings: ${error.message}`;
+  }
+  for (const prefix of ["deploy", "workflow"]) {
+    for (const suffix of foundrySettingSuffixes) {
+      $(prefix + suffix).value = typeof values[suffix] === "string" ? values[suffix] : "";
+    }
+    $(prefix === "deploy" ? "foundryClientId" : "workflowDeployClientId").value =
+      typeof values.clientId === "string" ? values.clientId : "";
+    $(prefix + "FoundryCreate").checked = false;
+    $(prefix + "FoundryCreate").dispatchEvent(new Event("change"));
+    $(prefix + "FoundryStatus").textContent = errorMessage ||
+      "Saved overrides restored for this target; everything else uses automatic discovery. New resource creation is always off until you opt in.";
+  }
+}
+function saveFoundrySettings(prefix) {
+  if (!foundryTarget || foundryTarget !== targetSettingsKey("foundry")) return;
+  const values = {};
+  for (const suffix of foundrySettingSuffixes) values[suffix] = $(prefix + suffix).value;
+  values.clientId = $(prefix === "deploy" ? "foundryClientId" : "workflowDeployClientId").value;
+  for (const other of ["deploy", "workflow"]) {
+    if (other === prefix) continue;
+    for (const suffix of foundrySettingSuffixes) $(other + suffix).value = values[suffix];
+    $(other === "deploy" ? "foundryClientId" : "workflowDeployClientId").value = values.clientId;
+  }
+  try {
+    localStorage.setItem(foundryTarget, JSON.stringify(values));
+  } catch (error) {
+    for (const other of ["deploy", "workflow"]) {
+      $(other + "FoundryStatus").textContent = `Could not save Foundry settings: ${error.message}`;
+    }
+  }
+}
+function pipelineSettingsStatus(message) {
+  for (const id of ["pipelineSettingsStatus", "workflowPipelineSettingsStatus"]) {
+    if ($(id)) $(id).textContent = message;
+  }
+}
+function readPipelineSettings() {
+  try {
+    const saved = pipelineTarget ? JSON.parse(localStorage.getItem(pipelineTarget) || "{}") : {};
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) throw new Error("Invalid saved parameter object");
+    return saved;
+  } catch (error) {
+    pipelineSettingsStatus(`Could not restore saved parameters: ${error.message}`);
+    return {};
+  }
+}
+function suggestPipelineEmail() {
+  if (!pipelineIdentity || pipelineIdentity.userType !== "user"
+      || pipelineIdentity.tenantId?.toLowerCase() !== $("tenant").value.trim().toLowerCase()
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pipelineIdentity.user || "")
+      || Object.hasOwn(pipelineSavedValues, "alert_email_to")) return;
+  for (const prefix of ["pp_", "wf_pp_"]) {
+    const field = $(prefix + "alert_email_to");
+    if (field && !field.value.trim()) {
+      field.value = pipelineIdentity.user;
+      field.title = "Suggested from the signed-in user. Confirm or replace the alert recipient.";
+    }
+  }
+}
+function savePipelineField(name, value) {
+  if (!pipelineTarget || pipelineTarget !== pipelineTargetKey() || name === "workspace_id") return;
+  pipelineSavedValues[name] = value;
+  for (const prefix of ["pp_", "wf_pp_"]) {
+    const field = $(prefix + name);
+    if (field) field.value = value;
+  }
+  updatePipelineDefaultsSummary();
+  try {
+    const values = {};
+    for (const spec of pipelineSpec) {
+      if (spec.name !== "workspace_id" && typeof pipelineSavedValues[spec.name] === "string") {
+        values[spec.name] = pipelineSavedValues[spec.name];
+      }
+    }
+    localStorage.setItem(pipelineTarget, JSON.stringify(values));
+    pipelineSettingsStatus("Non-secret setup values saved for this tenant and workspace in this browser.");
+  } catch (error) {
+    pipelineSettingsStatus(`Could not save parameters in this browser: ${error.message}`);
+  }
+}
 function renderPipelineFields(prefix) {
   const fields = pipelineSpec.map((p) => {
-    const advanced = !["env_suffix", ...requiredPipelineFields].includes(p.name);
+    const advanced = !["env_suffix", "workspace_id", ...requiredPipelineFields].includes(p.name);
     const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
     const html = `<div class="param${wide ? " wide" : ""}">
       <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
@@ -1156,8 +1262,19 @@ function renderPipelineFields(prefix) {
     return { advanced, html };
   });
   return `<div class="params">${fields.filter(p => !p.advanced).map(p => p.html).join("")}</div>
-    <details class="foundry-block"><summary>Advanced: secret names, run-as identity and timeout</summary>
+    <p id="${prefix}defaultsSummary" class="phelp"></p>
+    <details class="foundry-block"><summary>Change notebook defaults (optional)</summary>
     <div class="params">${fields.filter(p => p.advanced).map(p => p.html).join("")}</div></details>`;
+}
+function updatePipelineDefaultsSummary() {
+  for (const prefix of ["pp_", "wf_pp_"]) {
+    const summary = $(prefix + "defaultsSummary");
+    if (!summary) continue;
+    const value = name => $(prefix + name)?.value || "";
+    summary.textContent = `Notebook settings: ${value("ops_agent_run_as_user") || "signed-in deploying user"}; secret names: ${
+      ["key_vault_tenant_id_secret_name", "key_vault_client_id_secret_name", "key_vault_client_secret_name"].map(value).join(", ")
+    }; timeout: ${value("per_notebook_timeout_secs")} seconds. These are names, not secret values.`;
+  }
 }
 function syncPipelineWorkspace() {
   ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
@@ -1166,29 +1283,58 @@ function syncPipelineWorkspace() {
   });
 }
 async function loadPipelineParams() {
+  const sequence = ++pipelineLoadSequence;
+  const target = pipelineTargetKey();
   try {
-    const res = await fetch("/api/pipeline-params");
+    const query = new URLSearchParams({ tenant: $("tenant").value.trim(), workspace: $("workspace").value.trim() });
+    const res = await fetch(`/api/pipeline-params?${query}`, { cache: "no-store" });
     const data = await res.json();
     if (!res.ok || !Array.isArray(data.parameters)) throw new Error(data.error || `HTTP ${res.status}`);
+    if (sequence !== pipelineLoadSequence || target !== pipelineTargetKey()) return;
     pipelineSpec = data.parameters;
   } catch (e) {
+    if (sequence !== pipelineLoadSequence || target !== pipelineTargetKey()) return;
+    pipelineSpec = [];
     for (const id of ["pipelineFields", "workflowPipelineFields"]) {
       $(id).innerHTML = `<p class="phelp" role="alert">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
     }
+    refresh();
     return;
   }
+  pipelineTarget = target;
+  restoreFoundrySettings();
   $("pipelineFields").classList.remove("params");
   $("workflowPipelineFields").classList.remove("params");
   $("pipelineFields").innerHTML = renderPipelineFields("pp_");
   $("workflowPipelineFields").innerHTML = renderPipelineFields("wf_pp_");
+  for (const [container, id] of [["pipelineFields", "pipelineSettingsStatus"], ["workflowPipelineFields", "workflowPipelineSettingsStatus"]]) {
+    const status = document.createElement("p");
+    status.id = id;
+    status.className = "phelp";
+    status.setAttribute("role", "status");
+    status.textContent = "Known defaults are prefilled. Entries are remembered per tenant/workspace; confirm alert destinations before running. Unknown values stay blank.";
+    $(container).prepend(status);
+  }
+  pipelineSavedValues = readPipelineSettings();
   syncPipelineWorkspace();
   // Re-run validation whenever a pipeline field changes.
   pipelineSpec.forEach((p) => {
     ["pp_", "wf_pp_"].forEach((prefix) => {
       const el = $(prefix + p.name);
-      if (el) el.addEventListener("input", refresh);
+      if (el) {
+        if (p.name !== "workspace_id" && typeof pipelineSavedValues[p.name] === "string") {
+          el.value = pipelineSavedValues[p.name];
+          el.title = "Restored for this tenant and workspace from this browser.";
+        } else if (p.source) {
+          el.title = `Prefilled from ${p.source}. Confirm before running.`;
+        }
+        el.addEventListener("input", () => { savePipelineField(p.name, el.value); refresh(); });
+      }
     });
   });
+  suggestPipelineEmail();
+  updatePipelineDefaultsSummary();
+  loadSubscriptions();
   refresh();
 }
 function collectPipelineParams(prefix = "pp_") {
@@ -1198,14 +1344,37 @@ function collectPipelineParams(prefix = "pp_") {
 }
 function pipelineValid() {
   return $("tenant").value.trim() && $("workspace").value.trim()
+    && pipelineTarget === pipelineTargetKey()
     && requiredPipelineFields.every(name => $("pp_" + name)?.value.trim());
 }
 function workflowPipelineValid() {
   return $("tenant").value.trim() && $("workspace").value.trim()
+    && pipelineTarget === pipelineTargetKey()
     && requiredPipelineFields.every(name => $("wf_pp_" + name)?.value.trim());
 }
 
 $("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });
+for (const id of ["tenant", "workspace"]) {
+  $(id).addEventListener("input", () => {
+    restoreFoundrySettings();
+    if (pipelineTarget !== pipelineTargetKey()) {
+      pipelineSpec = [];
+      for (const container of ["pipelineFields", "workflowPipelineFields"]) {
+        $(container).innerHTML = '<p class="phelp">Finish entering the target to load its setup parameters.</p>';
+      }
+      refresh();
+    }
+  });
+  $(id).addEventListener("change", () => { loadPipelineParams(); loadSubscriptions(); });
+}
+for (const prefix of ["deploy", "workflow"]) {
+  for (const id of [
+    ...foundrySettingSuffixes.map(suffix => prefix + suffix),
+    prefix === "deploy" ? "foundryClientId" : "workflowDeployClientId",
+  ]) {
+    $(id).addEventListener("input", () => { saveFoundrySettings(prefix); refresh(); });
+  }
+}
 
 $("pipelineBtn").addEventListener("click", async () => {
   $("pipelineBtn").disabled = true;
@@ -1231,6 +1400,7 @@ async function loadWhoAmI() {
     const res = await fetch("/api/whoami");
     const d = await res.json();
     if (d.signedIn) {
+      pipelineIdentity = d;
       chip.classList.remove("warn");
       name.textContent = d.user || "Signed in";
       sub.textContent = d.subscription ? d.subscription : (d.tenantId || "");
@@ -1238,8 +1408,15 @@ async function loadWhoAmI() {
       av.textContent = initialsFor(d.user);
       btn.textContent = "Switch"; btn.title = "Sign in as a different account"; btn.hidden = false;
       // Prefill the tenant target from the active session when the field is empty.
-      if (!$("tenant").value.trim() && d.tenantId) { $("tenant").value = d.tenantId; refresh(); maybeAutoTest(); }
+      if (!$("tenant").value.trim() && d.tenantId) {
+        $("tenant").value = d.tenantId;
+        loadPipelineParams();
+        refresh(); maybeAutoTest();
+      }
+      suggestPipelineEmail();
+      refresh();
     } else {
+      pipelineIdentity = null;
       chip.classList.add("warn");
       name.textContent = "Not signed in";
       sub.textContent = "sign in to continue";
@@ -1248,6 +1425,7 @@ async function loadWhoAmI() {
       btn.textContent = "Sign in"; btn.title = "Sign in with Microsoft"; btn.hidden = false;
     }
   } catch (e) {
+    pipelineIdentity = null;
     chip.classList.add("warn");
     name.textContent = "Sign-in unknown"; sub.textContent = "couldn't reach az"; av.textContent = "!";
     btn.textContent = "Sign in"; btn.hidden = false;

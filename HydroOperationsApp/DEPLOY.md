@@ -5,6 +5,54 @@ Use the **local deployment app** for guided setup. It calls the same
 engine used by command-line operators. Do not assemble a separate Rayfin,
 Entra or SQL deployment sequence.
 
+## Quick start: one path for each job
+
+1. From the repository root, run `python Raw\workspace-reset\launch.py`.
+   In the browser, **sign in**, then enter the **tenant** and **workspace** on the left.
+2. Choose the task below. Keep automatic settings unless the app reports an
+   ambiguity or your administrator has given you a specific resource ID.
+3. Follow the progress panel. If it stops, resolve the named prerequisite and
+   retry that module. **Do not delete/reset the workspace to fix a deployment.**
+
+| What you need | Do this |
+|---|---|
+| Update an already prepared app | **Deploy app**. Normally no other inputs are needed. |
+| Update agents | **Set up Foundry agents**, then **Deploy app**. |
+| Initialize an empty workspace | **Full workflow**. Review the source, supply Key Vault URI, Teams team/channel and alert email, then run. Existing Foundry resources are reused by default. |
+| Create Foundry resources for the first time | In the Foundry section, explicitly check **I need a new Foundry project**. Enter your approved model deployment name, version, SKU and capacity. Creation is billable. |
+
+### What you actually need to enter
+
+| Setting | Normal behavior |
+|---|---|
+| Tenant / workspace | Enter once in the sidebar; shared by every module. |
+| Repository / branch | Filled from this checkout. |
+| Key Vault URI / Teams destinations | Restored from saved values for this target, or configured defaults. Otherwise ask the resource owner; the app does not invent destinations. |
+| Alert email | Suggests the signed-in user's email when the tenant GUID matches. Confirm or replace it. |
+| Notebook credentials / runtime | Uses secret **names** `tenantid`, `clientid`, `clientsecret`, the signed-in deploying user, and 3600 seconds. Current settings are summarized above **Change notebook defaults (optional)**. |
+| Azure subscription | Auto-selected only when it matches the target tenant and is the active signed-in subscription or the sole match. Otherwise choose from the loaded list. |
+| Foundry project / model | Reuses saved settings for this target, then verified discovery. Supply the project resource ID or deployment name only when needed. |
+| SPA / registry / project endpoint | Automatic discovery; optional overrides are grouped together. |
+| New-project region / model catalog name | Defaults to the Fabric capacity's region / deployment name. Version, SKU and capacity must be approved for your subscription and region; they are not guessed. |
+
+The two Foundry forms share remembered non-secret overrides for each target.
+**Create new resources is always off again after changing targets or reloading**;
+it is never a remembered spending authorization.
+No PAT, token or credential secret value is saved by these forms.
+
+**One unavoidable manual prerequisite:** after core ontology setup, materialize
+the selected ontology's graph in Fabric (**Manage graph → select eligible
+entities/relationships → Continue → Materialize**). Foundry and final app setup
+can stop until this is complete. Complete the portal action, then retry the
+failed module; do not rerun Git import or core setup.
+
+**Completion:** the deployment log must print `SUCCESS` and `DEPLOYED_APP_URL`.
+Open that URL and sign in. A successful website deployment is not proof of agent
+execution, Teams/email delivery or complete data ingestion.
+
+The sections below are the access checklist and detailed reference, not extra
+steps to perform for every deployment.
+
 ## Start here: choose your interface, not a different deployment process
 
 | Your target | Choose in the local app |
@@ -39,7 +87,7 @@ Global Administrator and subscription Owner are not routine requirements.
 
 Leave **Create Foundry** off when subscription/resource creation rights are
 unavailable. For first-time setup with only scoped resource access, enter the
-existing project's **full ARM resource ID** in Advanced Foundry settings.
+existing project's **full ARM resource ID** in the visible **Existing project resource ID** field.
 The deployer verifies that exact project without listing all subscription
 resources. Same-target reruns reuse and verify its saved subscription/project.
 Fabric capacity and Foundry can use different subscriptions in the same tenant.
@@ -84,10 +132,12 @@ For an empty workspace, use **Full workflow**. Supply:
 - Source repository/branch and an approved saved GitHub connection, or a PAT
   only when creating a connection. The PAT is not stored on disk.
 - Environment suffix, your Key Vault URI, target Teams team/channel and alert
-  email recipient. Advanced settings expose secret names, run-as guard and
-  notebook timeout. Blank run-as means the signed-in deploying user.
+  email recipient. The workspace is shown directly; notebook settings summarize
+  secret names, run-as identity and timeout. Use **Change notebook defaults
+  (optional)** only to override them. Blank run-as means the signed-in deploying user.
 - Existing Foundry settings, or explicit opt-in to new billable resources
-  with a region-supported model/version/SKU/capacity.
+  with a region-supported model/version/SKU/capacity. First-time creation settings
+  appear directly when you opt in; they are not hidden under Advanced.
 
 Core setup provisions Lakehouse, Eventhouse, independent operational SQL,
 ontology generation **2**, dashboard, Data Agent and retained Operations Agent
