@@ -136,7 +136,7 @@ class SourceTools:
                 "open_work_order_count": 0,
             }]
             return ToolEvidence(
-                id=f"quality-{quality.lower()}", source=request.source, tool=name, arguments=arguments,
+                id=f"quality-{quality.lower()}-{self.calls}", source=request.source, tool=name, arguments=arguments,
                 completed_at=utc_now(), result={
                     "rows": rows, "row_count": len(rows),
                     "population": {
@@ -260,11 +260,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     async def test_three_quality_workflows_pass_full_request_admission(self):
         base = "Which turbines had BAD telemetry quality today, and what work is already open for these?"
         for suffix, roles in (
-            ("", ("qa",)),
+            ("", ()),
             (" Based on this data, tell me which WOs need to be created and help me with the drafts.",
-             ("qa", "work-order")),
+             ("work-order",)),
             (" Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.",
-             ("qa", "rca", "work-order")),
+             ("rca", "work-order")),
         ):
             with self.subTest(roles=roles):
                 question = base + suffix
@@ -274,8 +274,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     deadline=self.request.deadline, **intent,
                 )
                 self.assertEqual(request.native_sources, ())
-                self.assertEqual(request.required_specialists, roles)
-                self.assertEqual(request.required_evidence_kinds, ("signal_quality", "work_orders"))
+                self.assertEqual(request.required_specialists, ("qa", *roles))
+                self.assertIn("signal_quality", request.required_evidence_kinds)
+                self.assertIn("work_orders", request.required_evidence_kinds)
+                native_intent = await self.bridge.call({
+                    "action": "chat_intent", "question": question, "native_sources": ["data-agent"],
+                })
+                native_request = ChatRequest(
+                    run_id=uuid4(), source=SOURCE, question=question,
+                    deadline=self.request.deadline, **native_intent,
+                )
+                self.assertEqual(native_request.native_sources, ("data-agent",))
+                self.assertEqual(native_request.required_specialists, roles)
+                self.assertEqual(native_request.required_evidence_kinds, ("native_claims",))
 
     async def test_live_version_readback_includes_weather_function_contract(self):
         def read_agent(request):
@@ -1849,7 +1860,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_source_requires_verified_binding_and_a_matching_execution_receipt(self):
         self.mode = "native"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         with self.assertRaisesRegex(SourceFailure, "verified target-specific native connection binding"):
             await self.make_owner().run(request)
         self.assertNotIn("hydro-fabric-iq-agent", self.calls)
@@ -2038,7 +2049,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_source_mismatch_does_not_fall_back_to_direct_tools(self):
         self.mode = "native_wrong_source"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         with self.assertRaisesRegex(SourceFailure, "Native source mismatch"):
             await owner.run(request)
@@ -2046,7 +2057,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_source_mismatch_gets_one_bounded_same_agent_correction(self):
         self.mode = "native_wrong_once"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
@@ -2061,7 +2072,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_timeout_is_not_retried(self):
         self.mode = "native_timeout_once"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         with self.assertRaises(AgentFrameworkException):
             await owner.run(request)
@@ -2075,7 +2086,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_missing_mcp_reply_gets_one_bounded_same_source_retry(self):
         self.mode = "native_mcp_transport_once"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
@@ -2084,7 +2095,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_server_error_gets_one_bounded_same_source_retry(self):
         self.mode = "native_server_error_once"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
@@ -2093,7 +2104,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_refusal_gets_one_bounded_same_source_correction(self):
         self.mode = "native_refusal_once"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
@@ -2110,7 +2121,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "native_identity_once"
         request = self.request.model_copy(update={
             "native_sources": ("data-agent",),
-            "question": "Read T005 telemetry using the Data Agent.",
             "resolved_scope": ResolvedScope(
                 source=SOURCE,
                 read_completed_at=utc_now(),
@@ -2134,7 +2144,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_repeated_native_refusal_is_not_accepted_as_evidence(self):
         self.mode = "native_refusal_always"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         with self.assertRaisesRegex(SourceFailure, "Native source refusal"):
             await owner.run(request)
@@ -2192,7 +2202,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_connection_metadata_is_not_accepted_as_domain_evidence(self):
         self.mode = "native_connection_only"
-        request = self.request.model_copy(update={"native_sources": ("data-agent",), "question": "Read T005 telemetry using the Data Agent."})
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         with self.assertRaisesRegex(SourceFailure, "connection metadata without domain evidence"):
             await owner.run(request)

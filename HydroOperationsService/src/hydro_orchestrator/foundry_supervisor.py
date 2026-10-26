@@ -2565,7 +2565,7 @@ class FoundrySupervisor:
             function_invocation_configuration={
                 "max_iterations": 6,
                 "max_function_calls": 8,
-                "max_consecutive_errors_per_request": 2,
+                "max_consecutive_errors_per_request": 1,
                 "terminate_on_unknown_calls": True, "include_detailed_errors": False,
                 "allow_concurrent_invocation": role != "supervisor",
             },
@@ -3758,7 +3758,7 @@ class FoundrySupervisor:
             if existing is not None and existing != encoded:
                 raise SourceFailure("Run identity already belongs to a different immutable request.")
             journal.save("request", encoded)
-            if (
+            if not request.native_sources and (
                 not request.required_specialists
                 or not request.required_evidence_kinds
                 or not request.permitted_evidence_kinds

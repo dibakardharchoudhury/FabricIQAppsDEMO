@@ -1,23 +1,16 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
-## October 26 operational routing repair (hosted acceptance pending)
+## October 26 current audit
 
-Ordinary quality/work questions no longer select the Data Agent by matching three
-exact phrases. Equivalent wording uses typed governed QA evidence followed by
-requested RCA/Work Order specialists. Explicit Data Agent selection remains native
-and fails closed without direct-source substitution.
-
-`query_signal_quality_snapshot` retains the default latest-reading semantics and
-adds explicit `quality_match: any` for “had BAD today”. It preserves recovered
-latest readings separately from matching counts/timestamps, distinguishes absent
-telemetry from good-only signals, and joins verified complete work coverage.
-Hosted snapshot windows use the server-owned request timestamp as their UTC end.
-BAD quality is not a confirmed physical fault; staged work still requires human
-approval and does not execute production writes.
-
-See the [audit findings and limitations](../docs/foundry-multi-agent-implementation.md#october-26-phrase-independent-operational-workflow-repair).
-Earlier native-prompt acceptance contracts below are historical; source validation
-and deployment success are not proof of completed hosted business workflows.
+See the [current end-to-end failure audit and repair](../docs/foundry-multi-agent-implementation.md#october-26-end-to-end-failure-audit-and-repair).
+The deployed Gauge failure was an overly strict Kusto left-join aggregate validator,
+not an absent Agent Framework workflow. The source layer now accepts zero-match
+string absence without weakening positive-match, timestamp or identity checks.
+Ordinary operational questions use governed connectors/Eventhouse tools; explicit
+native selection is retained across the Python/Node admission boundary.
+Function loops stop on the first real callback error; one local input correction
+remains available. Keep the pinned deterministic workflow and existing project.
+Historical version/test counts below are not this release's runtime certificate.
 
 ## Current architecture and October 25 bounded review
 
@@ -65,15 +58,17 @@ stale telemetry and the still-unaccepted compound business workflows.
 
 ## Scoped Data Agent quality/work workflows
 
-The three BAD-quality-today prompts documented in the
+Explicitly selected native BAD-quality/work requests documented in the
 [routing contract](../HydroOperationsApp/AGENT-ACCEPTANCE.md#complete-routing-rules)
-use one Sparky step against the verified ontology-connected Data Agent, followed only by the
+use one Sparky step against the verified ontology-connected Data Agent, followed by the
 requested RCA and/or work-order specialists. Native evidence is preserved across
 handoffs, including when no RCA ran or RCA cited a native table instead of a
 direct `/rows` receipt. The validated native bundle is not authoritative SQL
 work-coverage attestation: fresh SQL coverage, identity checks and human approval
-remain mandatory for drafts. Native failure never silently switches to direct
-fleet retrieval. Weather remains a separate read-only specialist.
+remain mandatory for drafts. Native failure never silently switches to direct fleet retrieval. Ordinary
+operational questions instead start with Gauge's governed source tools, preserving
+historical quality matching and complete work coverage across paraphrases.
+Weather remains a separate read-only specialist.
 
 Validate the structured quality/work contract across the complete native step,
 not separately against each intermediate Data Agent call. Accept exactly one

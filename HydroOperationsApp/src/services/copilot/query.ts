@@ -162,21 +162,16 @@ const KQL_TIMESPAN = /^\d+(\.\d+)?(s|m|h|d)$/
 const KQL_BIN = KQL_TIMESPAN
 
 function lookbackStart(lookback: string, asOf?: string): string {
-  if (asOf !== undefined) {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|\+00:00)$/.test(asOf)
-      || !Number.isFinite(Date.parse(asOf))) throw new Error('Snapshot observation clock must be a valid UTC timestamp.')
-    const end = new Date(asOf).toISOString()
-    if (lookback !== 'today' && (!KQL_TIMESPAN.test(lookback) || Number.parseFloat(lookback) <= 0)) {
-      throw new Error('Snapshot lookback must be today (UTC) or a positive duration.')
-    }
-    const start = lookback === 'today' ? `startofday(datetime(${end}))` : `datetime(${end}) - ${lookback}`
-    return `between (${start} .. datetime(${end}))`
+  if (asOf !== undefined && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(asOf)
+    || !Number.isFinite(Date.parse(asOf)) || new Date(asOf).toISOString() !== asOf)) {
+    throw new Error('Snapshot observation time must be a valid UTC timestamp.')
   }
-  if (lookback === 'today') return '>= startofday(now())'
+  const end = asOf ? `datetime(${asOf})` : 'now()'
+  if (lookback === 'today') return `>= startofday(${end})`
   if (!KQL_TIMESPAN.test(lookback) || Number.parseFloat(lookback) <= 0) {
     throw new Error(`Invalid lookback '${lookback}'. Use today (UTC) or a positive duration such as 30m, 6h or 7d.`)
   }
-  return `> ago(${lookback})`
+  return asOf ? `> (${end} - ${lookback})` : `> ago(${lookback})`
 }
 
 export function buildStationPowerQuery(lookback = '24h'): string {
@@ -375,12 +370,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'query_signal_quality_snapshot',
-      description: 'Read a complete active-signal population with equipment and complete open-work coverage. Default latest: filter the latest raw reading by quality for current/running BAD. Use quality_match any for had BAD today or any matching sample in a window; returns matching counts, first/last matching samples and the actual latest reading separately. Never infer physical failure from telemetry quality.',
+      description: 'Read a complete active-signal population with equipment and complete open-work coverage. Use quality_match latest for current/running quality; any for signals that had the requested quality at any time in the window. Retain latest state separately from matching samples. Never infer physical failure from telemetry quality.',
       parameters: {
         type: 'object',
         properties: {
           quality: { type: 'string', enum: ['GOOD', 'UNCERTAIN', 'BAD'], description: 'Requested quality. Default BAD.' },
-          quality_match: { type: 'string', enum: ['latest', 'any'], description: 'Default latest. Any means at least one sample of the requested quality in the window, even if the latest reading recovered.' },
+          quality_match: { type: 'string', enum: ['latest', 'any'], description: 'Default latest; any means at least one matching sample during the requested window.' },
           lookback: { type: 'string', description: 'Window ending now: 30m, 6h, or today for since midnight UTC. Default 30m.' },
           equipment_type: { type: 'string', description: 'Optional equipment type substring, e.g. turbine.' },
         },
@@ -478,7 +473,7 @@ export function buildQualitySnapshotQuery(quality = 'BAD', lookback = '30m'): st
 
 export function buildLatestSignalSnapshotQuery(lookback = '30m', asOf?: string): string {
   return `OPCUAEvents
-| where event_time ${lookbackStart(lookback, asOf)}
+| where event_time ${lookbackStart(lookback, asOf)} and event_time <= ${asOf ? `datetime(${asOf})` : 'now()'}
 | summarize arg_max(event_time, value, quality) by opcua_node_id
 | project event_time, opcua_node_id, value, quality
 | order by opcua_node_id asc`
@@ -486,7 +481,7 @@ export function buildLatestSignalSnapshotQuery(lookback = '30m', asOf?: string):
 
 export function buildTemperatureSnapshotQuery(lookback = '30m', asOf?: string): string {
   return `OPCUAEvents
-| where event_time ${lookbackStart(lookback, asOf)}
+| where event_time ${lookbackStart(lookback, asOf)} and event_time <= ${asOf ? `datetime(${asOf})` : 'now()'}
 | summarize arg_max(event_time, value, quality) by opcua_node_id
 | where opcua_node_id endswith '.turbine_temp'
 | project event_time, opcua_node_id, value, quality
@@ -538,7 +533,7 @@ export function fleetSnapshotQuery(temperature: boolean, args: FleetSnapshotArgs
   if (args.quality_match !== 'any') return buildLatestSignalSnapshotQuery(args.lookback, asOf)
   const quality = (args.quality ?? 'BAD').trim().toUpperCase()
   return `let window = materialize(OPCUAEvents
-| where event_time ${lookbackStart(args.lookback ?? '30m', asOf)}
+| where event_time ${lookbackStart(args.lookback ?? '30m', asOf)} and event_time <= ${asOf ? `datetime(${asOf})` : 'now()'}
 | project event_time, opcua_node_id, value, quality);
 let matches = window
 | where toupper(quality) == '${quality}'
@@ -562,22 +557,17 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
   workInventoryComplete?: boolean
   readStartedAt: string
   readCompletedAt: string
-  asOf?: string
 }) {
-  fleetSnapshotQuery(temperature, args, data.asOf)
+  fleetSnapshotQuery(temperature, args, data.readStartedAt)
   if (!data.inventoryComplete) throw new Error('Asset inventory pagination did not attest a complete equipment/instrument population. Fleet verification is incomplete; no partial snapshot was returned.')
   if (data.telemetryRows.length >= MAX_ROWS) throw new Error('Fleet snapshot reached the source row limit; complete membership and ranking cannot be verified.')
   const nonempty = (value: unknown): value is string => typeof value === 'string' && !!value.trim()
   const started = Date.parse(data.readStartedAt), completed = Date.parse(data.readCompletedAt)
   if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started) throw new Error('Snapshot read clock is invalid.')
-  const observationEnd = data.asOf === undefined ? completed : Date.parse(data.asOf)
-  if (!Number.isFinite(observationEnd) || (data.asOf !== undefined && observationEnd > started)) {
-    throw new Error('Snapshot observation clock must not be later than the source read.')
-  }
   const lookback = args.lookback ?? '30m'
   const duration = lookback === 'today' ? 0 : Number.parseFloat(lookback)
     * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[lookback.slice(-1)] ?? Number.NaN)
-  const windowStart = lookback === 'today' ? Date.parse(`${(data.asOf ?? data.readStartedAt).slice(0, 10)}T00:00:00Z`) : (data.asOf === undefined ? started : observationEnd) - duration
+  const windowStart = lookback === 'today' ? Date.parse(`${data.readStartedAt.slice(0, 10)}T00:00:00Z`) : started - duration
   if (!Number.isFinite(windowStart)) throw new Error('Snapshot lookback is invalid.')
   const equipment = new Map<string, (typeof data.equipment)[number]>()
   const equipmentIdentities = new Set<string>()
@@ -638,7 +628,8 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
   const validTimestamp = (value: unknown): value is string => typeof value === 'string'
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$/.test(value)
     && Number.isFinite(Date.parse(value)) && Date.parse(value) >= windowStart
-    && Date.parse(value) <= observationEnd && new Date(value).toISOString().slice(0, 19) === value.slice(0, 19)
+    && Date.parse(value) <= started
+    && new Date(value).toISOString().slice(0, 19) === value.slice(0, 19)
   const rows = data.telemetryRows.flatMap(reading => {
     const node = reading.opcua_node_id
     if (!nonempty(node) || observedNodes.has(node) || typeof reading.value !== 'number' || !Number.isFinite(reading.value)
@@ -651,14 +642,16 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
       const count = reading.matching_sample_count
       if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0
         || (count === 0 && (reading.quality.toUpperCase() === qualityFilter
-          || ['first_matching_event_time', 'matching_event_time', 'matching_value', 'matching_quality'].some(key => reading[key] != null)))
+          || ['first_matching_event_time', 'matching_event_time', 'matching_value'].some(key => reading[key] != null)
+          || (reading.matching_quality != null && reading.matching_quality !== '')))
         || (count > 0 && (!validTimestamp(reading.first_matching_event_time)
           || !validTimestamp(reading.matching_event_time)
           || Date.parse(reading.first_matching_event_time) > Date.parse(reading.matching_event_time)
           || Date.parse(reading.matching_event_time) > Date.parse(reading.event_time)
           || typeof reading.matching_value !== 'number' || !Number.isFinite(reading.matching_value)
           || typeof reading.matching_quality !== 'string' || reading.matching_quality.toUpperCase() !== qualityFilter
-          || (reading.quality.toUpperCase() === qualityFilter && reading.matching_event_time !== reading.event_time)))) {
+          || (reading.quality.toUpperCase() === qualityFilter
+            && (reading.matching_event_time !== reading.event_time || reading.matching_value !== reading.value))))) {
         throw new Error('Matching-quality aggregate is missing, conflicting, or outside the verified observation window.')
       }
     }
@@ -666,8 +659,7 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
     const instrument = instruments.get(node)
     const asset = instrument ? equipment.get(instrument.equipment_id) : undefined
     if (!instrument || !asset) { unresolvedNodes.push(node); return [] }
-    if (!inScope(instrument) || (!temperature && (anyQuality
-      ? reading.matching_sample_count === 0 : reading.quality.toUpperCase() !== qualityFilter))) return []
+    if (!inScope(instrument) || (!temperature && (anyQuality ? reading.matching_sample_count === 0 : reading.quality.toUpperCase() !== qualityFilter))) return []
     matchedNodes.add(node)
     const relatedWork = data.workOrders
       .filter(order => order.equipmentId === asset.equipment_id
@@ -696,11 +688,10 @@ export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs
   return {
     result: {
       read_completed_at_utc: data.readCompletedAt, lookback,
-      window_start_utc: new Date(windowStart).toISOString(), window_end_utc: new Date(observationEnd).toISOString(),
+      window_start_utc: new Date(windowStart).toISOString(), window_end_utc: data.readStartedAt,
       provenance: {
         metadata: 'Lakehouse equipment/instruments; complete inventory',
-        telemetry: anyQuality
-          ? 'Eventhouse OPCUAEvents; any matching sample in window, counts and first/last matching timestamps, with latest raw row per node retained separately'
+        telemetry: anyQuality ? 'Eventhouse OPCUAEvents; matching-quality aggregates and latest raw state in window'
           : 'Eventhouse OPCUAEvents; latest raw row per node in window',
         work_orders: data.workInventoryComplete ? 'SQL WorkOrder; complete paginated inventory' : 'SQL WorkOrder; returned records only, population completeness not attested',
       },

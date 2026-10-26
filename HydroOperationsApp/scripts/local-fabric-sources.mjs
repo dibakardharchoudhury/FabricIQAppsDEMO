@@ -11,7 +11,7 @@ import { operationalConnectorConfig } from '../src/services/operationalConnector
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, WEATHER_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, qualityMatchForRequest, qualityWorkWorkflow, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, qualityMatchForRequest, qualityWorkWorkflow, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsDirectSourceRead, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -26,20 +26,21 @@ export function chatIntent(question, carriedKinds = [], selectedNativeSources = 
   if (typeof question !== 'string' || !question.trim() || question.length > 8000) {
     throw new Error('Chat intent requires a bounded nonempty operator question.')
   }
-  if (!Array.isArray(selectedNativeSources) || selectedNativeSources.some(source => source !== 'data-agent')) {
-    throw new Error('Only the explicitly selected published Data Agent is supported.')
+  if (!Array.isArray(selectedNativeSources) || selectedNativeSources.length > 1
+      || selectedNativeSources.some(source => source !== 'data-agent')) {
+    throw new Error('Only the published Data Agent can be explicitly selected for native execution.')
   }
   const nativeSources = [...new Set([...requestedNativeSources(question), ...selectedNativeSources])]
   const specialists = requiredSpecialists(question, nativeSources.length > 0)
+  const answerKinds = nativeSources.length && !requestsDirectSourceRead(question)
+    ? ['native_claims'] : requiredEvidenceKinds(question, carriedKinds)
   // Required evidence always needs a reader: never compile an empty plan for a question that asks for data.
-  if (!specialists.length && requiredEvidenceKinds(question, carriedKinds, nativeSources.length > 0).some(kind => kind !== 'native_claims')) specialists.push('qa')
+  if (!specialists.length && answerKinds.some(kind => kind !== 'native_claims')) specialists.push('qa')
   return { charts_requested: requiresChartOutput(question), native_sources: nativeSources,
     proposal_priority: workOrderPriorityForRequest(question),
     equipment_selection: equipmentSelectionForRequest(question) ?? null,
-    required_evidence_kinds: requiredEvidenceKinds(question, carriedKinds, nativeSources.length > 0),
-    permitted_evidence_kinds: [...new Set([
-      ...permittedEvidenceKinds(question, carriedKinds), ...(nativeSources.length ? ['native_claims'] : []),
-    ])],
+    required_evidence_kinds: answerKinds,
+    permitted_evidence_kinds: [...new Set([...permittedEvidenceKinds(question, carriedKinds), ...answerKinds])],
     required_specialists: specialists,
     required_specialist_steps: Object.fromEntries(specialists.map(role => [
       role, role === 'qa' ? requiredIndependentQaSteps(question) : 1,
@@ -74,10 +75,7 @@ function addNeedAssessmentKinds(question, kinds, carriedKinds) {
   for (const kind of held.length && refersToPriorData(question) ? held : ['signal_quality', 'temperature']) kinds.add(kind)
 }
 
-export function requiredEvidenceKinds(question, carriedKinds = [], hasNativeRequest = requestedNativeSources(question).length > 0) {
-  if (hasNativeRequest && !requiredSpecialists(question, true).some(role => role === 'qa' || role === 'weather')) {
-    return ['native_claims']
-  }
+export function requiredEvidenceKinds(question, carriedKinds = []) {
   const text = positiveActionClauses(question)
   const kinds = new Set()
   const weather = requestsWeather(question)
@@ -88,7 +86,7 @@ export function requiredEvidenceKinds(question, carriedKinds = [], hasNativeRequ
     if (observations) kinds.add('weather_observations')
     if (!observations || /\bforecasts?\b/i.test(text)) kinds.add('weather_forecasts')
   }
-  if (hasNativeRequest) kinds.add('native_claims')
+  if (requestedNativeSources(question).length) kinds.add('native_claims')
   if (requestsSignalQuality(question)) kinds.add('signal_quality')
   if ((!weather || /\b(?:turbine|equipment|telemetry|sensor)\b/i.test(text))
       && /\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
@@ -1137,10 +1135,9 @@ export async function readWorkBacklog(config, args, token,
 
 export async function readFleetSnapshot(config, metadata, temperature, args, tokens, fetcher = fetch,
   readWorkInventory = () => operationalRead(config, tokens.graphql, 'work-order snapshot',
-    client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders'))),
-  asOf) {
-  const query = fleetSnapshotQuery(temperature, args, asOf)
+    client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders')))) {
   const readStartedAt = new Date().toISOString()
+  const query = fleetSnapshotQuery(temperature, args, readStartedAt)
   const labels = ['equipment metadata', 'instrument metadata', 'work-order inventory', 'telemetry']
   const reads = await Promise.allSettled([
     readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql),
@@ -1158,7 +1155,7 @@ export async function readFleetSnapshot(config, metadata, temperature, args, tok
   const [equipment, instruments, workOrders, telemetry] = reads.map(read => read.value)
   return shapeFleetSnapshot(temperature, args, {
     equipment, instruments, inventoryComplete: true, telemetryRows: telemetry.rows, workOrders,
-    workInventoryComplete: true, readStartedAt, readCompletedAt: new Date().toISOString(), asOf,
+    workInventoryComplete: true, readStartedAt, readCompletedAt: new Date().toISOString(),
   }).result
 }
 
@@ -1432,7 +1429,7 @@ export async function handle(request, deps = {}) {
       case 'query_turbine_temperature_snapshot':
         if (request.cluster !== metadata.cluster) throw new Error('The KQL endpoint changed.')
         result = await readFleetSnapshot(config, metadata, request.tool === 'query_turbine_temperature_snapshot',
-          args, request.tokens, undefined, undefined, request.requested_at_utc)
+          args, request.tokens)
         break
       default:
         throw new Error('This source tool has no configured backend implementation.')

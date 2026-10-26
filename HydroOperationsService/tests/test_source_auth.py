@@ -868,8 +868,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"local deployment fallback is not enabled", stopped.stderr)
         identity = str(TENANT)
         source_config = dict.fromkeys(
-            ("tenant_id", "workspace_id", "ontology_id", "eventhouse_id", "database_id", "lakehouse_id", "appbackend_id",
-             "operational_sql_database_id"),
+            ("tenant_id", "workspace_id", "ontology_id", "eventhouse_id", "database_id", "lakehouse_id", "appbackend_id", "operational_sql_database_id"),
             identity,
         )
         source_config.update(

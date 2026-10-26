@@ -5,45 +5,58 @@ dated follow-ups, corrections, measured results and unfinished acceptance, groun
 in repository commits and linked records. It is not a release certificate.
 Earlier runs remain historical evidence, not passes after a later code change.
 
-## October 26 phrase-independent operational workflow repair
+## October 26 end-to-end failure audit and repair
 
-The current audit reproduced a routing defect: the exact “Which turbines had BAD
-telemetry quality today ...” wording selected only native Data Agent evidence,
-while replacing “for these” with “for them” selected typed direct evidence.
-Ordinary operational questions now consistently use governed connector/KQL reads
-through QA, followed by only the requested RCA and Work Order specialists.
-Explicit Data Agent selection remains a separate native path, including selection
-from the browser; a native failure must never substitute direct evidence.
+The signed FEATURE browser on build **1.0.1112 / `36b08ed`** reproduced the compound
+BAD-quality/open-work/draft failure in about **30.8 seconds**. Run
+`b2a843c8-479c-4b0d-ba1a-d2469967db8c` failed inside Gauge's source callback:
+`Matching-quality aggregate is missing, conflicting, or outside the verified observation window.`
+Read-only Eventhouse reproduction established the root cause: Kusto's unmatched
+left-join string is `""`, not `null`. The zero-match verifier rejected normal source
+output; telemetry quality and the multi-agent framework were not fabricated.
 
-The quality snapshot now distinguishes `quality_match: latest` (the unchanged
-current/running-quality default) from `any` (any matching sample in the requested
-window). Any-mode evidence retains counts and first/last matching timestamps,
-the recovered latest reading separately, complete metadata/work coverage, and
-distinct missing-reading/nonmatching-signal populations. Hosted snapshot windows
-end at the server-owned request clock rather than drifting during agent work.
-Work reviews reuse the affected population and must not treat BAD quality as proof
-of a physical fault or create production work without separate human approval.
+The repair accepts that string absence only for a zero count with absent matching
+numeric/date fields. Positive counts still require bounded, ordered timestamps,
+finite matching values and the requested quality. The latest sample remains
+separate from historical matching samples; `"had BAD today"` does not mean
+`"latest BAD"`. Browser and hosted reads share the same query/validator and fixed
+source-read UTC window. Missing readings, zero matches, stale readings, incomplete
+metadata/work coverage and source outages remain distinct.
 
-The architecture itself matches the official
-[WorkflowBuilder guidance](https://learn.microsoft.com/en-us/agent-framework/concepts/workflows/builder-and-execution)
-and [persisted FoundryAgent guidance](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/agent-services/foundry):
-deterministic typed control flow, pinned persisted specialists, service-declared
-tools with local callbacks, bounded corrections, and verified evidence.
-No new project, manager LLM, framework migration, or production-write enablement
-is warranted. Prompt definitions and hosted source remain incrementally deployed.
+Ordinary operational requests use governed Lakehouse/SQL connectors and Eventhouse
+tools through Gauge. Exact-sentence automatic Data Agent routing has been removed.
+Explicit Data Agent selection is preserved through admission and follow-ups;
+native-only intent cannot acquire an inferred direct-source workflow at the
+executor boundary. Mixed native/direct requests still retain their requested
+verification stages. Draft handoffs cover the affected evidence set and retain
+complete SQL coverage, canonical identity, physical-fault uncertainty and human
+approval gates. A real callback failure now ends the Framework function loop on
+its first error; the separately bounded argument-correction response remains.
 
-This source repair is not hosted acceptance yet. Native MCP progress is still
-buffered until the specialist finishes; application heartbeat events must not be
-described as native tool progress. Weather remains separately blocked by provider
-HTTP 401 and the unavailable authorized credential update.
+**Architecture conclusion: keep the existing deterministic `WorkflowBuilder`.**
+Microsoft's [workflow patterns](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/)
+allow explicit ordered/concurrent dependencies; a Magentic or group-chat manager
+is not required. [FoundryAgent](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/agent-services/foundry)
+uses the pinned remote agent's instructions/tool schemas and local callback dispatch.
+The SDK warning that supplied tool declarations are omitted is expected, not the
+failure; per-run tool overrides are not a repair. The active Fabric specialist
+already uses [`fabric_iq_preview`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/fabric-iq),
+not the deprecated classic Fabric tool. Native Data Agent preview execution has
+service/JSON-completeness limitations and is not an enterprise SLA. Its failure
+must not become a successful direct-source fallback.
 
-Validation: 256 backend tests passed under the cached Node 24 runtime, including
-isolated container-import/source-configuration checks and native no-fallback tests;
-241 directly coupled application tests passed. Pyright reported zero errors,
-TypeScript and scoped ESLint passed, and environment validation plus the production
-build passed. Packaging checks also exposed and repaired the missing
-`operationalConnector.ts` allowlist entry in the hosted Docker build context.
-These are source/build receipts, not live business-question acceptance.
+The audit verified existing coordinator **v16** and QA **v2**, RCA **v2**, Work Order
+**v3**, Fabric IQ **v2**, Weather **v1** in the already selected Foundry project,
+all using `gpt-5.6-sol`. No new project, model deployment or framework migration is
+needed. Local validation passed **101** Node source/routing contracts and **189**
+Python supervisor/service/auth/source tests under Python 3.12 and Node 24.21.0
+(the two isolated Docker-closure tests were rerun after correcting their missing
+operational SQL fixture/configuration). Pyright reported zero diagnostics;
+TypeScript, changed-file ESLint, environment validation and production build passed.
+Unit/type/build results and publication/live acceptance are separate gates.
+The workspace's `fabcapswc` capacity was checked **Active**. Weather remains blocked
+by the invalid Aurora subscription credential/private-vault access; changing
+authentication headers or fabricating empty weather as successful ingestion is not a fix.
 
 ## October 26 publication and main-merge readiness
 

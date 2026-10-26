@@ -1,51 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyFilter, validateFilters, QueryInputValidationError, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql, fleetSnapshotQuery, shapeFleetSnapshot } from '../src/services/copilot/query.ts'
+import { applyFilter, validateFilters, QueryInputValidationError, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { describeToolEvidence } from '../src/services/copilot/domainContract.ts'
-
-test('any BAD retains recovered latest readings and distinguishes nonmatching from absent telemetry', () => {
-  const args = { quality: 'BAD', quality_match: 'any', lookback: 'today', equipment_type: 'turbine' }
-  const node = 'ns=2;s=T001.quality'
-  const data = {
-    equipment: [{ equipment_id: 'T001', equipment_type_code: 'turbine' }],
-    instruments: [node, 'good-only', 'absent'].map((id, index) => ({
-      equipment_id: 'T001', instrument_id: `I${index}`, opcua_node_id: id, unit: 'C',
-    })),
-    inventoryComplete: true, workInventoryComplete: true, workOrders: [],
-    readStartedAt: '2026-10-26T12:00:01Z', readCompletedAt: '2026-10-26T12:00:02Z',
-    asOf: '2026-10-26T12:00:00Z',
-    telemetryRows: [
-      { opcua_node_id: node, value: 22, quality: 'GOOD', event_time: '2026-10-26T11:59:00Z',
-        matching_sample_count: 2, first_matching_event_time: '2026-10-26T09:00:00Z',
-        matching_event_time: '2026-10-26T10:00:00Z', matching_value: 21, matching_quality: 'BAD' },
-      { opcua_node_id: 'good-only', value: 20, quality: 'GOOD', event_time: '2026-10-26T11:00:00Z',
-        matching_sample_count: 0 },
-    ],
-  }
-  const result = shapeFleetSnapshot(false, args, data).result
-  assert.equal(result.rows.length, 1)
-  assert.equal(result.rows[0].quality, 'BAD')
-  assert.equal(result.rows[0].latest_quality, 'GOOD')
-  assert.equal(result.rows[0].matching_sample_count, 2)
-  assert.deepEqual(result.population.signals_without_readings, ['absent'])
-  assert.deepEqual(result.population.signals_without_matching_quality, ['good-only'])
-  assert.equal(result.latest_per_signal_then_quality_filter, false)
-  const query = fleetSnapshotQuery(false, args, data.asOf)
-  assert.match(query, /matching_sample_count=count\(\)/)
-  assert.match(query, /join kind=leftouter/)
-  assert.match(query, /startofday\(datetime\(2026-10-26T12:00:00.000Z\)\)/)
-  assert.doesNotMatch(query, /ago\(|now\(\)/)
-  assert.equal(shapeFleetSnapshot(false, { ...args, quality_match: 'latest' }, data).result.rows.length, 0)
-  for (const patch of [
-    { matching_sample_count: -1 }, { matching_sample_count: 0 }, { matching_quality: 'GOOD' },
-    { matching_event_time: '2026-10-26T12:00:01Z' }, { matching_value: NaN },
-    { first_matching_event_time: '2026-10-25T23:59:59Z' },
-  ]) assert.throws(() => shapeFleetSnapshot(false, args, {
-    ...data, telemetryRows: [{ ...data.telemetryRows[0], ...patch }],
-  }), /Matching-quality aggregate/)
-  assert.throws(() => fleetSnapshotQuery(false, { ...args, quality_match: 'invalid' }), /Quality matching/)
-  assert.throws(() => fleetSnapshotQuery(false, args, "2026-10-26');drop"), /observation clock/)
-})
 
 test('low-stock column comparisons include equality and exclude above-threshold and missing quantities', () => {
   const rows = [

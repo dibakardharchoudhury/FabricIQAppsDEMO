@@ -14,20 +14,16 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## October 26 operational routing regression contract
+## October 26 current failure repair
 
-The three BAD-quality/open-work questions now require QA, optionally RCA and Work
-Order specialists, with typed signal-quality and work-order evidence. Punctuation,
-case, “for these” versus “for them”, and “Based on this data” must not change the
-selected source. “Had BAD today” requires any matching sample since midnight UTC,
-not a latest-only BAD filter. Counts and matching timestamps must remain distinct
-from the actual latest quality; missing telemetry is not healthy telemetry.
-
-Explicit Data Agent requests or engine selection retain native execution and must
-fail honestly without fallback. Work review must cover all affected verified
-equipment, preserve covering work and no-draft outcomes, avoid inventing physical
-faults from BAD quality, and never execute a write without separate approval.
-Current hosted acceptance of this source repair is pending.
+The [current end-to-end audit](../docs/foundry-multi-agent-implementation.md#october-26-end-to-end-failure-audit-and-repair)
+supersedes the dated routing/runtime claims below. It reproduces the actual
+Gauge failure, fixes Kusto's empty-string zero-match join representation and
+preserves historical versus latest quality semantics. Ordinary operational
+requests and paraphrases use governed source tools, not three exact-sentence
+native-routing exceptions. An explicitly selected Data Agent remains native;
+its failure never triggers a direct-source fallback. Publication and signed
+browser acceptance must be recorded separately from local validation.
 
 ## October 12 v77 canonical-prompt release
 
@@ -1110,6 +1106,10 @@ verification rather than inferring speed from reduced input construction.
    Reading existing work is not drafting work and does not require Fixer.
 4. **Running BAD:** latest raw row per signal first, then literal quality BAD; default
    30-minute window, all matching active turbine signals. "Today" means midnight UTC.
+   **Had BAD/any BAD samples:** count matching samples in the whole requested window,
+   retaining first/last matching times and the actual latest raw state separately.
+   A recovered latest GOOD reading does not erase earlier BAD samples. All paths
+   distinguish zero matches from absent readings and physical condition.
 5. **Running HOT:** latest raw turbine-temperature readings, default hottest five over
    30 minutes. Preserve explicit counts, thresholds, windows and scope. Do not average
    or silently exclude non-GOOD signals. Freshness is independent of quality/temperature.
@@ -1149,12 +1149,12 @@ verification rather than inferring speed from reduced input construction.
 13. **Independent final verification requested:** Gauge after the relevant review/draft.
     Independence here means a separately invoked factual specialist, not independent
     physical measurements or a different model family.
-14. **Compound workflow:** use requested capabilities in order; maximum four delegations
-    and six Responses rounds for Chief/Sparky, eight for direct specialists (including
-    identity/coverage reads, investigation or staging, and final acknowledgement).
-    RCA may correct one locally rejected final-round assessment in one additional
-    completion-only round; no new reads or relaxed evidence checks are permitted.
-    Bounds and actual source failures are
+14. **Compound workflow:** the deterministic hosted workflow compiles requested
+    capabilities in order and pins remote specialist versions. Framework function
+    loops allow six iterations/eight calls, stop after the first real callback
+    error, and retain one bounded local argument/completion correction. Native
+    execution has its separate shared one-correction budget; it does not authorize
+    new direct-source reads or relaxed evidence checks. Bounds and source failures are
     explicit; no hidden retry of failed writes or forced completion from invented data.
 15. **Battle:** the same prompt reaches both configured entries. Read-only comparisons
     can be capacity-safe sequential or parallel. Recognized work-order requests use

@@ -856,7 +856,8 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         def configured(key):
             identities = {name: str(uuid4()) for name in (
                 "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
-                "database_id", "lakehouse_id", "appbackend_id", "operational_sql_database_id",
+                "database_id", "lakehouse_id", "appbackend_id",
+                "operational_sql_database_id",
             )}
             return json.dumps({**identities, "api_url": f"https://{'b' * 32}.pbidedicated.windows.net/workload",
                                "publishable_key": key})

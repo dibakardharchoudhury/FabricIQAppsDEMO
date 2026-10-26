@@ -100,6 +100,13 @@ export function requiresDirectSourceVerification(question: string): boolean {
   return /\b(?:verify|check|compare|reconcile|reconciliation|verification)\b[^.!?;\n]{0,240}\bdirect\b/i.test(positiveActionClauses(question))
 }
 
+export function requestsDirectSourceRead(question: string): boolean {
+  const positive = positiveActionClauses(question)
+  return requiresDirectSourceVerification(question)
+    || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
+    || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)
+}
+
 export function requiredIndependentQaSteps(question: string): number {
   const positive = positiveActionClauses(question)
   const request = /\bindependently\s+(?:check|verify|reconcile)\b[^.!?;\n]{0,80}/i.exec(positive)?.[0]
@@ -291,19 +298,18 @@ export function requestsWeather(question: string): boolean {
 }
 
 export function qualityWorkWorkflow(question: string): 'facts' | 'drafts' | 'rca-drafts' | undefined {
-  const text = positiveActionClauses(question)
-  if (!requestsSignalQuality(question) || !/\bBAD\b/i.test(text)
-    || !/\b(?:today|since midnight)\b/i.test(text)
-    || !/\b(?:work|work[\s-]*orders?|WOs?)\b/i.test(text)
-    || !/\b(?:open|existing|already)\b/i.test(text)) return undefined
+  const positive = positiveActionClauses(question)
+  if (!requestsSignalQuality(question) || !/\bBAD\b/i.test(positive)
+    || !/\b(?:work|work[\s-]*orders?)\b/i.test(positive)
+    || !/\b(?:open|existing|already)\b/i.test(positive)) return undefined
   if (!isWorkOrderRequest(question)) return 'facts'
-  return /\b(?:RCA|root[- ]cause|investigate|diagnose)\b/i.test(text) ? 'rca-drafts' : 'drafts'
+  return /\b(?:RCA|root[- ]cause|investigate|diagnose)\b/i.test(positive) ? 'rca-drafts' : 'drafts'
 }
 
 export function qualityMatchForRequest(question: string): 'latest' | 'any' {
-  const text = positiveActionClauses(question)
-  if (/\b(?:latest|currently|current|running)\b/i.test(text)) return 'latest'
-  return /\b(?:had|any|ever|occurred|occurrences?|samples?)\b/i.test(text) ? 'any' : 'latest'
+  const positive = positiveActionClauses(question)
+  if (/\b(?:latest|currently|current|running)\b/i.test(positive)) return 'latest'
+  return /\b(?:had|any|ever|occurred|occurrences?|samples?)\b/i.test(positive) ? 'any' : 'latest'
 }
 
 export function requiredSpecialists(question: string, hasNativeRequest = false): AgentRole[] {
@@ -312,9 +318,7 @@ export function requiredSpecialists(question: string, hasNativeRequest = false):
   const operational = /\b(?:telemetry|signals?|readings?|work[\s-]*orders?|inspections?|notifications?|spare parts?|inventory|turbines?|generators?|equipment)\b/i.test(positive)
   // A chart can only be drawn from source data, so any requested chart is a factual read whatever the measure.
   const factualRead = requiresChartOutput(question) || /\b(?:read|retrieve|inspect|list|show|return|query|check|verify|reconcile|compare|chart|plot|visualize|which|what)\b[^.!?;\n]{0,220}\b(?:telemetry|signals?|readings?|work(?:[\s-]+orders?)?|wos?|inspections?|notifications?|spare parts?|inventory|assets?|equipment|turbines?|generators?|facilit(?:y|ies)|relationships?|power|temperature|quality)\b/i.test(positive)
-  const downstreamRead = requiresDirectSourceVerification(question)
-    || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
-    || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)
+  const downstreamRead = requestsDirectSourceRead(question)
   const required = missingRequestedSpecialists(question, [])
   if ((factualRead || requestsWorkOrderNeedAssessment(question)) && (!weather || operational) && (!hasNativeRequest || downstreamRead) && !required.includes('qa')) required.push('qa')
   if (weather && (!hasNativeRequest || downstreamRead)) required.push('weather')

@@ -86,27 +86,26 @@ test('every direct tool result carries governed evidence descriptors at the Node
   }])
 })
 
-test('equivalent BAD-quality workflows use typed evidence and only requested specialists', () => {
+test('operational quality/work paraphrases share governed history semantics without forcing native execution', () => {
   const base = 'Which turbines had BAD telemetry quality today, and what work is already open for these?'
   const cases = [
     [base, ['qa']],
     [`${base} Based on this data, tell me which WOs need to be created and help me with the drafts.`, ['qa', 'work-order']],
     [`${base} Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.`, ['qa', 'rca', 'work-order']],
+    ['Show turbines that had any BAD quality samples today with existing open work and prepare work orders.', ['qa', 'work-order']],
   ]
   for (const [question, specialists] of cases) {
     const intent = chatIntent(question)
     assert.deepEqual(intent.native_sources, [])
     assert.deepEqual(intent.required_specialists, specialists)
-    assert.deepEqual(intent.required_evidence_kinds, ['signal_quality', 'work_orders'])
+    assert.ok(intent.required_evidence_kinds.includes('signal_quality'))
+    assert.ok(intent.required_evidence_kinds.includes('work_orders'))
     const plan = compileOrchestrationPlan(question, intent)
     assert.deepEqual(plan.steps.map(step => step.specialist), specialists)
     assert.equal(plan.steps.filter(step => step.native_source).length, 0)
     const qualityRead = analyticalEvidencePlan(question, intent.required_evidence_kinds)
-      .find(entry => entry.kind === 'signal_quality')
-    assert.equal(qualityRead.arguments.quality_match, 'any')
-    assert.equal(qualityRead.arguments.lookback, 'today')
-    assert.equal(qualityRead.arguments.quality, 'BAD')
-    assert.deepEqual(chatIntent(question.replace('for these', 'for them').replace('Based on this data, ', '')), intent)
+      .find(entry => entry.tool === 'query_signal_quality_snapshot')
+    assert.deepEqual(qualityRead.arguments, { quality: 'BAD', quality_match: 'any', lookback: 'today', equipment_type: 'turbine' })
     if (specialists.includes('work-order')) {
       assert.match(plan.steps.at(-1).question, /all affected/i)
       assert.match(plan.steps.at(-1).question, /SQL/)
@@ -114,18 +113,20 @@ test('equivalent BAD-quality workflows use typed evidence and only requested spe
     }
   }
   assert.deepEqual(chatIntent(base.toUpperCase().replaceAll(' ', '  ')).native_sources, [])
-  for (const intent of [chatIntent(`Use the Data Agent. ${base}`), chatIntent(base, [], ['data-agent'])]) {
-    assert.deepEqual(intent.native_sources, ['data-agent'])
-    assert.deepEqual(intent.required_evidence_kinds, ['native_claims'])
-    assert.deepEqual(intent.required_specialists, [])
-    assert.deepEqual(compileOrchestrationPlan(base, intent).steps.map(step => step.specialist), ['fabric-iq'])
-  }
   for (const question of [
     base.replace('today', 'yesterday'),
     base.replace('BAD', 'UNCERTAIN'),
     `${base} Independently verify against direct sources.`,
     'Show the weather forecast.',
   ]) assert.deepEqual(chatIntent(question).native_sources, [], question)
+  const native = chatIntent(base, [], ['data-agent'])
+  assert.deepEqual(native.native_sources, ['data-agent'])
+  assert.deepEqual(native.required_specialists, [])
+  assert.deepEqual(native.required_evidence_kinds, ['native_claims'])
+  assert.deepEqual(compileOrchestrationPlan(base, native).steps.map(step => step.specialist), ['fabric-iq'])
+  assert.throws(() => chatIntent(base, [], ['ontology']), /Only the published Data Agent/)
+  const current = analyticalEvidencePlan('Which turbines are currently BAD?', ['signal_quality'])[0]
+  assert.equal(current.arguments.quality_match, undefined)
 })
 
 test('scoped Data Agent evidence validates IDs, UTC bounds, complete arrays and open work without certifying SQL provenance', async () => {
@@ -773,6 +774,51 @@ function fleetData() {
   return { equipment, instruments, telemetryRows, workOrders, inventoryComplete: true,
     workInventoryComplete: true, readStartedAt, readCompletedAt: readStartedAt }
 }
+
+test('historical quality accepts Kusto empty-string join absence without confusing missing readings with zero matches', () => {
+  const data = fleetData()
+  const args = { quality: 'BAD', quality_match: 'any', lookback: '30m', equipment_type: 'turbine' }
+  data.telemetryRows = data.telemetryRows.map(row => ({
+    ...row, matching_sample_count: row.quality === 'BAD' ? 1 : 0,
+    first_matching_event_time: row.quality === 'BAD' ? row.event_time : null,
+    matching_event_time: row.quality === 'BAD' ? row.event_time : null,
+    matching_value: row.quality === 'BAD' ? row.value : null,
+    matching_quality: row.quality === 'BAD' ? 'BAD' : '',
+  }))
+  const priorBad = new Date(Date.parse(data.readStartedAt) - 5000).toISOString()
+  data.telemetryRows[0] = { ...data.telemetryRows[0], matching_sample_count: 4,
+    first_matching_event_time: priorBad, matching_event_time: priorBad, matching_value: 12.34, matching_quality: 'BAD' }
+  const result = shapeFleetSnapshot(false, args, data).result
+  assert.deepEqual(result.rows.map(row => [row.equipment_id, row.quality, row.latest_quality]), [
+    ['T1', 'BAD', 'GOOD'], ['T2', 'BAD', 'BAD'],
+  ])
+  assert.equal(result.rows[0].value, 12.34)
+  assert.equal(result.rows[0].matching_sample_count, 4)
+  assert.equal(result.rows[0].latest_value, 40)
+  assert.equal(result.latest_per_signal_then_quality_filter, false)
+  assert.equal(result.population.signals_without_matching_quality.length, 4)
+  assert.deepEqual(result.population.signals_without_readings, [data.instruments[6].opcua_node_id])
+  const query = fleetSnapshotQuery(false, args, data.readStartedAt)
+  assert.match(query, /join kind=leftouter/)
+  assert.match(query, new RegExp(`datetime\\(${data.readStartedAt.replaceAll('.', '\\.')}\\)`))
+  assert.doesNotMatch(query, /now\(\)|ago\(/)
+  for (const patch of [
+    { matching_quality: 'BAD' }, { matching_value: 1 }, { matching_event_time: priorBad },
+    { matching_sample_count: -1 }, { matching_sample_count: 1 },
+  ]) {
+    const invalid = structuredClone(data)
+    invalid.telemetryRows[3] = { ...invalid.telemetryRows[3], ...patch }
+    assert.throws(() => shapeFleetSnapshot(false, args, invalid), /Matching-quality aggregate/)
+  }
+  for (const patch of [
+    { matching_quality: '' }, { matching_quality: 'GOOD' }, { matching_value: null },
+    { first_matching_event_time: null }, { matching_event_time: data.readStartedAt },
+  ]) {
+    const invalid = structuredClone(data)
+    invalid.telemetryRows[0] = { ...invalid.telemetryRows[0], ...patch }
+    assert.throws(() => shapeFleetSnapshot(false, args, invalid), /Matching-quality aggregate/)
+  }
+})
 
 test('shared fleet hot/BAD semantics retain exact raw values, identities and all open work relations', () => {
   const data = fleetData()
