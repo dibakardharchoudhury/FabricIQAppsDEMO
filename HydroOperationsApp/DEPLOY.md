@@ -250,7 +250,10 @@ python Raw\workspace-reset\deploy_fabric_app.py `
 
 Add `--client-id <verified-spa-guid>` only when needed. The local UI does not
 require GitHub write access; `--push-config` is for command-line operators/agents
-with repository write access. The command without `--stage` retains the combined
+with repository write access. It requires a clean, pushed **non-main branch**
+tracking `origin/<same-branch>`; the engine refuses automatic commits to `main`.
+Use a deployment branch for generated-origin persistence, then merge the verified
+configuration through your normal repository process. The command without `--stage` retains the combined
 setup-and-app behavior. `--stage energy` and `--stage foundry` select the same
 independent lifecycle modules as the UI, not agent exemptions.
 

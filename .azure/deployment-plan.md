@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## October 26, 2026: V12 setup failure recovery and live verification
 
@@ -165,6 +165,53 @@ unconditional optional publisher, with verified content and unrelated-part
 readback. No Git reimport, data reset, notebook-source change or new chat agent
 was performed. Energy-only retry `f43aba283d6b4ba18a3b43816b3f19cf` is running
 pipeline instance `e914a0f3-ff53-428f-b60c-3b82e4f116e9`; await its result.
+
+### Final live deployment receipt: October 26, 2026
+
+Energy-only retry `f43aba283d6b4ba18a3b43816b3f19cf` completed successfully.
+The pipeline completed, and serving readback verified all 12 source layers,
+9 area polygons and 76 asset-message links. It printed `ENERGY_SETUP_SUCCESS`;
+no optional map-chat publisher ran.
+
+Before app publication, `npm --prefix HydroOperationsApp run validate-env`
+passed. The mandatory `--push-config` command requires a clean, pushed non-main
+branch, so publication used `deploy/v12-live-recovery-20261026`, not a weakened
+Git guard. Multiple Foundry projects existed; the previously approved project
+`ai-project-hydro-foundry-884a839f3132` was resolved by its actual ARM resource ID
+in subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`. The canonical orchestrator
+verified that selection directly. No replacement project or model was created.
+
+The canonical orchestrator completed at `2026-10-26T12:01:47Z`, exit code 0,
+in 618.813 seconds. It selected Node 24, reused locked dependencies and the
+existing `gpt-5.6-sol` model deployment, and verified persistent specialists:
+QA v2, RCA v2, work-order v3, Fabric IQ v2 and Weather v1. Hosted orchestrator
+version 12 became active on image tag `src-247959b77642fffb`, configured for
+the actual V12 sources. The current AppBackend ID is
+`0968e45b-fa21-4718-9e99-530edd07d3df`.
+
+It reapplied backend runtime/CORS, SQL and connector configuration, completed
+the repository live-auth setup, and preserved all 40 existing SPA redirects
+while adding the current origin (41 required redirects verified). Actual
+browser-equivalent checks passed:
+
+| Path | Preflight | POST | Scope |
+|---|---|---|---|
+| `/graphql` | 200 | 200 | Backend GraphQL readiness |
+| `/api/auth/v1/token` | 200 | 400 | Invalid-payload/auth transport readiness, not user token exchange |
+| `/connectors/hydrolakehouse/graphql` | 200 | 401 | Protected transport readiness, not source data acceptance |
+| `/connectors/hydrooperations/graphql` | 200 | 401 | Protected transport readiness, not source data acceptance |
+
+The orchestrator printed both `SUCCESS` and:
+
+`DEPLOYED_APP_URL=https://jade-dew-88c8451584-swedencentral.webapp.fabricapps.net`
+
+The generated redirect configuration was committed and pushed by the engine
+as `c425a1d`. An independent browser visit displayed the expected private-app
+Fabric sign-in gate. Interactive signed-in SPA acceptance, all-nine-entity
+connector data acceptance, business-prompt correctness, Teams/email delivery
+and optional map-chat execution are not certified by this deployment receipt.
+The actual Core setup, energy serving readback, Data Agent Lakehouse/SQL
+queries and complete publication/transport contracts above are verified live.
 
 ## Current SQL rollout validation (October 25, 2026)
 
