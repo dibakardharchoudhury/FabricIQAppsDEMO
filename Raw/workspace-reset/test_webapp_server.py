@@ -124,7 +124,7 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
-        starter = "_start_workflow" if endpoint == "/api/full-workflow" else "_start"
+        starter = "_start_workflow" if endpoint in ("/api/full-workflow", "/api/run-pipeline") else "_start"
         with patch.object(SERVER, starter, return_value="job-id") as start:
             response = self.client.post(endpoint, json=payload)
 
@@ -170,6 +170,72 @@ assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"')
         for endpoint, payload in actions:
             with self.subTest(endpoint=endpoint):
                 self.assert_exclusive_action(endpoint, payload)
+
+    def test_core_setup_includes_energy_once_and_keeps_foundry_separate(self):
+        target = {"tenant": "tenant.example", "workspace": "Demo", "parameters": PIPELINE_PARAMS}
+        with patch.object(SERVER, "_start_workflow", return_value="core-job") as start:
+            response = self.client.post("/api/run-pipeline", json=target)
+        self.assertEqual(response.status_code, 200)
+        steps = start.call_args.args[0]
+        self.assertEqual([step["name"] for step in steps], ["Setup pipeline", "Energy setup"])
+        self.assertEqual(steps[1]["argv"][steps[1]["argv"].index("--stage") + 1], "energy")
+        self.assertEqual(start.call_args.kwargs["phases"], SERVER.CORE_SETUP_PHASES)
+        self.assertLess(steps[0]["phase_offset"], steps[1]["phase_offset"])
+        self.assertFalse(any(phase.startswith("Foundry") for phase in SERVER.CORE_SETUP_PHASES))
+        with patch.object(SERVER, "_start_workflow", return_value="full-job") as start:
+            response = self.client.post("/api/full-workflow", json={
+                **target, "repository": "owner/repo", "connectionId": "yes", "energyMap": "keep",
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([step["name"] for step in start.call_args.args[0]].count("Energy setup"), 1)
+
+    def test_full_deploy_is_outside_collapsible_actions_and_all_actions_have_icons(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        navigation = page[page.index('<nav class="nav"'):page.index("</nav>")]
+        group = navigation[navigation.index('<details id="deploymentActions"'):navigation.index("</details>")]
+        self.assertIn("Deployment Actions", group)
+        self.assertNotIn('id="tabWorkflow"', group)
+        self.assertIn("> Full Deploy</button>", navigation)
+        self.assertNotIn("Full workflow", page)
+        for name in ("Sync", "Pipeline", "Energy", "Foundry", "Deploy", "Delete"):
+            button = group[group.index(f'id="tab{name}"'):]
+            button = button[:button.index("</button>")]
+            self.assertIn("<svg", button)
+        self.assertIn("Refresh energy sources", group)
+        self.assertNotIn("workflowEnableEnergy", page)
+
+    def test_sidebar_toggle_is_accessible_and_remembers_state(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertIn('aria-controls="deploymentSidebar"', page)
+        self.assertIn(".page.sidebar-collapsed .shell { grid-template-columns:minmax(0,1fr); }", page)
+        code = page[page.index("function setSidebarCollapsed("):page.index("function renderFoundryFields(")]
+        script = """
+const assert = require("node:assert/strict");
+const elements = {
+  deploymentSidebar:{hidden:false},
+  sidebarToggle:{setAttribute(name,value){this[name]=value},addEventListener(name,handler){this.click=handler}},
+  sidebarPreferenceStatus:{textContent:""},
+};
+const $ = id => elements[id];
+let collapsedClass=false;
+const document = {querySelector:()=>({classList:{toggle:(name,value)=>{collapsedClass=value}}})};
+const localStorage = {getItem:()=>"true",setItem:(key,value)=>{localStorage.saved=value}};
+""" + code + """
+assert.equal(elements.deploymentSidebar.hidden,true);
+assert.equal(elements.sidebarToggle["aria-expanded"],"false");
+assert.equal(elements.sidebarToggle.textContent,"Show sidebar");
+elements.sidebarToggle.click();
+assert.equal(elements.deploymentSidebar.hidden,false);
+assert.equal(elements.sidebarToggle["aria-expanded"],"true");
+assert.equal(collapsedClass,false);
+assert.equal(localStorage.saved,"false");
+localStorage.setItem=()=>{throw new Error("blocked")};
+elements.sidebarToggle.click();
+assert.equal(elements.deploymentSidebar.hidden,true);
+assert.match(elements.sidebarPreferenceStatus.textContent,/Could not save.*blocked/);
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_launcher_does_not_expose_agent_mode_flags(self):
         response = self.client.get("/api/pipeline-params")
@@ -380,8 +446,11 @@ assert.equal($("workflowFoundryCreate").checked, false);
         fabric.start_pipeline.assert_not_called()
 
     def test_pipeline_api_worker_and_poll_preserve_required_agent_failure_and_success(self):
-        for state, expected_status, expected_code in (("Completed", "succeeded", 0), ("Failed", "failed", 1)):
-            with self.subTest(state=state):
+        for state, energy_code, expected_status, expected_code in (
+            ("Completed", 0, "succeeded", 0), ("Failed", 0, "failed", 1),
+            ("Completed", 23, "failed", 23),
+        ):
+            with self.subTest(state=state, energy_code=energy_code):
                 fabric = Mock()
                 fabric.resolve_workspace_id.return_value = ("canonical-workspace", "DEV")
                 fabric.request.side_effect = [
@@ -393,8 +462,13 @@ assert.equal($("workflowFoundryCreate").checked, false);
                 fabric.start_pipeline.return_value = "https://mock.invalid/job"
                 reason = "Required Data Agent ontology runtime smoke failed: unsupported Ontology API"
                 fabric.poll_job.return_value = {"status": state, "failureReason": {"message": reason}}
+                started_scripts = []
 
                 def child_process(command, **kwargs):
+                    started_scripts.append(Path(command[2]).name)
+                    if Path(command[2]).name == "deploy_fabric_app.py":
+                        self.assertEqual(command[command.index("--stage") + 1], "energy")
+                        return Mock(stdout=io.StringIO("Energy: setup\n"), returncode=energy_code)
                     output = io.StringIO()
                     with (
                         patch.object(sys, "argv", command[2:]),
@@ -406,15 +480,15 @@ assert.equal($("workflowFoundryCreate").checked, false);
                         returncode = run_pipeline.main()
                     return Mock(stdout=io.StringIO(output.getvalue()), returncode=returncode)
 
-                def start_job(argv, env_extra, timeout, phases, markers, **kwargs):
+                def start_job(steps, *, phases):
                     job = SERVER.Job(phases)
                     SERVER.JOBS[job.id] = job
                     with patch.object(SERVER.subprocess, "Popen", side_effect=child_process), patch.object(SERVER.threading, "Timer"):
-                        SERVER._worker(job, argv, env_extra, timeout, markers)
+                        SERVER._workflow_worker(job, steps)
                     return job.id
 
                 try:
-                    with patch.object(SERVER, "_start", side_effect=start_job):
+                    with patch.object(SERVER, "_start_workflow", side_effect=start_job):
                         response = self.client.post("/api/run-pipeline", json={
                             "tenant": "tenant.example", "workspace": "DEV",
                             "parameters": {**PIPELINE_PARAMS, "key_vault_uri": "https://mock.vault.azure.net/",
@@ -435,13 +509,17 @@ assert.equal($("workflowFoundryCreate").checked, false);
                     if state == "Failed":
                         self.assertIn(reason, log)
                         self.assertNotIn("run COMPLETED", log)
+                        self.assertEqual(started_scripts, ["run_pipeline.py"])
                     else:
                         self.assertIn("run COMPLETED", log)
+                        self.assertEqual(started_scripts, ["run_pipeline.py", "deploy_fabric_app.py"])
+                        if energy_code:
+                            self.assertEqual(job["failedComponent"], "Energy setup")
                 finally:
                     SERVER.JOBS.clear()
 
     def test_pipeline_does_not_forward_hidden_agent_mode_flags(self):
-        with patch.object(SERVER, "_start", return_value="job-id") as start:
+        with patch.object(SERVER, "_start_workflow", return_value="job-id") as start:
             response = self.client.post("/api/run-pipeline", json={
                 "tenant": "tenant.example", "workspace": "DEV",
                 "parameters": {
@@ -453,7 +531,7 @@ assert.equal($("workflowFoundryCreate").checked, false);
                 },
             })
         self.assertEqual(response.status_code, 200)
-        forwarded = json.loads(start.call_args.args[1]["FABRIC_PIPELINE_PARAMS"])
+        forwarded = json.loads(start.call_args.args[0][0]["env"]["FABRIC_PIPELINE_PARAMS"])
         self.assertNotIn("ontology_data_agent_mode", forwarded)
         self.assertNotIn("ontology_operations_agent_mode", forwarded)
 
@@ -664,8 +742,8 @@ assert.equal($("workflowFoundryCreate").checked, false);
             response = self.client.post("/api/full-workflow", json=payload)
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
-        self.assertEqual(steps[2]["env"], {"HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_LOCATION": "swedencentral"})
-        for step in steps[:2]:
+        self.assertEqual(steps[3]["env"], {"HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_LOCATION": "swedencentral"})
+        for step in steps[:3]:
             self.assertNotIn("HYDRO_FOUNDRY_CREATE", step["env"] or {})
 
     def test_both_deploy_forms_collect_foundry_settings_and_warn_about_cost(self):
@@ -727,9 +805,9 @@ assert.equal(foundryValid("deploy"), true);
         html = (MODULE_PATH.parent / "static" / "index.html").read_text(encoding="utf-8")
         self.assertIn('class="workflow-phase-groups"', html)
         self.assertIn('title: "GitHub Sync"', html)
-        self.assertIn('title: "Setup Pipeline"', html)
+        self.assertIn('title: "Core Setup: Fabric and Weather"', html)
         self.assertIn('title: "Fabric App Deployment"', html)
-        self.assertIn('el.id === "workflowPanel"', html)
+        self.assertIn('["workflowPanel", "pipelinePanel"].includes(el.id)', html)
         self.assertIn('state === "active" || state === "failed"', html)
 
     def test_full_workflow_builds_existing_commands_in_serial_order(self):
@@ -755,7 +833,7 @@ assert.equal(foundryValid("deploy"), true);
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
         self.assertEqual([step["name"] for step in steps], [
-            "GitHub sync", "Setup pipeline", "Foundry multi-agent setup", "Fabric app deploy",
+            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
         ])
         self.assertEqual(Path(steps[0]["argv"][0]).name, "sync_workspace_from_git.py")
         self.assertEqual(Path(steps[1]["argv"][0]).name, "run_pipeline.py")
@@ -904,7 +982,7 @@ assert.equal(foundryValid("deploy"), true);
         self.assertIn('"/api/full-workflow"', page)
         self.assertIn("Each step starts only after the previous step succeeds", page)
         self.assertIn("later changes", page)
-        self.assertLess(page.index('id="tabDeploy"'), page.index('id="tabWorkflow"'))
+        self.assertLess(page.index('id="tabWorkflow"'), page.index('id="deploymentActions"'))
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="tabDelete"'))
 
     def test_full_workflow_page_is_self_contained_except_for_target(self):

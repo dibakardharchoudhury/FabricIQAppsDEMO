@@ -18,7 +18,7 @@ Entra or SQL deployment sequence.
 |---|---|
 | Update an already prepared app | **Deploy app**. Normally no other inputs are needed. |
 | Update agents | **Set up Foundry agents**, then **Deploy app**. |
-| Initialize an empty workspace | **Full workflow**. Review the source, supply Key Vault URI, Teams team/channel and alert email, then run. Existing Foundry resources are reused by default. |
+| Initialize an empty workspace | **Full Deploy**. Review the source, supply Key Vault URI, Teams team/channel and alert email, then run. Core setup includes Weather and energy sources. Existing Foundry resources are reused by default. |
 | Create Foundry resources for the first time | In the Foundry section, explicitly check **I need a new Foundry project**. Enter your approved model deployment name, version, SKU and capacity. Creation is billable. |
 
 ### What you actually need to enter
@@ -40,6 +40,11 @@ The two Foundry forms share remembered non-secret overrides for each target.
 it is never a remembered spending authorization.
 No PAT, token or credential secret value is saved by these forms.
 
+**Navigation:** **Full Deploy** is always a separate top-level choice. Expand
+**Deployment Actions** for individual modules and maintenance actions.
+Use **Hide sidebar** to give the form the full content width; **Show sidebar**
+remains available above it. The sidebar preference is remembered in this browser.
+
 **One unavoidable manual prerequisite:** after core ontology setup, materialize
 the selected ontology's graph in Fabric (**Manage graph → select eligible
 entities/relationships → Continue → Materialize**). Foundry and final app setup
@@ -57,10 +62,10 @@ steps to perform for every deployment.
 
 | Your target | Choose in the local app |
 |---|---|
-| Empty workspace | **Full workflow**: Git import, core setup, selected energy sources, Foundry setup, app publication |
+| Empty workspace | **Full Deploy**: Git import, core setup (including Weather and energy), Foundry setup, app publication |
 | Existing workspace, update website only | **Deploy app** |
 | Agent code, model, project or source identity changed | **Set up Foundry agents**, then **Deploy app** |
-| Add/update energy data | **Set up energy sources**, then **Deploy app** |
+| Refresh energy data only | **Deployment Actions → Refresh energy sources**; no core or Foundry rerun |
 | Different tenant/workspace | Prepare that target's prerequisites, then use the same modules |
 
 **Never reset, delete items, rerun core setup, or perform a full Git import just
@@ -127,7 +132,7 @@ branch is pushed before importing it.
 
 ## 3. Prepare core Fabric data, only when needed
 
-For an empty workspace, use **Full workflow**. Supply:
+For an empty workspace, use **Full Deploy**. Supply:
 
 - Source repository/branch and an approved saved GitHub connection, or a PAT
   only when creating a connection. The PAT is not stored on disk.
@@ -143,6 +148,10 @@ Core setup provisions Lakehouse, Eventhouse, independent operational SQL,
 ontology generation **2**, dashboard, Data Agent and retained Operations Agent
 capabilities. NB11 runs after the agents and Weather schema setup, inserts
 missing operational demo records and publishes the SQL Data Agent source.
+The local **Core setup** action then runs energy-source preparation under the
+same monitored job. **Full Deploy** reuses this exact sequence, so energy runs
+once, not as an additional optional stage. Failure in either part stops later
+work. Foundry setup remains a separate module.
 Real setup/publication/readback failures stop the workflow. Only NB09's exact
 `This API version is not supported for the specified Ontology item` response,
 after verified v2 publication, is a known product limitation rather than runtime
@@ -167,7 +176,8 @@ See [native graph details](../docs/knowledge-graph.md).
 
 ## 5. Prepare energy and Weather sources
 
-**Set up energy sources** imports/prepares only its ingestion artifacts, reuses
+Energy preparation is included in local **Core setup** and **Full Deploy**.
+For later data-only updates, **Refresh energy sources** imports/prepares only its ingestion artifacts, reuses
 GeoContext and verifies all twelve serving layers and nine reservoir polygons.
 GeoContext and its SQL endpoint belong in `RTI_DEMO_<suffix>`; placement preserves
 item identity and storage paths. The module does not rerun core setup or SQL seeds.

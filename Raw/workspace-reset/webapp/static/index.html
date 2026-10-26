@@ -168,6 +168,10 @@
 
   /* shell: left sidebar + content pane */
   .shell { display:grid; grid-template-columns:266px 1fr; gap:1.6rem; align-items:start; }
+  .page.sidebar-collapsed .shell { grid-template-columns:minmax(0,1fr); }
+  .sidebar-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }
+  .sidebar-toolbar button { width:auto; margin:0; }
+  .sidebar-toolbar span { color:var(--muted); font-size:.8rem; overflow-wrap:anywhere; }
   .side { position:sticky; top:1.4rem; display:flex; flex-direction:column; gap:1.15rem; }
   .side, .main { min-width:0; }
   .side .brand { align-items:flex-start; margin-bottom:.15rem; }
@@ -210,6 +214,11 @@
     letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
   .nav-group .tag { width:11px; height:11px; border-radius:3px; flex:0 0 auto;
     background:linear-gradient(135deg,var(--primary),var(--violet)); box-shadow:0 0 0 1px rgba(148,163,184,.18); }
+  .deployment-actions { margin-top:.7rem; }
+  .deployment-actions > summary { cursor:pointer; list-style:none; padding:.6rem .3rem; }
+  .deployment-actions > summary::-webkit-details-marker { display:none; }
+  .deployment-actions > summary::after { content:"\25BE"; margin-left:auto; }
+  .deployment-actions:not([open]) > summary::after { content:"\25B8"; }
   .tab { margin:0; width:100%; justify-content:flex-start; background:transparent; border:1px solid transparent;
     color:var(--muted); font-weight:600; font-size:.9rem; padding:.52rem .7rem; border-radius:9px;
     display:inline-flex; align-items:center; gap:.62rem; box-shadow:none; position:relative; transition:background .15s, color .15s, border-color .15s; }
@@ -279,8 +288,13 @@
 </head>
 <body>
 <div class="page">
+  <div class="sidebar-toolbar">
+    <button id="sidebarToggle" class="ghost" type="button" aria-controls="deploymentSidebar" aria-expanded="true">Hide sidebar</button>
+    <span id="sidebarTarget"></span>
+    <span id="sidebarPreferenceStatus" role="status"></span>
+  </div>
   <div class="shell">
-    <aside class="side">
+    <aside id="deploymentSidebar" class="side">
       <div class="brand">
         <div class="logo">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.6 12.6a.6.6 0 0 0 .47.98H11l-1 8.4 8.4-11.06a.6.6 0 0 0-.48-.96H12l1-8Z"/></svg>
@@ -310,15 +324,17 @@
           <input id="workspace" type="text" placeholder="ws-… or a display name" /></label>
       </div>
 
-      <nav class="nav" role="tablist">
-        <div class="nav-group"><span class="tag"></span> Actions</div>
+      <nav class="nav" aria-label="Deployment navigation">
+        <button id="tabWorkflow" class="tab active" data-tab="workflow" type="button" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg> Full Deploy</button>
+        <details id="deploymentActions" class="deployment-actions" open>
+        <summary class="nav-group"><span class="tag" aria-hidden="true"></span> Deployment Actions</summary>
         <button id="tabSync" class="tab" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
-        <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
-        <button id="tabEnergy" class="tab run" data-tab="energy" type="button">Set up energy sources</button>
-        <button id="tabFoundry" class="tab run" data-tab="foundry" type="button">Set up Foundry agents</button>
+        <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Core setup</button>
+        <button id="tabEnergy" class="tab run" data-tab="energy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z"/></svg> Refresh energy sources</button>
+        <button id="tabFoundry" class="tab run" data-tab="foundry" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="8" rx="2"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="12" cy="21" r="2"/><path d="m6 6 3 3m9-3-3 3m-3 7v3"/></svg> Set up Foundry agents</button>
         <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Deploy app</button>
-        <button id="tabWorkflow" class="tab active" data-tab="workflow" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg> Full workflow</button>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
+        </details>
       </nav>
 
       <div class="side-foot">
@@ -339,7 +355,7 @@
     <div class="card">
       <div class="card-head">
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
-        <h2>New workspace: guided deployment</h2>
+        <h2>Full Deploy</h2>
       </div>
       <p class="hint">Set your tenant and workspace on the left, then review the steps below. Setup values are shared with the individual modules and remembered for this target. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
       <aside class="notice">
@@ -351,14 +367,13 @@
       </aside>
       <div class="workflow-steps">
         <div class="workflow-step"><strong>1. Sync from GitHub</strong>Imports the selected branch into the target Fabric workspace.</div>
-        <div class="workflow-step"><strong>2. Run setup pipeline</strong>Runs Key Vault preflight and <code>01_Pipe_Setup</code>.</div>
-        <div class="workflow-step"><strong>3. Set up energy sources</strong>Prepares the selected energy-map data independently.</div>
-        <div class="workflow-step"><strong>4. Set up Foundry agents</strong>Reuses the selected project; converges five specialists and the Hosted coordinator.</div>
-        <div class="workflow-step"><strong>5. Deploy Fabric app</strong>Publishes the app last, with read-only agent verification and endpoint/CORS checks.</div>
+        <div class="workflow-step"><strong>2. Core setup</strong>Runs <code>01_Pipe_Setup</code> for core data and Weather setup, then prepares energy sources.</div>
+        <div class="workflow-step"><strong>3. Set up Foundry agents</strong>Reuses the selected project; converges five specialists and the Hosted coordinator.</div>
+        <div class="workflow-step"><strong>4. Deploy Fabric app</strong>Publishes the app last, with read-only agent verification and endpoint/CORS checks.</div>
       </div>
       <div class="workflow-config">
         <section class="workflow-config-section" aria-labelledby="workflowSyncHeading">
-          <div class="workflow-config-head"><div><strong id="workflowSyncHeading">1. GitHub sync</strong><span>Choose the source and connection behavior used by this full workflow.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowSyncHeading">1. GitHub sync</strong><span>Choose the source and connection behavior used by Full Deploy.</span></div></div>
           <div class="grid">
             <label>Repository (owner/repo or URL)
               <input id="workflowRepository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
@@ -378,23 +393,22 @@
           <div id="workflowTestPanel"></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
-          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Setup pipeline</strong><span>Complete parameters for Key Vault, agents, alert delivery, and notebook execution.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup, Weather and energy sources</strong><span>Complete parameters for Key Vault, agents and alert delivery. Energy-source setup runs automatically after the core pipeline succeeds.</span></div></div>
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
-          <label class="check"><input id="workflowEnableEnergy" type="checkbox" checked /> Prepare and enable the energy map after core setup (no hidden bootstrap profile required).</label>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">4. Foundry multi-agent setup</strong><span>Reuse existing resources by default. Create new resources only if you explicitly choose to.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Foundry multi-agent setup</strong><span>Separate from core data setup. Reuse existing resources by default. Create new resources only if you explicitly choose to.</span></div></div>
           <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
-          <div class="workflow-config-head"><div><strong>5. Final Fabric app deployment</strong><span>No Foundry project discovery, agent builds or publication. Verifies prepared source/runtime identities, publishes the SPA, and checks connectors, browser sign-in and CORS.</span></div></div>
+          <div class="workflow-config-head"><div><strong>4. Final Fabric app deployment</strong><span>No Foundry project discovery, agent builds or publication. Verifies prepared source/runtime identities, publishes the SPA, and checks connectors, browser sign-in and CORS.</span></div></div>
         </section>
       </div>
       <aside class="notice">
         Tenant and workspace come from the target card. Non-secret setup values are remembered in this browser.
         The GitHub PAT is never saved. Deployment uses <code>deploy_fabric_app.py</code>.
       </aside>
-      <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Initialize sources, set up Foundry &amp; deploy app last</button>
+      <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Run Full Deploy</button>
       <div id="workflowPanel"><pre class="output muted">Combined progress and phase-tagged output will appear here.</pre></div>
     </div>
   </section>
@@ -432,21 +446,22 @@
     <div class="card">
       <div class="card-head">
         <span class="ico" style="background:rgba(139,92,246,.16);color:#c4b5fd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg></span>
-        <h2>Run the <code>01_Pipe_Setup</code> pipeline</h2>
+        <h2>Core setup, Weather and energy sources</h2>
       </div>
       <p class="hint">Checks that the target workspace can reach Key Vault, creates and approves a Fabric managed private endpoint when required and permitted, then runs the setup pipeline. The workspace name is resolved to its canonical ID before the notebooks start.</p>
+      <p class="hint">After <code>01_Pipe_Setup</code> completes, energy-source setup runs automatically and verifies its serving layers. Weather schema and schedule setup remain in the core pipeline; provider ingestion still needs valid credentials and its scheduled run. Foundry setup stays separate. A failed core pipeline never starts energy setup.</p>
       <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
-      <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Check access &amp; run pipeline</button>
+      <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run core setup</button>
       <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
   </section>
 
   <section id="paneEnergy" class="pane">
     <div class="card">
-      <div class="card-head"><h2>Set up energy-map sources</h2></div>
-      <p class="hint">Run core Fabric setup first. This module reuses the selected workspace's RTI Eventhouse, prepares GeoContext, runs only energy ingestion, and verifies the twelve serving layers and nine reservoir polygons. It does not rerun core setup, SQL seeding, or Foundry deployment. Sync Git first to update existing Git-managed energy notebooks.</p>
+      <div class="card-head"><h2>Refresh energy sources only</h2></div>
+      <p class="hint">Energy sources are included in Core setup and Full Deploy. Use this maintenance action only to refresh energy data without rerunning core setup or Foundry. It prepares GeoContext and verifies the twelve serving layers and nine reservoir polygons. Sync Git first to update existing Git-managed energy notebooks.</p>
       <p class="hint">Provider failures stop setup explicitly. Map Data Agent chat is a separate prerequisite; this module does not create an unverified agent or certify AI responses.</p>
-      <button id="energyBtn" class="primary" disabled>Set up energy sources</button>
+      <button id="energyBtn" class="primary" disabled>Refresh energy sources</button>
       <div id="energyPanel"><pre class="output muted">Energy setup output will appear here.</pre></div>
     </div>
   </section>
@@ -522,6 +537,27 @@
 <script>
 const $ = (id) => document.getElementById(id);
 
+function setSidebarCollapsed(collapsed) {
+  document.querySelector(".page").classList.toggle("sidebar-collapsed", collapsed);
+  $("deploymentSidebar").hidden = collapsed;
+  $("sidebarToggle").textContent = collapsed ? "Show sidebar" : "Hide sidebar";
+  $("sidebarToggle").setAttribute("aria-expanded", String(!collapsed));
+}
+$("sidebarToggle").addEventListener("click", () => {
+  const collapsed = !$("deploymentSidebar").hidden;
+  setSidebarCollapsed(collapsed);
+  try {
+    localStorage.setItem("fabric-demo.sidebar-collapsed", String(collapsed));
+  } catch (error) {
+    $("sidebarPreferenceStatus").textContent = `Could not save sidebar preference: ${error.message}`;
+  }
+});
+try {
+  setSidebarCollapsed(localStorage.getItem("fabric-demo.sidebar-collapsed") === "true");
+} catch (error) {
+  $("sidebarPreferenceStatus").textContent = `Could not restore sidebar preference: ${error.message}`;
+}
+
 function renderFoundryFields(prefix, clientId) {
   return `<p class="phelp"><strong>Defaults:</strong> reuse this target's project and ready chat model; discover the SPA and registry; preserve work-order write permissions. Requires Azure Developer CLI (<code>azd</code>). No new project is created unless you opt in.</p>
     <div class="grid">
@@ -595,7 +631,7 @@ function renderPanel(el, job) {
       : (i === job.phaseIndex && job.status === "running") ? "active" : "";
     return `<li class="${cls}">${p}</li>`;
   }).join("");
-  const phaseProgress = el.id === "workflowPanel"
+  const phaseProgress = ["workflowPanel", "pipelinePanel"].includes(el.id)
     ? renderWorkflowPhaseGroups(el, job)
     : (phases ? `<ol class="phases">${phases}</ol>` : "");
   const tail = (job.status !== "running" && job.returncode !== null && job.returncode !== undefined)
@@ -694,8 +730,8 @@ document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
 
 const WORKFLOW_PHASE_GROUPS = [
   { key: "sync", title: "GitHub Sync", prefix: "Sync \u00b7", component: "GitHub sync" },
-  { key: "pipeline", title: "Setup Pipeline", prefix: "Pipeline \u00b7", component: "Setup pipeline" },
-  { key: "energy", title: "Energy Sources", prefix: "Energy \u00b7", component: "Energy setup" },
+  { key: "pipeline", title: "Core Setup: Fabric and Weather", prefix: "Pipeline \u00b7", component: "Setup pipeline" },
+  { key: "energy", title: "Core Setup: Energy Sources", prefix: "Energy \u00b7", component: "Energy setup" },
   { key: "foundry", title: "Foundry Multi-agent Setup", prefix: "Foundry \u00b7", component: "Foundry multi-agent setup" },
   { key: "deploy", title: "Fabric App Deployment", prefix: "Deploy \u00b7", component: "Fabric app deploy" },
 ];
@@ -843,6 +879,7 @@ function deployValid() {
   return $("tenant").value.trim() && $("workspace").value.trim();
 }
 function refresh() {
+  $("sidebarTarget").textContent = [$("tenant").value.trim(), $("workspace").value.trim()].filter(Boolean).join(" / ");
   // The PAT only exists to CREATE a new connection, so reveal it only when one is
   // needed: reuse is off (create a saved connection) or a reuse test just failed.
   const needPat = !reuseChecked() || connTestState === "fail";
@@ -1073,7 +1110,7 @@ $("workflowBtn").addEventListener("click", async () => {
     pipeline: "01_Pipe_Setup",
     parameters: collectPipelineParams("wf_pp_"),
     clientId: $("workflowDeployClientId").value,
-    energyMap: $("workflowEnableEnergy").checked ? "enabled" : "keep",
+    energyMap: "enabled",
     ...foundryPayload("workflow"),
   }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
 });
@@ -1124,7 +1161,12 @@ $("stopBtn").addEventListener("click", async () => {
 
 // ---- tab switching ----
 function activateTab(name) {
-  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".tab").forEach((b) => {
+    const active = b.dataset.tab === name;
+    b.classList.toggle("active", active);
+    if (active) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
+  });
   $("paneWorkflow").classList.toggle("active", name === "workflow");
   $("paneSync").classList.toggle("active", name === "sync");
   $("panePipeline").classList.toggle("active", name === "pipeline");

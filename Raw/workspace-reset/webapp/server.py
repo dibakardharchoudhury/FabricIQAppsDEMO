@@ -122,11 +122,16 @@ ENERGY_MARKERS = [
     (1, ("[1/8]",)), (2, ("Energy: setup",)), (3, ("Energy map read models are ready",)),
 ]
 
+CORE_SETUP_PHASES = [
+    "Queued",
+    *[f"Pipeline · {phase}" for phase in PIPELINE_PHASES[1:-1]],
+    *[f"Energy · {phase}" for phase in ENERGY_PHASES[1:-1]],
+    "Done",
+]
 WORKFLOW_PHASES = [
     "Queued",
     *[f"Sync · {phase}" for phase in SYNC_PHASES[1:-1]],
-    *[f"Pipeline · {phase}" for phase in PIPELINE_PHASES[1:-1]],
-    *[f"Energy · {phase}" for phase in ENERGY_PHASES[1:-1]],
+    *CORE_SETUP_PHASES[1:-1],
     *[f"Foundry · {phase}" for phase in FOUNDRY_PHASES[1:-1]],
     *[f"Deploy · {phase}" for phase in DEPLOY_PHASES[1:-1]],
     "Done",
@@ -437,7 +442,7 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
             job.returncode = 0
             job.component = None
             job.phase_index = len(job.phases) - 1
-            job.lines.append("[workflow] Sync, pipeline, and app deployment completed successfully.")
+            job.lines.append("[workflow] Completed: " + ", ".join(str(step["name"]) for step in steps) + ".")
 
 
 def _start_workflow(steps: list[dict[str, object]], *, phases: list[str] | None = None) -> str | None:
@@ -705,18 +710,27 @@ def _pipeline_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
 def api_run_pipeline():
     data = request.get_json(silent=True) or {}
     try:
-        argv, env_extra = _pipeline_invocation(data)
+        steps = _core_setup_steps(data)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
-    job_id = _start(
-        argv,
-        env_extra,
-        PIPELINE_TIMEOUT_S,
-        PIPELINE_PHASES,
-        PIPELINE_MARKERS,
-        exclusive=True,
-    )
+    job_id = _start_workflow(steps, phases=CORE_SETUP_PHASES)
     return job_response(job_id)
+
+
+def _core_setup_steps(data: dict, *, phase_offset: int = 1) -> list[dict[str, object]]:
+    argv, env_extra = _pipeline_invocation(data)
+    energy_argv = _deploy_invocation({**data, "energyMap": "enabled"}, stage="energy")
+    return [
+        {
+            "name": "Setup pipeline", "argv": argv, "env": env_extra,
+            "timeout": PIPELINE_TIMEOUT_S, "markers": PIPELINE_MARKERS, "phase_offset": phase_offset,
+        },
+        {
+            "name": "Energy setup", "argv": energy_argv, "env": None,
+            "timeout": ENERGY_TIMEOUT_S, "markers": ENERGY_MARKERS,
+            "phase_offset": phase_offset + len(PIPELINE_PHASES) - 2,
+        },
+    ]
 
 
 @app.post("/api/deploy-app")
@@ -880,30 +894,22 @@ def api_full_workflow():
     data = request.get_json(silent=True) or {}
     try:
         sync_argv, sync_env = _sync_invocation(data)
-        pipeline_argv, pipeline_env = _pipeline_invocation(data)
+        core_steps = _core_setup_steps(data, phase_offset=len(SYNC_PHASES) - 1)
         deploy_argv = _deploy_invocation(data)
         deploy_env = _deploy_environment(data)
         foundry_argv = _deploy_invocation(data, stage="foundry")
-        energy_argv = _deploy_invocation(data, stage="energy")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
     sync_offset = 1
-    pipeline_offset = sync_offset + len(SYNC_PHASES) - 2
-    energy_offset = pipeline_offset + len(PIPELINE_PHASES) - 2
-    energy_enabled = data.get("energyMap") == "enabled"
-    foundry_offset = energy_offset + (len(ENERGY_PHASES) - 2 if energy_enabled else 0)
+    foundry_offset = len(SYNC_PHASES) - 1 + len(CORE_SETUP_PHASES) - 2
     deploy_offset = foundry_offset + len(FOUNDRY_PHASES) - 2
     steps = [
         {
             "name": "GitHub sync", "argv": sync_argv, "env": sync_env,
             "timeout": SYNC_TIMEOUT_S, "markers": SYNC_MARKERS, "phase_offset": sync_offset,
         },
-        {
-            "name": "Setup pipeline", "argv": pipeline_argv, "env": pipeline_env,
-            "timeout": PIPELINE_TIMEOUT_S, "markers": PIPELINE_MARKERS,
-            "phase_offset": pipeline_offset,
-        },
+        *core_steps,
         {
             "name": "Foundry multi-agent setup", "argv": foundry_argv, "env": deploy_env or None,
             "timeout": FOUNDRY_TIMEOUT_S, "markers": FOUNDRY_MARKERS,
@@ -917,15 +923,7 @@ def api_full_workflow():
             "phase_offset": deploy_offset,
         },
     ]
-    if energy_enabled:
-        steps.insert(2, {
-            "name": "Energy setup", "argv": energy_argv, "env": None,
-            "timeout": ENERGY_TIMEOUT_S, "markers": ENERGY_MARKERS, "phase_offset": energy_offset,
-        })
-    phases = WORKFLOW_PHASES if energy_enabled else [
-        phase for phase in WORKFLOW_PHASES if not phase.startswith("Energy ·")
-    ]
-    job_id = _start_workflow(steps, phases=phases)
+    job_id = _start_workflow(steps, phases=WORKFLOW_PHASES)
     return job_response(job_id)
 
 

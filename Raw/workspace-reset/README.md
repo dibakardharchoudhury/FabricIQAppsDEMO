@@ -54,8 +54,8 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
   workflows and streams live progress.
-- **Full workflow** — the local web UI runs GitHub sync, `01_Pipe_Setup`, selected
-  energy setup, independent Foundry setup, then final app publication in one
+- **Full Deploy** — the local web UI runs GitHub sync, core setup (`01_Pipe_Setup`
+  followed by energy preparation), independent Foundry setup, then final app publication in one
   monitored serial job. Each component has its own progress and failure boundary.
 
 ## Easiest start — just launch it (no commands to type)
@@ -86,12 +86,12 @@ it (or press Ctrl+C) to stop.
 For the simplest deployment, choose the target tenant/workspace, then use **Load signed-in
 subscriptions** instead of copying a subscription GUID. The list shows tenant IDs and does
 not switch Azure subscriptions. Use **Deploy app** for an existing prepared workspace; only
-use **Initialize everything** when Git sync and data setup are actually needed.
+use **Full Deploy** when Git sync and data setup are actually needed.
 **Set up Foundry agents** is a separate module before final app publication;
 it owns project/model/registry settings and explicitly billable first-time
 provisioning. Blank overrides use verified discovery, never another tenant's saved target.
 
-The **Run pipeline** and **Full workflow** setup forms share non-secret parameter
+The **Core setup** and **Full Deploy** setup forms share non-secret parameter
 values and remember edits in this browser, separately for each tenant/workspace
 pair. This includes the environment suffix, Key Vault URI and secret *names*,
 Teams destinations, alert recipient, run-as guard, and timeout. It never saves
@@ -126,10 +126,10 @@ forms and saved separately per tenant/workspace. See the
 
 For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
 checkout and explicitly select **Branch = `feat/dibakar`** when using Git sync or
-**Initialize everything**; those branch fields prefill from the current local checkout. **Deploy app**
+**Full Deploy**; those branch fields prefill from the current local checkout. **Deploy app**
 verifies prepared Foundry specialists, including Weather, without creating or
 publishing agents. It does not update Fabric notebook source or run Weather
-ingestion. **Set up energy sources** prepares PR #19 without a hidden feature
+ingestion. **Refresh energy sources** prepares PR #19 without a hidden feature
 profile; routine app publication preserves the same target's map setting.
 Explicit map enablement verifies the twelve live serving layers before build.
 Map Data Agent chat remains a separate prerequisite. See the
@@ -167,7 +167,7 @@ situation.
 
 ## Prerequisites
 
-The setup pipeline and **Run pipeline** form have no Data Agent or Operations Agent mode flags.
+The setup pipeline and **Core setup** form have no Data Agent or Operations Agent mode flags.
 The project always attempts agent provisioning against Ontology v2; existing v1 items are rejected
 rather than reused. The original Data Agent, ontology-backed Operations Agent, playbook/actions, Teams,
 and email-alert provisioning are retained. Real failures propagate through RTI_009/010/011 and
@@ -540,24 +540,34 @@ falls back to the configured run-as user, or the deploying user when both fields
 also require the Office 365 Outlook OAuth2 connection described in the root README. Review status/reasons and
 verify actual playbook execution and delivery separately from app-deployment success.
 
-The **Run pipeline** tab accepts either the target workspace display name or GUID in
+The **Core setup** action accepts either the target workspace display name or GUID in
 the sidebar. Its workspace parameter mirrors that value, and the runner resolves it
-to the canonical GUID before starting `01_Pipe_Setup`.
+to the canonical GUID before starting `01_Pipe_Setup`. The local action then runs
+energy preparation and read-model verification in the same exclusive job; a
+pipeline failure prevents energy setup. The raw `run_pipeline.py` CLI still runs
+only the named Fabric pipeline, not the local app's composed core action.
 
-The **Full workflow** tab composes the existing actions without replacing their
-implementations. It is self-contained: only the target tenant and workspace are
-shared from the sidebar; Git, pipeline, and app-deployment values are entered on
-the Full workflow screen itself.
+**Full Deploy** is separate from the collapsible **Deployment Actions** group.
+The group contains every individual module, including the energy-only maintenance
+action, and each entry has an icon. **Hide sidebar** expands the content area;
+the always-visible **Show sidebar** control restores navigation and target fields.
+The sidebar preference is remembered in this browser.
+
+**Full Deploy** composes the existing actions without replacing their engines.
+It is self-contained, uses the sidebar target, and shares remembered non-secret
+core and Foundry settings with the individual modules.
 
 1. **Sync from GitHub** using its own repository, branch, directory, reusable
    connection/PAT settings, and connection test.
-2. **Run `01_Pipe_Setup`** using its own complete parameter set.
-3. **Deploy the Fabric app** using `deploy_fabric_app.py` and its own optional
+2. **Core setup** runs `01_Pipe_Setup`, then energy preparation once.
+3. **Foundry agent setup** remains separate from core setup and website publication.
+4. **Deploy the Fabric app** using `deploy_fabric_app.py` and its own optional
    SPA client ID.
 
-The individual Sync, Pipeline, and Deploy tabs remain available for running or
-troubleshooting a single component; their values are not prerequisites for a
-Full workflow run.
+The individual actions remain available for running or troubleshooting a single
+component. **Refresh energy sources** updates only energy data without rerunning
+core setup or Foundry. No separate energy opt-in is needed during core setup or
+Full Deploy.
 
 The steps run strictly in order under one exclusive job. Each child keeps its
 existing validation, timeout, environment-only secrets, and live output. If a
@@ -663,7 +673,7 @@ tenant and workspace selected in the sidebar:
    project creation is an explicit, billable opt-in and requires model version/SKU/capacity settings, not defaults
    copied from the demo tenant. Both forms expose those settings. Requires `azd`; missing
    `azure.ai.agents` and `microsoft.foundry` extensions are installed
-   by the deployer. Native graph materialization remains a manual prerequisite; if the full workflow stops
+   by the deployer. Native graph materialization remains a manual prerequisite; if Full Deploy stops
    there after setup, complete the ontology's Manage graph flow, resolve the explicit binding and resume
    **Set up Foundry agents**, followed by **Deploy app**, not another workspace reset.
    The final app module only reads prepared Foundry definitions/runtime identities;
