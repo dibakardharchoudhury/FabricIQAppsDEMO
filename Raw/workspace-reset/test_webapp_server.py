@@ -522,6 +522,56 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
             self.assertEqual(specs["per_notebook_timeout_secs"]["default"], "")
             self.assertEqual(specs["ops_agent_teams_team_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_team_id"])
 
+    def test_startup_restores_the_only_saved_workspace_for_the_selected_tenant(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "defaults.json"
+            path.write_text(json.dumps({
+                "version": 2, "targets": [{
+                    "tenant": "tenant.example", "workspace": "Demo", "saved": True,
+                    "parameters": {**PIPELINE_PARAMS, "env_suffix": "V12"},
+                }],
+            }), encoding="utf-8")
+            with (
+                patch.object(SERVER, "PIPELINE_DEFAULTS_FILE", path),
+                patch.dict(os.environ, {"FABRIC_PIPELINE_PARAMS": ""}),
+                patch.object(SERVER, "_start") as start,
+                patch.object(SERVER.subprocess, "run") as process,
+            ):
+                response = self.client.get("/api/pipeline-params", query_string={
+                    "tenant": "TENANT.example", "workspace": "", "restoreTarget": "1",
+                })
+                self.assertEqual(response.status_code, 200, response.get_json())
+                data = response.get_json()
+                self.assertEqual(data.get("restoredTarget"), {"tenant": "TENANT.example", "workspace": "Demo"})
+                specs = {spec["name"]: spec for spec in data["parameters"]}
+                self.assertEqual(specs["env_suffix"]["default"], "V12")
+                for name, value in PIPELINE_PARAMS.items():
+                    self.assertEqual(specs[name]["default"], value)
+                for query in (
+                    {"tenant": "other-tenant", "workspace": "", "restoreTarget": "1"},
+                    {"tenant": "", "workspace": "", "restoreTarget": "1"},
+                    {"tenant": "tenant.example", "workspace": "Other", "restoreTarget": "1"},
+                    {"tenant": "tenant.example", "workspace": ""},
+                ):
+                    with self.subTest(query=query):
+                        data = self.client.get("/api/pipeline-params", query_string=query).get_json()
+                        self.assertIsNone(data.get("restoredTarget"))
+                        specs = {spec["name"]: spec for spec in data["parameters"]}
+                        self.assertEqual(specs["key_vault_uri"]["default"], "")
+                stored = json.loads(path.read_text(encoding="utf-8"))
+                stored["targets"].append({
+                    "tenant": "tenant.example", "workspace": "Second",
+                    "parameters": {"key_vault_uri": "https://second.vault.azure.net/"},
+                })
+                path.write_text(json.dumps(stored), encoding="utf-8")
+                data = self.client.get("/api/pipeline-params", query_string={
+                    "tenant": "tenant.example", "workspace": "", "restoreTarget": "1",
+                }).get_json()
+                self.assertIsNone(data.get("restoredTarget"))
+                self.assertIn("Choose a workspace", data["targetRestoreStatus"])
+                start.assert_not_called()
+                process.assert_not_called()
+
     def test_defaults_save_rejects_invalid_input_and_reports_atomic_write_failure(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "defaults.json"
@@ -552,6 +602,102 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 path.write_text("{", encoding="utf-8")
                 self.assertEqual(self.client.post("/api/pipeline-params", json=payload).status_code, 400)
                 self.assertEqual(path.read_text(encoding="utf-8"), "{")
+
+    def test_browser_startup_restores_workspace_before_rendering_saved_values(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        function = page[page.index("async function loadPipelineParams("):page.index("function collectPipelineParams(")]
+        specs = [
+            {"name": name, "default": value, "source": "saved local settings"}
+            for name, value in {**PIPELINE_PARAMS, "env_suffix": "V12", "workspace_id": ""}.items()
+        ]
+        script = """
+const assert = require("node:assert/strict");
+const fields = new Map();
+const $ = id => fields.get(id);
+for (const id of ["tenant","workspace","pipelineFields","workflowPipelineFields","targetSettingsStatus"]) {
+  fields.set(id,{value:"",textContent:"",innerHTML:"",classList:{remove(){}},
+    prepend(status){fields.set(status.id,status);}});
+}
+const document = {createElement:()=>({setAttribute(){}})};
+let pipelineSpec=[], pipelineLoadSequence=0, pipelineTarget="", pipelineSavedValues={}, targetEdited=false;
+let renderCount=0, remembered=null;
+const pipelineTargetKey = () => $("tenant").value.trim() && $("workspace").value.trim()
+  ? JSON.stringify([$("tenant").value.trim(),$("workspace").value.trim()]) : "";
+const saveTargetSettings = () => {remembered={tenant:$("tenant").value,workspace:$("workspace").value};};
+const restoreFoundrySettings = () => {};
+const readPipelineSettings = () => ({});
+const renderPipelineFields = prefix => {
+  renderCount++;
+  for(const spec of pipelineSpec) fields.set(prefix+spec.name,{value:spec.default,addEventListener(){}});
+  return "";
+};
+const syncPipelineWorkspace = () => {
+  for(const prefix of ["pp_","wf_pp_"]) $(prefix+"workspace_id").value=$("workspace").value;
+};
+const suggestPipelineEmail = () => {};
+const updatePipelineDefaultsSummary = () => {};
+const loadSubscriptions = () => {};
+const refresh = () => {};
+const escapeHtml = String;
+const persistPipelineSettings = () => {throw new Error("Startup must not save invented values");};
+const requests=[];
+const specs = """ + json.dumps(specs) + """;
+const restored = {parameters:specs,restoredTarget:{tenant:"tenant.example",workspace:"Demo"}};
+global.fetch = async url => {
+  requests.push(url);
+  assert.equal(new URL(url,"http://localhost").searchParams.get("restoreTarget"),"1");
+  return {ok:true,json:async()=>restored};
+};
+""" + function + """
+(async()=>{
+  $("tenant").value="tenant.example";
+  $("workspace").value="";
+  await loadPipelineParams({restoreTarget:true});
+  assert.equal($("workspace").value,"Demo");
+  assert.deepEqual(remembered,{tenant:"tenant.example",workspace:"Demo"});
+  assert.equal(pipelineTarget,pipelineTargetKey());
+  for(const prefix of ["pp_","wf_pp_"]) {
+    assert.equal($(prefix+"workspace_id").value,"Demo");
+    for(const name of ["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id"]) {
+      assert.equal($(prefix+name).value,specs.find(spec=>spec.name===name).default);
+    }
+  }
+  assert.equal(requests.length,1);
+  // A user editing the target during startup must win over the delayed response.
+  $("workspace").value="";
+  let respond;
+  global.fetch=()=>new Promise(resolve=>{respond=resolve;});
+  let previousRenders=renderCount;
+  let loading=loadPipelineParams({restoreTarget:true});
+  $("workspace").value="New workspace";
+  targetEdited=true;
+  respond({ok:true,json:async()=>restored});
+  await loading;
+  assert.equal($("workspace").value,"New workspace");
+  assert.equal(renderCount,previousRenders);
+  // Incomplete targets share an empty storage key, but must not share responses.
+  $("workspace").value="";
+  targetEdited=false;
+  previousRenders=renderCount;
+  loading=loadPipelineParams({restoreTarget:true});
+  $("tenant").value="different-tenant";
+  respond({ok:true,json:async()=>restored});
+  await loading;
+  assert.equal($("workspace").value,"");
+  assert.equal(renderCount,previousRenders);
+  $("tenant").value="tenant.example";
+  targetEdited=true;
+  global.fetch=async url=>{
+    assert.equal(new URL(url,"http://localhost").searchParams.get("restoreTarget"),"0");
+    return {ok:true,json:async()=>({parameters:specs.map(spec=>({...spec,default:"",source:undefined}))})};
+  };
+  await loadPipelineParams({restoreTarget:true});
+  assert.equal($("workspace").value,"");
+  assert.match($("pipelineSettingsStatus").textContent,/Select a tenant and workspace/);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_teams_fields_link_to_microsoft_id_instructions(self):
         response = self.client.get("/api/pipeline-params")

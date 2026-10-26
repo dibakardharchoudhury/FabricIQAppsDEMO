@@ -1164,6 +1164,7 @@ let pipelineIdentity = null;
 let pipelineTarget = "";
 let pipelineLoadSequence = 0;
 let pipelineSavedValues = {};
+let targetEdited = false;
 let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
@@ -1355,18 +1356,40 @@ function syncPipelineWorkspace() {
     if (field) field.value = $("workspace").value;
   });
 }
-async function loadPipelineParams() {
+async function loadPipelineParams({ restoreTarget = false } = {}) {
   const sequence = ++pipelineLoadSequence;
-  const target = pipelineTargetKey();
+  let target = pipelineTargetKey();
+  const requestedTenant = $("tenant").value.trim();
+  const requestedWorkspace = $("workspace").value.trim();
+  const isCurrentRequest = () => sequence === pipelineLoadSequence
+    && requestedTenant === $("tenant").value.trim()
+    && requestedWorkspace === $("workspace").value.trim();
+  let restoreStatus = "";
   try {
-    const query = new URLSearchParams({ tenant: $("tenant").value.trim(), workspace: $("workspace").value.trim() });
+    const query = new URLSearchParams({
+      tenant: requestedTenant, workspace: requestedWorkspace,
+      restoreTarget: restoreTarget && !targetEdited ? "1" : "0",
+    });
     const res = await fetch(`/api/pipeline-params?${query}`, { cache: "no-store" });
     const data = await res.json();
     if (!res.ok || !Array.isArray(data.parameters)) throw new Error(data.error || `HTTP ${res.status}`);
-    if (sequence !== pipelineLoadSequence || target !== pipelineTargetKey()) return;
+    if (!isCurrentRequest()) return;
+    if (data.restoredTarget) {
+      if (targetEdited) return;
+      if (!restoreTarget || requestedWorkspace
+          || data.restoredTarget.tenant !== requestedTenant
+          || typeof data.restoredTarget.workspace !== "string" || !data.restoredTarget.workspace.trim()) {
+        throw new Error("Invalid restored workspace");
+      }
+      $("workspace").value = data.restoredTarget.workspace;
+      saveTargetSettings();
+      $("targetSettingsStatus").textContent = "Restored this tenant's saved workspace from local configuration. Confirm before running.";
+      target = pipelineTargetKey();
+    }
+    restoreStatus = data.targetRestoreStatus || "";
     pipelineSpec = data.parameters;
   } catch (e) {
-    if (sequence !== pipelineLoadSequence || target !== pipelineTargetKey()) return;
+    if (!isCurrentRequest()) return;
     pipelineSpec = [];
     for (const id of ["pipelineFields", "workflowPipelineFields"]) {
       $(id).innerHTML = `<p class="phelp" role="alert">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
@@ -1385,7 +1408,9 @@ async function loadPipelineParams() {
     status.id = id;
     status.className = "phelp";
     status.setAttribute("role", "status");
-    status.textContent = "Known defaults are prefilled. Edits are saved on this machine per tenant/workspace, across browser sessions. Confirm alert destinations before running. Unknown values stay blank.";
+    status.textContent = restoreStatus || (target
+      ? "Known defaults are prefilled. Edits are saved on this machine per tenant/workspace, across browser sessions. Confirm alert destinations before running. Unknown values stay blank."
+      : "Select a tenant and workspace in the sidebar to load saved Key Vault and Teams values.");
     $(container).prepend(status);
   }
   pipelineSavedValues = readPipelineSettings();
@@ -1447,6 +1472,7 @@ function workflowPipelineValid() {
 $("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });
 for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("input", () => {
+    targetEdited = true;
     saveTargetSettings();
     restoreFoundrySettings();
     if (pipelineTarget !== pipelineTargetKey()) {
@@ -1503,7 +1529,7 @@ async function loadWhoAmI() {
       if (!$("tenant").value.trim() && d.tenantId) {
         $("tenant").value = d.tenantId;
         saveTargetSettings();
-        loadPipelineParams();
+        loadPipelineParams({ restoreTarget: !targetEdited });
         refresh();
       }
       suggestPipelineEmail();
@@ -1572,7 +1598,7 @@ $("signInBtn").addEventListener("click", signIn);
 restoreTargetSettings();
 loadWhoAmI();
 loadVersion();
-loadPipelineParams();
+loadPipelineParams({ restoreTarget: true });
 refresh();</script>
 </body>
 </html>
