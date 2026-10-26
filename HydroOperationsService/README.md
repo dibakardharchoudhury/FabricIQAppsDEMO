@@ -9,10 +9,12 @@ string absence without weakening positive-match, timestamp or identity checks.
 Ordinary operational questions use governed connectors/Eventhouse tools; explicit
 native selection is retained across the Python/Node admission boundary.
 Function loops stop on the first real callback error; one local input correction
-remains available. One model-rate retry honors a numeric provider wait of at most
-60 seconds within the existing completion budget/deadline, preserving captured
-evidence and never replaying a completed assessment, proposal or write. Hard
-quota, missing retry headers and repeated throttling still fail explicitly.
+remains available. The official SDK allows one transport retry per model HTTP
+request, honoring provider wait/backoff while retaining existing tool-result
+messages rather than restarting the agent. Native MCP transport keeps zero SDK
+retries and its separate same-source correction limit. Service timeouts and the
+ten-minute workflow deadline remain enforced; exhausted retries still fail
+explicitly. This does not replay source callbacks, proposals or production writes.
 No-RCA work-order handoffs preserve verified direct evidence and source
 population/provenance metadata. Keep the pinned deterministic workflow and existing project.
 Historical version/test counts below are not this release's runtime certificate.

@@ -26,8 +26,10 @@ its failure never triggers a direct-source fallback. Publication and signed
 browser acceptance must be recorded separately from local validation.
 The first repaired publication completed Gauge but exposed Fixer HTTP 429 against
 the existing 60,000-token/minute model. The follow-up preserves no-RCA direct
-handoff evidence and adds one explicitly reported provider-directed wait of at
-most 60 seconds, without replaying a completed assessment, proposal or write.
+handoff evidence. Transport recovery now uses one official SDK retry per model
+HTTP request, retaining existing function-result messages instead of restarting
+the agent. Native transport retains its separate no-SDK-retry correction bound;
+service/run deadlines and failure propagation remain mandatory.
 
 ## October 12 v77 canonical-prompt release
 

@@ -38,7 +38,6 @@ Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq", "weather"]
 NativeSource = Literal["data-agent"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
-FOUNDRY_RATE_LIMIT_MAX_WAIT_SECONDS = 60.0
 # The Supervisor is this hosted orchestrator's deterministic control plane, not a Foundry prompt agent. Its pinned
 # identity is the control-plane contract revision; bump it when the orchestration contract changes incompatibly.
 CONTROL_PLANE_AGENT = "hydro-orchestrator"
@@ -61,14 +60,16 @@ class BoundedAIProjectClient(AIProjectClient):
         credential: AsyncTokenCredential,
         *,
         request_timeout: float = FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+        transport_retries: int = 1,
         allow_preview: bool = False,
         **kwargs: Any,
     ):
         self.request_timeout = request_timeout
+        self.transport_retries = transport_retries
         super().__init__(endpoint, credential, allow_preview=allow_preview, **kwargs)
 
     def get_openai_client(self, *, agent_name: str | None = None, **kwargs: object):  # type: ignore[no-untyped-def]
-        kwargs.setdefault("max_retries", 0)
+        kwargs.setdefault("max_retries", self.transport_retries)
         kwargs.setdefault("timeout", self.request_timeout)
         return super().get_openai_client(agent_name=agent_name, **kwargs)
 
@@ -369,26 +370,6 @@ def transient_native_failure(error: BaseException) -> str | None:
                 and "completed without a reply to request with ID" in detail
             ):
                 return "missing_mcp_reply"
-        seen.add(id(current))
-        cause = current.__cause__ or current.__context__
-        current = cause if isinstance(cause, BaseException) and cause is not current else None
-    return None
-
-
-def model_rate_limit_wait(error: BaseException) -> float | None:
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        if isinstance(current, APIStatusError) and current.status_code == 429:
-            if getattr(current, "code", None) == "insufficient_quota":
-                return None
-            headers = current.response.headers
-            milliseconds = headers.get("retry-after-ms")
-            value = milliseconds if milliseconds is not None else headers.get("retry-after")
-            if value is None or not re.fullmatch(r"\d+(?:\.\d+)?", value.strip()):
-                return None
-            seconds = float(value) / 1000 if milliseconds is not None else float(value)
-            return max(1.0, seconds) if 0 <= seconds <= FOUNDRY_RATE_LIMIT_MAX_WAIT_SECONDS else None
         seen.add(id(current))
         cause = current.__cause__ or current.__context__
         current = cause if isinstance(cause, BaseException) and cause is not current else None
@@ -2582,6 +2563,7 @@ class FoundrySupervisor:
         )
         project_client = BoundedAIProjectClient(
             endpoint=self.endpoint, credential=self.credential, request_timeout=service_timeout,
+            transport_retries=0 if role == "fabric-iq" else 1,
         )
         agent = FoundryAgent(
             project_client=project_client, agent_name=version.name, agent_version=version.version,
@@ -2611,32 +2593,6 @@ class FoundrySupervisor:
                 except AgentFrameworkException as error:
                     logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
                     self.healthy(request)
-                    wait = model_rate_limit_wait(error)
-                    if (wait is not None and completion_attempt == 0
-                            and completed_report is None
-                            and not any(item.tool == "propose_work_order" for item in self.evidence.values())
-                            and (request.deadline - utc_now()).total_seconds() > wait + 5):
-                        logger.warning(
-                            "Foundry %s is rate limited; honoring Retry-After %.3fs once without replaying a "
-                            "completed assessment, proposal or production write.", role, wait,
-                        )
-                        self.emit_event(
-                            f"{request.run_id}:{role}:rate-limit", role, "running", "Model rate limit",
-                            f"The model requested a {wait:g}-second wait; one bounded retry will use the same "
-                            "source and captured evidence. No write is retried.",
-                            agent_name=version.name,
-                        )
-                        await asyncio.sleep(wait)
-                        self.healthy(request)
-                        active_context = {
-                            **active_context,
-                            "evidence": self.model_evidence(role, targeted=targeted_context),
-                            "completed_specialists": self.model_specialists(role, compact=targeted_context),
-                            "rate_limit_recovery": "Resume this same assignment using captured immutable evidence. "
-                                                   "Do not reread completed sources, repeat a completed assessment, "
-                                                   "stage a second proposal or perform a write.",
-                        }
-                        continue
                     transient_failure = transient_native_failure(error) if role == "fabric-iq" else None
                     if (
                         transient_failure is not None

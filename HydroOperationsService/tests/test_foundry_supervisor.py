@@ -27,7 +27,6 @@ from hydro_orchestrator.foundry_supervisor import (
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, safe_exception_signature,
     transient_native_failure,
-    model_rate_limit_wait,
     canonical_source_arguments,
     _bounded_citation_fragments, _encoded, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
@@ -905,22 +904,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.owner.selected_equipment_ids.clear()
         self.assertEqual(self.owner.model_evidence("work-order"), [receipt.receipt()])
 
-    def test_model_rate_limit_wait_requires_bounded_provider_retry_after_and_not_hard_quota(self):
-        for headers, code, expected in (
-            ({"retry-after": "12"}, "rate_limit_exceeded", 12),
-            ({"retry-after-ms": "1500"}, "rate_limit_exceeded", 1.5),
-            ({"retry-after": "0"}, "rate_limit_exceeded", 1),
-            ({}, "rate_limit_exceeded", None),
-            ({"retry-after": "61"}, "rate_limit_exceeded", None),
-            ({"retry-after": "bad"}, "rate_limit_exceeded", None),
-            ({"retry-after": "1"}, "insufficient_quota", None),
-        ):
-            with self.subTest(headers=headers, code=code):
-                response = httpx.Response(429, headers=headers, request=httpx.Request("POST", ENDPOINT))
-                error = BadRequestError("Private provider detail", response=response, body={"code": code})
-                wrapped = AgentFrameworkException("Private wrapper")
-                wrapped.__cause__ = error
-                self.assertEqual(model_rate_limit_wait(wrapped), expected)
+    def test_model_transport_retries_are_bounded_per_request_and_can_be_disabled_for_native(self):
+        for retries in (0, 1):
+            with self.subTest(retries=retries), patch(
+                "azure.ai.projects.aio.AIProjectClient.get_openai_client",
+            ) as factory:
+                client = BoundedAIProjectClient(
+                    ENDPOINT, self.credential, transport_retries=retries,
+                )
+                client.get_openai_client(agent_name="hydro-work-order-agent")
+                self.assertEqual(factory.call_args.kwargs["max_retries"], retries)
+                self.assertEqual(factory.call_args.kwargs["timeout"], 120.0)
 
     def test_fixer_after_rca_retains_native_table_references_without_fabricating_sql_coverage(self):
         receipt = ToolEvidence(
@@ -1149,6 +1143,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
         if ((self.mode == "work_order_rate_limit_once" and name == "hydro-work-order-agent" and round_number == 0)
+                or (self.mode == "qa_rate_limit_after_source" and name == "hydro-qa-agent" and round_number == 1)
                 or self.mode == "rate_limit_always"):
             return httpx.Response(429, headers={"retry-after": "1"}, json={
                 "error": {"message": "Rate limited.", "code": "rate_limit_exceeded", "type": "error"},
@@ -1238,6 +1233,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 if self.mode == "repeat_invalid":
                     arguments["equipmentId"] = "TEST_T005"
                 output = [self.function("hydro_query", {"tool_name": "query_telemetry", "arguments": arguments})]
+            if self.mode == "qa_rate_limit_after_source" and round_number == 2:
+                output = [self.message("The captured source read is complete; no physical fault is established.")]
         elif name == "hydro-rca-agent":
             ref = {"evidence_id": "reading-1", "path": "/rows/0"}
             if self.mode == "rca_duplicated_evidence_suffix":
@@ -1545,7 +1542,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             return_value=self.openai,
         ) as get_openai_client:
             self.assertIs(client.get_openai_client(), self.openai)
-        self.assertEqual(get_openai_client.call_args.kwargs["max_retries"], 0)
+        self.assertEqual(get_openai_client.call_args.kwargs["max_retries"], 1)
         self.assertEqual(
             get_openai_client.call_args.kwargs["timeout"],
             FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
@@ -2153,7 +2150,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_work_order_rate_limit_honors_one_provider_wait_without_replaying_source_reads(self):
         self.mode = "work_order_rate_limit_once"
-        with patch("hydro_orchestrator.foundry_supervisor.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        self.openai.max_retries = 1
+        with patch("openai._base_client.anyio.sleep", new_callable=AsyncMock) as sleep:
             result = await self.owner.run(self.request)
         sleep.assert_awaited_once_with(1.0)
         self.assertEqual(self.calls["hydro-work-order-agent"], 2)
@@ -2162,12 +2160,30 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_repeated_model_rate_limit_fails_after_one_wait_without_source_execution(self):
         self.mode = "rate_limit_always"
-        with patch("hydro_orchestrator.foundry_supervisor.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        self.openai.max_retries = 1
+        with patch("openai._base_client.anyio.sleep", new_callable=AsyncMock) as sleep:
             with self.assertRaises(AgentFrameworkException):
                 await self.owner.run(self.request)
         sleep.assert_awaited_once_with(1.0)
         self.assertEqual(self.calls["hydro-qa-agent"], 2)
         self.assertEqual(self.tools.calls, 0)
+
+    async def test_per_request_rate_retry_keeps_tool_result_and_does_not_restart_source_dispatch(self):
+        self.mode = "qa_rate_limit_after_source"
+        self.openai.max_retries = 1
+        journal = RunJournal(self.root / "quota-after-source")
+        journal.save("tool_catalog", await self.tools.catalog(self.request))
+        with patch("openai._base_client.anyio.sleep", new_callable=AsyncMock) as sleep:
+            response, report, _ = await self.owner.invoke(
+                "qa", "Read the selected equipment telemetry.", self.request,
+                journal, self.versions, None,
+            )
+        sleep.assert_awaited_once_with(1.0)
+        self.assertIsNone(report)
+        self.assertTrue(response.response_id)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(self.calls["hydro-qa-agent"], 3)
+        self.assertEqual(self.payloads[-2]["input"], self.payloads[-1]["input"])
 
     async def test_native_refusal_gets_one_bounded_same_source_correction(self):
         self.mode = "native_refusal_once"

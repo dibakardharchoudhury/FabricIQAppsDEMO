@@ -76,14 +76,34 @@ The follow-up repair keeps direct evidence in a no-RCA work-order handoff,
 projecting only verified selected equipment when available and preserving source
 population/provenance metadata. Empty scope retains its evidence rather than
 silently projecting it away. Complete immutable receipts are not mutated.
-Rate-limit recovery honors a numeric provider `Retry-After`/`retry-after-ms`
+The first follow-up's rate-limit recovery honored a numeric provider `Retry-After`/`retry-after-ms`
 of at most **60 seconds**, once, inside the existing completion budget and run
 deadline. It emits explicit application progress and reuses captured evidence.
 There is no retry after a completed assessment or staged proposal, no production
 write replay and no quota/resource change. Missing/invalid/over-budget retry
 headers, hard insufficient quota, repeated throttling and source failures still
 fail explicitly. The full **110-test** supervisor suite and Pyright passed;
-publication and live acceptance of this follow-up remain separate gates.
+publication and live acceptance of this follow-up were separate gates.
+
+Coordinator **v18**, image `src-39224ae5f38120fd` (ACR `dtf`) and signed app
+**1.0.1114 / `bad7b55`** were published successfully. The original request again
+completed Gauge. Run `52a2b87b-a0a0-45c1-8a08-6d51359e6ec7` failed at **53.2 seconds**:
+Fixer honored the provider's **15.660-second** wait, its next model call succeeded,
+then the following call hit another 429. No draft/write was certified.
+
+The corrected transport policy uses the official OpenAI SDK's **one retry per
+model HTTP request**, rather than restarting the whole agent. A throttled
+follow-up therefore retains that request's existing function-result messages;
+earlier source callbacks and completed assessments are not replayed. Requests
+remain bounded by the service timeout and ten-minute workflow deadline. Native
+MCP transport keeps **zero SDK retries**, preserving its separate shared
+same-source correction limit. This follows Microsoft's
+[rate-limit guidance](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/quota#rate-limit-best-practices)
+on provider retry headers and bounded backoff. Persistent errors still propagate;
+no quota, project or model deployment was changed. All **111** supervisor tests
+and Pyright passed, including exact retained request messages and one source
+dispatch after a follow-up 429. This policy's live acceptance remains pending
+publication.
 
 ## October 26 publication and main-merge readiness
 
