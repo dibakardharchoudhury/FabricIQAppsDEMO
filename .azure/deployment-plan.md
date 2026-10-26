@@ -1,6 +1,84 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## October 26, 2026: V12 setup failure recovery and live verification
+
+The current request is to verify the real deployment after NB01 rejected the
+SQL creation operation URL. Preserve the existing FEATURE workspace and owned
+`RTI_Demo_SQLDatabase_V12`; no reset, Git reimport, deletion, replacement SQL,
+new Foundry project or new model deployment is authorized.
+
+- Target tenant: `ad340c84-1886-4202-a483-2da2cb9168eb`.
+- Target workspace: `c7da7c28-0dee-4f45-bc9e-5628bb882732`.
+- Existing subscription: `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+- Recipe: existing Python AZCLI/Fabric REST orchestrator; no new IaC or azd environment.
+- All validation checks pass:
+  - [x] Read the existing approved deployment plan and target.
+  - [x] Run focused SQL lifecycle, shared LRO and initializer regressions: 95 passed.
+  - [x] Check all distributed notebook helpers and Raw mirrors: passed.
+  - [x] Read-only Fabric checks verify V12 SQL ownership and authoritative TDS metadata.
+  - [x] Verify current tenant, subscription, workspace capacity and existing SPA.
+  - [x] Run `npm run validate-env` before any app build/deployment.
+  - [x] Static role/policy review: no new infrastructure or role changes.
+- Source-only recovery must preserve live notebook dependencies and parameters.
+  Retry the existing Core setup action with suffix V12, not Full Deploy's Git import.
+- Final app publication must use only
+  `python Raw\workspace-reset\deploy_fabric_app.py --tenant ad340c84-1886-4202-a483-2da2cb9168eb --workspace c7da7c28-0dee-4f45-bc9e-5628bb882732 --push-config`.
+- Completion requires the actual pipeline result and the orchestrator's `SUCCESS`
+  and `DEPLOYED_APP_URL`; stop and report any mandatory administrator/manual prerequisite.
+
+### Section 7: Validation Proof (current recovery)
+
+On October 26, before live writes: 95 targeted tests passed; distributed notebook
+checks and `git diff --check` passed. Fabric GET verified the existing SQL item
+`2478e550-20c0-409b-832b-50f7a61f5dec` with the expected ownership description
+and nonempty authoritative TDS identity. No live deployment success is claimed.
+The broader, unchanged ontology suite has 29 baseline namespace-contract errors;
+these are not a green full-suite result.
+
+Live preflight verified the existing Enabled subscription, the same FEATURE
+workspace on Active F8 capacity `fabcapswc` in Sweden Central, and the existing
+tenant SPA `3ccdb72d-6c81-4459-b9fd-d9293c242555`. `npm run validate-env`
+initially failed because the retained STABLE-target `.env` lacked the required
+explicit energy-map flag. Its previous implicit disabled default was restored
+as `false` without editing any generated state or target IDs; validation then
+passed. The orchestrator must rotate target-specific state itself.
+The previous pipeline job is terminal Failed; no concurrent setup run was found.
+Static role/policy review: the patch changes Python operation handling only,
+with no new IaC, Azure resource, principal, grant or policy exemption. Existing
+Fabric read/definition permissions were verified live. ARM what-if, new
+container builds and azd environments do not apply to this source-only repair.
+The first application build identified missing locked dependencies. After
+`npm --prefix HydroOperationsApp ci` restored them, `npm --prefix
+HydroOperationsApp run build` passed TypeScript compilation and Vite production
+bundling (25.59 seconds, existing bundle/mixed-import warnings only). This
+preflight used installed Node 26; the canonical production orchestrator must
+still select Node 24 itself. No dependency manifest or lockfile changed.
+
+### First live recovery result
+
+All three SQL-support notebooks were updated in place with exact source
+readback. Their existing metadata, parameters and other definition parts were
+preserved; backups are held in the session workspace. No Git import occurred.
+The real local Core setup action started job `9495fe995ae64569b27a398172f5e20b`
+and Fabric pipeline run `bdc421a7-ca9b-4176-8080-a0ef0c6746e3`, with suffix V12.
+NB01 run `12005a6d-e736-4645-b995-0c709bdc8d26` succeeded, retaining SQL item
+`2478e550-20c0-409b-832b-50f7a61f5dec` and moving it into the existing setup
+folder `b309eae1-0393-4c3e-b660-9e92402a65de`.
+
+Stage 2 then failed in NB05 with `Only the default namespace is managed: ''`;
+downstream activities and energy were correctly not started. This establishes
+that the earlier baseline namespace failures are actual deployment blockers.
+The repair now makes direct-setting reads description-aware, inserts backing
+tables beneath the entity declaration, and preserves adjacent property
+descriptions. All 257 tests across ontology generation, semantics, setup contracts,
+agent capabilities, SQL lifecycle and the initializer pass with Python UTF-8
+mode. The extra agent-capability errors were Windows cp1252 logging failures;
+UTF-8 execution resolves them without changing application behavior. This is
+not an all-repository test claim. All six affected live notebook definitions
+have exact repaired-source readback with their other content and metadata
+preserved. Retry the same V12 core job before attempting app deployment.
 
 ## Current SQL rollout validation (October 25, 2026)
 

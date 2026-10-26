@@ -1379,7 +1379,8 @@ def _object_spans(text, kind, depth=None):
         end = index + 1
         while end < len(lines):
             candidate = lines[end]
-            if candidate.strip() and not candidate.lstrip().startswith("//"):
+            if candidate.strip() and (
+                    not candidate.lstrip().startswith("//") or candidate.lstrip().startswith("///")):
                 size = len(candidate) - len(candidate.lstrip(" \t"))
                 if len(candidate[:size].expandtabs(4)) <= indentation:
                     break
@@ -1408,8 +1409,11 @@ def _replace_object(text, kind, name, replacement, depth=None):
 def _direct_setting(text, key):
     """Read a direct child setting, never one belonging to another object."""
     lines = _normal_text(text).splitlines()
-    if not lines:
+    start = next((index for index, line in enumerate(lines)
+                  if line.strip() and not line.lstrip().startswith("//")), None)
+    if start is None:
         return None
+    lines = lines[start:]
     root = len(lines[0]) - len(lines[0].lstrip(" \t"))
     root_depth = len(lines[0][:root].expandtabs(4))
     candidates = []
@@ -2441,8 +2445,12 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
         if backing and _local_name(backing) != name:
             raise RuntimeError(f"Existing {name} has a different backing table")
         if not backing:
-            first_line, rest = text.split("\n", 1)
-            text = first_line + f"\n\tbackingTable: {_quote_name(name)}\n" + rest
+            entity = _object_block(text, "entity", name, 0)
+            if not entity:
+                raise RuntimeError(f"Missing managed entity declaration {name!r}")
+            first_line, rest = entity.split("\n", 1)
+            text = _replace_object(
+                text, "entity", name, first_line + f"\n\tbackingTable: {_quote_name(name)}\n" + rest, 0)
         for prop in static:
             block = _property_objects(text)[prop][1]
             column_ref = f"{_quote_name(name)}.{_quote_name(prop)}"

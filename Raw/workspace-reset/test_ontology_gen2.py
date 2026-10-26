@@ -458,6 +458,17 @@ class StructureTests(unittest.TestCase):
 
 
 class LakehouseTests(unittest.TestCase):
+    def test_backing_table_is_inserted_under_entity_not_under_its_description(self):
+        initial = built()
+        before = text(initial, "entities/facilities.tmdl")
+        self.assertTrue(before.startswith("/// "))
+        description = before[:before.index("entity facilities\n")]
+        result = binding_namespace()["_bind_gen2_parts"](initial, table_columns())[0]
+        actual = text(result, "entities/facilities.tmdl")
+        self.assertTrue(actual.startswith(description + "entity facilities\n\tbackingTable: facilities\n"))
+        self.assertEqual(support._direct_setting(actual, "keyProperty"), "facility_id")
+        self.assertEqual(binding_namespace()["_bind_gen2_parts"](result, table_columns())[0], result)
+
     def test_native_directlake_without_private_annotations_is_idempotent(self):
         initial = bound()
         for path in ("tables/facilities.tmdl", "tables/signal_master.tmdl"):

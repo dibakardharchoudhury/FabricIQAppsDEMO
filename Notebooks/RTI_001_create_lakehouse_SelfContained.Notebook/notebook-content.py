@@ -2639,7 +2639,8 @@ def _object_spans(text, kind, depth=None):
         end = index + 1
         while end < len(lines):
             candidate = lines[end]
-            if candidate.strip() and not candidate.lstrip().startswith("//"):
+            if candidate.strip() and (
+                    not candidate.lstrip().startswith("//") or candidate.lstrip().startswith("///")):
                 size = len(candidate) - len(candidate.lstrip(" \t"))
                 if len(candidate[:size].expandtabs(4)) <= indentation:
                     break

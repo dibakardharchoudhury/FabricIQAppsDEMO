@@ -26,6 +26,41 @@ def fixture():
 
 
 class OntologySemanticsTests(unittest.TestCase):
+    def test_direct_settings_ignore_leading_descriptions_without_reading_nested_objects(self):
+        entity = ("entity equipment\n\tkeyProperty: equipment_id\n"
+                  "\tproperty equipment_id\n\t\tdataType: String\n"
+                  "\tproperty nested\n\t\tkeyProperty: wrong\n")
+        for prefix in ("", "/// Equipment description.\n", "\n/// First line.\n/// Second line.\n"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(prefix=prefix, newline=newline):
+                    text = (prefix + entity).replace("\n", newline)
+                    self.assertEqual(support._direct_setting(text, "keyProperty"), "equipment_id")
+                    self.assertIsNone(support._direct_setting(text, "dataType"))
+        self.assertIsNone(support._direct_setting("\n/// Only a comment.\n", "keyProperty"))
+
+    def test_semantic_descriptions_preserve_readable_entity_identity_settings(self):
+        before = support._parts_by_path(fixture())
+        after = support._parts_by_path(support._enrich_project_semantics(list(before.values())))
+        for path, part in before.items():
+            if not path.startswith("entities/"):
+                continue
+            for key in ("keyProperty", "backingTable"):
+                with self.subTest(path=path, key=key):
+                    self.assertEqual(
+                        support._direct_setting(support._decode_part(after[path]), key),
+                        support._direct_setting(support._decode_part(part), key))
+
+    def test_property_replacement_does_not_consume_the_next_property_description(self):
+        text = ("entity equipment\n\tkeyProperty: id\n"
+                "\tproperty id\n\t\tdataType: String\n"
+                "\t/// Operator description of the next property.\n"
+                "\tproperty label\n\t\tdataType: String\n")
+        block = support._object_block(text, "property", "id", 4)
+        self.assertNotIn("///", block)
+        updated = support._replace_object(
+            text, "property", "id", block + "\t\tannotation test = retained\n", 4)
+        self.assertIn("\t/// Operator description of the next property.\n\tproperty label\n", updated)
+
     def test_enrichment_is_additive_idempotent_and_preserves_bindings(self):
         before = fixture()
         after = support._enrich_project_semantics(before)

@@ -599,6 +599,14 @@ is reused and moved into its setup folder. Do not rerun a full Git import just t
 retry this stage. Local regression tests are not a successful live deployment;
 verify the real pipeline and each subsequent stage independently.
 
+A Stage 2 `Only the default namespace is managed: ''` error can also mean
+entity settings were hidden by leading TMDL descriptions, not that the ontology
+uses an unsupported namespace. The shared reader now skips leading descriptions,
+backing tables are inserted under the entity declaration, and binding updates
+preserve the following property's description. The default-namespace and source
+identity checks remain enforced. Apply the updated NB04/NB05/NB06 definitions and
+retry core setup with the same suffix; do not replace the ontology or SQL store.
+
 The steps run strictly in order under one exclusive job. Each child keeps its
 existing validation, timeout, environment-only secrets, and live output. If a
 step exits unsuccessfully, the combined log identifies the failed component and
