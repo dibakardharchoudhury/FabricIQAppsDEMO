@@ -3,12 +3,14 @@ import { useEffect, useEffectEvent, useRef } from 'react'
 import type { KnowledgeEdge, KnowledgeNode } from '../../knowledgeGraphModel'
 import {
   KNOWLEDGE_EDGE_COLOR,
+  KNOWLEDGE_EDGE_INTERACTION_STYLE,
   KNOWLEDGE_NODE_SIZE,
   KNOWLEDGE_STATUS_COLOR,
   KNOWLEDGE_TYPE_COLOR,
   knowledgeEdgeRoutes,
   knowledgeFaultPulse,
   knowledgeHaloPadding,
+  knowledgeFocusElementIds,
   telemetryFlowEdgeIds,
 } from '../../knowledgeGraphVisuals'
 import type { AppTheme } from '../../hooks/useTheme'
@@ -32,7 +34,7 @@ const nodeIcons = Object.fromEntries(Object.entries(iconPath).map(([type, path])
   `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`)}`,
 ])) as Record<KnowledgeNode['type'], string>
 
-function applyGraphFocus(graph: Core, selectedId?: string) {
+function applyGraphFocus(graph: Core, nodes: KnowledgeNode[], edges: KnowledgeEdge[], selectedId?: string) {
   graph.elements().removeClass('focus-dimmed focus-neighbor focus-selected')
   graph.$(':selected').unselect()
   if (!selectedId) return
@@ -40,7 +42,8 @@ function applyGraphFocus(graph: Core, selectedId?: string) {
   if (selected.empty()) return
   selected.select()
   graph.elements().addClass('focus-dimmed')
-  selected.closedNeighborhood().removeClass('focus-dimmed').addClass('focus-neighbor')
+  const context = knowledgeFocusElementIds(nodes, edges, selectedId)
+  graph.elements().filter(element => context.has(element.id())).removeClass('focus-dimmed').addClass('focus-neighbor')
   selected.removeClass('focus-neighbor').addClass('focus-selected')
 }
 
@@ -119,6 +122,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
           },
         },
         { selector: 'edge.focus-neighbor, edge:selected', style: { width: 2.8, opacity: 0.94, 'text-opacity': 1, 'z-index': 10 } },
+        { selector: 'edge:active, edge:selected', style: KNOWLEDGE_EDGE_INTERACTION_STYLE },
         {
           selector: 'edge[flow = 1]',
           style: {
@@ -191,7 +195,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         if (position && added.isNode()) added.position(position)
       }
     })
-    applyGraphFocus(graph, selectedId)
+    applyGraphFocus(graph, nodes, edges, selectedId)
     if ((!wasInitialized || needsLayout) && graph.nodes().nonempty()) {
       initializedRef.current = true
       previousLayoutRef.current = layout
@@ -209,8 +213,8 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
-    applyGraphFocus(graph, selectedId)
-  }, [controllerRef, selectedId, theme])
+    applyGraphFocus(graph, nodes, edges, selectedId)
+  }, [controllerRef, edges, nodes, selectedId, theme])
 
   useEffect(() => {
     const graph = controllerRef.current

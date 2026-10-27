@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseOntologyContract } from '../src/services/ontologyContract.ts'
 import { readOntologySourceGraph, SOURCE_GRAPH_LIMITS, type OntologySourceReader } from '../src/services/ontologySourceGraph.ts'
-import { buildKnowledgeGraph, loadNativeGraphSnapshot } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { buildKnowledgeGraph, knowledgeGraphScope, loadNativeGraphSnapshot } from '../src/ui-shared/knowledgeGraphModel.ts'
 
 const workspace = '11111111-1111-4111-8111-111111111111'
 const item = '22222222-2222-4222-8222-222222222222'
@@ -83,6 +83,97 @@ test('live presentation does not append inferred SQL nodes or native provenance'
   assert.ok(graph.nodes.every(node => !node.nativeOid && !node.provenance.includes('materialized')))
   assert.ok(graph.edges.every(edge => !edge.nativeOid && edge.ontologyRelationshipId))
 })
+
+  test('declared maintenance joins retain distinct equipment, instrument and signal endpoints in both presentations', async () => {
+    const rows: Record<string, Array<Record<string, string>>> = {
+      facilities: [{ facility_id: 'F1' }],
+      systems: [{ system_id: 'S1', facility_id: 'F1' }],
+      equipment: [{ equipment_id: 'E1', system_id: 'S1' }],
+      instruments: [
+        { instrument_id: 'I1', equipment_id: 'E1', opcua_node_id: 'power' },
+        { instrument_id: 'I2', equipment_id: 'E1', opcua_node_id: 'temperature' },
+      ],
+      signal_master: [
+        { opcua_node_id: 'power', instrument_id: 'I1' },
+        { opcua_node_id: 'temperature', instrument_id: 'I2' },
+      ],
+      WorkOrder: [{ id: 'W1', equipmentId: 'E1', instrumentId: 'I1', opcuaNodeId: 'power' }],
+      Inspection: [{ id: 'IN1', equipmentId: 'E1', opcuaNodeId: 'power' }],
+      MaintenanceNotification: [{ id: 'N1', equipmentId: 'E1', opcuaNodeId: 'power' }],
+    }
+    const relationships = [
+      ['systems_in_facilities', 'systems', 'facility_id', 'facilities', 'facility_id'],
+      ['equipment_in_systems', 'equipment', 'system_id', 'systems', 'system_id'],
+      ['instruments_on_equipment', 'instruments', 'equipment_id', 'equipment', 'equipment_id'],
+      ['signals_from_instruments', 'signal_master', 'instrument_id', 'instruments', 'instrument_id'],
+      ['WorkOrder_for_equipment', 'WorkOrder', 'equipmentId', 'equipment', 'equipment_id'],
+      ['WorkOrder_for_instrument', 'WorkOrder', 'instrumentId', 'instruments', 'instrument_id'],
+      ['WorkOrder_for_signal', 'WorkOrder', 'opcuaNodeId', 'signal_master', 'opcua_node_id'],
+      ['Inspection_for_equipment', 'Inspection', 'equipmentId', 'equipment', 'equipment_id'],
+      ['Inspection_for_signal', 'Inspection', 'opcuaNodeId', 'signal_master', 'opcua_node_id'],
+      ['MaintenanceNotification_for_equipment', 'MaintenanceNotification', 'equipmentId', 'equipment', 'equipment_id'],
+      ['MaintenanceNotification_for_signal', 'MaintenanceNotification', 'opcuaNodeId', 'signal_master', 'opcua_node_id'],
+    ]
+    const parts = [definition().definition.parts[0]]
+    for (const [name, records] of Object.entries(rows)) {
+      const columns = Object.keys(records[0])
+      parts.push(
+        part(`tables/${name}.tmdl`, [
+          `table ${name}`,
+          ...columns.map(column => `    column ${column}\n      dataType: string\n      sourceColumn: ${column}`),
+          `    partition ${name} = entity`, '      mode: directLake', '      source',
+          `        entityName: ${name}`, "        expressionSource: 'Bound Lake'",
+        ].join('\n')),
+        part(`entities/${name}.tmdl`, [
+          `entity ${name}`, `    backingTable: ${name}`, `    keyProperty: ${columns[0]}`,
+          ...columns.map(column => `    property ${column}\n      dataType: string\n      lineageTag: ${name}-${column}\n      backingConfiguration\n        type: default\n        valueColumn: ${name}.${column}`),
+        ].join('\n')),
+      )
+    }
+    parts.push(
+      part('relationships.tmdl', relationships.map(([name, from, source, to, target]) =>
+        `relationship ${name}\n    fromColumn: ${from}.${source}\n    toColumn: ${to}.${target}`).join('\n')),
+      part('entityRelationships.tmdl', relationships.map(([name, from, , to]) =>
+        `entityRelationship ${name}\n    lineageTag: ${name}\n    fromEntity: ${from}\n    toEntity: ${to}\n    backingConfiguration\n      relationship: ${name}`).join('\n')),
+    )
+    const ontology = parseOntologyContract('ontology', 'Maintenance join fixture', { definition: { parts } }, 2)
+    const sources: OntologySourceReader[] = Object.entries(rows).map(([name, records]) => ({
+      workspaceId: workspace, itemId: item, itemKind: 'Lakehouse', schema: 'dbo', table: name,
+      columns: Object.keys(records[0]), read: async () => ({ items: records, hasNextPage: false }),
+    }))
+    const topology = await readOntologySourceGraph(ontology, sources)
+    const native = {
+      execution: 'native' as const, ontologyId: ontology.id, graphModelId: 'fixture-native', graphModelName: 'Fixture',
+      nodes: topology.nodes, edges: topology.edges,
+    }
+    for (const ontologyGraph of [topology, native]) {
+      const graph = buildKnowledgeGraph({
+        ontology, ontologyGraph, facilities: [], systems: [], equipment: [], instruments: [], telemetry: [],
+        workOrders: [], inspections: [], notifications: [], models: [],
+      })
+      assert.equal(graph.error, undefined)
+      for (const [name, source, target] of [
+        ['WorkOrder_for_equipment', 'work-order:W1', 'equipment:E1'],
+        ['WorkOrder_for_instrument', 'work-order:W1', 'instrument:I1'],
+        ['WorkOrder_for_signal', 'work-order:W1', 'signal:power'],
+        ['Inspection_for_signal', 'inspection:IN1', 'signal:power'],
+        ['MaintenanceNotification_for_signal', 'notification:N1', 'signal:power'],
+      ]) {
+        const edge = graph.edges.find(edge => edge.ontologyRelationshipName === name)
+        assert.equal(edge?.source, source, name)
+        assert.equal(edge?.target, target, name)
+        assert.equal(edge?.ontologyRelationshipId, name)
+      }
+      assert.ok(graph.edges.some(edge => edge.source === 'signal:power' && edge.target === 'instrument:I1'))
+      assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.properties['Signal entity'], undefined)
+      assert.equal(graph.nodes.find(node => node.id === 'instrument:I2')?.properties['Signal entity'], 'temperature')
+      assert.ok(!graph.nodes.some(node => node.id === 'signal:temperature'), 'unreferenced one-to-one leaves stay compact')
+      const scope = knowledgeGraphScope(graph, 'asset', 'equipment:E1')!
+      for (const id of ['work-order:W1', 'inspection:IN1', 'notification:N1', 'signal:power']) assert.ok(scope.has(id), id)
+      const ids = new Set(graph.nodes.map(node => node.id))
+      assert.ok(graph.edges.every(edge => ids.has(edge.source) && ids.has(edge.target)))
+    }
+  })
 
 test('checks every source identity before starting any connector read', async () => {
   const sources = readers()

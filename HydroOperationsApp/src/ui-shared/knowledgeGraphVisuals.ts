@@ -1,4 +1,10 @@
 import type { KnowledgeEdge, KnowledgeNode } from './knowledgeGraphModel'
+import type { Css } from 'cytoscape'
+
+export const KNOWLEDGE_EDGE_INTERACTION_STYLE: Css.Edge = {
+  'overlay-opacity': 0,
+  'overlay-padding': 0,
+}
 
 export const KNOWLEDGE_TYPE_COLOR: Record<KnowledgeNode['type'], string> = {
   facility: '#22d3ee',
@@ -87,10 +93,10 @@ export function knowledgeEdgeRoutes(edges: KnowledgeEdge[]): Map<string, { dista
   return routes
 }
 
-export function telemetryFlowEdgeIds(nodes: KnowledgeNode[], edges: KnowledgeEdge[], nowMs = Date.now()): Set<string> {
-  const flowing = new Set<string>()
+function topologyAncestors(nodes: KnowledgeNode[], edges: KnowledgeEdge[], seeds: Iterable<string>) {
+  const edgeIds = new Set<string>()
   const byId = new Map(nodes.map(node => [node.id, node]))
-  const queue = nodes.filter(node => node.reading && knowledgeTelemetryState(node.reading.eventTime, nowMs) === 'live').map(node => node.id)
+  const queue = [...new Set(seeds)]
   const visited = new Set(queue)
   const parents = new Map<string, Array<{ edge: KnowledgeEdge; parentId: string }>>()
   for (const edge of edges) {
@@ -110,11 +116,29 @@ export function telemetryFlowEdgeIds(nodes: KnowledgeNode[], edges: KnowledgeEdg
   for (let index = 0; index < queue.length; index++) {
     const nodeId = queue[index]
     for (const { edge, parentId } of parents.get(nodeId) ?? []) {
-      flowing.add(edge.id)
+      edgeIds.add(edge.id)
       if (visited.has(parentId)) continue
       visited.add(parentId)
       queue.push(parentId)
     }
   }
-  return flowing
+  return { nodeIds: visited, edgeIds }
+}
+
+export function knowledgeFocusElementIds(nodes: KnowledgeNode[], edges: KnowledgeEdge[], selectedId: string): Set<string> {
+  const neighborIds = new Set([selectedId])
+  const relationshipIds = new Set<string>()
+  for (const edge of edges) {
+    if (edge.source !== selectedId && edge.target !== selectedId) continue
+    neighborIds.add(edge.source)
+    neighborIds.add(edge.target)
+    relationshipIds.add(edge.id)
+  }
+  const ancestors = topologyAncestors(nodes, edges, neighborIds)
+  return new Set([...ancestors.nodeIds, ...ancestors.edgeIds, ...relationshipIds])
+}
+
+export function telemetryFlowEdgeIds(nodes: KnowledgeNode[], edges: KnowledgeEdge[], nowMs = Date.now()): Set<string> {
+  const fresh = nodes.filter(node => node.reading && knowledgeTelemetryState(node.reading.eventTime, nowMs) === 'live')
+  return topologyAncestors(nodes, edges, fresh.map(node => node.id)).edgeIds
 }

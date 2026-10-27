@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import test from 'node:test'
+import cytoscape from 'cytoscape'
 import type { KnowledgeEdge, KnowledgeNode } from '../src/ui-shared/knowledgeGraphModel.ts'
-import { knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeHaloPadding, knowledgeTelemetryState, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
+import { KNOWLEDGE_EDGE_INTERACTION_STYLE, knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeFocusElementIds, knowledgeHaloPadding, knowledgeTelemetryState, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
 
 const NOW = Date.parse('2026-10-27T01:00:00Z')
 const node = (id: string, type: KnowledgeNode['type'], reading = false): KnowledgeNode => ({
@@ -47,6 +48,62 @@ test('flow starts when telemetry arrives, not when topology is loaded', () => {
   assert.deepEqual([...telemetryFlowEdgeIds([
     node('instrument', 'instrument', true), node('equipment', 'equipment'),
   ], edges, NOW)], ['binding'])
+})
+
+test('selection keeps the full governed ancestor path readable without highlighting sibling branches', () => {
+  const nodes = [
+    node('facility', 'facility'), node('system', 'system'), node('equipment', 'equipment'),
+    node('instrument', 'instrument'), node('signal', 'signal'), node('work', 'work-order'),
+    node('sibling', 'equipment'),
+  ]
+  const edges: KnowledgeEdge[] = [
+    { id: 'sf', source: 'system', target: 'facility', type: 'contains', label: 'system' },
+    { id: 'es', source: 'equipment', target: 'system', type: 'contains', label: 'equipment' },
+    { id: 'ie', source: 'instrument', target: 'equipment', type: 'has-instrument', label: 'instrument' },
+    { id: 'si', source: 'signal', target: 'instrument', type: 'has-signal', label: 'signal' },
+    { id: 'ws', source: 'work', target: 'signal', type: 'affects', label: 'work order' },
+    { id: 'sibling-system', source: 'sibling', target: 'system', type: 'contains', label: 'sibling' },
+  ]
+  for (const selected of ['work', 'signal', 'instrument', 'equipment']) {
+    const focused = knowledgeFocusElementIds(nodes, edges, selected)
+    for (const id of ['facility', 'system', 'equipment', 'sf', 'es']) assert.ok(focused.has(id), `${selected}: ${id}`)
+    assert.ok(!focused.has('sibling'))
+    assert.ok(!focused.has('sibling-system'))
+    assert.deepEqual(knowledgeFocusElementIds(nodes, edges.map(edge => ({ ...edge, source: edge.target, target: edge.source })), selected), focused)
+  }
+  assert.deepEqual(telemetryFlowEdgeIds(nodes, edges, NOW), new Set(), 'selection cannot manufacture live telemetry')
+})
+
+test('active and selected Cytoscape edges have no black overlay and retain semantic color and direction', () => {
+  const graph = cytoscape({
+    headless: true, styleEnabled: true,
+    elements: [
+      { data: { id: 'work' } }, { data: { id: 'signal' } },
+      { data: { id: 'relationship', source: 'work', target: 'signal', color: '#fbbf24' } },
+    ],
+    style: [
+      { selector: 'edge', style: { 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', width: 1.9 } },
+      { selector: 'edge:active, edge:selected', style: KNOWLEDGE_EDGE_INTERACTION_STYLE },
+    ],
+  })
+  try {
+    const edge = graph.getElementById('relationship')
+    for (const state of ['active', 'selected'] as const) {
+      if (state === 'active') edge.activate()
+      else { edge.unactivate(); edge.select() }
+      assert.equal(edge.style('overlay-opacity'), '0', state)
+      assert.equal(edge.style('overlay-padding'), '0px', state)
+      assert.equal(edge.style('line-color'), 'rgb(251,191,36)', state)
+      assert.equal(edge.style('target-arrow-color'), 'rgb(251,191,36)', state)
+      assert.equal(edge.style('target-arrow-shape'), 'triangle', state)
+      assert.equal(edge.source().id(), 'work')
+      assert.equal(edge.target().id(), 'signal')
+    }
+  } finally {
+    graph.destroy()
+  }
+  const canvas = readFileSync(new URL('../src/ui-shared/components/knowledgeGraph/KnowledgeGraphCanvas.tsx', import.meta.url), 'utf8')
+  assert.match(canvas, /selector: 'edge:active, edge:selected', style: KNOWLEDGE_EDGE_INTERACTION_STYLE/)
 })
 
 test('flow expires by event time without requiring another fetch and rejects invalid/future timestamps', () => {
@@ -187,6 +244,7 @@ test('maximum supported graph visual preparation stays within an interactive bud
   const started = performance.now()
   const flowing = telemetryFlowEdgeIds(nodes, edges, NOW)
   assert.equal(knowledgeEdgeRoutes(edges).size, edges.length)
+  assert.ok(knowledgeFocusElementIds(nodes, edges, 'node-83').size > 0)
   const elapsed = performance.now() - started
   assert.ok(flowing.size > 0)
   assert.ok(elapsed < 250, `visual preparation took ${elapsed.toFixed(1)} ms`)

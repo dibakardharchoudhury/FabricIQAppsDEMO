@@ -1,6 +1,85 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Knowledge Graph endpoint and edge interaction repair
+
+Modify the existing React/Cytoscape frontend, using the existing canonical Python
+deployment recipe and unchanged FEATURE target described below. No new Azure
+resources, infrastructure, role grants, network settings or source permissions.
+No agent runtime/image change or approved-write policy change.
+
+Scope:
+- Preserve separate signal nodes whenever any relationship other than the
+  one-to-one instrument binding references them; never redirect maintenance
+  relationships to a different Ontology entity type.
+- Stop appending inferred SQL overlay topology in native mode, matching live
+  mode's source-authoritative behavior. Keep telemetry and maintenance-health
+  observations; preserve operational entities returned by Ontology execution.
+- Suppress Cytoscape's black active/selected edge overlay, retaining semantic
+  colors/arrowheads and existing visual design.
+- Keep the selected context's governed ancestor chain readable to the facility.
+
+Source review read the published FEATURE Ontology's 18 entity types and 17
+relationship types. Equipment/instrument/signal WorkOrder keys and maintenance
+signal joins are distinct and correctly typed. No binding error was established;
+no Ontology relationship will be removed to hide a renderer discrepancy.
+
+Target: tenant `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, existing Sweden Central capacity and
+subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+
+Publication to this unchanged target was offered for confirmation; the user was
+unavailable. Continue with the existing FEATURE target and no resource or
+permission changes, consistent with the requested application repair.
+
+### Functional verification - endpoint and interaction repair
+
+- Status: Verified locally. The graph suite passes **114 tests**, scoped ESLint,
+  Node 24 `validate-env`, and production TypeScript/Vite build pass.
+- The authenticated live WO-2851 inspector confirmed equipment T008, instrument
+  `INST_T008_POWER_OUTPUT`, and signal `ns=2;s=T008.power_output`; its old signal
+  relationship displayed an instrument endpoint, reproducing the discrepancy.
+- An explicitly synthetic actual-component browser fixture verified zero
+  activated-edge overlay opacity/padding, preserved hierarchy/WO colors and
+  triangle arrows, visible ancestors through the facility, dimmed siblings,
+  and unchanged node positions during selection.
+- Backend/agents, permissions, source queries and Ontology bindings are unchanged.
+  No production write was performed. Canonical endpoint readiness and hosted
+  live-source acceptance remain deployment gates, not inferred from fixtures.
+- Azure CLI readback confirms the expected tenant and Enabled subscription.
+  Origin/main is already an ancestor; the working branch is synchronized.
+
+Previous receipts below describe earlier releases and are not deployment proof
+for this update.
+
+### Section 7: Validation Proof - endpoint and interaction repair
+
+Validation date: 2026-10-27. Recipe: existing repository Python/Azure CLI
+orchestrator, not a new ARM/Bicep/Terraform deployment.
+
+All validation checks pass:
+- [x] Core validation: authenticated expected tenant/Enabled subscription,
+  Node 24, `npm run validate-env`, **114 passing graph tests**, scoped ESLint,
+  and production TypeScript/Vite build. Existing mixed-import/chunk warnings
+  remain non-blocking. ARM template validation/what-if are not applicable:
+  no ARM resource or IaC changes are part of this frontend repair.
+- [x] Container build: not applicable; agent/container source and dependency
+  manifests are unchanged. Reuse the current source-fingerprinted image.
+- [x] Static role verification and policy delta: no identity, role assignment,
+  source permission, resource type/SKU, region, tag or network changes. Existing
+  delegated source authentication and human-approved write enforcement remain.
+- [x] Functional verification: actual physical-join regression in both modes,
+  actual Cytoscape computed styles, and synthetic browser checks recorded above.
+  The fixture file was deleted and its attached server stopped.
+
+Commands executed under Node 24: `npm run test:knowledge-graph`,
+`npm exec -- eslint` on the three changed graph modules and three changed test
+files, `npm run validate-env`, and `npm run build`; all passed.
+Azure MCP policy readback returned ten applicable assignments, including the
+resource-creation block and write/delete MFA policies. This app-only publication
+does not request new ARM resources or change protected infrastructure properties;
+this is not a subscription-wide compliance certification.
 
 ## Knowledge Graph in-workspace loading update
 

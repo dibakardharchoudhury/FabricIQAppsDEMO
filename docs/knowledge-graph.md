@@ -7,6 +7,60 @@ navigable operational context. It is designed for an operator who starts with a 
 and needs to move quickly between the affected facility, system, equipment, instruments, current
 readings, inspections, notifications, work orders, and 3D model.
 
+## Ontology endpoint identity and edge interaction repair
+
+The October 27 review read the published FEATURE Ontology definition: **18 entity
+types and 17 relationship types**. Its WorkOrder associations are distinct:
+
+| Declared relationship | Source key | Target entity/key |
+| --- | --- | --- |
+| `WorkOrder_for_equipment` | `equipmentId` | `equipment.equipment_id` |
+| `WorkOrder_for_instrument` | `instrumentId` | `instruments.instrument_id` |
+| `WorkOrder_for_signal` | `opcuaNodeId` | `signal_master.opcua_node_id` |
+
+These are associations, not assertions that a work order causes power output.
+The same review verified inspection/notification signal joins and the declared
+instrument/equipment/system/facility chain. No incorrect binding was established
+in the published definition, so no valid Ontology relationship was deleted or
+changed merely to simplify the canvas.
+
+The authenticated live inspector confirmed WO-2851, **Investigate power output
+dip**, references equipment `EQUIP_RTI_T008`, instrument
+`INST_T008_POWER_OUTPUT` and signal `ns=2;s=T008.power_output`.
+Before repair, its `WORKORDER FOR SIGNAL` link incorrectly displayed the
+destination as an **instrument**, reproducing the presentation discrepancy
+against the actual operational record.
+
+The presentation previously collapsed every one-to-one signal into its instrument
+and redirected other relationships to the instrument. That could turn the last
+two associations above into apparently duplicate WO-to-power links. Now only an
+**unreferenced leaf signal** can collapse. A signal referenced by a work order,
+inspection, notification or any other relationship stays a separate `Signal`
+node; relationship direction, endpoint identity and provenance are preserved.
+
+Both execution modes now render source-provided topology without appending the
+old native-mode SQL `AFFECTS`/`DOCUMENTS`/`REPORTS`/`HAS MODEL` overlay links.
+Operational entities must come through Ontology execution. Separate telemetry
+readings and native maintenance-health context remain observations, not invented
+graph relationships.
+
+Cytoscape's default active edge was reproduced with a black overlay, opacity
+0.25 and 10 px padding. Active/selected edges now explicitly suppress that overlay,
+preserving semantic stroke colors and arrowheads. Selecting a turbine or related
+record keeps its existing governed ancestor path readable through the facility,
+without highlighting sibling branches or manufacturing telemetry flow. Existing
+palette, icons, layouts, fault halos, freshness rules and dash motion are retained.
+
+Validation: **114 graph tests pass**, including physical-column projection and
+distinct maintenance endpoints in both presentations, leaf compaction, native
+overlay removal, scope preservation, ancestor focus and computed Cytoscape
+active/selected styles. Scoped ESLint, Node 24 environment validation and the
+production TypeScript/Vite build pass. An explicitly synthetic browser fixture
+of the actual React/Cytoscape component verified zero overlay opacity/padding
+on activated hierarchy and WO edges, preserved semantic colors/triangle arrows,
+readable facility ancestry, dimmed siblings and unchanged node positions on
+selection. This fixture is not live-source performance or native-query acceptance.
+
 ## Loading and refresh interaction
 
 The graph workspace, toolbar, filters and inspector render immediately. First-load
@@ -67,8 +121,8 @@ historical acceptance tables below:
   including dimmed context.
 
 Hierarchy layout starts at the highest visible facility/system/equipment level rather than
-mistaking incoming maintenance records for roots. Parallel links, including separate instrument
-and signal relationships on a combined one-to-one node, retain their identities and labels in
+mistaking incoming maintenance records for roots. Referenced signals retain their own nodes;
+parallel relationships between the same endpoints retain their identities and labels in
 separate curved lanes. The inspector explicitly identifies incoming and outgoing relationships.
 Changing only readings or selection does not relayout or recenter the map; **Focus selected
 entity** and **Fit graph** remain explicit camera actions. Topology changes relayout the visible
@@ -545,18 +599,17 @@ polls preserve the current viewport, selection, and dragged node positions inste
 the graph. A layout is rerun only on initial load or when the operator selects a different layout.
 
 Latest Eventhouse readings enrich the measurement point by `opcua_node_id`; this preserves telemetry
-freshness independently of graph materialization. When one native `signal_master` node has a
-one-to-one native `signals_from_instruments` relationship, the UI combines it with that instrument into one
+freshness independently of graph materialization. When one `signal_master` node has a
+one-to-one `signals_from_instruments` relationship and no other relationship, the UI combines it with that instrument into one
 visual node and retains both entities in the inspector provenance. This removes duplicate labels
-without changing the governed v2 semantic contract. Unbound and non-one-to-one signals remain explicit nodes.
+without redirecting any external relationship. Referenced, unbound and non-one-to-one signals remain explicit nodes.
 The v2 adaptation retains the existing page layout, controls, friendly inspector labels, and
 one-to-one signal presentation. Native identity validation and errors do not introduce new panels.
-In native mode only, Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
-`instrumentId`, or `opcuaNodeId` as explicit external overlays attached to the corresponding
-native equipment. GraphQL/STID reads are not dependencies or topology substitutes for the
+Neither execution mode appends inferred SQL work orders, inspections, notifications or 3D model topology.
+GraphQL/STID reads are not dependencies or topology substitutes for the
 native canvas, tree or scopes; missing native edges are never filled in from foreign keys.
 Live mode reads operational entities through their ontology bindings and renders only relationships
-declared in the ontology, rather than these external overlays.
+declared in the ontology. Native mode preserves returned native topology and its provenance.
 
 The application does not execute GraphModel queries without an explicit, validated v2 graph binding.
 REST `/v1` does not mean Ontology generation 1.
@@ -625,8 +678,8 @@ or operational record, source timestamp, quality, and provenance.
 4. For live sources, verify item/table/property/key bindings and supported declared joins before reads.
    For native execution, validate graph metadata, queryable types/endpoints and complete responses.
 5. Preserve execution-specific identities, ontology type mappings and provenance; disclose coverage.
-6. Enrich loaded measurement points with separately observed KQL readings. Historical SQL overlays
-   remain native-only; live topology uses declared ontology relationships exclusively.
+6. Enrich loaded measurement points with separately observed KQL readings. Neither execution mode
+   appends historical SQL overlay topology; live topology uses declared ontology relationships exclusively.
 7. Fail closed on denied, invalid, incomplete or over-budget reads; never substitute guessed STID.
 
 This reuses the deployed v2 contract without silently substituting an unrelated graph or a v1 ontology.
@@ -666,8 +719,8 @@ It does not provide a GraphModel-instance REST export contract.
 
 1. Verify a v1 item is rejected. For a v2 ontology, verify the live TMDL contract, explicit managed
    graph binding, queryable type mappings, and native result paths; reject unrelated graphs.
-2. Verify every edge references two existing nodes and every operational overlay record exposes its
-   source join key.
+2. Verify every edge references two existing nodes, declared maintenance joins keep their distinct
+   endpoint entity types, and externally referenced signals never collapse into instruments.
 3. Compare representative relationship paths with the `ontology_relationship_audit` output from
    RTI_004/005.
 4. Select a turbine in Overview and verify Knowledge Graph restores it; select another turbine in

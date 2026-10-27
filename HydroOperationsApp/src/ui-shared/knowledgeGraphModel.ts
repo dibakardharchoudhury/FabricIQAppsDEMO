@@ -94,10 +94,6 @@ export type KnowledgeGraphInput = {
 }
 
 const nodeId = (type: KnowledgeNodeType, id: string) => `${type}:${id}`
-const edge = (source: string, target: string, type: KnowledgeEdgeType, label: string): KnowledgeEdge => ({
-  id: `${source}|${type}|${target}`, source, target, type, label,
-  provenance: 'SQL operational overlay · matched native equipment entity',
-})
 const presentGraphProperties = (properties: Record<string, unknown>): KnowledgeNode['properties'] => Object.fromEntries(
   Object.entries(properties).map(([key, value]) => [key, typeof value === 'object' && value !== null ? JSON.stringify(value) : value]),
 ) as KnowledgeNode['properties']
@@ -294,24 +290,25 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
 
   const sourceCounts = new Map<string, number>()
   const targetCounts = new Map<string, number>()
+  const degrees = new Map<string, number>()
+  for (const relationship of edges) for (const id of [relationship.source, relationship.target]) {
+    degrees.set(id, (degrees.get(id) ?? 0) + 1)
+  }
   for (const { source, target } of signalBindings) {
     sourceCounts.set(source.id, (sourceCounts.get(source.id) ?? 0) + 1)
     targetCounts.set(target.id, (targetCounts.get(target.id) ?? 0) + 1)
   }
-  const collapsed = new Map<string, string>()
+  const collapsed = new Set<string>()
   for (const { source, target } of signalBindings) {
-    if (sourceCounts.get(source.id) !== 1 || targetCounts.get(target.id) !== 1) continue
-    collapsed.set(source.id, target.id)
+    if (sourceCounts.get(source.id) !== 1 || targetCounts.get(target.id) !== 1 || degrees.get(source.id) !== 1) continue
+    collapsed.add(source.id)
     target.properties['Signal entity'] = source.entityId
     target.provenance = `Fabric Ontology · ${provenanceName} · combined one-to-one instruments + signal_master node with Eventhouse time-series binding`
   }
   for (let index = nodes.length - 1; index >= 0; index--) if (collapsed.has(nodes[index].id)) nodes.splice(index, 1)
   for (let index = edges.length - 1; index >= 0; index--) {
     const relationship = edges[index]
-    const remapped = collapsed.has(relationship.source) || collapsed.has(relationship.target)
-    relationship.source = collapsed.get(relationship.source) ?? relationship.source
-    relationship.target = collapsed.get(relationship.target) ?? relationship.target
-    if (remapped && relationship.source === relationship.target) edges.splice(index, 1)
+    if (collapsed.has(relationship.source) || collapsed.has(relationship.target)) edges.splice(index, 1)
   }
 
   const index = topologyIndex(nodes, edges)
@@ -354,30 +351,5 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     asset.status = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'
   }
 
-  if (sourceBacked) return { nodes, edges }
-
-  for (const model of input.models.filter(item => equipment.has(item.equipmentId))) {
-    nodes.push({ id: nodeId('model', model.id), entityId: model.id, type: 'model', label: model.modelName, subtitle: `${model.format}${model.version ? ` · ${model.version}` : ''}`, status: 'ok', equipmentId: model.equipmentId, properties: { Format: model.format, Version: model.version, URL: model.modelUrl, 'File size MB': model.fileSizeMb }, provenance: 'Rayfin operational database · Asset3DModel' })
-    edges.push(edge(equipment.get(model.equipmentId)!.id, nodeId('model', model.id), 'has-model', 'HAS MODEL'))
-  }
-  for (const order of orders) {
-    const closed = ['completed', 'cancelled'].includes(order.status.toLowerCase())
-    nodes.push({ id: nodeId('work-order', order.id), entityId: order.workOrderNumber, type: 'work-order', label: order.workOrderNumber, subtitle: order.title, status: closed ? 'ok' : order.priority.toLowerCase() === 'critical' ? 'crit' : 'warn', equipmentId: order.equipmentId, properties: { Title: order.title, Priority: order.priority, Status: order.status, Created: String(order.createdAt), Due: order.dueAt ? String(order.dueAt) : undefined }, provenance: 'Rayfin operational database · WorkOrder' })
-    edges.push(edge(nodeId('work-order', order.id), equipment.get(order.equipmentId)!.id, 'affects', 'AFFECTS'))
-  }
-  for (const inspection of input.inspections.filter(item => equipment.has(item.equipmentId))) {
-    nodes.push({ id: nodeId('inspection', inspection.id), entityId: inspection.id, type: 'inspection', label: inspection.inspectionType, subtitle: inspection.result, status: /fail|issue|attention/i.test(inspection.result) ? 'warn' : 'ok', equipmentId: inspection.equipmentId, properties: { Result: inspection.result, Findings: inspection.findings, Inspected: String(inspection.inspectedAt), 'Next due': inspection.nextDueAt ? String(inspection.nextDueAt) : undefined }, provenance: 'Rayfin operational database · Inspection' })
-    edges.push(edge(nodeId('inspection', inspection.id), equipment.get(inspection.equipmentId)!.id, 'documents', 'DOCUMENTS'))
-  }
-  for (const notification of input.notifications.filter(item => equipment.has(item.equipmentId))) {
-    nodes.push({ id: nodeId('notification', notification.id), entityId: notification.id, type: 'notification', label: notification.summary, subtitle: `${notification.severity} · ${notification.status}`, status: /critical|high/i.test(notification.severity) ? 'crit' : 'warn', equipmentId: notification.equipmentId, properties: { Severity: notification.severity, Status: notification.status, Reported: String(notification.reportedAt), 'OPC UA node': notification.opcuaNodeId }, provenance: 'Rayfin operational database · MaintenanceNotification' })
-    edges.push(edge(nodeId('notification', notification.id), equipment.get(notification.equipmentId)!.id, 'reports', 'REPORTS'))
-  }
-  for (const node of nodes) {
-    if (!node.nativeOid && node.equipmentId) node.facilityId = equipment.get(node.equipmentId)?.facilityId
-  }
-  if (!native) for (const relationship of edges) {
-    relationship.provenance = relationship.provenance?.replace('matched native equipment entity', 'matched Ontology-bound equipment entity')
-  }
   return { nodes, edges }
 }
