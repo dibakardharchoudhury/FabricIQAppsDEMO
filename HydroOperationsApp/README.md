@@ -62,6 +62,15 @@ The live connector/KQL requests still determine whether those sources exist and 
 queryable: missing, deleted, or failed sources clear the corresponding UI data rather than displaying
 a persisted snapshot.
 
+The **Inflow Model** page is a prototype shell for a Lomma/Bærum catchment flow forecast. It lists the
+official NVE and MET inputs and describes the referenced ensemble/HBV-style method, but does not
+currently ingest those feeds or calculate model values. This repository does not define a verified
+Lomma HydAPI series, MEPS ensemble, calibrated model parameters, or catchment geometry. The page
+therefore shows explicit unavailable states rather than substituting unrelated Hydro Operations data
+or illustrative values. HydAPI credentials must remain in the Fabric ingestion path, never in the
+browser bundle. The prototype is not an official warning service; use Varsom for current official
+information.
+
 NB11 does not provision a separate GraphQL API. SPA and hosted reads use the source-bound
 Lakehouse and independent SQL connectors; `Hydro_STID_API` is retired.
 The retained AppBackend-managed SQL/GraphQL children are not the active operational store.

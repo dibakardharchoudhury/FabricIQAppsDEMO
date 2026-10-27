@@ -1,8 +1,8 @@
-import { Activity, Bot, CloudSun, Factory, Gauge, Map, Network, Settings, Wrench } from 'lucide-react'
+import { Activity, Bot, CloudSun, Factory, Gauge, Map, Network, Settings, Waves, Wrench } from 'lucide-react'
 import { lazy, type ComponentType } from 'react'
 import { filterEnergyMapTabs, resolveVisibleTab } from '../ui-shared/appFeatures'
 
-export type V2TabId = 'overview' | 'map' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
+export type V2TabId = 'overview' | 'map' | 'telemetry' | 'weather' | 'inflow-model' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
 
 export type V2Tab = {
   id: V2TabId
@@ -17,6 +17,7 @@ const ALL_V2_TABS: V2Tab[] = [
   { id: 'map', label: 'Map', title: 'Operations Map', icon: Map, Page: lazy(() => import('../ui-shared/pages/OperationsMapPage').then(module => ({ default: module.OperationsMapPage }))) },
   { id: 'telemetry', label: 'Real Time Telemetry', title: 'Real Time Telemetry', icon: Activity, Page: lazy(() => import('./pages/TelemetryPage').then(module => ({ default: module.TelemetryPage }))) },
   { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: lazy(() => import('./pages/WeatherPage').then(module => ({ default: module.WeatherPage }))) },
+  { id: 'inflow-model', label: 'Inflow Model', title: 'Inflow Model', icon: Waves, Page: lazy(() => import('./pages/InflowModelPage').then(module => ({ default: module.InflowModelPage }))) },
   { id: 'digital-twin', label: 'Digital Twin', title: 'Digital Twin', icon: Factory, Page: lazy(() => import('./pages/DigitalTwinPage').then(module => ({ default: module.DigitalTwinPage }))) },
   { id: 'knowledge-graph', label: 'Knowledge Graph', title: 'Knowledge Graph', icon: Network, Page: lazy(() => import('./pages/KnowledgeGraphPage').then(module => ({ default: module.KnowledgeGraphPage }))) },
   { id: 'copilot', label: 'Hydro Intelligence', title: 'Hydro Intelligence', icon: Bot, Page: lazy(() => import('./pages/CopilotPage').then(module => ({ default: module.CopilotPage }))) },
