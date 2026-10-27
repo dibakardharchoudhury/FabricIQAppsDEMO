@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Agent authorization and source-routing repair validation
 
@@ -45,6 +45,34 @@ resolved, not waived. Azure CLI verified the expected tenant and Enabled
 subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`.
 Deployment SUCCESS and authenticated runtime acceptance must be recorded
 separately after publication.
+
+### Agent repair publication and acceptance boundary
+
+The canonical root command
+`python Raw\workspace-reset\deploy_fabric_app.py --tenant ad340c84-1886-4202-a483-2da2cb9168eb --workspace c7da7c28-0dee-4f45-bc9e-5628bb882732 --push-config`
+completed at `2026-10-27T07:01:08.626526Z`, in 812.578 seconds, with `SUCCESS`
+and `DEPLOYED_APP_URL=https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+Source commit: `f760be8`. ACR build `dtn` succeeded; coordinator version 24 is
+active on `src-ae2d589b20c8d8bd`. All five specialists were unchanged/reused
+(current=5, updated=0, created=0). No NB11 execution or demo DML ran.
+
+The existing AppBackend and all three connectors applied successfully.
+Browser-equivalent preflights returned HTTP 200 on `/graphql`, token and
+connector paths; POST readiness returned GraphQL 200, token 400 and protected
+connector 401, not a source-data acceptance claim. All 42 Entra SPA redirects
+were preserved; delegated permissions and existing consent were verified.
+
+Local browser verification displayed the new control and a resource-specific
+missing-access error in 0.1 seconds with no invocation. Hosted navigation
+reached the protected Fabric sign-in gate. Its Sign in action reported
+`Please allow pop-ups and try again`; trusted browser clicking also failed
+visibility/stability automation. The user was unavailable to complete sign-in.
+No token extraction/substitution or gate bypass was attempted.
+
+Therefore current-build hosted connector/QA/RCA/draft execution and latency
+acceptance remain **blocked**, not passed. After normal browser sign-in, use
+**Connect agent access** for each missing audience, then submit a fresh read/
+review request. No work-order approval or production write was performed.
 
 ## October 27 UKMet-first weather follow-up
 

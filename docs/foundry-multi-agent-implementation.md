@@ -32,6 +32,29 @@ Local regression results and deployment/browser acceptance are separate gates.
 Earlier live runs below are not evidence that this repair has been published or
 that a current authenticated multi-agent request has passed.
 
+### Publication receipt and remaining gate
+
+Repair `f760be8` was published through the canonical orchestrator at
+`2026-10-27T07:01:08.626526Z` (812.578 seconds), with `SUCCESS` and
+`DEPLOYED_APP_URL` for the existing FEATURE origin. ACR build `dtn` succeeded;
+`hydro-orchestrator:24` is active on source image `src-ae2d589b20c8d8bd`.
+All five specialists were reused unchanged. Existing AppBackend/three-connector
+apply, CORS/preflight/POST readiness and delegated-consent checks passed;
+all 42 redirects were preserved. No seeding or production write ran.
+
+All 149 focused application tests and 185 supervisor/live-source/source-auth
+tests pass under Node 24, as do the four focused packaging/fingerprint checks.
+TypeScript/Vite, environment validation and scoped ESLint pass. The local browser
+displayed the new control and actionable four-resource preflight failure in
+0.1 seconds without sending an invocation.
+
+**Hosted authenticated acceptance is blocked, not passed.** Fresh navigation
+reached Fabric's private-app gate; Sign in reported that its popup was blocked.
+The user was unavailable to finish browser sign-in. No CLI credentials were
+substituted and no gate was bypassed. A normal signed-in, current-build
+QA/RCA/draft run and its latency still require verification; historical passes
+below do not satisfy that gate.
+
 This record covers the original **October 7-11, 2026** implementation and later
 dated follow-ups, corrections, measured results and unfinished acceptance, grounded
 in repository commits and linked records. It is not a release certificate.
