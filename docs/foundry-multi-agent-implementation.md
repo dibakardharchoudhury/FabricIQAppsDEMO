@@ -277,6 +277,33 @@ no invocation starts until the source preflight succeeds. Authentication does
 not approve work, and transport failures never automatically replay a question
 or decision. Forced renewal must still meet the bounded operation's minimum lease.
 
+### Implicit-access publication and signed-browser acceptance
+
+The separate setup control was removed from both chat and Battle in `9197530`.
+Canonical FEATURE publication completed on October 27 at **09:36:54 UTC**:
+signed app **1.0.1143**, coordinator **v26**, image `src-ea5c543336298b9a`,
+ACR build `dtp`. All five specialist definitions and 42 redirects were preserved.
+The 43 authorization/transport tests, 43 hosted packaging tests, scoped lint,
+environment validation and production TypeScript/Vite build passed.
+
+The signed browser rendered no access setup button/banner and opened no sign-in
+popup on mount. Sending the existing six-hour BAD/UNCERTAIN telemetry question
+made **one run request**, opened **zero sign-in popups**, and returned in
+**24,972 ms**, with all 15 turbines and 180 verified records. Supervisor and
+Gauge completed; no work-order action or approval was requested. Session:
+`8b650710-77d8-4be4-b44f-7c73618b1f1f`. This is an observed single request,
+not a performance SLO or first-time-consent browser test; conditional consent,
+cancellation and silent-only background behavior have focused regressions.
+
+Do not treat this authorization acceptance as complete multi-agent acceptance.
+A different facility-count question first reached the hosted runtime but
+failed its existing planner contract with `unexpected-evidence:telemetry`
+(HTTP 500; no certified answer). Read-only session logs identified failed run
+`28968fae-2e54-4792-8637-9b3d814ea29f` in session
+`1a5f69ed-7d76-4e40-8c52-949c28796ba2`. It was not resubmitted; the independent
+routing defect remains open, not suppressed or repaired by this UX change.
+No operational write, approval or rejection was performed in either test.
+
 Ordinary operational questions use governed direct sources. Explicit Data Agent
 requests stay native, with no silent fallback. The specialized native quality/work
 contract must not capture ordinary wording or replace a requested independent

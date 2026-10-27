@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Implicit agent access
 
@@ -30,9 +30,10 @@ and explicit approval/no ambiguous-write replay. Scoped ESLint, Node 24
 mixed-import/chunk warnings remain. Hosted packaging/fingerprint tests exit 0.
 Azure CLI confirms the expected tenant and Enabled subscription.
 
-Pending: validation workflow proof and authenticated hosted chat acceptance
-after canonical deployment. Earlier receipts below remain historical, not
-acceptance for this change. No ARM provisioning or extra quota is requested.
+Validation workflow and authenticated hosted authorization acceptance are
+complete, as recorded below. This is not acceptance of every orchestration
+intent; an independent facility-count planner failure remains open. Earlier
+receipts below remain historical. No ARM provisioning or extra quota requested.
 
 ### Section 7: Validation Proof - implicit agent access
 
@@ -62,7 +63,36 @@ Commands: `node --import tsx --test` for source-access, Entra and transport
 tests; scoped `npm exec -- eslint`; `npm run validate-env`; `npm run build`;
 `.venv\Scripts\python.exe -m unittest discover -s Raw\workspace-reset -p
 test_deploy_hosted_agent.py`. All exit 0. Existing chunk/mixed-import warnings
-are unchanged. Hosted acceptance remains pending, not inferred from mocks.
+are unchanged. These local checks do not substitute for hosted acceptance below.
+
+### Hosted acceptance - implicit agent access
+
+- Canonical orchestrator exited 0 with final `SUCCESS` and `DEPLOYED_APP_URL`
+  at `2026-10-27T09:36:54.886760Z`, total **942.031 seconds**.
+  URL: `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+- Signed browser verified **v1.0.1143 / 9197530**, zero separate access
+  buttons/banners and no sign-in popup on mount.
+- A normal Send of the existing six-hour BAD/UNCERTAIN telemetry question
+  submitted exactly **one run request**, opened **zero sign-in popups**, and
+  returned the source-backed answer in **24,972 ms**. Supervisor and Gauge
+  completed; the rendered answer identified all 15 turbines with **180
+  verified records**. This is one browser sample, not a latency SLO.
+  Session: `8b650710-77d8-4be4-b44f-7c73618b1f1f`. No alert or work-order
+  action was present; no approval/rejection/production write was submitted.
+- An earlier, different facility-count question reached the runtime without
+  separate access setup but failed the existing orchestration guard with
+  `unexpected-evidence:telemetry`, returning HTTP 500 and no certified answer.
+  Session: `1a5f69ed-7d76-4e40-8c52-949c28796ba2`;
+  failed run: `28968fae-2e54-4792-8637-9b3d814ea29f`.
+  Read-only session logs confirmed this planner-contract failure. The failed
+  question was not resubmitted. This unrelated routing defect is not fixed or
+  hidden by the authorization change.
+- ACR build `dtp` succeeded; coordinator **v26** activated on
+  `src-ea5c543336298b9a`. All five specialist definitions were reused.
+- All 42 existing SPA redirects were preserved; runtime/SQL/CORS reapplication
+  and GraphQL, token and three connector preflight/POST readiness checks passed.
+- Azure MCP readback confirmed the existing project-scoped Foundry User role.
+  No new permission, role assignment, resource or write-policy change.
 
 ## Knowledge Graph endpoint and edge interaction repair
 
