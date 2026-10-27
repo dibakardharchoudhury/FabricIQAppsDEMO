@@ -1,5 +1,34 @@
 # Foundry and multi-agent implementation record
 
+## FEATURE human-approved work-order creation restored
+
+The disabled-card screenshot was a runtime policy failure, not a missing Fixer
+agent or a failed SQL insert. Read-only inspection found active coordinator v24
+had `production_writes_enabled=false`. The deployer correctly preserved that
+existing setting, while a new coordinator also defaults to disabled writes.
+
+The supported process-local `HYDRO_PRODUCTION_WRITES_ENABLED=true` override was
+published through the canonical combined deployment at
+`2026-10-27T07:25:26.149585Z` (667.016 seconds). Independent Foundry readback
+confirmed **hydro-orchestrator:25**, enabled approved creation, the expected
+FEATURE workspace and unchanged source image `src-ae2d589b20c8d8bd`. All five
+specialists were reused without version changes. Endpoint/CORS/preflight/POST
+readiness and delegated-scope contracts passed; all 42 SPA redirects remain.
+
+The focused configuration/convergence/delegated-authorization suite passed
+**48 tests in 34.596 seconds**, including explicit false-to-true/true-to-false
+overrides, enabled-policy preservation, signed approval, principal isolation,
+expiry, idempotency and uncertain-write reconciliation. The Node 24 production
+build and environment validation passed. No approval safety boundary, SQL
+permission or identity was changed.
+
+This restores the capability, not an approval: no SQL record was created, no
+decision was retried and no browser write/readback acceptance is claimed.
+The screenshot's displayed draft expiry was already in the past. Reload the
+app and request fresh evidence and a new draft; do not replay the disabled card.
+Hosting verification reached the protected sign-in gate, so authenticated
+application acceptance remains a separate outstanding check.
+
 ## Agent authorization and source-routing repair
 
 The immediate zero-second authorization error occurs in the browser's delegated

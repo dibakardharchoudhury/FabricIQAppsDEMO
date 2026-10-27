@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## FEATURE human-approved work-order policy restoration
 
@@ -27,7 +27,7 @@ All validation checks pass (required before deployment):
   No new image or source-code change is required.
 - [x] Static roles and Azure Policy: no ARM/IaC, identity, network, delegated
   permission or RBAC change; the application-level approved-write flag changes.
-- [ ] Canonical publication and live readback: active coordinator flag true,
+- [x] Canonical publication and live readback: active coordinator flag true,
   unchanged target and source image; preserved redirects and endpoint readiness.
 
 ### Section 7: Work-order policy validation proof
@@ -53,9 +53,28 @@ Validation performed 2026-10-27T07:09Z through 07:13Z:
   build `dtn` and is active in v24. No packaged runtime source or dependency changed;
   no new image or ARM validate/what-if/Azure Policy resource delta is applicable.
 
-Canonical publication and independent active-version readback are pending. Do
-not claim a production SQL creation: no acceptance work order will be submitted
-without a separate explicit approval of its actual draft.
+Canonical publication completed at `2026-10-27T07:25:26.149585Z`, in
+**667.016 seconds**, with `SUCCESS` and `DEPLOYED_APP_URL`:
+`https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+Independent Foundry API readback confirmed active **hydro-orchestrator:25**,
+`production_writes_enabled=true`, the expected FEATURE workspace and unchanged
+container digest
+`sha256:163da34bda6d6d359b9cf014872ff59387f5ccb4594dadad6f89c5538c265fa6`.
+All five specialists were reused; no source image rebuild was needed.
+
+The canonical deployment verified all AppBackend/three-connector preflights and
+POST readiness, the current generated endpoint and required delegated scopes,
+and preserved all 42 existing SPA redirects. Post-deployment read-only role
+verification in the same tenant-scoped CLI profile confirmed the existing
+project-scoped Foundry User grant and inherited grants; no access was added.
+The ambient CLI profile required renewed authentication, so role verification
+used the already-current deployment profile for the same tenant and caller.
+
+Hosting verification reached the protected sign-in gate, not an authenticated
+application session. **No production SQL creation, new browser approval, or
+authenticated source execution is claimed.** No screenshot decision was retried
+and no acceptance work order was submitted. Reload and request a fresh draft
+before approving; the expired/disabled card must not be replayed.
 
 ## Agent authorization and source-routing repair validation
 
