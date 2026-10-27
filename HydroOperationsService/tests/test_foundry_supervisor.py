@@ -23,7 +23,7 @@ from hydro_orchestrator.foundry_supervisor import (
     EquipmentSelection, EvidenceDataset,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeAnswer, NativeBinding, OperatorAnswerContract, RunJournal,
-    SpecialistResult, ToolEvidence,
+    SemanticDecision, SpecialistResult, ToolEvidence,
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, safe_exception_signature,
     transient_native_failure,
@@ -318,6 +318,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner = self.make_owner(native_binding=NativeBinding(
             source=SOURCE, connections={"data-agent": "native-data"}, toolbox="hydro-fabric-iq-tools",
         ))
+        owner.semantic_decision = SemanticDecision(
+            mode="conversation", reason="Existing semantic decision must not disable evidence validation.",
+            proposal_requested=False, charts_requested=False, proposal_priority="Medium", reuse_prior_evidence=False,
+        )
         timestamp = request.requested_at.isoformat()
         tables = [
             {"source_type": "LakehouseTables", "source_id": "registry", "query": "registry",
@@ -356,6 +360,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence["coverage"]["open_work_order_count"], 1)
         self.assertEqual(evidence["native_source_output"]["documents"], call.documents)
         self.assertEqual(evidence["response"], text)
+        for role in ("qa", "rca", "work-order"):
+            context = owner.model_evidence(role)
+            self.assertLess(len(json.dumps(context)), 20_000)
+            self.assertEqual(context[0]["result"]["response"], text)
+            self.assertEqual(context[0]["result"]["affected_signals"], evidence["affected_signals"])
+            self.assertNotIn("native_source_output", context[0]["result"])
+            self.assertNotIn("native_response", context[0]["result"])
+            self.assertNotIn("documents", context[0]["result"])
+        self.assertEqual(owner.evidence["verified-native"].result, evidence)
         self.assertFalse(self.calls)
         self.assertEqual(self.tools.calls, 0)
 

@@ -1952,13 +1952,25 @@ class FoundrySupervisor:
             await execute_required(name, arguments, "telemetry", "focus")
 
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
+        def model_result(item: ToolEvidence) -> dict[str, object]:
+            return {
+                key: data for key, data in item.result.items()
+                if item.tool != "fabriciq-data-agent"
+                or key not in {"documents", "native_response", "native_source_output"}
+            }
+
+        def model_receipt(item: ToolEvidence) -> dict[str, object]:
+            value = item.receipt()
+            value["result"] = model_result(item)
+            return value
+
         if role != "work-order" and not targeted:
-            return [item.receipt() for item in self.evidence.values()]
+            return [model_receipt(item) for item in self.evidence.values()]
         if (role == "work-order" and not targeted
                 and (self.carried_ids or any(item.tool == "fabriciq-data-agent" for item in self.evidence.values()))
                 and not any(item.role == "rca" for item in self.specialists)):
             # Without RCA narrowing, preserve the carried/native bundle rather than projecting around no target.
-            return [item.receipt() for item in self.evidence.values()]
+            return [model_receipt(item) for item in self.evidence.values()]
 
         referenced_rows: dict[str, set[str]] = {}
         for specialist in self.specialists:
@@ -1986,7 +1998,7 @@ class FoundrySupervisor:
         if role == "work-order" and not any(item.role == "rca" for item in self.specialists):
             target_equipment_ids.update(self.selected_equipment_ids)
             if not target_equipment_ids:
-                return [item.receipt() for item in self.evidence.values()]
+                return [model_receipt(item) for item in self.evidence.values()]
         for evidence_id, paths in referenced_rows.items():
             receipt = self.evidence.get(evidence_id)
             if receipt is None:
@@ -2016,7 +2028,7 @@ class FoundrySupervisor:
             }
             rows = receipt.result.get("rows")
             if receipt.tool == "fabriciq-data-agent" and (metadata_match or receipt.id in referenced_rows):
-                result = dict(receipt.result)
+                result = model_result(receipt)
             elif isinstance(rows, list):
                 selected_rows = [
                     row for index, row in enumerate(rows) if f"/rows/{index}" in relevant_paths
@@ -2547,18 +2559,17 @@ class FoundrySupervisor:
             "request_id": call.request_id, "result": call.result,
         })
         result = _validated_native_result(json.dumps(call.source_payload()))
-        if self.semantic_decision is None:
-            bundle = quality_work_evidence(call, request.requested_at)
-            checked = await self.bridge.call({
-                "action": "validate_quality_work_evidence", "question": request.question,
-                "result": {"native_outputs": [bundle if bundle is not None else result]},
-                "requested_at_utc": request.requested_at.isoformat(),
-            })
-            if checked.get("required") is True:
-                checked_result = checked.get("result")
-                if not isinstance(checked_result, dict):
-                    raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
-                result = {**checked_result, "native_source_output": result, "response": result["response"]}
+        bundle = quality_work_evidence(call, request.requested_at)
+        checked = await self.bridge.call({
+            "action": "validate_quality_work_evidence", "question": request.question,
+            "result": {"native_outputs": [bundle if bundle is not None else {"response": result["response"]}]},
+            "requested_at_utc": request.requested_at.isoformat(),
+        })
+        if checked.get("required") is True:
+            checked_result = checked.get("result")
+            if not isinstance(checked_result, dict):
+                raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
+            result = {**checked_result, "native_source_output": result, "response": result["response"]}
         required = initial_equipment_selection(request)
         if required and not required.issubset(_native_equipment_ids(result)):
             raise SourceFailure("Native identity coverage missing: the selected source omitted requested equipment.")

@@ -261,6 +261,9 @@ selected; visible but unselected SQL control tables are not extra query sources.
 Native JSON result files and their typed tables are retained without rewriting the
 answer. Quality/work evidence must match successful native source-query and combine
 receipts; row-limited reads, unmatched keys or failed coverage cannot certify completeness.
+Dependent specialists receive typed evidence and the original source answer, not duplicate
+result documents or provider execution traces. Complete artifacts remain in the audit.
+The same quality/work completeness gate applies to semantically selected native steps.
 Existing temporal, identity and duplicate-work checks still apply before any approved write.
 Check actual tool output during compatibility-path native acceptance: a completed Foundry response
 can still include an error in `raiPostToolAnnotations`. Endpoint readiness or

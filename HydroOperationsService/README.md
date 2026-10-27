@@ -363,6 +363,10 @@ authorize discovery, connection attestation and native execution respectively.
 No managed identity fallback or new consent screen is introduced. Managed toolbox
 execution policies are not claimed for this separate Responses transport: source
 authorization, native read-only execution and application approval gates remain explicit.
+Native result documents and provider execution traces stay in the immutable audit;
+dependent specialists receive the unchanged answer and typed evidence at their original
+paths, without duplicate transport envelopes. The quality/work completeness gate also
+runs for semantically selected native steps, not only explicitly pinned source runs.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.
