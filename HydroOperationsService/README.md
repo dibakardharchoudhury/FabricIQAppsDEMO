@@ -341,6 +341,19 @@ required normal sign-in, so current delegated-source/UI acceptance remains pendi
 
 ## Thin-client contract
 
+For a Fabric Data Agent-only answer, the supervisor executes one Fabric IQ handoff
+and returns the original tool `response` without a Q&A handoff, narrative projection,
+analysis-model call, Markdown escaping, or answer truncation. A sole native step
+receives the original operator question rather than a planner rewrite. The answer
+retains the source receipt ID and a SHA-256 digest of the original UTF-8 text;
+the digest verifies text integrity, not factual accuracy. Prepared-answer recovery
+revalidates this same source text. Structured-only native results retain their
+existing table path, and explicitly requested charts still use validated source
+records. Combined workflows display the unchanged Fabric Data Agent answer
+separately from Hydro workflow analysis and approval cards. Source errors,
+content-filter failures, moderation-processing failures, and work-order approval
+gates remain enforced; wrapper prose never replaces a failed native receipt.
+
 Foundry, the Hosted Data Agent route and both Battle panes require the hosted
 Invocations transport configured by `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL`.
 There is no browser coordinator fallback. Missing hosted configuration is an

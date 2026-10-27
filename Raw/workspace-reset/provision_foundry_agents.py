@@ -263,6 +263,49 @@ def select_model_deployment(deployments: list[dict], wanted: str) -> str:
     return matches[0]["name"]
 
 
+def fabric_iq_target_matches(target: str, workspace: str, item: str, *, ontology: bool = False) -> bool:
+    parsed = urlparse(target)
+    path = (f"/v1/mcp/dataPlane/workspaces/{workspace}/items/{item}/ontologyEndpoint" if ontology
+            else f"/v1/mcp/workspaces/{workspace}/dataagents/{item}/agent")
+    workspace_host = re.fullmatch(
+        re.escape(workspace.replace("-", "").lower()) + r"\.z[0-9a-f]{2}\.w\.api\.fabric\.microsoft\.com",
+        parsed.hostname or "",
+    )
+    return bool(
+        parsed.scheme == "https" and not parsed.username and not parsed.password
+        and parsed.port in (None, 443) and not parsed.query and not parsed.fragment
+        and (parsed.hostname == "api.fabric.microsoft.com" or workspace_host)
+        and parsed.path.lower() == path.lower()
+    )
+
+
+def fabric_iq_target(workspace: str, item: str, connections: list[dict], *, ontology: bool = False) -> str:
+    candidates = {
+        properties["target"]
+        for connection in connections
+        if isinstance((properties := connection.get("properties")), dict)
+        and isinstance(properties.get("metadata"), dict)
+        and properties["metadata"].get("type") == "fabric_iq_preview"
+        and isinstance(properties.get("target"), str)
+        and fabric_iq_target_matches(properties["target"], workspace, item, ontology=ontology)
+    }
+    scoped = {target for target in candidates if urlparse(target).hostname != "api.fabric.microsoft.com"}
+    if len(scoped) > 1:
+        raise RuntimeError("Fabric IQ has conflicting workspace-specific endpoints for the selected item.")
+    if scoped:
+        return next(iter(scoped))
+    return (f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/{item}/ontologyEndpoint"
+            if ontology else f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{workspace}/dataagents/{item}/agent")
+
+
+def fabric_iq_connection_properties(target: str) -> dict:
+    return {
+        "category": "RemoteTool", "authType": "UserEntraToken", "target": target,
+        "audience": "https://api.fabric.microsoft.com", "isSharedToAll": False,
+        "metadata": {"type": "fabric_iq_preview"},
+    }
+
+
 def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> None:
     value = lambda key: deploy._public_config_value(values, key)
     project_id = value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID")
@@ -290,15 +333,13 @@ def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: s
     project = read(project_id + "?api-version=2025-06-01")
     if project.get("endpoints", {}).get("AI Foundry API", "").rstrip("/") != value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT").rstrip("/"):
         raise RuntimeError("Prepared Foundry project resource and endpoint do not match.")
-    targets = {
-        "hydro-fabric-iq": f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{workspace}/dataagents/{agent_id}/agent",
-        "hydro-fabric-ontology": f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/{ontology}/ontologyEndpoint",
-    }
-    for name, target in targets.items():
+    for name, item, is_ontology in (
+        ("hydro-fabric-iq", agent_id, False), ("hydro-fabric-ontology", ontology, True),
+    ):
         connection = read(f"{project_id}/connections/{name}?api-version=2025-10-01-preview")
-        expected = {"category": "RemoteTool", "authType": "UserEntraToken", "target": target,
-                    "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False}
-        if any(connection.get(key) != expected_value for key, expected_value in expected.items()):
+        target = connection.get("target", "")
+        if (not fabric_iq_target_matches(target, workspace, item, ontology=is_ontology)
+                or not definition_matches(connection, fabric_iq_connection_properties(target))):
             raise RuntimeError(f"Prepared Foundry connection {name} no longer matches the selected source/authentication.")
     definition = read_data_agent_definition(deploy, workspace, agent_id, deploy.fabric_headers(tenant))
     verify_published_identity(definition, workspace, ontology)
@@ -680,15 +721,12 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         raise deploy.DeployError("Exactly one published Data Agent must match the verified v2 ontology.")
 
     iq_name = "hydro-fabric-iq"
-    iq_url = f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{workspace}/dataagents/{selected[0]['id']}/agent"
+    iq_url = fabric_iq_target(workspace, selected[0]["id"], connections)
     ontology_connection = "hydro-fabric-ontology"
-    ontology_url = f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/{ontology}/ontologyEndpoint"
+    ontology_url = fabric_iq_target(workspace, ontology, connections, ontology=True)
     for connection_name, target in ((iq_name, iq_url), (ontology_connection, ontology_url)):
         connection_url = f"https://management.azure.com{project_id}/connections/{connection_name}?api-version=2025-10-01-preview"
-        connection = {
-            "category": "RemoteTool", "authType": "UserEntraToken", "target": target,
-            "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False,
-        }
+        connection = fabric_iq_connection_properties(target)
         matching = [item for item in connections if item.get("name") == connection_name]
         if len(matching) > 1:
             raise deploy.DeployError(f"Foundry connection {connection_name} has duplicate live entries.")

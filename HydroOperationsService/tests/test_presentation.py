@@ -1,6 +1,7 @@
 import tempfile
 import csv
 from io import StringIO
+from hashlib import sha256
 import unittest
 from pathlib import Path
 from uuid import uuid4
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from hydro_orchestrator.presentation import AnswerTable, client_presentation
-from hydro_orchestrator.foundry_supervisor import ChatAnswer, PlannedChart, SpecialistResult
+from hydro_orchestrator.foundry_supervisor import ChatAnswer, NativeAnswer, PlannedChart, SpecialistResult
 from hydro_orchestrator.service import create_app
 from hydro_orchestrator.store import Store
 from hydro_orchestrator.contracts import ReviewRequest, utc_now
@@ -54,6 +55,15 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(receipt.role, specialist.role)
         self.assertIn("123 ms", receipt.detail)
         self.assertGreaterEqual(receipt.timestamp, int(answer.requested_at.timestamp() * 1000))
+        original = "Source **Markdown** with A|[B] and <C>.\r\n" + "Full evidence. " * 300
+        native = NativeAnswer(
+            evidence_id="native-read", text=original,
+            content_sha256=sha256(original.encode("utf-8")).hexdigest(),
+        )
+        combined = client_presentation(answer.model_copy(update={"native_answers": (native,)}))
+        self.assertIn("## Fabric Data Agent answer\n\n" + original, combined.text)
+        self.assertIn("## Hydro workflow result", combined.text)
+        self.assertIn("A\\|\\[B\\]\\n\\<C\\>", combined.text)
 
     def test_keyed_rows_reject_wrong_columns_missing_values_and_numeric_coercion(self):
         row = {"values": {"value": 0.0, "unit": "C"}, "source": {"evidence_id": "receipt", "path": "/rows/0"}}

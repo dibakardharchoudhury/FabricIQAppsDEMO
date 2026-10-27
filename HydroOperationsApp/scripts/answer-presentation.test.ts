@@ -558,9 +558,11 @@ test('persistent agents share source semantics, complete equipment work and real
   }
   const native = agentDefinition('fabric-iq', 'test', 'data')
   assert.ok(!native.instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
-  assert.match(native.instructions, /complete natural-language question/)
-  assert.match(native.instructions, /not a JSON-encoded application context/)
-  assert.match(native.instructions, /moderation failures explicitly/)
+  assert.match(native.instructions, /complete supplied question verbatim as userQuestion/)
+  assert.match(native.instructions, /do not rephrase it/)
+  assert.match(native.instructions, /Return the response field verbatim/)
+  assert.match(native.instructions, /application displays the original tool response directly/)
+  assert.match(native.instructions, /Report tool failures/)
 })
 
 test('native specialists do not depend on Fabric; only IQ has the IQ tool', () => {

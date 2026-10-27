@@ -1009,6 +1009,18 @@ class SpecialistResult(Contract):
     report: dict[str, object] | None = None
 
 
+class NativeAnswer(Contract):
+    evidence_id: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=524288)
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def unchanged_source_text(self) -> "NativeAnswer":
+        if not self.text.strip() or sha256(self.text.encode("utf-8")).hexdigest() != self.content_sha256:
+            raise ValueError("Native answer text differs from its source-content digest.")
+        return self
+
+
 class ChatAnswer(Contract):
     run_id: UUID
     source: SourceIdentity
@@ -1026,6 +1038,7 @@ class ChatAnswer(Contract):
     production_write_executed: Literal[False] = False
     presentation: ClientPresentation | None = None
     analysis: AnalysisReport | None = None
+    native_answers: tuple[NativeAnswer, ...] = ()
 
 
 class ProjectionReceipt(Contract):
@@ -1217,6 +1230,9 @@ For a complete facility list/count use evidence="facilities_population_direct" a
 kind="facilities", scope="population", presentation="direct_records_table".
 For any native Data Agent answer use evidence="native_claims_population_native" and a view with
 kind="native_claims", scope="population", presentation="native_records_table".
+For a single Fabric IQ step preserve the original operator message, not a rewritten business question.
+The application returns the actual Data Agent answer unchanged; do not schedule QA or a second answer
+writer merely to summarize, certify or reformat that answer.
 View kind never includes the evidence suffix. Its kind/scope/authority must exactly match a requirement.
 An unfiltered query_assets(entity="facilities") reader returns the complete governed facility population;
 use that one reader, not an agent or telemetry query, for a simple facility list/count.
@@ -2887,12 +2903,7 @@ class FoundrySupervisor:
                         assignment = active_context.get("assignment", question)
                         if not isinstance(assignment, str) or not assignment.strip():
                             raise SourceFailure("Native invocation requires a complete natural-language assignment.")
-                        model_input = (
-                            assignment
-                            + f"\n\nAs-of UTC: {request.requested_at.isoformat()}."
-                            + "\nReturn the actual source-backed answer with complete requested rows, source "
-                              "references and material coverage/freshness limitations. This is read-only."
-                        )
+                        model_input = assignment
                         repair = active_context.get("native_source_repair")
                         if isinstance(repair, str):
                             model_input += "\n\nnative_source_repair: " + repair
@@ -2927,7 +2938,7 @@ class FoundrySupervisor:
                 except APITimeoutError as error:
                     raise SourceFailure(f"Foundry {role} invocation exceeded an upstream service deadline.") from error
                 self.healthy(request)
-                if not response.response_id or response.finish_reason == "length":
+                if not response.response_id or (response.finish_reason == "length" and role != "fabric-iq"):
                     if completion_attempt == 0 and role != "supervisor":
                         logger.warning(
                             "Foundry %s returned an incomplete completion; requesting one bounded evidence-only "
@@ -3852,6 +3863,40 @@ class FoundrySupervisor:
         )
         return answer
 
+    def native_answers(self) -> tuple[NativeAnswer, ...]:
+        answers = []
+        for receipt in self.evidence.values():
+            if receipt.tool != "fabriciq-data-agent":
+                continue
+            text = next((
+                value for key in ("response", "native_text", "native_output")
+                if isinstance((value := receipt.result.get(key)), str) and value.strip()
+            ), None)
+            if text is None:
+                logger.info("Native source returned structured records without an answer-text field.")
+                continue
+            answers.append(NativeAnswer(
+                evidence_id=receipt.id, text=text,
+                content_sha256=sha256(text.encode("utf-8")).hexdigest(),
+            ))
+        return tuple(answers)
+
+    def native_passthrough_answer(self, request: ChatRequest) -> ChatAnswer | None:
+        if (request.charts_requested or not self.evidence
+                or any(receipt.tool != "fabriciq-data-agent" for receipt in self.evidence.values())
+                or any(item.role != "fabric-iq" for item in self.specialists)):
+            return None
+        native = self.native_answers()
+        if not native:
+            return None
+        return ChatAnswer(
+            run_id=request.run_id, source=request.source, requested_at=request.requested_at,
+            source_read_times=tuple(item.completed_at for item in self.evidence.values()),
+            summary="\n\n".join(item.text for item in native), tables=(), charts=(), limitations=(),
+            cell_sources=(), specialists=tuple(self.specialists),
+            audit_url=f"/chat/runs/{request.run_id}/evidence", native_answers=native,
+        )
+
     def answer(
         self, request: ChatRequest, plan: AnswerPlan, *, use_projected_summary: bool = False,
         analysis: AnalysisReport | None = None,
@@ -4053,7 +4098,7 @@ class FoundrySupervisor:
                           cell_sources=plan.tables, specialists=tuple(self.specialists),
                           audit_url=f"/chat/runs/{request.run_id}/evidence", proposals=proposals,
                           proposal_digests={str(draft.id): draft.digest() for draft in proposals},
-                          analysis=analysis)
+                          analysis=analysis, native_answers=self.native_answers())
 
     async def run(self, request: ChatRequest) -> ChatAnswer:
         try:
@@ -4207,11 +4252,11 @@ class FoundrySupervisor:
                         if any(item.source != request.source for item in owner.evidence.values()):
                             raise SourceFailure("Prepared answer contains a different source identity.")
                         owner.specialists = list(prepared.answer.specialists)
-                        if owner.answer(
+                        if (owner.native_passthrough_answer(request) or owner.answer(
                             request, prepared.supervisor_output,
                             use_projected_summary=prepared.answer_projection is not None,
                             analysis=prepared.answer.analysis,
-                        ) != prepared.answer:
+                        )) != prepared.answer:
                             raise SourceFailure("Prepared answer differs from its immutable source projections.")
                         await ctx.send_message(SupervisorTurn(
                             text=prepared.supervisor_output.model_dump_json(),
@@ -4385,6 +4430,9 @@ class FoundrySupervisor:
                             )
                         )
                         async with asyncio.timeout(max(1.0, (request.deadline - utc_now()).total_seconds())):
+                            if (delegation.specialist == "fabric-iq" and len(plan.steps) == 1
+                                    and request.historical_context is None):
+                                delegation = delegation.model_copy(update={"question": request.question})
                             await owner.handoff(
                                 delegation, request, journal, versions,
                                 maintenance_gate_required=maintenance_gate_required,
@@ -4460,14 +4508,30 @@ class FoundrySupervisor:
                     turn = restore_turn(encoded_turn)
                     if not turn.verified:
                         raise SourceFailure("Presentation requires completed independent-evidence verification.")
+                    native = owner.native_passthrough_answer(request)
                     if turn.prepared is not None:
-                        if owner.answer(
+                        if (native or owner.answer(
                             request, turn.prepared.supervisor_output,
                             use_projected_summary=turn.prepared.answer_projection is not None,
                             analysis=turn.prepared.answer.analysis,
-                        ) != turn.prepared.answer:
+                        )) != turn.prepared.answer:
                             raise SourceFailure("Recovered presentation differs from immutable source projections.")
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
+                        return
+                    if native is not None:
+                        journal.save("native_passthrough", native.model_dump(mode="json"))
+                        journal.save("prepared_answer", PreparedAnswer(
+                            answer=native, evidence=tuple(owner.evidence.values()),
+                            supervisor_response_id=turn.response_id, supervisor_version=turn.version,
+                            supervisor_duration_ms=turn.duration_ms,
+                            supervisor_output=AnswerPlan(
+                                summary="Original Fabric Data Agent answer; no narrative projection.",
+                                tables=(), charts=(), limitations=(),
+                            ),
+                            supervisor_model_round_count=turn.model_round_count,
+                            request_digest=request_digest,
+                        ).model_dump(mode="json"))
+                        await ctx.yield_output(native.model_dump_json())
                         return
                     plan = owner.contract_answer_plan(request)
                     projection = ProjectionReceipt(

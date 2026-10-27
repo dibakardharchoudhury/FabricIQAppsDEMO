@@ -57,6 +57,17 @@ ANALYSIS_CATEGORY_LABELS = {
 
 
 def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
+    received_at = int(utc_now().timestamp() * 1000)
+    events = tuple(ClientExecutionEvent(
+        id=f"{answer.run_id}:{index}:{item.response_id}", role=item.role,
+        label="Verified specialist execution receipt",
+        detail=f"Version {item.version}; response {item.response_id}; measured duration {item.duration_ms:.0f} ms.",
+        timestamp=received_at, agentName=item.agent_name, responseId=item.response_id,
+    ) for index, item in enumerate(answer.specialists))
+    native = getattr(answer, "native_answers", ())
+    if native and not answer.tables and answer.analysis is None and not answer.proposals:
+        return ClientPresentation(text="\n\n".join(item.text for item in native), execution_events=events)
+
     def literal(value: object) -> str:
         text = "" if value is None else str(value)
         text = text.replace("\\", "\\\\").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
@@ -65,7 +76,11 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
         return text
 
     analysis = getattr(answer, "analysis", None)
-    sections: list[str] = []
+    sections: list[str] = [
+        "## Fabric Data Agent answer\n\n" + item.text for item in native
+    ]
+    if native:
+        sections.append("## Hydro workflow result")
     if analysis is not None:
         sections.append("## Answer\n\n" + literal(analysis.answer))
         if analysis.findings:
@@ -127,13 +142,6 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             xAxisTitle=next(column.label for column in table.columns if column.key == chart.x_key),
             inlineCsvData=stream.getvalue(),
         ))
-    received_at = int(utc_now().timestamp() * 1000)
-    events = tuple(ClientExecutionEvent(
-        id=f"{answer.run_id}:{index}:{item.response_id}", role=item.role,
-        label="Verified specialist execution receipt",
-        detail=f"Version {item.version}; response {item.response_id}; measured duration {item.duration_ms:.0f} ms.",
-        timestamp=received_at, agentName=item.agent_name, responseId=item.response_id,
-    ) for index, item in enumerate(answer.specialists))
     return ClientPresentation(text="\n\n".join(sections), visualizations=tuple(charts), execution_events=events)
 
 

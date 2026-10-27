@@ -22,7 +22,7 @@ from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, BoundedAIProjectClient, CachedHandoff, ChatRequest, Delegation,
     EquipmentSelection, EvidenceDataset,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
-    FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, OperatorAnswerContract, RunJournal,
+    FoundryAgent, FoundrySupervisor, HistoricalContext, NativeAnswer, NativeBinding, OperatorAnswerContract, RunJournal,
     SpecialistResult, ToolEvidence,
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, safe_exception_signature,
@@ -38,6 +38,7 @@ from hydro_orchestrator.foundry_supervisor import (
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
+from hydro_orchestrator.presentation import client_presentation
 from hydro_orchestrator.service import ChatInput, create_app, follow_up_intent
 from test_durable_service import SOURCE, HEADERS, TOKEN
 
@@ -258,6 +259,74 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_framework_flow_preserves_question_and_completed_receipt_without_projection(self):
+        self.native_text = "## Source answer\r\n\r\n**T005** belongs to the source facility.\n\n"
+        self.native_text += "Original source details and limitations. " * 100
+        for mode in ("native_text", "native_text_truncated"):
+            with self.subTest(mode=mode):
+                self.mode = mode
+                self.calls.clear()
+                self.payloads.clear()
+                request = self.request.model_copy(update={
+                    "run_id": uuid4(), "native_sources": ("data-agent",),
+                    "question": "How do facilities, turbines and work orders relate?",
+                })
+                self.seed(request)
+                owner = self.make_owner(native_binding=NativeBinding(
+                    source=SOURCE, connections={"data-agent": "native-data"},
+                ), analysis_model="test-model")
+                answer = await owner.run(request)
+                self.assertEqual(self.calls, {"hydro-fabric-iq-agent": 1})
+                self.assertEqual(len(self.payloads), 1)
+                self.assertEqual(self.payloads[0]["input"][0]["content"][0]["text"], request.question)
+                self.assertEqual(client_presentation(answer).text, self.native_text)
+                self.assertEqual(answer.native_answers[0].text, self.native_text)
+                self.assertIsNone(answer.analysis)
+                self.assertEqual(self.tools.calls, 0)
+                journal = RunJournal(self.root / str(request.run_id) / "receipts")
+                restarted = self.make_owner(native_binding=NativeBinding(
+                    source=SOURCE, connections={"data-agent": "native-data"},
+                ), analysis_model="test-model")
+                restarted.root = self.root / f"restart-{mode}"
+                self.seed(request, root=restarted.root)
+                recovered = RunJournal(restarted.root / str(request.run_id) / "receipts")
+                recovered.save("prepared_answer", journal.read("prepared_answer"))
+                self.assertEqual(await restarted.run(request), answer)
+                self.assertEqual(self.calls, {"hydro-fabric-iq-agent": 1})
+
+    async def test_native_answer_is_returned_byte_for_byte_without_a_second_answer_writer(self):
+        text = "## Facilities \u2192 turbines \u2192 work orders\r\n\r\n| ID | Name |\n| --- | --- |\n"
+        text += "| T005 | Source **Markdown** |\n" + "Full source details. " * 300
+        text += "\n\nSource limitation: no enforced cardinality constraint.\n"
+        receipt = ToolEvidence(
+            id="native-source", source=SOURCE, tool="fabriciq-data-agent", arguments={},
+            completed_at=utc_now(), result={"response": text, "native_table": [{"id": "T005"}]},
+        )
+        self.owner.evidence = {receipt.id: receipt}
+        self.owner.specialists = [SpecialistResult(
+            role="fabric-iq", agent_name="hydro-fabric-iq-agent", version="4",
+            response_id="foundry-response", duration_ms=10, input_digest="a" * 64,
+            text="A rewritten wrapper answer that must never replace the source.",
+        )]
+        answer = self.owner.native_passthrough_answer(self.request)
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.summary, text)
+        self.assertEqual(answer.native_answers[0].content_sha256, sha256(text.encode("utf-8")).hexdigest())
+        self.assertEqual(answer.native_answers[0].evidence_id, receipt.id)
+        self.assertEqual(client_presentation(answer).text.encode("utf-8"), text.encode("utf-8"))
+        self.assertEqual(answer.tables, ())
+        self.assertIsNone(answer.analysis)
+        self.assertFalse(answer.production_write_executed)
+        self.assertEqual(client_presentation(answer).execution_events[0].responseId, "foundry-response")
+        with self.assertRaises(ValidationError):
+            NativeAnswer.model_validate({
+                **answer.native_answers[0].model_dump(), "text": text + " altered",
+            })
+        self.owner.evidence["direct-source"] = receipt.model_copy(update={
+            "id": "direct-source", "tool": "query_assets", "result": {"rows": []},
+        })
+        self.assertIsNone(self.owner.native_passthrough_answer(self.request))
+
     async def test_three_quality_workflows_pass_full_request_admission(self):
         base = "Which turbines had BAD telemetry quality today, and what work is already open for these?"
         for suffix, roles in (
@@ -1243,7 +1312,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("trusted_operation_skills", native_input)
             self.assertNotIn("permitted_source_catalog", native_input)
             self.assertNotIn('"operator_question"', native_input)
-            self.assertIn("As-of UTC:", native_input)
+            self.assertNotIn("As-of UTC:", native_input)
         else:
             self.assertIn("trusted_operation_skills", json.dumps(payload["input"]))
         self.assertFalse(payload["store"])
@@ -1434,6 +1503,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 if self.mode == "native_moderation_payload"
                 else {"error": {"code": "source_unavailable", "message": "Published Data Agent unavailable."}}
                 if self.mode == "native_error_payload"
+                else {"response": self.native_text}
+                if self.mode in ("native_text", "native_text_truncated")
                 else
                 {"documents": [{
                     "id": "connection-1", "content": "I'm sorry, but I cannot assist with that request.",
@@ -1502,7 +1573,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     first["output"] = json.dumps(bundle)
         else:
             raise AssertionError(name)
-        incomplete = self.mode == "qa_incomplete_once" and name == "hydro-qa-agent" and round_number == 1
+        incomplete = (
+            self.mode == "qa_incomplete_once" and name == "hydro-qa-agent" and round_number == 1
+            or self.mode == "native_text_truncated" and name == "hydro-fabric-iq-agent"
+        )
         return httpx.Response(200, json={
             "id": f"resp_{name}_{round_number}", "object": "response", "created_at": 1,
             "model": "test", "status": "incomplete" if incomplete else "completed",

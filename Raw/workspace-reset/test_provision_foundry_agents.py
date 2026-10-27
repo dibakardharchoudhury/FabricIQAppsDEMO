@@ -27,6 +27,48 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
     }]}}
 
 
+class FabricIQConnectionTests(unittest.TestCase):
+    def test_connections_match_portal_fabric_audience_and_type_metadata(self):
+        properties = module.fabric_iq_connection_properties("https://api.fabric.microsoft.com/example")
+        self.assertEqual(properties["audience"], "https://api.fabric.microsoft.com")
+        self.assertEqual(properties["metadata"], {"type": "fabric_iq_preview"})
+        self.assertEqual(properties["authType"], "UserEntraToken")
+
+    def test_reuses_verified_workspace_endpoint_without_copying_another_workspace(self):
+        workspace, item = str(uuid.uuid4()), str(uuid.uuid4())
+        host = workspace.replace("-", "") + ".zc7.w.api.fabric.microsoft.com"
+        target = f"https://{host}/v1/mcp/workspaces/{workspace}/dataagents/{item}/agent"
+        candidates = [
+            {"properties": module.fabric_iq_connection_properties(target)},
+            {"properties": module.fabric_iq_connection_properties(target)},
+            {"properties": {"metadata": None}},
+        ]
+        self.assertEqual(module.fabric_iq_target(workspace, item, candidates), target)
+        self.assertTrue(module.fabric_iq_target_matches(target, workspace, item))
+        for invalid in (
+            target.replace(host, "other.zc7.w.api.fabric.microsoft.com"),
+            target.replace(host, "example.com"), target + "?redirect=1", target + "#fragment",
+            target.replace("https://", "https://user@"), target.replace(item, str(uuid.uuid4())),
+        ):
+            with self.subTest(target=invalid):
+                self.assertFalse(module.fabric_iq_target_matches(invalid, workspace, item))
+        fallback = f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{workspace}/dataagents/{item}/agent"
+        self.assertEqual(module.fabric_iq_target(workspace, item, []), fallback)
+        self.assertEqual(module.fabric_iq_target(str(uuid.uuid4()), item, candidates).split("/")[2],
+                         "api.fabric.microsoft.com")
+
+    def test_conflicting_verified_workspace_hosts_require_resolution(self):
+        workspace, item = str(uuid.uuid4()), str(uuid.uuid4())
+        connections = [
+            {"properties": module.fabric_iq_connection_properties(
+                f"https://{workspace.replace('-', '')}.z{zone}.w.api.fabric.microsoft.com"
+                f"/v1/mcp/workspaces/{workspace}/dataagents/{item}/agent")}
+            for zone in ("c7", "a1")
+        ]
+        with self.assertRaisesRegex(RuntimeError, "conflicting"):
+            module.fabric_iq_target(workspace, item, connections)
+
+
 class IncrementalProvisionTests(unittest.TestCase):
     def run_provision(self, *, drift=None, missing=None, broken_readback=False, denied=False):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
@@ -53,7 +95,8 @@ class IncrementalProvisionTests(unittest.TestCase):
         ):
             connections[name] = {
                 "category": "RemoteTool", "authType": "UserEntraToken", "target": target,
-                "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False,
+                "audience": "https://api.fabric.microsoft.com", "isSharedToAll": False,
+                "metadata": {"type": "fabric_iq_preview"},
             }
         if drift == "connection":
             connections["hydro-fabric-iq"]["target"] = "https://old.example/agent"
@@ -374,7 +417,8 @@ class PreparedFoundryTests(unittest.TestCase):
                                   f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/"
                                   f"{json.loads(values['RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING'])['ontologyId']}/ontologyEndpoint")
                         props = {"category": "RemoteTool", "authType": "UserEntraToken", "target": target,
-                                 "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False}
+                                 "audience": "https://api.fabric.microsoft.com", "isSharedToAll": False,
+                                 "metadata": {"type": "fabric_iq_preview"}}
                     return Mock(ok=True, json=lambda: {"properties": props})
                 ontology = json.loads(values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"])["ontologyId"]
                 with patch.object(module, "request_with_read_retry", side_effect=respond) as request, \

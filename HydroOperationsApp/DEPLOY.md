@@ -218,6 +218,23 @@ missing source-fingerprinted images, and republishes the hosted coordinator only
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
 
+Fabric IQ connections use the Fabric API audience
+`https://api.fabric.microsoft.com` and `metadata.type=fabric_iq_preview`,
+matching portal-created Data Agent tools. Setup reuses an existing verified
+workspace-specific Fabric endpoint only for the selected workspace and item;
+fresh targets otherwise use the documented generic Fabric MCP endpoint.
+Conflicting workspace-specific endpoints fail rather than choosing an arbitrary
+connection. Portal-created connections are not deleted.
+
+The ontology supplies the associated Lakehouse and Eventhouse execution sources;
+standalone duplicates of those sources are removed. The explicit operational SQL
+adapter remains necessary while the ontology's SQL association supplies context
+but not an independent SQL execution tool. Only the five operational tables are
+selected; visible but unselected SQL control tables are not extra query sources.
+Check actual tool output during native acceptance: a completed Foundry response
+can still include an error in `raiPostToolAnnotations`. Endpoint readiness or
+successful tool discovery alone does not establish a successful native answer.
+
 - **Reuse a specific project:** enter its name under **Project and model
   choices**. Without a name, setup uses saved settings, the target-named project,
   or the sole available project. Choose a model only for a specific deployment.
