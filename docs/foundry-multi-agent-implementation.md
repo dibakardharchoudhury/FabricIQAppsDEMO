@@ -364,6 +364,35 @@ the invalid Weather provider credential. No blocked native query was repeated,
 no provider policy or private-vault boundary was changed, and neither successful
 operational run is a native or Weather acceptance substitute.
 
+#### Read-only prerequisite review at 01:36 UTC
+
+A further review used supported metadata/admin reads, not another native query:
+
+- The live published Data Agent selects the correct workspace's Core Lakehouse
+  tables: `silver_facilities`, `silver_systems`, `silver_equipment`,
+  `silver_instruments` and `silver_signal_master`; Eventhouse `OPCUAEvents`; and
+  operational SQL `WorkOrders`, `MaintenanceNotifications`, `Inspections`,
+  `SpareParts` and `Asset3DModels`. Missing facility/work tables do not explain
+  the recorded refusal.
+- The read-only Fabric tenant-settings API returned `EnableAOAI`,
+  `CopilotCapacitySetupPermissionSwitch`, `AllowSendAOAIDataToOtherRegions`
+  and `AllowStoreAOAIDataInOtherRegions` enabled, with no included/excluded
+  security-group scopes on those settings. These are tenant-level facts, not
+  proof of effective capacity overrides or successful provider execution.
+- OpenAI-as-subprocessor flags were disabled. This was not established as the
+  cause, and no provider selection, consent or tenant setting was changed.
+- Azure Service Health returned no active incidents for the checked subscription
+  window. Account Resource Health returned **409 / AuthError**, so account
+  availability is **unknown**, not certified healthy. No resource provider was
+  registered and no access controls were changed to obtain that diagnostic.
+- The existing Weather receipts already establish matching live/local executable
+  code, the correct provider endpoint and invalid-key rejection with both
+  supported authentication placements. Changing headers is not remediation.
+  The private-vault authorization/network boundary was not retried or bypassed.
+
+These checks do not clear either external prerequisite. No speculative code
+change, new refused query or repeat Weather ingestion was justified.
+
 ## October 26 publication and main-merge readiness
 
 Tenant Graph authorization recovered. The canonical **app-only** command published
