@@ -17,6 +17,7 @@ export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
 const fabric = 'https://api.fabric.microsoft.com/v1'
 const guid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
+const POPULATION_COUNT = /\b(?:how\s+many|count|number\s+of|total)\b/i
 
 export function governedToolResult(tool, args, result) {
   return { ...result, _evidence_datasets: describeToolEvidence(tool, args, result) }
@@ -113,6 +114,9 @@ export function requiredEvidenceKinds(question, carriedKinds = []) {
   if (/\blist\b[^.!?;\n]{0,80}\bspare parts?\b/i.test(text)) kinds.add('spare_parts')
   if (/\b(?:show|read|list)\b[^.!?;\n]{0,80}\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
   if (requestsWorkOrderNeedAssessment(question)) addNeedAssessmentKinds(question, kinds, carriedKinds)
+  if (!kinds.size && POPULATION_COUNT.test(text)) {
+    for (const kind of permittedEvidenceKinds(question, carriedKinds)) kinds.add(kind)
+  }
   return [...kinds]
 }
 
@@ -203,6 +207,7 @@ function defaultEvidenceScope(kind, question) {
   if (!dataset) throw new Error(`Cannot compile an ungoverned evidence kind: ${kind}.`)
   if (dataset.evidenceScopes.length === 1) return dataset.evidenceScopes[0]
   const text = positiveActionClauses(question)
+  if (POPULATION_COUNT.test(text)) return 'population'
   if (kind === 'native_claims') {
     return /\b(?:all|every|inventory|list facility instances|which turbines)\b/i.test(text)
       ? 'population' : 'focus'

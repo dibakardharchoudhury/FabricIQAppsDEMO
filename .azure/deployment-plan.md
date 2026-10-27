@@ -1,6 +1,51 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Facility-count acceptance follow-up
+
+Resolve the live planner failure discovered during implicit-access acceptance.
+The existing intent producer permits facilities but requires no evidence for a
+count request; compilation then injects unrequested telemetry and correctly
+fails its guard. Derive unresolved count evidence from the existing permitted
+dataset classification, retain population coverage for counts, and keep the
+unexpected-evidence guard intact. Test the original question and paraphrases,
+then repeat canonical deployment and signed-browser acceptance on the unchanged
+FEATURE target below. No new permissions, infrastructure or write-policy change.
+The user explicitly requested autonomous completion of the outstanding failure.
+Earlier deployment/authorization receipts remain historical.
+
+### Section 7: Validation Proof - facility-count follow-up
+
+Validation date: 2026-10-27; existing canonical Python/Azure CLI recipe,
+same approved tenant/workspace/subscription/region as the receipts below.
+
+All validation checks pass:
+- [x] Core: 128 Node source/routing/weather/authorization regressions pass,
+  including the formerly failing exact browser question and six population-count
+  variants. Requirements are exact `<dataset>_population_direct` contracts;
+  no unrelated telemetry, specialist or native execution is introduced.
+- [x] Backend: 119 supervisor tests pass with repository `PYTHONPATH` and Node 24.
+  Unexpected-evidence rejection, source coverage and human approval remain intact.
+- [x] Build: scoped ESLint, `npm run validate-env`, and production TypeScript/Vite
+  build pass. Existing chunk/mixed-import warnings remain unchanged.
+- [x] Container: 43 hosted packaging/fingerprint tests pass. Dockerfile,
+  lockfiles and COPY closure are unchanged; the
+  modified packaged source bridge requires a fresh ACR source-fingerprinted
+  image. Its canonical build/activation is a hard deployment gate.
+- [x] Static roles/policy: no identity, scope, permission, source operation,
+  infrastructure, network, region or write-policy change. The earlier live
+  same-target policy/project-role readbacks remain applicable. No ARM template,
+  what-if or quota provisioning applies.
+
+Repro: the added count test failed on the exact browser prompt because required
+evidence was empty. After the producer fix all 128 tests pass, including the
+strict complete-contract validation. Commands: Node 24 `node --import tsx --test`
+over source, operational-routing, weather, orchestration, source-access,
+transport and Entra tests; `python -m unittest discover -s
+HydroOperationsService\tests -p test_foundry_supervisor.py` with the service's
+`src` on `PYTHONPATH`; scoped ESLint; environment validation; production build.
+Actual hosted facility-count acceptance is still pending, not inferred from mocks.
 
 ## Implicit agent access
 

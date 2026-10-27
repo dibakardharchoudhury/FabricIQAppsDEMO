@@ -1399,6 +1399,32 @@ const nonAdvisoryPhrasings = [
   'Do not raise any work orders; just list the telemetry.',
 ]
 
+test('population counts use the requested governed datasets, not unrequested telemetry', () => {
+  for (const [question, expected] of [
+    ['How many facilities are in the connected Lakehouse? Return the actual facility count with its source. Read-only.', ['facilities']],
+    ['How many facilities are registered?', ['facilities']],
+    ['Count the facilities in the Lakehouse.', ['facilities']],
+    ['What is the number of facilities?', ['facilities']],
+    ['Give me the total number of facilities.', ['facilities']],
+    ['How many equipment records are registered?', ['equipment']],
+    ['Count the available spare parts.', ['spare_parts']],
+  ]) {
+    const intent = chatIntent(question)
+    assert.deepEqual(intent.required_specialists, ['qa'], question)
+    assert.deepEqual(intent.required_evidence_kinds, expected, question)
+    const plan = compileOrchestrationPlan(question, intent)
+    const kinds = [...new Set(plan.answer_contract.views.map(view => view.kind))]
+    assert.deepEqual(kinds, expected, question)
+    assert.deepEqual(plan.answer_contract.requirements.map(item => item.evidence),
+      expected.map(kind => `${kind}_population_direct`), question)
+    const defects = validatePlanRequirements(
+      intent.required_specialists, intent.required_specialist_steps, plan.steps,
+      intent.native_sources, question, kinds, intent.required_evidence_kinds, intent.permitted_evidence_kinds)
+    assert.deepEqual(Object.values(defects), [[], {}, [], [], []], question)
+    assert.deepEqual(plan.steps.map(step => step.specialist), ['qa'], question)
+  }
+})
+
 test('a chart of any equipment measure compiles one governed telemetry line view, not a table', () => {
   for (const question of [
     'Chart power output for T05 for the past 2 hours',

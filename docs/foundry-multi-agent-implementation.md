@@ -304,6 +304,22 @@ failed its existing planner contract with `unexpected-evidence:telemetry`
 routing defect remains open, not suppressed or repaired by this UX change.
 No operational write, approval or rejection was performed in either test.
 
+### Facility-count evidence-selection follow-up
+
+The failed count request exposed disagreement between the existing required and
+permitted evidence classifiers: facilities were permitted, but no dataset was
+required, so Q&A compilation defaulted to telemetry and correctly failed the
+strict guard. For a count with no specialized evidence requirement, the producer
+now derives required datasets from the existing permitted classification instead
+of falling through to an unrelated source. Multi-scope count evidence requires
+population coverage. No dataset permission or unexpected-evidence check is relaxed.
+
+The exact browser question and six count variants now pass complete-contract
+regressions for facilities, equipment and spare parts. The 128 Node regressions,
+119 backend supervisor tests, scoped lint, configuration validation and production
+build pass. Publication and a fresh authenticated count are still required;
+the earlier failed run remains immutable and is not automatically replayed.
+
 Ordinary operational questions use governed direct sources. Explicit Data Agent
 requests stay native, with no silent fallback. The specialized native quality/work
 contract must not capture ordinary wording or replace a requested independent
