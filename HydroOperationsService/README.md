@@ -364,7 +364,9 @@ content-filter failures, moderation-processing failures, and work-order approval
 gates remain enforced; wrapper prose never replaces a failed native receipt.
 Expected MCP discovery, transport and delegated-authorization failures are unwrapped
 from SDK task groups and reported with their execution phase and correlation ID.
-Diagnostics retain safe status/error codes, not raw provider messages or tokens.
+Execution diagnostics retain safe status/error codes, not native answer data or
+tokens. Discovery-only diagnostics retain the bounded service reason with
+credentials and URLs redacted, before any user question is sent to the source.
 
 Foundry, the Hosted Data Agent route and both Battle panes require the hosted
 Invocations transport configured by `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL`.

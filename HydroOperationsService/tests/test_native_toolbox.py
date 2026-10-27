@@ -25,7 +25,8 @@ TOOL = {
 
 
 class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
-    async def execute(self, *, tools=None, result=None, next_cursor=None, rpc_error=None, auth_error=None):
+    async def execute(self, *, tools=None, result=None, next_cursor=None, rpc_error=None, auth_error=None,
+                      discovery_error=None):
         requests = []
         credential = AsyncMock()
         credential.get_token.return_value = AccessToken("delegated-test-token", 9999999999)
@@ -46,6 +47,10 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
                 value = {"protocolVersion": message["params"]["protocolVersion"],
                          "capabilities": {"tools": {}}, "serverInfo": {"name": "Foundry", "version": "1"}}
             elif method == "tools/list":
+                if discovery_error:
+                    return httpx.Response(200, headers={"Content-Type": "application/json",
+                                                       "apim-request-id": "failed-discovery-request"},
+                                          json={"jsonrpc": "2.0", "id": message["id"], "error": discovery_error})
                 value = {"tools": tools if tools is not None else [copy.deepcopy(TOOL)]}
                 if next_cursor:
                     value["nextCursor"] = next_cursor
@@ -99,6 +104,20 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
                     "code": -32603, "message": "Dependency failed with status code 500; private provider details.",
                 })
         self.assertNotIn("private provider details", "\n".join(logs.output))
+
+    async def test_discovery_diagnostic_redacts_credentials_and_preserves_service_reason(self):
+        with self.assertLogs("hydro_orchestrator.native_toolbox", level="ERROR") as logs:
+            with self.assertRaisesRegex(SourceFailure, "tool discovery.*-32007.*failed-discovery-request"):
+                await self.execute(discovery_error={
+                    "code": -32007,
+                    "message": "Discovery rejected. Bearer private-token "
+                               "https://example.test?access_token=private-query client_secret=private-secret "
+                               "eyJheader.payload.signature",
+                })
+        diagnostic = "\n".join(logs.output)
+        self.assertIn("Discovery rejected", diagnostic)
+        for secret in ("private-token", "private-query", "private-secret", "eyJheader.payload.signature"):
+            self.assertNotIn(secret, diagnostic)
 
     async def test_source_authorization_failure_does_not_become_a_generic_sdk_group(self):
         with self.assertRaisesRegex(SourceAuthorizationError, "initialization"):

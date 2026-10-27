@@ -1,6 +1,5 @@
 """Read-only native Fabric execution through the Foundry-managed MCP gateway."""
 
-import json
 import logging
 import re
 from collections.abc import AsyncGenerator
@@ -87,6 +86,14 @@ async def call_native_toolbox(
                     status = re.search(r"\bstatus code[ :]+([1-5][0-9]{2})\b", error.error.message)
                     if status:
                         detail += f", upstream HTTP {status[1]}"
+                    if phase != "tool execution":
+                        diagnostic = re.sub(
+                            r"(?i)\bBearer\s+\S+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+                            r"|https?://\S+|\b(?:access_token|refresh_token|client_secret|authorization)"
+                            r"\s*[:=]\s*\S+",
+                            "[redacted]", error.error.message,
+                        )
+                        logger.error("Native toolbox discovery diagnostic: %s", diagnostic[:1200])
                 details.append(detail)
             message = f"Foundry native toolbox {phase} failed ({'; '.join(details)[:600]}; request {request_id})."
             logger.error("%s", message)
@@ -96,7 +103,7 @@ async def call_native_toolbox(
 
     async def capture(response: httpx.Response) -> None:
         nonlocal request_id
-        if response.request.method == "POST" and json.loads(response.request.content).get("method") == "tools/call":
+        if response.request.method == "POST":
             request_id = response.headers.get("apim-request-id") or response.headers.get("x-ms-request-id") or request_id
 
     url = f"{endpoint}/toolboxes/{name}/versions/{version}/mcp?api-version=v1"
