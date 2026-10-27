@@ -317,6 +317,53 @@ environment validation, TypeScript/Vite build and changed-file ESLint.
 The failure-contract tests include interrupted-stream recovery, detached
 credential cleanup, refusal-bearing partial rows and unavailable audit storage.
 
+### October 27 v23 publication and signed-browser retest
+
+The canonical deployment of **`1673261`** returned final `SUCCESS` and
+`DEPLOYED_APP_URL` at **01:17:57 UTC**, taking **891.656 seconds**.
+Coordinator **v23** is active on image **`src-5afb91f86a3d8ee5`**, ACR build
+**`dtm`**. The signed browser verified **app 1.0.1121 / `1673261`**.
+All five specialist definitions were reused, all 42 redirects were preserved,
+and runtime/CORS, three-connector and endpoint-contract checks passed.
+
+Signed session **`0f143dea-1f74-48b2-9a93-433a57f3b433`** records both failure
+and recovery, not an uninterrupted performance pass:
+
+1. The first historical T005 QA/RCA/draft request failed after **194.3 seconds**.
+   Gauge and Sleuth completed, but Fixer exhausted its model HTTP operation with
+   `ChatClientException <- APITimeoutError <- ReadTimeout`. Failed run:
+   `77b2d0e4-bf7d-4d93-9843-53a9f2e85cba`. The UI certified no answer or draft.
+   An independent capacity check returned **Active**.
+2. One controlled operator-side acceptance retry completed **Gauge -> Sleuth ->
+   Fixer in 75.1 seconds**. Actual source tables retained **89 signal rows across
+   all 15 turbine IDs**, and the selected T005 work-order table had **0 rows**.
+   The answer identified all six historical BAD signal groups, probable rather
+   than confirmed causes, missing independent measurements and approximately
+   six-hour-old telemetry. It staged no draft, explicitly requiring fresh checks.
+3. A follow-up explicitly requested a diagnostic-only draft for fresh samples and
+   OPC UA/gateway/ingestion-log checks, conditional on no duplicate open work.
+   **Gauge -> Fixer completed in 36.5 seconds** and staged one unapproved,
+   Medium-priority T005 card: **"Diagnose historical telemetry quality on T005"**.
+   Its actual editable description states that the evidence is historical and
+   the physical condition unconfirmed; no repair, replacement, dispatch or
+   production write is authorized. The current-window quality read had 0 rows
+   and 90 missing signals, reported as missing rather than healthy.
+
+No approval or rejection controls were used; no work order was created.
+The transient model timeout remains part of the reliability record; these
+individual passes are not a latency/SLA guarantee or a load test.
+
+The current [Foundry Fabric IQ guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/fabric-iq)
+was rechecked: `fabric_iq_preview` supports the existing published-data-agent
+endpoint and incoming Entra user context. The separate public Fabric IQ MCP
+Power BI experience is not a reason to migrate this connection. The Foundry
+tool remains preview without a service-level agreement.
+
+**Overall acceptance remains blocked** by the prior native provider refusal and
+the invalid Weather provider credential. No blocked native query was repeated,
+no provider policy or private-vault boundary was changed, and neither successful
+operational run is a native or Weather acceptance substitute.
+
 ## October 26 publication and main-merge readiness
 
 Tenant Graph authorization recovered. The canonical **app-only** command published

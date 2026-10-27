@@ -2,6 +2,12 @@
 
 ## October 26 current audit
 
+Latest publication: coordinator **v23**, signed app **1.0.1121 / `1673261`**.
+The [v23 signed-browser record](../docs/foundry-multi-agent-implementation.md#october-27-v23-publication-and-signed-browser-retest)
+includes an initial model timeout, a 75-second RCA/work-order review and a
+36-second diagnostic-only draft follow-up. Native/Weather acceptance remains
+blocked; these runs are not a production latency guarantee.
+
 See the [current end-to-end failure audit and repair](../docs/foundry-multi-agent-implementation.md#october-26-end-to-end-failure-audit-and-repair).
 The deployed Gauge failure was an overly strict Kusto left-join aggregate validator,
 not an absent Agent Framework workflow. The source layer now accepts zero-match

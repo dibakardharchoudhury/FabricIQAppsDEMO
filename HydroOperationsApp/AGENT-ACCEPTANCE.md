@@ -100,7 +100,28 @@ fallback certified. The [RCA follow-up](../docs/foundry-multi-agent-implementati
 was unpublished/unaccepted at that checkpoint; neither crew animation nor
 the fleet pass is a substitute for those remaining gates.
 
-### Current v22: three-specialist RCA passed; native provider remains blocked
+### Current v23: failure contract published; operational retest and diagnostic draft verified
+
+Canonical publication of **`1673261`** completed at **01:17:57 UTC on October 27**:
+coordinator **v23**, image `src-5afb91f86a3d8ee5`, ACR `dtm`, signed browser
+**1.0.1121**. Five specialists were reused; 204 Python and 179 Node regressions,
+type checks, build and targeted lint passed.
+
+Signed session `0f143dea-1f74-48b2-9a93-433a57f3b433` first encountered a
+**194.3-second Fixer model read timeout**; capacity was Active. A controlled
+retry completed QA/RCA/work-order review in **75.1 seconds**, retaining the
+actual 89-row/all-15-turbine source table. No draft was staged on that turn
+because telemetry was about six hours old. A diagnostic-only follow-up then
+staged one unapproved T005 card in **36.5 seconds**, explicitly limiting scope
+to fresh samples/log review and leaving current physical condition unconfirmed.
+No approval/rejection or production write occurred.
+
+The [complete v23 record](../docs/foundry-multi-agent-implementation.md#october-27-v23-publication-and-signed-browser-retest)
+retains the timeout alongside successful results. Native refusal and Weather
+credential prerequisites remain unresolved; overall acceptance is **blocked**.
+Synthetic refusal regressions are not native business acceptance.
+
+### Prior v22: three-specialist RCA passed; native provider remains blocked
 
 Subsequent native-refusal failure-contract hardening is documented in the
 [current audit](../docs/foundry-multi-agent-implementation.md#october-27-native-refusal-failure-contract-hardening).
