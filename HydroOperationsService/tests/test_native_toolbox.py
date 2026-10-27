@@ -9,6 +9,7 @@ from mcp import types
 
 from hydro_orchestrator.live_sources import SourceFailure
 from hydro_orchestrator.native_toolbox import NativeToolboxCall, call_native_toolbox
+from hydro_orchestrator.source_auth import SourceAuthorizationError
 
 
 TOOL = {
@@ -24,10 +25,12 @@ TOOL = {
 
 
 class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
-    async def execute(self, *, tools=None, result=None, next_cursor=None):
+    async def execute(self, *, tools=None, result=None, next_cursor=None, rpc_error=None, auth_error=None):
         requests = []
         credential = AsyncMock()
         credential.get_token.return_value = AccessToken("delegated-test-token", 9999999999)
+        if auth_error is not None:
+            credential.get_token.side_effect = auth_error
         question = "Which turbines?\nKeep punctuation & Norwegian names: \u00c5."
 
         def respond(request):
@@ -48,6 +51,10 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
                     value["nextCursor"] = next_cursor
             elif method == "tools/call":
                 self.assertEqual(message["params"]["arguments"], {"userQuestion": question})
+                if rpc_error:
+                    return httpx.Response(200, headers={"Content-Type": "application/json",
+                                                       "apim-request-id": "failed-tool-request"},
+                                          json={"jsonrpc": "2.0", "id": message["id"], "error": rpc_error})
                 value = result if result is not None else {
                     "content": [{"type": "text", "text": "**Original**\n\n| Status | Count |\n| Open | 10 |"}],
                     "isError": False,
@@ -85,6 +92,18 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
             await self.execute(result={"content": [{"type": "text", "text": "SQL execution failed"}],
                                        "isError": True})
 
+    async def test_gateway_rpc_failure_surfaces_phase_code_and_real_request_without_private_text(self):
+        with self.assertLogs("hydro_orchestrator.native_toolbox", level="ERROR") as logs:
+            with self.assertRaisesRegex(SourceFailure, "tool execution.*MCP code -32603.*HTTP 500.*failed-tool-request"):
+                await self.execute(rpc_error={
+                    "code": -32603, "message": "Dependency failed with status code 500; private provider details.",
+                })
+        self.assertNotIn("private provider details", "\n".join(logs.output))
+
+    async def test_source_authorization_failure_does_not_become_a_generic_sdk_group(self):
+        with self.assertRaisesRegex(SourceAuthorizationError, "initialization"):
+            await self.execute(auth_error=SourceAuthorizationError("The delegated source token expired."))
+
     async def test_unverified_or_ambiguous_tools_cannot_be_called(self):
         variants = [[], [copy.deepcopy(TOOL), copy.deepcopy(TOOL)]]
         for path, value in (
@@ -102,16 +121,11 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
             variants.append([tool])
         for tools in variants:
             with self.subTest(tools=tools):
-                with self.assertRaises(ExceptionGroup) as raised:
+                with self.assertRaises(SourceFailure):
                     await self.execute(tools=tools)
-                exceptions = list(raised.exception.exceptions)
-                while len(exceptions) == 1 and isinstance(exceptions[0], BaseExceptionGroup):
-                    exceptions = list(exceptions[0].exceptions)
-                self.assertEqual(len(exceptions), 1)
-                self.assertIsInstance(exceptions[0], SourceFailure)
 
     async def test_incomplete_inventory_is_rejected(self):
-        with self.assertRaises(ExceptionGroup):
+        with self.assertRaisesRegex(SourceFailure, "complete Data Agent query tool"):
             await self.execute(next_cursor="more-tools")
 
     def test_native_resources_and_provider_annotations_survive(self):

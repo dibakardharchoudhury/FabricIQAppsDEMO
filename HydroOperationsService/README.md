@@ -346,7 +346,7 @@ Foundry toolbox, not the Fabric IQ prompt-agent wrapper. The deterministic
 Agent Framework workflow discovers the single verified, read-only Fabric IQ tool
 and sends the exact question through Foundry's managed MCP gateway. Foundry retains
 delegated authentication and toolbox governance; no direct-Fabric fallback is used.
-The standalone Fabric IQ prompt agent remains available for playground use but
+The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.
 
@@ -362,6 +362,9 @@ records. Combined workflows display the unchanged Fabric Data Agent answer
 separately from Hydro workflow analysis and approval cards. Source errors,
 content-filter failures, moderation-processing failures, and work-order approval
 gates remain enforced; wrapper prose never replaces a failed native receipt.
+Expected MCP discovery, transport and delegated-authorization failures are unwrapped
+from SDK task groups and reported with their execution phase and correlation ID.
+Diagnostics retain safe status/error codes, not raw provider messages or tokens.
 
 Foundry, the Hosted Data Agent route and both Battle panes require the hosted
 Invocations transport configured by `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL`.

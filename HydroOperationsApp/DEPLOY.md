@@ -232,7 +232,7 @@ needed, preserves existing toolbox policies/skills/metadata, promotes its defaul
 version and verifies readback. Prepared app deployment verifies it without
 repairing it. Each run pins the immutable version and discovers its single
 read-only Data Agent query tool. This removes the intermediate Fabric IQ model
-from the app's answer path; the prompt specialist remains for playground use.
+from the app's answer path; the prompt specialist is retained for compatibility.
 Delegated tokens and policy enforcement stay in Foundry's managed MCP gateway.
 Original source text and resource receipts are retained; downstream analysis and
 approval drafts are separate, never replacements for the source answer.

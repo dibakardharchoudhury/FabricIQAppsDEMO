@@ -261,6 +261,13 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_grouped_sdk_errors_keep_bounded_safe_leaf_diagnostics(self):
+        grouped = ExceptionGroup("private provider message", [
+            ExceptionGroup("private nested group", [httpx.RequestNotRead()]),
+        ])
+        self.assertEqual(safe_exception_signature(grouped), "ExceptionGroup <- ExceptionGroup <- RequestNotRead")
+        self.assertNotIn("private", safe_exception_signature(grouped))
+
     async def test_native_toolbox_flow_preserves_source_answer_and_recovers_without_model_calls(self):
         request = self.request.model_copy(update={
             "run_id": uuid4(),

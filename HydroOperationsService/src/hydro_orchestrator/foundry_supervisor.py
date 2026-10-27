@@ -354,8 +354,13 @@ def requests_new_work_order_proposal(question: str) -> bool:
 
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
-    current: BaseException | None = error
-    while current is not None and len(signatures) < 4:
+    pending = [error]
+    seen: set[int] = set()
+    while pending and len(signatures) < 4:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
         fields = [type(current).__name__]
         for name in ("status_code", "code", "type", "param"):
             value = getattr(current, name, None)
@@ -365,8 +370,12 @@ def safe_exception_signature(error: BaseException) -> str:
             ):
                 fields.append(f"{name}={value}")
         signatures.append(",".join(fields))
-        cause = current.__cause__ or current.__context__
-        current = cause if isinstance(cause, BaseException) and cause is not current else None
+        if isinstance(current, BaseExceptionGroup):
+            pending[0:0] = list(current.exceptions)
+        else:
+            cause = current.__cause__ or current.__context__
+            if isinstance(cause, BaseException):
+                pending.append(cause)
     return " <- ".join(signatures)
 
 

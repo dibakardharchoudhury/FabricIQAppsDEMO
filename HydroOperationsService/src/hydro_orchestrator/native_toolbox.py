@@ -1,7 +1,10 @@
 """Read-only native Fabric execution through the Foundry-managed MCP gateway."""
 
 import json
+import logging
+import re
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import uuid4
@@ -10,8 +13,12 @@ import httpx
 from azure.core.credentials_async import AsyncTokenCredential
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import McpError
 
 from .live_sources import SourceFailure
+from .source_auth import SourceAuthorizationError
+
+logger = logging.getLogger(__name__)
 
 
 class FoundryUserAuth(httpx.Auth):
@@ -54,6 +61,38 @@ async def call_native_toolbox(
     credential: AsyncTokenCredential, *, timeout: float = 300,
 ) -> NativeToolboxCall:
     request_id = str(uuid4())
+    phase = "initialization"
+
+    @asynccontextmanager
+    async def source_errors() -> AsyncGenerator[None, None]:
+        try:
+            yield
+        except* (SourceFailure, SourceAuthorizationError, McpError, httpx.HTTPError) as group:
+            pending = list(group.exceptions)
+            details = []
+            authorization = False
+            while pending:
+                error = pending.pop()
+                if isinstance(error, BaseExceptionGroup):
+                    pending.extend(error.exceptions)
+                    continue
+                detail = type(error).__name__
+                if isinstance(error, (SourceFailure, SourceAuthorizationError)):
+                    detail += ": " + str(error)
+                    authorization |= isinstance(error, SourceAuthorizationError)
+                elif isinstance(error, httpx.HTTPStatusError):
+                    detail += f": HTTP {error.response.status_code}"
+                elif isinstance(error, McpError):
+                    detail += f": MCP code {error.error.code}"
+                    status = re.search(r"\bstatus code[ :]+([1-5][0-9]{2})\b", error.error.message)
+                    if status:
+                        detail += f", upstream HTTP {status[1]}"
+                details.append(detail)
+            message = f"Foundry native toolbox {phase} failed ({'; '.join(details)[:600]}; request {request_id})."
+            logger.error("%s", message)
+            if authorization:
+                raise SourceAuthorizationError(message) from group
+            raise SourceFailure(message) from group
 
     async def capture(response: httpx.Response) -> None:
         nonlocal request_id
@@ -61,13 +100,14 @@ async def call_native_toolbox(
             request_id = response.headers.get("apim-request-id") or response.headers.get("x-ms-request-id") or request_id
 
     url = f"{endpoint}/toolboxes/{name}/versions/{version}/mcp?api-version=v1"
-    async with httpx.AsyncClient(
+    async with source_errors(), httpx.AsyncClient(
         auth=FoundryUserAuth(credential), follow_redirects=False, timeout=timeout,
         headers={"x-ms-tool-call-id": request_id}, event_hooks={"response": [capture]},
     ) as client:
         async with streamable_http_client(url, http_client=client, terminate_on_close=False) as (read, write, _):
             async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=timeout)) as session:
                 await session.initialize()
+                phase = "tool discovery"
                 inventory = await session.list_tools()
                 if inventory.nextCursor or len(inventory.tools) != 1:
                     raise SourceFailure("The native toolbox must expose exactly one complete Data Agent query tool.")
@@ -85,6 +125,7 @@ async def call_native_toolbox(
                         or properties[required[0]].get("type") != "string"):
                     raise SourceFailure("The native Data Agent query schema has no unambiguous question argument.")
                 arguments = {required[0]: question}
+                phase = "tool execution"
                 result = await session.call_tool(tool.name, arguments=arguments)
     if result.isError:
         raise SourceFailure("The Foundry toolbox returned a native source execution error.")

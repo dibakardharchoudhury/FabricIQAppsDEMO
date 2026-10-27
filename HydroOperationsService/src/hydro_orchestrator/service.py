@@ -27,6 +27,7 @@ from .contracts import (
 from .foundry_supervisor import (
     ChatAnswer, ChatRequest, EquipmentSelection, FoundrySupervisor, HistoricalContext, HistoricalTurn, NativeBinding,
     NativeSource, RunJournal, ToolEvidence, previous_receipts,
+    safe_exception_signature,
 )
 from pydantic import Field, ValidationError, model_validator
 from starlette.responses import JSONResponse, StreamingResponse
@@ -678,7 +679,7 @@ def create_delegated_app(
                         except (NativeSourceRefusal, NativeSourceServiceError) as failure:
                             failed(502, failure.category, str(failure))
                         except Exception as failure:
-                            logger.error("Detached orchestration failed (%s).", type(failure).__name__)
+                            logger.error("Detached orchestration failed (%s).", safe_exception_signature(failure))
                             failed(500, "execution", "Orchestration failed; inspect the execution audit.")
                         finally:
                             await stream_credential.close()
@@ -754,7 +755,7 @@ def create_delegated_app(
                             ]
                             logger.error("Streamed orchestration failed (ValidationError: %s).", signature)
                         else:
-                            logger.error("Streamed orchestration failed (%s).", type(failure).__name__)
+                            logger.error("Streamed orchestration failed (%s).", safe_exception_signature(failure))
                         yield line(terminal_event("Orchestration failed; no answer was certified."))
                         error = failed(500, "execution", "Orchestration failed; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
