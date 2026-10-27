@@ -290,6 +290,33 @@ invalid Aurora subscription key in the private vault and rerun authorized
 Weather ingestion. Neither blocker is hidden by a deployment success or a
 model-only answer.
 
+### October 27 native-refusal failure-contract hardening
+
+The remaining provider prerequisite is not solved by another invocation.
+A regression reproduced two application defects: native provider refusal was
+flattened into generic HTTP 500/connectivity advice, and a refusal-bearing
+payload with partial business rows could pass the domain-evidence check.
+
+The source boundary now raises a typed `native_refusal` before considering
+generic service errors or partial rows. Refusals terminate immediately: no
+same-source prompt correction, SDK retry, direct fallback, certified answer,
+or work-order draft. Non-refusal source/identity contract corrections retain
+their existing bounds. The known safe category and source-owner review advice
+survive streaming, non-streaming, detached completion and exact-run recovery.
+The browser uses an allowlisted message, never arbitrary provider text, and
+does not suggest that waiting for connectivity will resolve a refusal.
+
+These are deterministic regression checks, not a successful native business
+read. Native business acceptance and Weather credential remediation remain
+blocked as recorded above; no new known-blocked native query or Weather
+credential attempt was made to validate the failure contract.
+
+Validation passed: **204 Python regressions**, **179 Node transport,
+presentation, tool and connector regressions**, Pyright with zero diagnostics,
+environment validation, TypeScript/Vite build and changed-file ESLint.
+The failure-contract tests include interrupted-stream recovery, detached
+credential cleanup, refusal-bearing partial rows and unavailable audit storage.
+
 ## October 26 publication and main-merge readiness
 
 Tenant Graph authorization recovered. The canonical **app-only** command published

@@ -12,7 +12,10 @@ Function loops stop on the first real callback error; one local input correction
 remains available. The official SDK allows one transport retry per model HTTP
 request, honoring provider wait/backoff while retaining existing tool-result
 messages rather than restarting the agent. Native MCP transport keeps zero SDK
-retries and its separate same-source correction limit. Service timeouts and the
+retries and its separate same-source correction limit for non-refusal contract
+or identity errors. Provider refusals, including moderation, stop immediately:
+they are never retried, repaired by another prompt, or routed to direct sources.
+Service timeouts and the
 ten-minute workflow deadline remain enforced; exhausted retries still fail
 explicitly. This does not replay source callbacks, proposals or production writes.
 
@@ -34,6 +37,11 @@ selection and resolved named equipment before a fleet population, so a named
 investigation cannot freeze an empty scope or widen to unrelated turbines.
 Native validation failures log only the Foundry response ID for authorized
 provider-receipt diagnostics, not raw source output or credentials.
+Native refusals retain the safe `native_refusal` category through streamed,
+non-streamed and detached execution, persisted failure/result recovery, and
+the hosted UI. The UI requests source-owner review instead of claiming a
+connectivity problem; it never displays arbitrary provider error text.
+Refusal-bearing partial rows are also rejected, not certified.
 No-RCA work-order handoffs preserve verified direct evidence and source
 population/provenance metadata. Keep the pinned deterministic workflow and existing project.
 Historical version/test counts below are not this release's runtime certificate.

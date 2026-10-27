@@ -27,7 +27,7 @@ from openai import APIStatusError, APITimeoutError
 from pydantic import AwareDatetime, Field, ValidationError, model_validator
 
 from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentity, WorkOrderDraft, utc_now
-from .live_sources import Bridge, SourceFailure
+from .live_sources import Bridge, NativeSourceRefusal, SourceFailure
 from .foundry_rca import verified_project_endpoint
 from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation
 from .workflow import RequiredCheckpointStorage
@@ -127,9 +127,6 @@ def _validated_native_result(output: object) -> dict[str, object]:
             return any(contains_service_error(item) for item in value)
         return False
 
-    if contains_service_error(payload):
-        raise SourceFailure("Native source failure: the selected source returned an error payload.")
-
     def contains_refusal(value: object) -> bool:
         if isinstance(value, str):
             return _is_native_refusal_text(value)
@@ -139,10 +136,10 @@ def _validated_native_result(output: object) -> dict[str, object]:
             return any(contains_refusal(item) for item in value)
         return False
 
-    if contains_refusal(payload) and not _has_native_domain_evidence(payload):
-        raise SourceFailure(
-            "Native source refusal: the selected source returned moderation/refusal text instead of domain evidence."
-        )
+    if contains_refusal(payload):
+        raise NativeSourceRefusal()
+    if contains_service_error(payload):
+        raise SourceFailure("Native source failure: the selected source returned an error payload.")
     native_result: dict[str, object] = (
         dict(payload) if isinstance(payload, dict)
         else {"native_output": payload}
@@ -2738,7 +2735,6 @@ class FoundrySupervisor:
                     except SourceFailure as error:
                         logger.warning("Foundry native response %s failed source validation.", response.response_id)
                         source_mismatch = str(error).startswith("Native source mismatch:")
-                        source_refusal = str(error).startswith("Native source refusal:")
                         identity_missing = str(error).startswith("Native identity coverage missing:")
                         contract_missing = str(error).startswith(
                             "Data Agent quality/work evidence requires one inspectable JSON bundle;"
@@ -2747,24 +2743,18 @@ class FoundrySupervisor:
                             "Data Agent quality/work coverage is incomplete;"
                         )
                         if completion_attempt == 0 and (
-                            source_mismatch or source_refusal or identity_missing or contract_missing
+                            source_mismatch or identity_missing or contract_missing
                             or coverage_incomplete
                         ):
                             logger.warning(
                                 "Foundry native agent returned %s; requesting one bounded same-source correction.",
                                 "the wrong connection" if source_mismatch
-                                else "a moderation/refusal payload" if source_refusal
                                 else "no inspectable quality/work JSON bundle" if contract_missing
                                 else "incomplete quality/work source coverage" if coverage_incomplete
                                 else "incomplete requested-identity coverage",
                             )
                             if source_mismatch:
                                 repair_reason = "The prior call used the wrong native connection. "
-                            elif source_refusal:
-                                repair_reason = (
-                                    "The prior selected-source call returned moderation/refusal text "
-                                    "instead of domain evidence. "
-                                )
                             elif coverage_incomplete:
                                 repair_reason = (
                                     "The prior Data Agent reported incomplete source reads. Forward the complete "

@@ -26,6 +26,16 @@ class SourceFailure(RuntimeError):
         self.write_attempted = write_attempted
 
 
+class NativeSourceRefusal(SourceFailure):
+    category = "native_refusal"
+
+    def __init__(self):
+        super().__init__(
+            "Native source refusal: the selected Fabric Data Agent refused the request. "
+            "Its owner must review the provider response before retrying. No direct-source fallback was used."
+        )
+
+
 class Discovery(Contract):
     source: SourceIdentity
     cluster: str

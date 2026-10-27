@@ -102,6 +102,11 @@ the fleet pass is a substitute for those remaining gates.
 
 ### Current v22: three-specialist RCA passed; native provider remains blocked
 
+Subsequent native-refusal failure-contract hardening is documented in the
+[current audit](../docs/foundry-multi-agent-implementation.md#october-27-native-refusal-failure-contract-hardening).
+Its synthetic transport/ingress regressions are not native business acceptance.
+The external native and Weather prerequisites remain unresolved.
+
 Canonical publication of **`bb184aa`** succeeded on October 27 at **00:36:23 UTC**.
 The signed browser verified **1.0.1119**, coordinator **v22**, image
 `src-b850ab2a1ec1e3fc` (ACR `dtk`), with unchanged specialists and 42 preserved

@@ -34,7 +34,7 @@ from .source_auth import DelegatedCredential, DelegatedTokens, SourceAuthPolicy,
 from .store import Conflict, Store, StoredRun
 from .workflow import ReviewAdapters, build_workflow, checkpoint_store
 from .presentation import OperatorAnswer, client_presentation, operator_answer
-from .live_sources import Bridge, FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
+from .live_sources import Bridge, FabricBackendTools, LiveSources, NativeSourceRefusal, NodeSourceBridge, SourceFailure
 from .foundry_rca import verified_project_endpoint
 
 logger = logging.getLogger(__name__)
@@ -508,7 +508,7 @@ def create_delegated_app(
                 return HTTPException(status, message)
             detail: dict[str, object] = {
                 "message": message, "run_id": str(chat.run_id), "audit_url": "/invocations",
-                "audit_available": True,
+                "audit_available": True, "category": category,
             }
             try:
                 RunJournal(state / str(chat.run_id) / "receipts").save("failure", {
@@ -672,6 +672,8 @@ def create_delegated_app(
                         except TimeoutError:
                             failed(504, "source_timeout",
                                    "An upstream source operation timed out; inspect the execution audit.")
+                        except NativeSourceRefusal as failure:
+                            failed(502, failure.category, str(failure))
                         except Exception as failure:
                             logger.error("Detached orchestration failed (%s).", type(failure).__name__)
                             failed(500, "execution", "Orchestration failed; inspect the execution audit.")
@@ -725,6 +727,10 @@ def create_delegated_app(
                         yield line(terminal_event("An upstream source operation timed out; no answer was certified."))
                         error = failed(504, "source_timeout",
                                        "An upstream source operation timed out; inspect the execution audit.")
+                        yield line({"type": "error", "status": error.status_code, "detail": error.detail})
+                    except NativeSourceRefusal as failure:
+                        yield line(terminal_event(str(failure)))
+                        error = failed(502, failure.category, str(failure))
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     except Exception as failure:
                         if isinstance(failure, SourceFailure):
@@ -783,6 +789,8 @@ def create_delegated_app(
             logger.warning("Delegated invocation upstream operation timed out.")
             raise failed(504, "source_timeout",
                          "An upstream source operation timed out; inspect the execution audit.") from None
+        except NativeSourceRefusal as error:
+            raise failed(502, error.category, str(error)) from None
         except HTTPException:
             raise
         except Exception as error:

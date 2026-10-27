@@ -1364,6 +1364,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         elif name == "hydro-fabric-iq-agent":
             native_output = (
                 {"error": {"code": "output_moderation", "message": "Published Data Agent unavailable."}}
+                if self.mode == "native_moderation_payload"
+                else {"error": {"code": "source_unavailable", "message": "Published Data Agent unavailable."}}
                 if self.mode == "native_error_payload"
                 else
                 {"documents": [{
@@ -2290,19 +2292,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-qa-agent"], 3)
         self.assertEqual(self.payloads[-2]["input"], self.payloads[-1]["input"])
 
-    async def test_native_refusal_gets_one_bounded_same_source_correction(self):
+    async def test_native_refusal_stops_without_same_source_correction_or_fallback(self):
         self.mode = "native_refusal_once"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
-        result = await owner.run(request)
-        self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
-        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
-        repair = next(
-            payload for payload in self.payloads
-            if payload.get("agent_reference", {}).get("name") == "hydro-fabric-iq-agent"
-            and "native_source_repair" in json.dumps(payload["input"])
-        )
-        self.assertIn("moderation/refusal text", json.dumps(repair["input"]))
+        with self.assertRaisesRegex(SourceFailure, "Native source refusal"):
+            await owner.run(request)
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
+        self.assertFalse(any("native_source_repair" in json.dumps(payload["input"]) for payload in self.payloads))
+        self.assertFalse(owner.evidence)
         self.assertEqual(self.tools.calls, 0)
 
     async def test_native_requested_identity_gets_one_bounded_same_source_correction(self):
@@ -2336,7 +2334,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         with self.assertRaisesRegex(SourceFailure, "Native source refusal"):
             await owner.run(request)
-        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
         self.assertEqual(self.tools.calls, 0)
 
     def test_native_moderation_and_error_payloads_are_not_domain_evidence(self):
@@ -2355,12 +2353,37 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "rows": [{"equipment_id": "TEST_T005", "status": "Unavailable"}],
         }))["rows"], [{"equipment_id": "TEST_T005", "status": "Unavailable"}])
 
+    def test_native_refusal_is_classified_before_service_errors_or_partial_evidence(self):
+        for payload in [
+            {"error": {"code": "output_moderation", "message": "private provider diagnostics"}},
+            {"documents": [{"content": "OutputModeration: no source query completed."}]},
+            {"rows": [{"facility_count": 1}], "warning": "output moderation"},
+            "I'm sorry, but I cannot assist with that request.",
+        ]:
+            with self.subTest(payload=payload):
+                with self.assertRaises(SourceFailure) as caught:
+                    _validated_native_result(json.dumps(payload))
+                self.assertEqual(getattr(caught.exception, "category", None), "native_refusal")
+                self.assertIn("owner", str(caught.exception))
+                self.assertNotIn("private provider diagnostics", str(caught.exception))
+
     async def test_native_service_error_payload_fails_without_fallback_or_false_completion(self):
         self.mode = "native_error_payload"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         with self.assertRaisesRegex(SourceFailure, "Native source failure"):
             await owner.run(request)
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
+        self.assertEqual(self.tools.calls, 0)
+        self.assertFalse(owner.evidence)
+
+    async def test_native_moderation_error_stops_without_correction_or_fallback(self):
+        self.mode = "native_moderation_payload"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        with self.assertRaisesRegex(SourceFailure, "Native source refusal") as caught:
+            await owner.run(request)
+        self.assertEqual(getattr(caught.exception, "category", None), "native_refusal")
         self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
         self.assertEqual(self.tools.calls, 0)
         self.assertFalse(owner.evidence)

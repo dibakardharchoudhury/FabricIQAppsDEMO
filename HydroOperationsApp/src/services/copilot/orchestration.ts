@@ -56,7 +56,7 @@ export function uncertifiedFailureMessage(error: unknown): string {
     ? error.message.trim()
     : 'The agent transport failed.'
   return `The request failed before a certified answer was returned. No answer or write outcome is certified. ` +
-    `Do not repeat this request or any write decision until connectivity recovers and the prior run audit is checked. ` +
+    `Do not repeat this request or any write decision until the reported failure is resolved and the prior run audit is checked. ` +
     `Technical detail: ${technical}`
 }
 

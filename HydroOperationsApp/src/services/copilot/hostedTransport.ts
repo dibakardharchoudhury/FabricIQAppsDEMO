@@ -37,7 +37,11 @@ export class HostedInvocationError extends Error {
   readonly detail: Record<string, unknown> | undefined
   readonly status: number
   constructor(status: number, detail?: Record<string, unknown>) {
-    super(`Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
+    super(detail?.category === 'native_refusal'
+      ? 'The selected Fabric Data Agent refused the request. Its owner must review the provider response before retrying. ' +
+        'No direct-source fallback was used. No answer or write outcome is certified.' +
+        (detail.audit_available === false ? ' The execution audit could not be saved; contact the service owner.' : '')
+      : `Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
     this.status = status
     this.detail = detail
   }

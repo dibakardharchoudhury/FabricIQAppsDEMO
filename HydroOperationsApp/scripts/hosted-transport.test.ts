@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   hostedDecisionEdits, HostedTransport, HostedInvocationError, type SourceTokens,
 } from '../src/services/copilot/hostedTransport.ts'
+import { uncertifiedFailureMessage } from '../src/services/copilot/orchestration.ts'
 
 const project = 'https://test.services.ai.azure.com/api/projects/test'
 const endpoint = `${project}/agents/coordinator/endpoint/protocols/invocations`
@@ -15,6 +16,56 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
   presentation: { schema_version: 1, text: 'Backend-provided answer.', visualizations: [], execution_events: [] } })
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
+
+test('native refusal is actionable and not presented as connectivity or retried', async () => {
+  for (const delivery of ['json', 'stream', 'recovery'] as const) {
+    const operations: string[] = []
+    const failure = { category: 'native_refusal', message: 'private untrusted provider diagnostics' }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+      const body = JSON.parse(String(init?.body))
+      operations.push(body.operation)
+      if (body.operation === 'result') return response({ status: 'failed', failure })
+      if (delivery === 'json') return response({ detail: failure }, 502)
+      if (delivery === 'stream') {
+        return new Response(`${JSON.stringify({ type: 'error', status: 502, detail: failure })}\n`,
+          { headers: { 'Content-Type': 'application/x-ndjson' } })
+      }
+      let sent = false
+      return new Response(new ReadableStream({
+        pull(controller) {
+          if (sent) controller.error(new Error('connection reset'))
+          else {
+            sent = true
+            controller.enqueue(new TextEncoder().encode(`${JSON.stringify({
+              type: 'run', run_id: 'run-refused', source,
+            })}\n`))
+          }
+        },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+    })
+    await assert.rejects(client.run({ question: 'Count facilities.' }, () => {}), error => {
+      assert.ok(error instanceof HostedInvocationError)
+      assert.equal(error.detail?.category, 'native_refusal')
+      const displayed = uncertifiedFailureMessage(error)
+      assert.match(displayed, /Fabric Data Agent.*refused/)
+      assert.match(displayed, /owner.*review/)
+      assert.match(displayed, /No answer or write outcome is certified/)
+      assert.doesNotMatch(displayed, /connectivity recovers|private untrusted/)
+      return true
+    })
+    assert.deepEqual(operations, delivery === 'recovery' ? ['run', 'result'] : ['run'])
+  }
+})
+
+test('native refusal does not hide a failure to persist its audit', () => {
+  const error = new HostedInvocationError(500, {
+    category: 'native_refusal', audit_available: false, message: 'private untrusted provider diagnostics',
+  })
+  const displayed = uncertifiedFailureMessage(error)
+  assert.match(displayed, /execution audit could not be saved/)
+  assert.match(displayed, /contact the service owner/)
+  assert.doesNotMatch(displayed, /private untrusted/)
+})
 
 test('default fetch preserves the browser receiver', async () => {
   const original = globalThis.fetch

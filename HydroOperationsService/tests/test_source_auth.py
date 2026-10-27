@@ -22,7 +22,9 @@ from starlette.requests import Request
 
 from hydro_orchestrator.contracts import SourceIdentity, WorkOrderDraft, utc_now
 from hydro_orchestrator.live_sources import FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
-from hydro_orchestrator.foundry_supervisor import ChatAnswer, FoundrySupervisor, NativeBinding, RunJournal
+from hydro_orchestrator.foundry_supervisor import (
+    ChatAnswer, FoundrySupervisor, NativeBinding, RunJournal, _validated_native_result,
+)
 from hydro_orchestrator.service import (
     ChatInput, RuntimeConfiguration, create_delegated_app, create_fabric_delegated_app, create_runtime_app,
     decide_work_order, interrupted_worker_failure, normalized_chat_input,
@@ -642,6 +644,81 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("RuntimeError", combined)
             self.assertNotIn("private diagnostic content", combined)
             self.assertEqual(contexts, ["closed"])
+
+    async def test_native_refusal_survives_streaming_and_persisted_result_without_private_text(self):
+        async def fail(_request):
+            _validated_native_result(json.dumps({
+                "error": {"code": "output_moderation", "message": "private provider diagnostics"},
+            }))
+
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming), TemporaryDirectory() as directory:
+                app, _, _, contexts = self.ingress(Path(directory), run=fail)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                             base_url="http://test") as client:
+                    response = await client.post("/invocations", json={
+                        **self.invocation(), "stream": streaming,
+                    })
+                    if streaming:
+                        messages = [json.loads(line) for line in response.text.splitlines()]
+                        self.assertEqual(messages[-1]["type"], "error")
+                        self.assertEqual(messages[-1]["status"], 502)
+                        detail = messages[-1]["detail"]
+                        self.assertEqual(messages[-2]["event"]["status"], "error")
+                        self.assertIn("owner", messages[-2]["event"]["detail"])
+                    else:
+                        self.assertEqual(response.status_code, 502)
+                        detail = response.json()["detail"]
+                    self.assertEqual(detail["category"], "native_refusal")
+                    self.assertIn("owner", detail["message"])
+                    recovered = await client.post("/invocations", json={
+                        "operation": "result", "run_id": detail["run_id"], "tokens": self.invocation()["tokens"],
+                    })
+                    self.assertEqual(recovered.status_code, 200, recovered.text)
+                    self.assertEqual(recovered.json()["status"], "failed")
+                    self.assertEqual(recovered.json()["failure"]["category"], "native_refusal")
+                self.assertNotIn("private provider diagnostics", response.text + recovered.text)
+                self.assertEqual(contexts, ["closed"])
+
+    async def test_detached_native_refusal_remains_failed_and_closes_its_credential(self):
+        release = asyncio.Event()
+
+        async def fail(_request):
+            await release.wait()
+            _validated_native_result(json.dumps({"error": {"code": "output_moderation"}}))
+
+        with TemporaryDirectory() as directory:
+            app, leases, _, contexts = self.ingress(Path(directory), run=fail)
+            invocation = {**self.invocation(), "stream": True}
+
+            async def receive():
+                return {"type": "http.request", "body": json.dumps(invocation).encode(), "more_body": False}
+
+            route = next(route for route in app.routes if getattr(route, "path", None) == "/invocations")
+            streamed = await route.endpoint(Request({
+                "type": "http", "http_version": "1.1", "method": "POST",
+                "scheme": "http", "path": "/invocations", "raw_path": b"/invocations",
+                "query_string": b"", "headers": [], "client": ("test", 1), "server": ("test", 80),
+            }, receive))
+            first = json.loads(await anext(streamed.body_iterator))
+            await streamed.body_iterator.aclose()
+            recovery = {"operation": "result", "run_id": first["run_id"], "tokens": invocation["tokens"]}
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test") as client:
+                pending = await client.post("/invocations", json=recovery)
+                self.assertEqual(pending.status_code, 202, pending.text)
+                release.set()
+                for _ in range(20):
+                    await asyncio.sleep(.01)
+                    result = await client.post("/invocations", json=recovery)
+                    if result.status_code != 202:
+                        break
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json()["status"], "failed")
+                self.assertEqual(result.json()["failure"]["category"], "native_refusal")
+            self.assertEqual(contexts, ["closed"])
+            with self.assertRaises(SourceAuthorizationError):
+                await leases[0].get_token(self.policy.scopes["fabric"])
 
     async def test_ingress_validation_and_auth_errors_never_echo_token_input(self):
         with TemporaryDirectory() as directory:
