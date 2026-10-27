@@ -1,6 +1,61 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Knowledge Graph in-workspace loading update
+
+Reuse the existing approved FEATURE target and canonical Python deployment
+recipe. This is a frontend-only change: remove the blocking loading/error page,
+render the existing graph workspace immediately, keep verified topology visible
+and timestamped during refresh, and retain fail-closed clearing on failed reads.
+The execution selector remains available under Advanced graph details, including
+loading and error states. No query-source, model, infrastructure, RBAC, network,
+redirect, source permission or approved-write policy changes are requested.
+
+Target: tenant `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, existing Sweden Central capacity and
+subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+The existing target was offered for confirmation; the user was unavailable.
+Continue with this unchanged target for the requested application update, with
+no new resources or broader permissions.
+
+### Functional verification
+
+- Status: Verified locally using an isolated, explicitly synthetic browser
+  fixture of the actual React/Cytoscape page; no cloud source tokens or data
+  were used by that fixture.
+- The normal workspace, toolbar and inspector render before graph completion;
+  the initial skeleton has no invented graph entities.
+- A successful verified fixture renders the real canvas. During refresh the
+  canvas remains mounted and the header identifies its last-verification time.
+- A rejected read clears graph data and shows an inline error; explicit retry
+  restores the verified canvas without replacing the workspace.
+- The temporary fixture and its attached server were removed/stopped.
+
+### Section 7: Validation Proof - Knowledge Graph loading UI
+
+Validation performed on 2026-10-27 against the current frontend-only change.
+
+All validation checks pass:
+- [x] Core validation: CLI tenant/subscription, Node 24 environment, tests,
+  scoped lint and production build. ARM validate/what-if are not applicable:
+  the canonical repository workflow updates an existing Fabric application;
+  no Bicep/Terraform or ARM resource changes are included.
+- [x] Container build: not applicable; packaged runtime source/dependencies
+  are unchanged and the canonical deployer reuses the source-fingerprinted image.
+- [x] Static role verification and Azure Policy delta: no identity, role,
+  resource, SKU, region, tag or network configuration changes. Existing source
+  authentication and approved-write enforcement are unchanged.
+
+- Existing tenant-scoped CLI profile confirms the expected tenant and Enabled
+  subscription, `ME-MngEnvMCAP218279-didharch-2`.
+- Node 24 `npm run validate-env`: passed.
+- `npm run test:knowledge-graph`: **111 passed, 0 failed**.
+- Scoped ESLint for the changed page and visual regression tests: passed.
+- TypeScript/Vite production build: passed; existing mixed-import/chunk warnings.
+- Runtime/container source is unchanged. Reuse the current image; no new
+  container, IaC deployment or role expansion is required.
+- Canonical publication and hosted UI acceptance remain pending.
 
 ## FEATURE human-approved work-order policy restoration
 

@@ -152,6 +152,28 @@ test('compact graph presentation retains earlier fluid strokes and keeps diagnos
   assert.match(styles, /\.kg-source-state button \{[^}]*grid-row: 1 \/ span 2/)
 })
 
+test('loading and errors stay inside the graph workspace without a blocking placeholder page', () => {
+  const page = readFileSync(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(page, /v2-placeholder-card|Loading the Ontology graph/)
+  assert.match(page, /className="kg-stage" aria-label="Knowledge Graph canvas" aria-busy=\{graphLoading\}/)
+  assert.match(page, /kg-loading-skeleton" aria-hidden="true"/)
+  assert.match(page, /Entities appear after verification/)
+  assert.match(page, /className="kg-no-results" role="alert"/)
+  assert.match(page, /Connect Fabric and retry/)
+  assert.match(page, /Refreshing · showing last verified graph/)
+  assert.match(page, /hasVerifiedGraph && graphQueriedAt/)
+  assert.match(page, /disabled=\{!hasVerifiedGraph\} onClick=\{exportNativeGraph\}/)
+  assert.match(page, /<summary>Advanced graph details[^]*?<\/summary>\{executionControl\}/)
+  assert.equal(page.match(/\{executionControl\}/g)?.length, 1)
+})
+
+test('loading and unavailable headers do not display the live-ready treatment', () => {
+  const styles = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.kg-source-state\[data-state="loading"\][^}]*var\(--cp-text-muted\)/)
+  assert.match(styles, /\.kg-source-state\[data-state="unavailable"\][^}]*var\(--cp-danger\)/)
+  assert.match(styles, /\.kg-source-state:not\(\[data-state="ready"\]\) \.kg-live-dot[^}]*box-shadow: none/)
+})
+
 test('maximum supported graph visual preparation stays within an interactive budget', () => {
   const nodes = Array.from({ length: 2000 }, (_, index) =>
     node(`node-${index}`, (['facility', 'system', 'equipment', 'instrument'] as const)[index % 4], index % 80 === 3))

@@ -7,6 +7,33 @@ navigable operational context. It is designed for an operator who starts with a 
 and needs to move quickly between the affected facility, system, equipment, instruments, current
 readings, inspections, notifications, work orders, and 3D model.
 
+## Loading and refresh interaction
+
+The graph workspace, toolbar, filters and inspector render immediately. First-load
+verification uses a static skeleton inside the canvas, not a separate blocking
+page. No placeholder entities or relationships are invented. The header does not
+show a green ready indicator or graph counts until a verified graph is available.
+
+During refresh, the existing verified graph remains visible with an explicit
+refreshing/last-verified label and verification timestamp. Refresh failures still
+clear analytical graph data and display an inline error with **Connect Fabric and
+retry**, preserving the fail-closed source contract. Identity changes hide the
+previous user's graph, and changing execution mode clears the old topology;
+neither transition displays it as a result from the new user or mode.
+
+**Advanced graph details** contains the execution selector in every state,
+including first load and errors. The configured mode is never silently changed.
+Existing bounded query deadlines apply; this presentation change does not claim
+to reduce source-query latency. Node styles, layouts, telemetry highlights and
+health animations are unchanged.
+
+Validation: the focused graph suite passes **111 tests**, scoped ESLint and the
+production TypeScript/Vite build pass. An isolated synthetic browser fixture of
+the actual page confirmed the initial workspace/skeleton, verified canvas,
+canvas retention and timestamp during refresh, inline fail-closed errors, and
+successful explicit retry. This is UI verification, not a live-source latency
+benchmark. The temporary fixture and its server were cleaned up.
+
 ## Relationship strokes, freshness and health alerts
 
 The current visual contract supersedes the older telemetry-bearing-path behavior in the
