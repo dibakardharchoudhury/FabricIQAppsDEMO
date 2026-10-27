@@ -5,6 +5,13 @@ dated follow-ups, corrections, measured results and unfinished acceptance, groun
 in repository commits and linked records. It is not a release certificate.
 Earlier runs remain historical evidence, not passes after a later code change.
 
+**October 27 Weather status update:** UKMet-only ingestion and serving now pass
+real pipeline and signed-browser acceptance on app **1.0.1131 / 51b05d6**.
+Aurora is disabled by default, not credential-repaired; its key is retained.
+This supersedes earlier claims that Aurora's HTTP 401 blocks all Weather.
+Native Foundry policy acceptance is unchanged. See the
+[UKMet-first receipt](weather-fabric-port-plan.md#october-27-ukmet-first-live-acceptance).
+
 ## October 26 end-to-end failure audit and repair
 
 The signed FEATURE browser on build **1.0.1112 / `36b08ed`** reproduced the compound

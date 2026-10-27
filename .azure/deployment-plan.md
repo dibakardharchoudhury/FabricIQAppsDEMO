@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## October 27 UKMet-first weather follow-up
 
@@ -31,7 +31,7 @@ Validation:
 - [x] Independent actual UKMet run `785fcd48-77d5-414e-a2b7-30bed3b2969e`
   completed at `2026-10-27T03:03:11Z`, without running Aurora.
 - [x] Two focused nested pipeline rebinding/inventory tests; mirror drift check.
-- [ ] Actual UKMet-first pipeline run, serving rows and authenticated app.
+- [x] Actual UKMet-first pipeline run, serving rows and authenticated app.
 
 All validation checks pass for this scoped change:
 - [x] Core CLI/auth/build: existing tenant credentials, successful real UKMet
@@ -70,6 +70,32 @@ Record focused relevant results separately, without claiming the whole suite pas
   passed for this correction. The initial UKMet-first app publication succeeded.
 - Live pipeline preparation succeeded in 281.312 seconds and returned exactly
   `{"status":"prepared","areas":3,"aurora":"disabled"}` before UKMet ingestion.
+
+### UKMet-first publication and live acceptance
+
+- The complete manual pipeline run `1b8dc1af-4d75-4885-960d-782b0dcb3a85`
+  completed successfully at `2026-10-27T03:27:57Z`. Preparation, UKMet ingestion,
+  serving calculations and the disabled optional branch all succeeded; neither
+  `Ingest_Aurora` nor its second metrics refresh executed.
+- Signed-browser reads showed actual future UKMet forecasts for all three stations
+  and all three representative 20 km areas. Each station had four forecast rows
+  in the selected next-24-hour window and 24 observation rows in the past 24 hours.
+  Areas reuse their representative station's observations; they are not areal
+  measurements. Solar radiation remains unavailable rather than fabricated.
+- Final canonical app publication completed at `2026-10-27T03:30:09Z` in
+  416.547 seconds, with `SUCCESS` and `DEPLOYED_APP_URL`.
+  Authenticated reload confirmed **1.0.1131 / 51b05d6**, UKMet selected by default,
+  actual forecast/observation rows and corrected Administration prerequisite text.
+- All five specialists and the existing coordinator image were reused. Forty-two
+  redirects were preserved; runtime/CORS and connector readiness checks passed.
+- No MAI secret deletion/replacement, identity/RBAC/network change, schedule change,
+  Core/seed execution or telemetry stream start was performed. Live notebook
+  Lakehouse/Environment bindings were preserved and read back.
+- Final scoped checks: 17 Python weather contracts, two nested rebinding/inventory
+  tests, five Node weather tests, production build and scoped lint passed.
+  The unrelated broad feature-test mock mismatch above remains documented.
+
+See [the weather acceptance receipt](../docs/weather-fabric-port-plan.md#october-27-ukmet-first-live-acceptance).
 
 ## October 27 graph freshness and fault-pulse publication
 

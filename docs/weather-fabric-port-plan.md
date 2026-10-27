@@ -1,5 +1,45 @@
 # Weather data to Fabric porting plan
 
+## October 27 UKMet-first live acceptance
+
+The deployed app is **1.0.1131 / 51b05d6**:
+[open Weather](https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net/?ui=v1&tab=weather).
+UKMet is the default; Aurora is opt-in and its key was not deleted or replaced.
+
+- Independent UKMet notebook run `785fcd48-77d5-414e-a2b7-30bed3b2969e`
+  completed at `2026-10-27T03:03:11Z`, establishing that UKMet works without Aurora.
+- Full UKMet-first pipeline `1b8dc1af-4d75-4885-960d-782b0dcb3a85` completed
+  from `03:12:09Z` to `03:27:57Z` (approximately 15 min 48 s, including sequential
+  Spark notebook startup/execution). This is not an instantaneous API refresh.
+
+| Actual pipeline activity | Result | Duration |
+| --- | --- | --- |
+| Shared area preparation | Succeeded; `{"status":"prepared","areas":3,"aurora":"disabled"}` | 281.312 s |
+| UKMet forecasts and observations | Succeeded | 315.759 s |
+| Metrics and serving projections | Succeeded | 282.083 s |
+| Optional Aurora condition | Succeeded with no ingestion/refresh child executed | 1.023 s |
+
+The authenticated browser read real serving data for Sloy, Foyers and Pitlochry,
+plus each station's representative 20 km area. All six selections had four future
+forecast rows in the selected next-24-hour window. Each station had 24 past-hourly
+observation rows; area views reuse that station data, not independent areal
+observations. The unmapped UKMet solar-radiation field stayed unavailable.
+These are actual provider results, not synthetic weather or substituted vendors.
+
+Final canonical app publication completed at `2026-10-27T03:30:09Z` in 416.547 s.
+Signed-browser reload confirmed the version above, default UKMet selection,
+forecast/observation rendering, and setup text that no longer requires Aurora.
+Seventeen weather contract tests, two pipeline rebinding/inventory tests, five
+Node weather tests, production build and scoped lint passed. The broader feature
+suite has an unrelated existing deployment-mock mismatch documented in the
+[deployment plan](../.azure/deployment-plan.md); it is not claimed to pass.
+
+Existing notebook Lakehouse/Environment bindings and 42 SPA redirects were
+preserved. Runtime/CORS and connector readiness passed, and all five specialists
+and the unchanged coordinator image were reused. No MAI secret, role, network
+policy or schedule was changed; no Core/seed notebook or telemetry stream ran.
+Aurora credential repair and native Foundry policy acceptance remain separate.
+
 ## Existing implementation
 
 The code in `weather/` is a local Aurora proof of concept split into four stages:
