@@ -2,9 +2,52 @@
 
 ## October 27 semantic orchestration implementation
 
-This supersedes the phrase-routing design below. **Local implementation is not
-yet live acceptance.** Publication and the three native comparisons must be
-recorded separately.
+This supersedes the phrase-routing design below. The implementation is deployed,
+but **native Fabric IQ acceptance remains blocked by provider moderation
+processing errors**. Deployment and diagnostic fact parity are not successful
+native acceptance.
+
+### Live publication and acceptance
+
+Canonical deployment completed with final `SUCCESS` and `DEPLOYED_APP_URL`:
+app **1.0.1147 / `a2ccda0`**, coordinator **v28**, image
+`src-eeda8b47b7e3a339`, Fabric IQ specialist **v3**. AppBackend runtime/database
+configuration was reapplied; GraphQL/token browser preflights and POST readiness
+passed. The signed browser then exercised the new release. No operational
+proposal, approval or SQL write was performed.
+
+| Read-only comparison | Direct Data Agent | Foundry native path | Acceptance |
+|---|---|---|---|
+| Complete facility IDs/names | Three canonical facilities, 13s | Same three IDs/names in provider receipt, 55.2s | Failed: provider moderation-processing error |
+| Generating units by power station; canonical IDs and ontology relationship | All 15 turbines across three stations; equipment -> system -> facility; 41s | Same 15 equipment IDs and station memberships in provider receipt, about 67s | Failed: same provider error |
+
+Both new native receipts confirm `userQuestion` is now plain-language business
+input, not serialized application context. Both still include
+`raiPostToolAnnotations.error.errorDetails`:
+`Error during output moderation for tool: DataAgent_RTI_Demo_Agent_V12 for general harms.`
+This establishes that narrowing the input corrected an application defect but
+**did not repair the provider failure**. Correct-looking rows carrying that
+error are diagnostic evidence, not certified answers. Safety annotations were
+not removed, moderation was not disabled and no direct-source fallback ran.
+
+Signed session: `0d486615-c3fa-4ca0-95c9-61d7637ddc43`.
+Support correlation:
+- Facilities run `2c38b59a-924c-4bb6-af6a-f9608315b4f3`,
+  response `resp_0204c37e74cf2cef016ae09c4cb1f88197a48f213d9ff12e7c`.
+- Relationships run `562632fe-4102-44c3-86a2-de8f819c484b`,
+  response `resp_00dc44517ff6211b016ae09da2def48195a60aefc7d88b8e33`.
+
+The third native comparison was not executed after these two reproduced
+provider failures. Escalate the error-bearing tool outputs and response IDs to
+Microsoft Foundry/Fabric support; a different prompt or suppression of the
+annotation is not an established repair.
+
+A separate, explicitly non-native inventory smoke test succeeded in **7.8s**:
+three facility records, one planned `query_assets(entity="facilities")` reader,
+no specialist model chain or narrative model. Its durable semantic decision
+records a 2.675s planning call. Run:
+`8967fd86-7f5e-4d2f-90fb-6dcaa32c0cdf`. This validates that reader path only;
+it is not a fallback or acceptance of Fabric IQ.
 
 ### Actual runtime responsibilities
 
@@ -60,7 +103,9 @@ actual refusals remain `native_refusal`. Neither permits silent direct fallback.
 The live Ontology already has 18 enriched entities and six business rules.
 The stale producer selected only five entities in the Data Agent. NB009 now
 refreshes its selected entity context from live TMDL while preserving operator
-choices, custom descriptions/instructions and working source mounts.
+choices, custom descriptions/instructions and working source mounts. NB009 job
+`e8e697e2-d370-4b85-83c5-892b6c253686` completed; independent readback verified
+all 18 entities selected in both draft and published Data Agent context.
 
 Per Microsoft's [Ontology-context integration documentation](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-ontology-sources),
 Ontology supplies definitions, synonyms, relationships and physical bindings;
@@ -68,8 +113,11 @@ underlying sources execute SQL/KQL/DAX. Mounted sources may supply additional
 source-specific guidance. Seeing them under **Other data sources** does not
 prove duplication or justify deleting them. Eventhouse physical bindings exist;
 its missing UI grouping is not proof of a missing KQL dependency. Do not invent
-private annotations to change that grouping. Publish/refresh context and inspect
-actual KQL execution before claiming the UI issue resolved.
+private annotations to change that grouping. After supported Refresh and the
+18-entity publication, Eventhouse still does not appear in the Ontology data
+sources UI group. The Kusto mount remains under Other data sources; Lakehouse
+and SQL mounts were also preserved. **The Eventhouse UI grouping is unresolved**;
+this publication does not establish a successful ontology-routed KQL test.
 
 ### Enterprise limitations
 

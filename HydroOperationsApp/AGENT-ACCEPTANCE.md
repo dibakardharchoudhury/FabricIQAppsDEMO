@@ -5,10 +5,23 @@
 The [current implementation record](../docs/foundry-multi-agent-implementation.md#october-27-semantic-orchestration-implementation)
 replaces keyword-owned production routing with typed semantic planning and
 governed execution. Six live-model planning probes passed, including negation,
-Sparky/ontology relationships, Weather, RCA and clarification. This is not yet a
-claim that the source-backed native answers pass. Required: publish, compare the
-three prompts below against direct Data Agent answers, inspect real source/tool
-receipts, and record run IDs, timings and any provider failures. No write approvals.
+Sparky/ontology relationships, Weather, RCA and clarification. This is not a
+claim that the source-backed native answers pass.
+
+Published app **1.0.1147 / `a2ccda0`**, coordinator **v28**, Fabric IQ **v3**.
+Signed-browser facility and station/unit comparisons both reached the native
+Data Agent with plain-language input and returned matching facts in diagnostic
+receipts, but both carried provider output-moderation processing errors.
+**Native acceptance failed; do not certify those answers.** The third comparison
+remains unexecuted. No native fallback, safety bypass or write approval occurred.
+The [live publication and acceptance record](../docs/foundry-multi-agent-implementation.md#live-publication-and-acceptance)
+contains response/run IDs and timings for provider escalation.
+
+The independent ordinary inventory-reader smoke test passed in 7.8s with all
+three facilities, one planned read and no specialist/narrative model chain.
+All 18 Ontology entities are now published in the Data Agent context.
+Eventhouse's absence from the Ontology data sources UI group remains unresolved;
+its working Kusto mount was not removed.
 
 For current FEATURE deployment receipts and limitations, use the
 [current verification record](../docs/ontology-test-review.md).

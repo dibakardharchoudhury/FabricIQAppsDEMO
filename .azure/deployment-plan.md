@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed - native runtime acceptance blocked
 
 ## Semantic orchestration and Fabric IQ acceptance
 
@@ -35,9 +35,10 @@ approval/context form returned user-unavailable with an instruction to choose
 the pragmatic option; proceed on the unchanged target and requested design.
 
 Live metadata audit: all 18 Ontology entities have descriptions and synonyms,
-and six business rules exist. The published Data Agent selects only five
-entities and uses column-list descriptions. Correct the Data Agent producer
-and publication rather than rewriting the enriched Ontology or its bindings.
+and six business rules exist. The audit found the Data Agent selected only five
+entities and used column-list descriptions. The producer is repaired; NB009
+publication and independent readback now confirm all 18 selected entities in
+draft and published context. The enriched Ontology and bindings were preserved.
 
 Preparation gates:
 - [x] Confirm the role/semantic-routing design and unchanged Azure context.
@@ -46,6 +47,17 @@ Preparation gates:
 - [x] Validate pinned Agent Framework execution, persistence and source gates.
 - [x] Complete Azure validation before canonical publication.
 - [ ] Record authenticated three-prompt parity, routing and timing acceptance.
+
+Canonical publication completed: app 1.0.1147 / `a2ccda0`, coordinator v28,
+Fabric IQ v3; final `SUCCESS` and `DEPLOYED_APP_URL` were returned after endpoint,
+CORS and POST readiness checks. Authenticated browser access was restored.
+Two native comparisons reached the Data Agent with corrected plain-language
+input and matching facility/relationship facts, but both failed with provider
+output-moderation processing errors. The third comparison is unexecuted; native
+acceptance remains blocked. No error annotation was ignored and no fallback or
+write occurred. A separate inventory-reader smoke test passed in 7.8s.
+See the [live acceptance record](../docs/foundry-multi-agent-implementation.md#live-publication-and-acceptance)
+for exact run/response IDs. Eventhouse UI grouping remains unresolved.
 
 ### Section 7: Validation Proof - semantic implementation
 
@@ -79,8 +91,9 @@ full run, and the repaired production-factory/readiness fixtures pass separately
   readback. Job `e8e697e2-d370-4b85-83c5-892b6c253686` completed successfully.
   Separate REST readback confirms all 18 entities selected in both draft and
   published Data Agent context; Lakehouse, Kusto and SQL mounts remain.
-- App/source runtime acceptance is still required after canonical deployment.
-  The browser hosting session has expired; reauthentication may be necessary.
+- App/source runtime acceptance was attempted after canonical deployment with
+  restored signed-browser access. Ordinary reader execution passed; two native
+  comparisons reproduced the provider error and cannot pass acceptance.
 
 Commands: root `.venv\Scripts\python.exe -m unittest discover -s
 HydroOperationsService\tests`; affected source-auth factory/readiness and semantic
