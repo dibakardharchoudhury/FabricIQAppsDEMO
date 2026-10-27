@@ -75,10 +75,9 @@ and Active capacity, then required renewed Microsoft/Azure CLI sign-in while
 discovering the existing tenant SPA (step 2/8). The user was unavailable to complete
 that sign-in, so the task-owned waiting process was stopped before Rayfin publication.
 No `SUCCESS` or `DEPLOYED_APP_URL` completion receipt was issued.
-The signed-in hosted page still reports **1.0.1121 / 1673261**, not these graph fixes.
-After legitimate sign-in renewal, rerun the canonical command and verify actual
-stale edges, both halo pulses, directed relationships and graph timing on the new
-hosted build. The component checks above do not substitute for that hosted acceptance.
+At that point the signed-in hosted page still reported **1.0.1121 / 1673261**,
+not these graph fixes. Publication and hosted acceptance remained outstanding;
+the component checks above did not substitute for them.
 
 An autonomous retry confirmed the exact authentication blocker:
 `az account get-access-token` returned a future Graph expiry, but the actual
@@ -105,6 +104,46 @@ This hosted check also exposed the old minimum-zoom clipping and long-label
 layout expansion; the follow-up adds wrapped labels, canvas-sized hierarchy
 bounds, overview zoom and zoom-aware fault halos. Its focused suite passes
 **109 tests**; final publication acceptance is recorded separately below.
+
+### Final hosted acceptance: 1.0.1128 / 44325bc
+
+The canonical orchestrator completed at `2026-10-27T02:47:55Z` in **719.344 seconds**,
+printing `SUCCESS` and `DEPLOYED_APP_URL`. The signed-in browser confirmed
+**1.0.1128 / 44325bc** at
+[the deployed Knowledge Graph](https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net/?ui=v1&tab=knowledge-graph).
+This supersedes the earlier publication blocker and intermediate fit/clipping result.
+
+| Hosted check | Actual observation |
+| --- | --- |
+| Ontology contract coverage | 18/18 entity bindings and 17/17 relationship types; explicitly source-backed, not materialized |
+| All-scope topology | 225 nodes / 238 edges; 225 finite, distinct positions |
+| Directed relationship identities | Exact hash above unchanged; no endpoint or relationship identity changes |
+| Actual stale telemetry | Zero flowing edges in both Selected and All scopes |
+| Full-map Fit | All bounds inside the 992 x 778 canvas at zoom 0.028482; rendered x bounds 48-943.27 px |
+| Critical alerts | 15 nodes; measured halo opacity 0.14217-0.43994, rendered padding 1.535-3.713 px at overview zoom |
+| Warning alerts | 35 nodes; measured halo opacity 0.12155-0.33926, rendered padding 1.531-3.201 px at overview zoom |
+| Reduced motion | Both halos stayed at opacity 0.26 and rendered padding 2.193 px over 400 ms; breathing resumed when restored |
+| Real parallel maintenance relationships | WORKORDER FOR INSTRUMENT and WORKORDER FOR SIGNAL remain distinct `affects` links from WO-2841 to the combined T001 vibration instrument; triangle arrows retain source-to-target direction |
+| Parallel curve geometry | Control points separated by 208 model units and midpoints by 107.21; separate labels and identities retained |
+| Stale inspector | Actual reading marked `Stale bound signal`, with event age of 7 h, `Quality (last known)` and incoming/outgoing relationship labels |
+| Cold application-memory reload | 10.147 s; graph loader reported 5.33 s |
+| Explicit source refresh | 5.067 s |
+| Warm Overview-to-Graph return | 83 ms; original observation timestamp retained |
+
+These are single signed-browser session measurements, not load testing, a cache-cleared
+network benchmark or an SLA certification. Fresh-reading expiry was exercised in the
+synthetic component regressions above; no operational telemetry was fabricated to
+produce a hosted live-flow result. One unrelated Leaflet map teardown exception was
+observed after rapid Overview navigation; graph checks remained functional, so this
+receipt does not claim that every application tab is browser-error-free.
+
+Final validation passed **109 graph tests**, the production TypeScript/Vite build
+and scoped ESLint. The 2,000-node/4,000-edge preparation fixture took **33.21 ms**
+against its 250 ms budget. Deployment reused all five specialists and the unchanged
+coordinator image `src-5afb91f86a3d8ee5`, preserved 42 SPA redirects, and passed
+runtime/CORS, connector preflights and protected POST readiness checks.
+No stream, notebook, seed DML or production business write was started for these checks.
+The browser was left on the readable Selected T006 scope.
 
 ## Ontology context versus native graph execution
 

@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## October 27 graph freshness and fault-pulse publication
 
@@ -34,11 +34,11 @@ Detailed measurements are recorded in `docs/knowledge-graph.md`.
 Publication attempt: the canonical orchestrator verified the Active FEATURE capacity,
 then required Microsoft/Azure CLI sign-in renewal at existing-SPA discovery (step 2/8).
 The user was unavailable, so the owned waiting process was stopped before Rayfin
-publication. This plan remains Validated, not newly Deployed. Hosted acceptance is
-pending; the signed-in page still reports `1.0.1121 / 1673261`.
+publication. At that point this plan remained Validated, not newly Deployed.
+Hosted acceptance was pending; the signed-in page still reported `1.0.1121 / 1673261`.
 Autonomous retry confirmed Graph CAE `InteractionRequired /
 TokenCreatedWithOutdatedPolicies` on the actual read-only SPA lookup, despite
-a future cached-token expiry. Fresh interactive sign-in remains required.
+a future cached-token expiry. Fresh interactive sign-in was required.
 
 That blocker was resolved by standard browser/device authentication using the
 same signed-in administrator, with no policy/permission change. Actual Graph
@@ -52,6 +52,33 @@ zoom and scales fault halos at overview zoom. It changes no source identity,
 relationship endpoint, connector, agent, permission or infrastructure. Validation
 now includes 109 graph tests, production build and scoped lint; the 2,000-node /
 4,000-edge visual preparation fixture completed in 33.21 ms (250 ms budget).
+
+### Final publication and authenticated acceptance
+
+The canonical orchestrator printed `SUCCESS` / `DEPLOYED_APP_URL` at
+`2026-10-27T02:47:55Z`, after 719.344 seconds. The signed-in hosted app confirmed
+**1.0.1128 / 44325bc**. All five specialists and the coordinator image
+`src-5afb91f86a3d8ee5` were reused; 42 SPA redirects were preserved.
+Runtime/CORS, connector preflights and protected POST readiness checks passed.
+
+- Actual stale readings produced zero flowing edges in Selected and All scopes.
+- All scope retained 225 nodes / 238 directed edges with 225 distinct finite
+  positions and the unchanged directed identity hash recorded in
+  [the graph acceptance receipt](../docs/knowledge-graph.md#final-hosted-acceptance-101128--44325bc).
+- Full-map Fit kept the complete graph inside the canvas. Both real critical/red
+  and warning/amber halos varied across time and remained visible at overview zoom.
+  Reduced motion retained static halos; restoring motion resumed breathing.
+- Actual work-order instrument/signal links had separate curve geometry, unchanged
+  identities/endpoints and correct arrows. The stale inspector showed event age,
+  last-known quality and incoming/outgoing context.
+- Cold application-memory reload: 10.147 s (graph loader 5.33 s); explicit refresh:
+  5.067 s; warm return: 83 ms with the observation timestamp preserved.
+  These are single-session observations, not an SLA/load certification.
+- Final validation: 109 focused graph tests, production build and scoped lint passed.
+  No stream, seed, notebook or production business write was started.
+
+The graph publication is accepted. Earlier native Foundry policy and Weather
+credential blockers are separate and are not represented as resolved by this change.
 
 ## Knowledge Graph live-source publication
 
