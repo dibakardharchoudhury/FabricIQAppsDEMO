@@ -1,6 +1,74 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Deployed (empty HydroOps vault only); full Fabric application deployment remains blocked.
+
+## New HydroOps workspace Key Vault
+
+Create one empty Standard Azure Key Vault for workspace
+`7c42e1f2-73a2-4025-9912-feb830ca4449`, as requested by the operator.
+No existing infrastructure or credentials will be changed.
+
+- Tenant: `cfbb67d9-96a6-4e29-a919-1fc7cfb80776`.
+- Subscription: `ME-MngEnvMCAP679828-espenb-1`
+  (`d4d67f11-3766-4c12-8966-599f08e759da`).
+- Proposed existing resource group: `Power`; region: `norwayeast`,
+  matching the explicitly selected powergrid capacity.
+- Proposed vault: `kv-hydro-7c42e1f2`, Standard, RBAC authorization, soft delete
+  and purge protection enabled; public network access disabled.
+- Recipe: Azure CLI incremental ARM deployment with explicit subscription.
+  Template is a session artifact `files/hydro-vault.json`, not app infrastructure.
+- Validate name availability, provider registration, region support, current
+  identity, resource group and scoped resource-creation permissions before creation.
+- Do not create a new service principal, assign roles, mint/store credentials,
+  weaken existing networking, or provision other services as part of this action.
+- Read back the live vault ID, URI, tenant, region and security settings.
+  An empty vault alone does not unblock notebook provisioning or certify deployment.
+
+### New vault validation proof
+
+User explicitly requested a new vault. The context/settings confirmation was
+presented through ask_user; the user was unavailable and instructed autonomous
+execution. Reuse the established deployment subscription and capacity region.
+
+Live preparation checks: Azure CLI identity is
+`espenb@MngEnvMCAP679828.onmicrosoft.com` in the exact target tenant/subscription.
+`az group show --name Power` verified the existing group (metadata location
+Sweden Central; the new vault will be Norway East).
+`az keyvault check-name --name kv-hydro-7c42e1f2` returned nameAvailable=true.
+`az provider show --namespace Microsoft.KeyVault` returned Registered with
+Norway East supported. Four existing vaults were listed, only one in Norway East.
+No AZD environment, application deployment, role assignment or credential
+creation is needed for this single service-specific CLI resource operation.
+### Section 7: New vault Validation Proof
+
+azure-validate completed actual checks on 2026-10-27:
+- Azure CLI authentication and provider/name/region checks passed as recorded above.
+- At 12:48:36Z, ARM effective permissions on Power included `*` with no notActions.
+- `az deployment group validate` with the isolated vault template returned
+  provisioningState=Succeeded and error=null.
+- `az deployment group what-if` reported exactly one Create for the new vault,
+  with every existing resource Ignore. No updates, deletes, credentials or RBAC.
+- Template uses RBAC, 90-day soft delete, purge protection, disabled public
+  access and default-deny network ACLs. No role assignments are deployed.
+- No application build, Bicep compilation or container build applies to a
+  literal ARM template creating an empty vault.
+- An approved private connectivity path and credential provisioning remain
+  separate prerequisites before notebooks can use this empty vault.
+
+### New vault deployment receipt
+
+`az deployment group create --mode Incremental --name hydro-vault-7c42e1f2`
+succeeded. Independent `az keyvault show` readback verified:
+
+- URI: `https://kv-hydro-7c42e1f2.vault.azure.net/`.
+- Resource group: `Power`; region: `norwayeast`; tenant matches the target.
+- RBAC=true, softDelete=true, retentionDays=90, purgeProtection=true.
+- publicNetworkAccess=Disabled. No credentials, role assignments or private
+  endpoints were created. No existing vault or Entra redirect was modified.
+
+This satisfies the operator's new-vault request, not the full deployment.
+Notebook credentials, approved connectivity, Teams/email destinations and core
+Fabric resources still need setup before application publication.
 
 ## Knowledge Graph live-source publication
 
