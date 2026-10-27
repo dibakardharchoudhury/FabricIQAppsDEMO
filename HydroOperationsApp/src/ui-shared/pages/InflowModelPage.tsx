@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, ArrowUpRight, CloudRain, Database, Gauge, Map, Waves } from 'lucide-react'
-import './inflow-model.css'
+import '../styles/inflow-model.css'
 
 const SOURCES = [
   {
