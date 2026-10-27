@@ -34,6 +34,13 @@ canvas retention and timestamp during refresh, inline fail-closed errors, and
 successful explicit retry. This is UI verification, not a live-source latency
 benchmark. The temporary fixture and its server were cleaned up.
 
+Published to FEATURE on October 27 as **v1.0.1139 / 91e8756** through the
+canonical deployer. Endpoint/CORS readiness and preservation of all 42 SPA
+redirects passed. Authenticated browser inspection confirmed the deployed
+workspace and in-canvas loading state with no blocking placeholder card.
+That background-tab inspection is not a new live graph-query or latency
+acceptance result.
+
 ## Relationship strokes, freshness and health alerts
 
 The current visual contract supersedes the older telemetry-bearing-path behavior in the

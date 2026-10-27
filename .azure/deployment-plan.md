@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Knowledge Graph in-workspace loading update
 
@@ -55,7 +55,21 @@ All validation checks pass:
 - TypeScript/Vite production build: passed; existing mixed-import/chunk warnings.
 - Runtime/container source is unchanged. Reuse the current image; no new
   container, IaC deployment or role expansion is required.
-- Canonical publication and hosted UI acceptance remain pending.
+- Canonical publication completed at `2026-10-27T08:21:02.025155Z` in
+  **540.844 seconds**, with `SUCCESS` and `DEPLOYED_APP_URL`:
+  `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+  The existing hosted-agent image/configuration was current and was not
+  republished. All 42 Entra SPA redirects were preserved.
+- AppBackend `/graphql`, `/api/auth/v1/token`, and all three connector paths
+  passed the orchestrator's browser-equivalent preflight/POST readiness checks.
+- Live RBAC readback confirms the existing project-scoped Foundry User grant
+  and inherited roles; no role or permission was added.
+- Authenticated hosted-browser inspection confirmed **v1.0.1139 / 91e8756**,
+  one graph workspace, zero blocking placeholder cards, the in-canvas loading
+  state, and Advanced graph details. The inspected tab was backgrounded:
+  no new live graph-query completion or source-latency claim is made from
+  that inspection. Refresh/error/retry behavior was tested separately in
+  the isolated synthetic component fixture described above.
 
 ## FEATURE human-approved work-order policy restoration
 
