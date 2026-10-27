@@ -1,6 +1,35 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## October 27 graph freshness and fault-pulse publication
+
+Source: `162a6cd`; same FEATURE tenant/workspace and existing canonical Python
+orchestrator recipe. No infrastructure, connector projection, identity, permission,
+model, agent source, source data or deployment target changes.
+
+All validation checks pass:
+- [x] Core CLI/auth/build validation: expected tenant and Enabled subscription;
+      `npm run validate-env`, 108 focused graph tests, production TypeScript/Vite
+      build and scoped ESLint passed on October 27.
+- [x] Docker build: not applicable to this frontend-only change; the canonical
+      deployer owns existing supervisor fingerprint verification and reuse.
+- [x] Azure Policy validation: no ARM/IaC, region, SKU, network, RBAC or tag change;
+      no resource what-if or policy mutation applies.
+- [x] Static role verification: no added data operation or principal; existing
+      signed-in read-only graph sources and telemetry enrichment are unchanged.
+
+### Section 7: Validation Proof
+
+At approximately `2026-10-27T01:57Z`, the required checks above had passed.
+Azure CLI read-only verification returned tenant
+`ad340c84-1886-4202-a483-2da2cb9168eb`, subscription Enabled, and the explicitly
+authorized `rg_fabric/fabcapswc` capacity **Active** in Sweden Central.
+The actual React/Cytoscape browser fixture verified freshness expiry without
+refetch, both temporal fault pulses, reduced-motion/offscreen guards, cleanup,
+separate directed parallel curves and unchanged camera on reading/selection changes.
+The actual source-backed All scope also retained 225 finite distinct positions.
+Detailed measurements are recorded in `docs/knowledge-graph.md`.
 
 ## Knowledge Graph live-source publication
 
