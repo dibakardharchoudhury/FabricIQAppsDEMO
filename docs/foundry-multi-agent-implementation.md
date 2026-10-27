@@ -1,5 +1,233 @@
 # Foundry and multi-agent implementation record
 
+## October 27 architecture validation: redesign recommended, not implemented
+
+### Verdict and scope
+
+Audit baseline: `f5434f3`, the source behind hosted coordinator v25. The policy
+restoration below did not change its agent architecture. This audit inspected
+the input normalization, shared intent/compiler, specialist definitions and
+runtime enforcement, actual Agent Framework graph, evidence and approval
+boundaries, persistence, observability and existing acceptance records.
+
+The application genuinely uses Agent Framework and Foundry specialists. It has
+strong evidence and human-approval boundaries, but **the present architecture
+is not demonstrated enterprise-ready for unrestricted natural-language requests
+or highly available production operation**. Successful deployment and many
+passing regression tests do not establish that claim.
+
+This is an architecture review and proposed redesign, not a production change
+or representative model-quality/latency acceptance. The authenticated browser
+checks below are diagnostic observations, not a workload benchmark.
+
+### Reproduced routing gap
+
+Local Node 24 probes imported and executed the actual `chatIntent` and
+`compileOrchestrationPlan` functions without calling models or live sources:
+
+| Operator wording | Actual selected specialist(s) | Concern |
+|---|---|---|
+| Diagnose BAD telemetry quality on T007. | RCA | Recognized keyword form |
+| Explain the likely causes of unreliable readings on T007. | QA | Causal request loses RCA |
+| Why are T007 vibration readings unreliable? | QA | Another causal form loses RCA |
+| Show the rainfall forecast at Ringedalen tomorrow. | Weather | Recognized keyword form |
+| Will it rain at Ringedalen tomorrow? | None | Clear forecast question loses source retrieval |
+| Prepare a work order for T007. | Work Order | Recognized keyword form |
+| Put together a maintenance request for T007. | None | Equivalent maintenance preparation intent is missed |
+| Use the Fabric Data Agent to list open work orders. | Fabric IQ | Recognized native-source form |
+| Ask Sparky to list open work orders. | QA | Published display-name request does not select Sparky |
+
+These are diagnostic examples, not a statistically representative routing score.
+Ambiguous requests must be allowed to ask for clarification; the desired remedy
+is not to force every "why" question into RCA or every mention of work into drafting.
+Factual-list and explicit no-create controls in the probe retained QA.
+
+The cause is [keyword-derived intent](../HydroOperationsApp/src/services/copilot/orchestration.ts#L318)
+and [bridge classification](../HydroOperationsApp/scripts/local-fabric-sources.mjs#L25),
+not a model making a poor semantic routing decision. The
+[compiler](../HydroOperationsApp/scripts/local-fabric-sources.mjs#L462) produces
+an ordered list; the hosted Supervisor explicitly forbids invoking a planning
+model. Zero recognized source requirements lead to conversation-only handling.
+The [separate proposal detector](../HydroOperationsService/src/hydro_orchestrator/foundry_supervisor.py#L324),
+source/answer contracts, lookback/selection extraction and plan validation also
+depend on natural-language detectors. Adding a semantic router alone, while
+leaving those gates phrase-dependent, would be an incomplete fix.
+
+### Authenticated current-browser diagnostic
+
+On October 27, the signed-in FEATURE application (v1.0.1136, build `329948b`,
+coordinator v25) accepted two read-only questions through its normal chat UI.
+No CLI token was substituted, no draft was approved and no SQL write was requested.
+
+| Question | Observed execution | Displayed result |
+|---|---|---|
+| Will it rain at Ringedalen tomorrow? Use only governed source evidence. Do not create or change anything. | Supervisor finished; every specialist, including Weather, stayed on standby. | 9.8 seconds. The answer requested a rephrasing and explicitly said no live data was read. |
+| What is the governed precipitation forecast for Ringedalen tomorrow? Keep vendors, forecast issue times, valid times and units separate. Do not create or change anything. | Weather ran; the other specialists stayed on standby. Weather v1's recorded duration was 143,277 ms. | 2m 31s. Three governed weather locations were returned, with zero matching forecast rows. The answer explicitly said Ringedalen was not a configured location and did not invent rain or precipitation values. |
+
+The configured locations returned were Sloy, Foyers and Pitlochry. Therefore,
+this is a routing and missing-target diagnostic, **not** proof of successful
+forecast answering for a valid site, or evidence that all forecast data is empty.
+The second question followed the first in the same conversation, so it is not
+an isolated, repeated, controlled latency experiment.
+
+The live observation corroborates the local paraphrase failure: the first
+wording did not even check governed location/source evidence; the recognized
+wording did. The second answer respected the evidence boundary, but its
+151-second displayed completion is not an acceptable performance demonstration
+for this narrow diagnostic. The specialist duration includes its reasoning and
+tool execution; these browser records do not separate connector latency from
+model latency. Conversation-relative flow timestamps must not be interpreted
+as this request's startup delay.
+
+### What every participant actually does
+
+| Participant | Present responsibility and enforcement | Recommended role |
+|---|---|---|
+| Supervisor | Deterministic owner/compiler, validation, journal and dispatch; not a persistent planning prompt agent | Keep ownership and deterministic enforcement; add a bounded semantic planner that proposes a typed plan, not arbitrary tool execution |
+| Gauge / QA | Broad factual retrieval across operational sources; no proposal tool, but shared direct-tool set includes weather and raw governed KQL | Keep for complex operational retrieval/analytics; use typed direct-read fast paths for simple facts; do not make it the default domain reasoner |
+| Weather | Forecast/observation retrieval, vendor/issue/time/units semantics; restricted to weather, asset identity and visualization reads | Keep its domain capability and narrow tools; only incur a specialist model call when the task benefits from weather interpretation |
+| Sleuth / RCA | Source-referenced competing hypotheses and a checked maintenance-follow-up gate; cannot establish confirmed cause without an approved causal model/limits | Keep for equipment investigations; consume existing receipts and bounded additional evidence, not generic factual or weather questions |
+| Fixer / Work Order | Maintenance/coverage review and in-memory editable proposals; actual SQL creation is a separate signed human decision | Keep planning/drafting separate from the deterministic command handler; narrow tools to the assigned maintenance task |
+| Sparky / Fabric IQ | Published Fabric Data Agent adapter with one verified native tool; current policy requires explicit native-source selection | Keep as an optional authoritative source capability, not a compulsory extra reasoning hop or a general ontology/graph agent |
+| Grounded briefing model call | Additional synthesis/recommendation pass in `analysis_for`; not another registered specialist | Make this explicit in trace/cost accounting; skip for simple tables and avoid redoing RCA reasoning already validated |
+
+QA, RCA and Work Order currently share most read tools; Weather has a genuinely
+narrower enforced tool list. Shared equipment/identity reads are reasonable and
+not themselves a defect. However, prompt instructions alone do not provide
+clean task segregation: filter tools and context by the validated assignment.
+RCA's structured completion and Fixer's exclusive proposal capability are real
+boundaries worth retaining. No specialist may gain a production SQL-write tool.
+
+### Enterprise and performance findings
+
+1. **Planning generalization is inadequate.** The reproduced paraphrases select
+   different roles or no source reader. Specialist selection, intent slots,
+   source requirements, completion and draft authorization must consume one
+   server-owned semantic contract rather than independent regex interpretations.
+2. **Actual specialist execution is serial.** The
+   [workflow graph](../HydroOperationsService/src/hydro_orchestrator/foundry_supervisor.py#L4158)
+   chains eight delegation slots, and `handoff` holds a per-run delegation lock
+   throughout invocation. Unused slots do not make model calls. Source reads and
+   version reads already have concurrency; the Node worker is already warmed
+   and multiplexed. Do not claim those existing optimizations as new work.
+   Independent specialist branches need immutable per-step contexts and a
+   deterministic merge, not simply removal of the shared-state lock.
+3. **Unused agents affect every operational request.** `versions()` reads and
+   validates all five specialist definitions before execution. An unavailable
+   unused specialist can fail an unrelated task. Resolve the validated plan
+   first, then pin only required versions; safely cache non-user metadata with
+   an explicit deployment revision/invalidation policy.
+4. **Context and model-call overhead are not minimized.** Most non-Fixer
+   invocations receive all accumulated receipts and the full permitted catalog.
+   Fixer/final verification already have projections, but QA/RCA/Weather need
+   assignment-specific views as well. The final briefing adds another model
+   pass. Optimize against actual token/round/latency measurements.
+5. **Session persistence is not distributed recovery.**
+   [RequiredCheckpointStorage](../HydroOperationsService/src/hydro_orchestrator/workflow.py#L39)
+   wraps local files; journals, file locks and admission semaphores remain local
+   to the hosted session/worker. Foundry persists session HOME across idle
+   resume, so it is incorrect to call the deployment entirely stateless.
+   Nevertheless, the API reports `distributed_durability=false`, and worker
+   interruption is explicitly failed rather than transparently resumed.
+   Cross-worker coordination, durable run lookup and approval idempotency
+   require a supported shared-state design and failover tests.
+6. **Observability is partial, not absent.** Specialist identity/version,
+   response IDs, durations, model-round counts and immutable receipts exist.
+   No explicit application OpenTelemetry/exporter wiring or token/cost fields
+   were found in the reviewed service. Foundry/SDK platform telemetry may still
+   exist; correlated end-to-end traces and exported dashboards were not proven
+   by this source audit.
+7. **Quality and latency are not established by the current tests.** Curated
+   acceptance prompts and strong contract regressions are useful, but they are
+   not a held-out semantic-routing evaluation, current per-role quality score
+   or workload p50/p95. Historical successful and failed timings must not be
+   relabeled as v25 acceptance.
+8. **Domain limits need explicit contracts.** RCA currently uses a 48-hour
+   history and at most eight equipment, disclosing omissions. Preserve budgets,
+   but express the requested analysis window/scope and any bounded reduction in
+   the semantic plan; do not silently replace the user's requested scope.
+9. **Authorization is coupled to all sources.** Browser admission requires all
+   four resource audiences even for narrow tasks. A future planner-first design
+   can request only the sources the approved plan actually needs, with server
+   enforcement, explicit user interaction and no automatic write replay.
+
+### Recommended project-specific architecture
+
+Use **semantic planning with deterministic, dependency-aware execution**:
+
+```text
+Request + bounded conversation + governed capability metadata
+  -> Semantic planner: typed goals, scope, source needs, steps and dependencies
+  -> Deterministic validator: supported capabilities, authority, budgets, policy
+  -> Authorize required sources; resolve canonical identities
+  -> Execute independent read/Weather/native branches concurrently when valid
+  -> RCA only when the goal requires an equipment investigation
+  -> Fixer only for requested maintenance review/proposal intent
+  -> Deterministic evidence/completeness checks
+  -> Briefing only when useful; facts retain receipt references
+  -> Fresh draft + separate explicit human approval
+  -> Deterministic idempotent SQL command and verified readback
+```
+
+The planner chooses from a metadata-backed capability registry derived from the
+existing source catalog, domain contracts and enforced tool definitions; do not
+introduce a competing schema or permission registry. It cannot invent tools,
+schemas, identities, permissions or a causal model. Record concise
+selection reasons, dependencies, expected evidence and actual execution results,
+not private chain-of-thought. A missing capability or genuinely ambiguous
+request produces clarification or an explicit unsupported result, not a guessed
+telemetry read or silent fallback.
+
+Do not replace phrase lists with unrestricted peer handoffs or make all five
+agents debate every request. Sequential stages remain correct where a real
+data dependency exists; fan-out/fan-in applies only to independent branches.
+Retain the existing Foundry project, model and source bindings while evaluating
+the redesign; no new model deployment is assumed. The additional planner call
+has a cost and must earn it through fewer redundant specialist/briefing calls
+and better completion rates.
+
+Nothing should hardcode expected user sentences. Capability schemas, source
+bindings, tenant boundaries, explicit approval, evidence validation and bounded
+budgets must remain deterministic. An LLM's inferred intent is never SQL consent.
+
+### Rollout and acceptance, not an enterprise label
+
+- First build a held-out, paraphrase/multilingual/compound/negation/ambiguous/
+  unsupported-request set with expected goals, source policy and allowed plans.
+  Keep the probes above as regressions, not the entire evaluation set.
+- Shadow-evaluate semantic plans against the existing compiler without
+  executing duplicate source reads. Then gate a controlled rollout; do not
+  silently revert to keyword routing when semantic planning fails.
+- Measure routing/task completion, unnecessary delegations, read completeness,
+  citation validity, input/output tokens, model rounds, source latency and
+  end-to-end warm/cold p50/p95 by task and source. Set release thresholds from
+  the agreed workload and measured source baseline, not an invented seconds SLA.
+- Require zero unapproved writes and pass expiry, principal isolation,
+  conflicting decision, crash/restart and uncertain-write reconciliation cases.
+- Prove independent-branch overlap, cancellation and reproducible evidence
+  merge under concurrency before enabling parallel specialist execution.
+- Select an approved production durable provider, including distributed leases
+  and immutable journal semantics. Agent Framework documents Cosmos-backed
+  checkpoints; verify provider compatibility with the pinned SDK before use.
+  Foundry's newer durable state store supports optimistic concurrency but is
+  explicitly **preview/no SLA**, so it is not an automatic production solution.
+- Finally run authenticated live source/model acceptance and replay/failover
+  tests against the actual candidate version. No code-only or planner-only run
+  may be called current production acceptance.
+
+### Official documentation reviewed
+
+- [Azure Architecture Center: choose the lowest sufficient orchestration complexity](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns).
+- [Agent Framework orchestration patterns](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/),
+  [handoff versus agents-as-tools](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/handoff),
+  [concurrent orchestration](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/concurrent)
+  and [bounded Magentic coordination](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/magentic).
+- [Checkpoints and production storage providers](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints),
+  [human-in-the-loop](https://learn.microsoft.com/en-us/agent-framework/workflows/human-in-the-loop)
+  and [workflow observability](https://learn.microsoft.com/en-us/agent-framework/workflows/observability).
+- [Foundry hosted-agent session and protocol semantics](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents)
+  and [durable state store preview constraints](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agent-state-store).
+
 ## FEATURE human-approved work-order creation restored
 
 The disabled-card screenshot was a runtime policy failure, not a missing Fixer
