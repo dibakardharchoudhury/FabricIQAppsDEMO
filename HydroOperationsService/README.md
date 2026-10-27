@@ -367,6 +367,19 @@ Native result documents and provider execution traces stay in the immutable audi
 dependent specialists receive the unchanged answer and typed evidence at their original
 paths, without duplicate transport envelopes. The quality/work completeness gate also
 runs for semantically selected native steps, not only explicitly pinned source runs.
+When the provider retries federation, typed evidence is selected by the exact executed
+queries in one successful, nondegraded combine receipt. Artifacts from failed attempts
+remain in the audit but cannot pollute the verified selection or be stitched together
+to imply complete coverage. Conflicting artifacts for the same read remain a failure.
+Telemetry-quality investigation drafts use verified quality/coverage evidence and a
+fresh duplicate-work check; they do not automatically require a mechanical RCA or
+unrelated inspection/spares reads. Fault-contingent repair still requires checked RCA.
+Connector failures retain credential-free source labels and codes across the worker
+boundary, including `TOKEN_EXCHANGE_FAILED` from the SDK's brokered sign-in exchange.
+The SDK sanitizes exchange status; that code alone does not establish a permissions
+problem. An Active capacity can still reject requests with `CapacityLimitExceeded`;
+retries, identity changes and
+partial-source answers do not establish readiness.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.

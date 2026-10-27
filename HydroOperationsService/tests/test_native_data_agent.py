@@ -294,5 +294,40 @@ class NativeQualityWorkEvidenceTests(unittest.TestCase):
                              (2, "SELECT * FROM orders OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY")):
             self.setUp()
             self.tables[index]["query"] = query
+            self.proof["dataSourcesQueried"][index]["generatedQuery"] = query
             with self.assertRaisesRegex(SourceFailure, "row-limited source"):
                 quality_work_evidence(self.call(), self.clock)
+
+    def test_failed_attempt_artifacts_do_not_make_a_later_verified_combine_ambiguous(self):
+        earlier = {**self.tables[0], "query": "earlier registry query",
+                   "rows": [{"equipment_id": "wrong-asset", "opcua_node_id": "opaque.signal.alpha"}]}
+        self.tables.insert(0, earlier)
+        call = self.call()
+        call.result["output"].insert(0, {
+            "type": "function_call_output", "output": json.dumps({
+                "degraded": True, "combineStep": None, "dataSourcesQueried": [{
+                    "dataSourceId": "registry", "generatedQuery": earlier["query"], "succeeded": True,
+                }],
+            }),
+        })
+        bundle = quality_work_evidence(call, self.clock)
+        self.assertEqual(bundle["affected_signals"][0]["equipment_id"], "canonical-asset-A")
+        self.assertEqual(len(call.tables), 4)
+        self.assertEqual(call.source_payload()["response"], "Untouched native answer.")
+
+    def test_conflicting_artifacts_for_the_same_verified_read_still_fail(self):
+        self.tables.append({**self.tables[0], "rows": []})
+        with self.assertRaisesRegex(SourceFailure, "ambiguous source tables"):
+            quality_work_evidence(self.call(), self.clock)
+
+    def test_multiple_partial_combines_cannot_be_stitched_into_complete_evidence(self):
+        call = self.call()
+        output = call.result["output"]
+        output[0]["output"] = json.dumps({
+            **self.proof, "dataSourcesQueried": self.proof["dataSourcesQueried"][:2],
+        })
+        output.insert(0, {"type": "function_call_output", "output": json.dumps({
+            **self.proof, "dataSourcesQueried": self.proof["dataSourcesQueried"][2:],
+        })})
+        with self.assertRaisesRegex(SourceFailure, "complete source-read"):
+            quality_work_evidence(call, self.clock)

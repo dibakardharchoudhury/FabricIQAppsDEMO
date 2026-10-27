@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, readWork, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, errorEnvelope, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, readWork, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
 import { requestsWorkOrderNeedAssessment, refersToPriorData } from '../src/services/copilot/orchestration.ts'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
@@ -113,6 +113,28 @@ test('fleet failure retains the connector HTTP codes and rejects partial source 
   await assert.rejects(readFleetSnapshot(config, metadata, false, {}, tokens,
     async () => response({ Tables: [telemetry()] })),
   /equipment metadata failed \(HTTP_503\).*instrument metadata failed \(HTTP_503\).*work-order inventory failed \(HTTP_503\).*No partial fleet snapshot/)
+})
+
+test('brokered exchange failure survives the worker boundary without exposing the SDK error body', async t => {
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', async () => {
+    requests++
+    return new Response(JSON.stringify({ error: {
+      code: 'CapacityLimitExceeded', message: 'sensitive backend detail',
+    } }), { status: 429, headers: { 'Content-Type': 'application/json' } })
+  })
+  await assert.rejects(readWork(config, 'T005', tokens.graphql), error => {
+    assert.equal(error.code, 'TOKEN_EXCHANGE_FAILED')
+    const envelope = errorEnvelope(error)
+    assert.equal(envelope.ok, false)
+    assert.match(envelope.error, /work-order read failed \(TOKEN_EXCHANGE_FAILED\)/)
+    assert.doesNotMatch(JSON.stringify(envelope), /sensitive backend detail|test-graphql/)
+    return true
+  })
+  assert.equal(requests, 1)
+  class UntrustedSdkError extends Error {}
+  assert.doesNotMatch(JSON.stringify(errorEnvelope(new UntrustedSdkError('sensitive backend detail'))),
+    /sensitive backend detail/)
 })
 
 test('every direct tool result carries governed evidence descriptors at the Node boundary', () => {

@@ -133,7 +133,7 @@ def quality_work_evidence(call: NativeDataAgentCall, requested_at: datetime) -> 
         "telemetry": ("Kusto", {"opcua_node_id", "bad_sample_count"}),
         "work": ("SQLDatabase", {"equipmentId", "workOrderNumber", "status"}),
     }
-    selected = {}
+    candidates = {}
     for role, (source_type, columns) in required.items():
         matches = [
             table for table in call.tables if table.get("source_type") == source_type
@@ -143,20 +143,9 @@ def quality_work_evidence(call: NativeDataAgentCall, requested_at: datetime) -> 
         ]
         if not matches:
             return None
-        if len(matches) != 1:
-            raise SourceFailure("Native quality/work evidence has ambiguous source tables.")
-        selected[role] = matches[0]
-    for role, table in selected.items():
-        query = table.get("query")
-        if not isinstance(query, str) or not query.strip():
-            raise SourceFailure("Native quality/work evidence has no executed source query.")
-        bounded = (re.search(r"\|\s*(?:take|limit|top|sample|sample-distinct)\b", query, re.I)
-                   if role == "telemetry" else
-                   re.search(r"\b(?:TOP\s*\(?\s*\d+|LIMIT\s+\d+|OFFSET\s+\d+|FETCH\s+(?:FIRST|NEXT)\s+\d+)", query, re.I))
-        if bounded:
-            raise SourceFailure("Native quality/work evidence contains a row-limited source query.")
-    verified = False
-    for item in call.result.get("output", []):
+        candidates[role] = matches
+    selected = {}
+    for item in reversed(call.result.get("output", [])):
         if item.get("type") != "function_call_output" or not isinstance(item.get("output"), str):
             continue
         try:
@@ -170,16 +159,28 @@ def quality_work_evidence(call: NativeDataAgentCall, requested_at: datetime) -> 
         reads = proof.get("dataSourcesQueried")
         if not isinstance(reads, list):
             continue
-        verified = all(any(
-            read.get("dataSourceId") == table.get("source_id") and read.get("succeeded") is True
-            and isinstance(read.get("generatedQuery"), str) and isinstance(table.get("query"), str)
-            and " ".join(read["generatedQuery"].split()) == " ".join(table["query"].split())
-            for read in reads if isinstance(read, dict)
-        ) for table in selected.values())
-        if verified:
+        matched = {
+            role: [table for table in tables if any(
+                read.get("dataSourceId") == table.get("source_id") and read.get("succeeded") is True
+                and isinstance(read.get("generatedQuery"), str) and isinstance(table.get("query"), str)
+                and " ".join(read["generatedQuery"].split()) == " ".join(table["query"].split())
+                for read in reads if isinstance(read, dict)
+            )] for role, tables in candidates.items()
+        }
+        if all(matched.values()):
+            if any(len(tables) != 1 for tables in matched.values()):
+                raise SourceFailure("Native quality/work evidence has ambiguous source tables.")
+            selected = {role: tables[0] for role, tables in matched.items()}
             break
-    if not verified:
+    if not selected:
         raise SourceFailure("Native quality/work tables lack successful complete source-read and combine receipts.")
+    for role, table in selected.items():
+        query = table["query"]
+        bounded = (re.search(r"\|\s*(?:take|limit|top|sample|sample-distinct)\b", query, re.I)
+                   if role == "telemetry" else
+                   re.search(r"\b(?:TOP\s*\(?\s*\d+|LIMIT\s+\d+|OFFSET\s+\d+|FETCH\s+(?:FIRST|NEXT)\s+\d+)", query, re.I))
+        if bounded:
+            raise SourceFailure("Native quality/work evidence contains a row-limited source query.")
     registry = {}
     for row in selected["registry"]["rows"]:
         node, equipment = row.get("opcua_node_id"), row.get("equipment_id")

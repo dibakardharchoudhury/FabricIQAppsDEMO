@@ -19,6 +19,13 @@ const fabric = 'https://api.fabric.microsoft.com/v1'
 const guid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
 const POPULATION_COUNT = /\b(?:how\s+many|count|number\s+of|total)\b/i
 
+class SourceReadError extends Error {
+  constructor(message, code) {
+    super(message)
+    this.code = code
+  }
+}
+
 export function governedToolResult(tool, args, result) {
   return { ...result, _evidence_datasets: describeToolEvidence(tool, args, result) }
 }
@@ -1063,11 +1070,11 @@ async function operationalRead(config, token, label, read) {
     await signInWithEntraToken(client.auth, { entraToken: token })
     return await read(client)
   } catch (error) {
-    const code = typeof error?.code === 'string' && /^[A-Z_0-9]+$/.test(error.code) ? error.code
+    const code = typeof error?.code === 'string' && /^[A-Z_0-9]{1,64}$/.test(error.code) ? error.code
       : Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? `HTTP_${error.status}`
         : /^Request timed out after \d+ms$/.test(error?.message ?? '') ? 'READ_TIMEOUT'
           : error?.message?.startsWith('GraphQL errors:') ? 'GRAPHQL_QUERY_FAILED' : 'READ_FAILED'
-    throw new RayfinClient.errors.SdkError(
+    throw new SourceReadError(
       `Rayfin ${label} read failed (${code}). No empty-work fallback or proposal is permitted.`, code)
   } finally {
     client.auth.destroy()
@@ -1480,9 +1487,10 @@ export async function handle(request, deps = {}) {
     open_work_numbers: work.rows.map(item => item.workOrderNumber) }
 }
 
-function errorEnvelope(error) {
+export function errorEnvelope(error) {
   // Do not serialize SDK exceptions, request headers, tokens or response bodies.
   const message = error instanceof RcaEvidenceError || error instanceof WorkOrderSubmissionError
+    || error instanceof SourceReadError
     || (error instanceof Error && error.constructor === Error)
     ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
   return { ok: false, error: message,

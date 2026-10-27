@@ -1216,16 +1216,28 @@ Use the smallest complete plan:
   and output fields, not application tool names, invented SQL/KQL, rigid application JSON or instructions to
   retrieve its own published output. Native evidence uses native_claims, native authority and native views.
   Never promise a materialized graph or silently replace a native failure with direct evidence.
+  When native_data_agent_available=true, use Fabric IQ for the factual part of a cross-source business
+  question even when the operator does not name an agent. The ontology owns the cross-source entity joins
+  and business vocabulary. Do not select QA as a competing default to reconstruct those joins in the app.
 - QA/Gauge retrieves exact governed operational facts, explicit source queries, analytics and independent
   verification. It is not the default investigator, work-order author or compulsory pre/post-processing hop.
 - Weather handles forecast/observation interpretation with vendor, issue, target, valid time and units kept
   separate. Do not read turbine telemetry for a weather question or infer equipment faults from weather.
-- RCA/Sleuth owns evidence-backed investigations and competing hypotheses, not confirmed diagnoses.
+- RCA/Sleuth owns evidence-backed fault investigations and competing hypotheses, not confirmed diagnoses.
+  Do not add RCA merely because evidence reports a data-quality problem or the operator requests diagnostic
+  work. BAD telemetry is a validity observation, not proof of mechanical failure. A telemetry-quality
+  investigation draft can use verified quality and open-work coverage without first inventing a fault.
 - Work Order/Fixer owns maintenance/coverage review and editable in-memory drafts. proposal_requested is true
   only if this current message actually asks to prepare a new proposal, including natural paraphrases.
   Listing work, recalling a draft and explicit no-new-draft instructions never authorize proposal preparation.
   Read-only/no-save can permit an editable draft but never a production write. Actual writes always need a
-  separate human approval. Conditional maintenance requires a preceding RCA step and requiresVerifiedIssue.
+  separate human approval. Fault-contingent repairs require a preceding RCA step and requiresVerifiedIssue.
+  Diagnostic/data-quality investigation drafts do not require a prior RCA unless the operator also requests
+  fault analysis; set requiresVerifiedIssue=false for those drafts. That flag means a checked fault/repair
+  assessment from RCA, not merely a verified quality observation or a gap in work coverage.
+  They must not assert a mechanical diagnosis, repair, severity or spare-part need without
+  supporting evidence. Do not fetch inspections, inventory or weather just to make a quality investigation
+  draft look more complete; use the relevant verified source receipts and a fresh duplicate-work check.
   A clarification has no executable plan, so proposal_requested must be false in clarify/conversation mode.
 
 For simple facts with fully specified tool arguments, use execution=reader and provide at most four independent

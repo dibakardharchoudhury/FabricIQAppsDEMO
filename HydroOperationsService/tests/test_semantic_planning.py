@@ -111,6 +111,21 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("native_claims_population_native", evidence)
         self.assertNotIn("invented_population_direct", evidence)
 
+    def test_quality_investigation_draft_does_not_require_a_mechanical_rca(self):
+        planned = decision("fabric-iq", "native_claims", reader=False)
+        planned["proposal_requested"] = True
+        planned["plan"]["steps"].append({
+            "specialist": "work-order", "question": "Prepare review-only telemetry-quality investigation drafts.",
+            "reason": "Use verified quality and work coverage without asserting a mechanical fault.",
+            "nativeSource": None, "requiresSelection": False, "requiresVerifiedIssue": False,
+            "execution": "agent", "reads": [],
+        })
+        validated = SemanticDecision.model_validate(planned)
+        self.assertEqual([step.specialist for step in validated.plan.steps], ["fabric-iq", "work-order"])
+        planned["plan"]["steps"][-1]["requiresVerifiedIssue"] = True
+        with self.assertRaisesRegex(ValidationError, "must follow a checked RCA"):
+            SemanticDecision.model_validate(planned)
+
     async def test_semantic_intent_not_phrase_classifier_owns_requirements(self):
         self.journal.save("semantic_decision", {"decision": decision()})
         request = await self.owner.plan_semantically(self.request, self.journal)
