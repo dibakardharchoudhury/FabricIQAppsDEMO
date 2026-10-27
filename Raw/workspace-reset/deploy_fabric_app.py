@@ -1447,9 +1447,12 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID": "",
     }
     geo_name = str(lakehouse["displayName"]).replace("Energy_IQ_LakehouseRTI", "Hydro_GeoContext", 1)
-    geo_matches = [item for item in items if item["type"] == "Lakehouse" and item["displayName"] == geo_name]
+    geo_matches = [item for item in items if item["type"] == "Lakehouse"
+                   and item.get("description") == f"Feature bootstrap {workspace_id}: energy context"]
+    if not geo_matches:
+        geo_matches = [item for item in items if item["type"] == "Lakehouse" and item["displayName"] == geo_name]
     if len(geo_matches) > 1:
-        raise DeployError("Multiple GeoContext Lakehouses match the selected Core Lakehouse suffix.")
+        raise DeployError("Multiple GeoContext Lakehouses match the selected workspace; refusing an arbitrary target.")
     geo = geo_matches[0] if geo_matches else None
     if geo is not None:
         geo_detail = fabric_get(f"workspaces/{workspace_id}/lakehouses/{geo['id']}", headers)
@@ -2512,7 +2515,9 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         from feature_workspace import FeatureWorkspaceError
 
         try:
-            energy_workspace(tenant_id, workspace_id).verify_energy()
+            energy = energy_workspace(tenant_id, workspace_id)
+            energy.verify_energy()
+            energy.prepare_map_chat()
         except FeatureWorkspaceError as exc:
             raise DeployError(f"Energy prerequisites failed; run the local energy setup module first: {exc}") from exc
 

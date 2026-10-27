@@ -224,7 +224,7 @@ class EnergyConfig:
     state_path: Path
     env_suffix: str
     enable_energy_map: bool = True
-    enable_map_chat: bool = False
+    enable_map_chat: bool = True
 
 
 class FeatureWorkspace:
@@ -394,8 +394,13 @@ class FeatureWorkspace:
         return item_id
 
     def _item(self, name: str, item_type: str) -> dict[str, Any]:
-        matches = [i for i in self.fabric.list_workspace_items(self.config.workspace_id)
-                   if i.get("displayName") == name and i.get("type") == item_type]
+        items = self.fabric.list_workspace_items(self.config.workspace_id)
+        matches = [i for i in items if i.get("displayName") == name and i.get("type") == item_type]
+        if item_type == "Lakehouse" and name == f"Hydro_GeoContext_{self.config.env_suffix}":
+            owned = [i for i in items if i.get("type") == item_type
+                     and i.get("description") == f"{self.marker}: energy context"]
+            if owned:
+                matches = owned
         if len(matches) != 1:
             raise FeatureWorkspaceError(f"Expected one {item_type} named {name}, found {len(matches)}.")
         return matches[0]
@@ -537,7 +542,7 @@ class FeatureWorkspace:
         notebook_ids = {}
         for item_type in ("Notebook", "DataPipeline"):
             for spec in self.specs:
-                if spec["name"] not in ENERGY_ITEMS or spec["type"] != item_type:
+                if spec["name"] not in ENERGY_ITEMS | {MAP_AGENT_NOTEBOOK} or spec["type"] != item_type:
                     continue
                 matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
                            if item.get("type") == item_type and item.get("displayName") == spec["name"]]
@@ -556,11 +561,13 @@ class FeatureWorkspace:
 
     def _prepare_energy_map(self) -> None:
         name = f"Hydro_GeoContext_{self.config.env_suffix}"
-        matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
-                   if item.get("type") == "Lakehouse" and item.get("displayName") == name]
+        items = self.fabric.list_workspace_items(self.config.workspace_id)
+        marker = f"{self.marker}: energy context"
+        matches = [item for item in items if item.get("type") == "Lakehouse" and item.get("description") == marker]
+        if not matches:
+            matches = [item for item in items if item.get("type") == "Lakehouse" and item.get("displayName") == name]
         if len(matches) > 1:
             raise FeatureWorkspaceError("Energy context Lakehouse discovery is ambiguous.")
-        marker = f"{self.marker}: energy context"
         if matches and matches[0].get("description") != marker:
             raise FeatureWorkspaceError("Refusing to bind to an unowned energy context Lakehouse.")
         if not matches:
@@ -571,13 +578,14 @@ class FeatureWorkspace:
             self.fabric.poll_lro(response)
         for attempt in range(12):
             matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
-                       if item.get("type") == "Lakehouse" and item.get("displayName") == name]
+                       if item.get("type") == "Lakehouse" and item.get("description") == marker]
             if len(matches) == 1:
                 break
             time.sleep(5)
         if len(matches) != 1:
             raise FeatureWorkspaceError("The energy context Lakehouse did not become visible.")
         lakehouse = matches[0]
+        name = lakehouse["displayName"]
         self.ensure_energy_folder(lakehouse)
         self.state["energy_lakehouse_id"] = lakehouse["id"]
         self._save()
@@ -597,22 +605,50 @@ class FeatureWorkspace:
                 )
                 check_response(response, f"Bind {notebook_name}", {200, 202})
                 self.fabric.poll_lro(response)
-        self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
+        source_ran = self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
             "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
+            "geo_lakehouse_id": lakehouse["id"],
             "refresh_mode": "all", "force_refresh": False,
         }}})
-        self._complete_energy_map(lakehouse["id"])
+        self._complete_energy_map(lakehouse["id"], publish_agent=not source_ran)
 
-    def _complete_energy_map(self, lakehouse_id: str) -> None:
+    def _complete_energy_map(self, lakehouse_id: str, *, publish_agent: bool = True) -> None:
         self._publish_energy_read_models(lakehouse_id)
-        if self.config.enable_map_chat:
-            self._run(MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
-                {"name": "workspace_id", "value": self.config.workspace_id, "type": "Text"},
-                {"name": "env_suffix", "value": self.config.env_suffix, "type": "Text"},
-            ]})
+        if publish_agent:
+            self._publish_map_agent(lakehouse_id)
+        elif self.config.enable_map_chat:
             agent = self._item(f"Hydro_Map_Agent_{self.config.env_suffix}", "DataAgent")
             self.state["map_agent_id"] = agent["id"]
             self._save()
+
+    def _publish_map_agent(self, lakehouse_id: str) -> None:
+        if not self.config.enable_map_chat:
+            return
+        lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
+        if lakehouse["id"] != lakehouse_id or lakehouse.get("description") != f"{self.marker}: energy context":
+            raise FeatureWorkspaceError("Map agent Lakehouse identity/ownership does not match the energy target.")
+        notebook = self._item(MAP_AGENT_NOTEBOOK, "Notebook")
+        definition = notebook_definition(self.fabric, self.config.workspace_id, notebook["id"])
+        target = {
+            "default_lakehouse": lakehouse_id, "default_lakehouse_name": lakehouse["displayName"],
+            "default_lakehouse_workspace_id": self.config.workspace_id,
+            "known_lakehouses": [{"id": lakehouse_id}],
+        }
+        if bind_notebook_definition(definition, target, {}):
+            response = self.fabric.request("POST",
+                f"{self.base}/notebooks/{notebook['id']}/updateDefinition?updateMetadata=true",
+                json={"definition": definition},
+            )
+            check_response(response, "Bind map publisher to GeoContext", {200, 202})
+            self.fabric.poll_lro(response)
+        self._run(MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
+            {"name": "workspace_id", "value": self.config.workspace_id, "type": "Text"},
+            {"name": "env_suffix", "value": self.config.env_suffix, "type": "Text"},
+            {"name": "geo_lakehouse_id", "value": lakehouse_id, "type": "Text"},
+        ]})
+        agent = self._item(f"Hydro_Map_Agent_{self.config.env_suffix}", "DataAgent")
+        self.state["map_agent_id"] = agent["id"]
+        self._save()
 
     def ensure_energy_folder(self, lakehouse: dict[str, Any] | None = None) -> None:
         lakehouse = lakehouse if lakehouse is not None else self._item(
@@ -637,6 +673,10 @@ class FeatureWorkspace:
     def verify_energy(self) -> None:
         lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
         self._publish_energy_read_models(lakehouse["id"], publish=False)
+
+    def prepare_map_chat(self) -> None:
+        lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
+        self._publish_map_agent(lakehouse["id"])
 
     def publish_energy(self) -> None:
         """Finish Core's parallel import without starting another ingestion job."""

@@ -1,5 +1,6 @@
 import type { Feature, FeatureCollection, Geometry } from 'geojson'
 import { validateEnergyPropertyFilters, createEnergyPropertyFilters, type EnergyPropertyFilters } from './energyMapFilters'
+import { lakehouseTimestamp } from '../services/lakehouseConnector'
 
 export const MAP_LAYERS = [
   { id: 'transmission', label: 'Transmission lines', source: 'NVE grid', color: '#0f766e', minZoom: 3, defaultVisible: true },
@@ -191,7 +192,7 @@ function parseObject(value: unknown, name: string): Record<string, unknown> {
 
 export function parseEnergyFeature(row: Record<string, unknown>): EnergyFeature {
   if (!isEnergyLayer(row.layer_id) || typeof row.feature_id !== 'string'
-    || typeof row.label !== 'string' || typeof row.ingested_at !== 'string') {
+    || typeof row.label !== 'string') {
     throw new Error('Fabric returned an invalid energy map feature.')
   }
   let geometry: Geometry | null = null
@@ -203,8 +204,8 @@ export function parseEnergyFeature(row: Record<string, unknown>): EnergyFeature 
   return {
     id: row.feature_id, layerId: row.layer_id, label: row.label, geometry,
     properties: parseObject(row.properties_json, 'feature properties'),
-    observedAt: typeof row.observed_at === 'string' && row.observed_at ? row.observed_at : null,
-    ingestedAt: row.ingested_at,
+    observedAt: row.observed_at == null || row.observed_at === '' ? null : lakehouseTimestamp(row.observed_at, 'observed_at'),
+    ingestedAt: lakehouseTimestamp(row.ingested_at, 'ingested_at'),
     sourceUrl: typeof row.source_url === 'string' ? row.source_url : '',
   }
 }
@@ -221,8 +222,8 @@ export function parseSourceStatus(row: Record<string, unknown>): EnergySourceSta
   }
   return {
     layerId: row.layer_id, state: row.state as 'ready' | 'error',
-    lastAttemptAt: typeof row.last_attempt_at === 'string' ? row.last_attempt_at : null,
-    lastSuccessAt: typeof row.last_success_at === 'string' ? row.last_success_at : null,
+    lastAttemptAt: row.last_attempt_at == null || row.last_attempt_at === '' ? null : lakehouseTimestamp(row.last_attempt_at, 'last_attempt_at'),
+    lastSuccessAt: row.last_success_at == null || row.last_success_at === '' ? null : lakehouseTimestamp(row.last_success_at, 'last_success_at'),
     rowCount: count(row.row_count), unmappedCount: count(row.unmapped_count),
     rejectedCount: count(row.rejected_count),
     message: typeof row.message === 'string' ? row.message : '',

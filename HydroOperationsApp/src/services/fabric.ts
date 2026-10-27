@@ -1382,9 +1382,15 @@ export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, o
     }
     const current = (async () => {
       const pipelineId = await resolveEnergyMapPipeline()
+      const geoLakehouseId = import.meta.env.VITE_RAYFIN_GEO_LAKEHOUSE_ID as string | undefined
+      if (!geoLakehouseId) throw new Error('The selected workspace has no verified GeoContext Lakehouse. Run map provisioning before refreshing.')
       return runJob(pipelineId, 'Pipeline', publish, {
         reuseActive: true, timeoutMs: 3 * 60 * 60_000,
-        pipelineParameters: { refresh_mode: 'all', force_refresh: forceRefresh },
+        pipelineParameters: {
+          workspace_id: requireWorkspaceId(), geo_lakehouse_id: geoLakehouseId,
+          env_suffix: '', map_agent_name: mapDataAgentName(eventhouseName, configuredMapAgentName),
+          refresh_mode: 'all', force_refresh: forceRefresh,
+        },
         onReuseActive: startedAt => {
           mapRefreshStartedAt = startedAt ?? mapRefreshStartedAt
           onExistingRun?.(mapRefreshStartedAt)

@@ -110,7 +110,8 @@ class FeatureWorkspaceTests(unittest.TestCase):
             "weather_environment_id": "weather-environment", "weather_environment_name": "Weather",
         }
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
-        for name, expected in ((feature.ENERGY_NOTEBOOK, "geo"), ("RTI_002_Setup_Eventhouse_Only", "operational")):
+        for name, expected in ((feature.ENERGY_NOTEBOOK, "geo"), (feature.MAP_AGENT_NOTEBOOK, "geo"),
+                               ("RTI_002_Setup_Eventhouse_Only", "operational")):
             result = namespace["_rebind_lakehouse"](name)
             self.assertTrue(result[1])
             definition = json.loads(notebooks.notebook.updateDefinition.call_args.kwargs["content"])
@@ -122,7 +123,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
     def test_core_finish_only_publishes_and_verifies_energy_without_a_second_import(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             workspace = feature.FeatureWorkspace(
-                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V11"), ROOT,
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V11", enable_map_chat=False), ROOT,
             )
             lakehouse = {"id": "geo", "description": f"{workspace.marker}: energy context"}
             with patch.object(workspace, "_item", return_value=lakehouse), \
@@ -181,7 +182,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
 
     def test_energy_only_setup_has_no_core_or_azure_prerequisite_configuration(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
-            config = feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V9")
+            config = feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V9", enable_map_chat=False)
             workspace = feature.FeatureWorkspace(config, ROOT)
             workspace.fabric.list_workspace_items.return_value = []
             with patch.object(workspace, "_upsert", side_effect=["notebook", "pipeline"]) as upsert, \
@@ -208,6 +209,33 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 workspace.verify_energy()
             publish.assert_called_once_with("lakehouse", publish=False)
             run.assert_not_called()
+
+    def test_map_chat_preparation_is_separate_from_read_only_energy_verification(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "PROD_42"), ROOT,
+            )
+            with patch.object(workspace, "_item", return_value={"id": "current-geo"}), \
+                    patch.object(workspace, "_publish_map_agent") as publish, \
+                    patch.object(workspace, "_run") as run:
+                workspace.prepare_map_chat()
+            publish.assert_called_once_with("current-geo")
+            run.assert_not_called()
+
+    def test_geocontext_discovery_uses_workspace_ownership_not_a_stale_display_name(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "PROD_42"), ROOT,
+            )
+            target = {"id": "current-geo", "type": "Lakehouse", "displayName": "Norway Energy Production",
+                      "description": f"{workspace.marker}: energy context"}
+            workspace.fabric.list_workspace_items.return_value = [
+                {"id": "stale-geo", "type": "Lakehouse", "displayName": "Hydro_GeoContext_PROD_42"}, target,
+            ]
+            self.assertEqual(workspace._item("Hydro_GeoContext_PROD_42", "Lakehouse"), target)
+            workspace.fabric.list_workspace_items.return_value.append({**target, "id": "ambiguous"})
+            with self.assertRaisesRegex(feature.FeatureWorkspaceError, "found 2"):
+                workspace._item("Hydro_GeoContext_PROD_42", "Lakehouse")
 
     def test_bootstrap_is_opt_in(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -302,17 +330,21 @@ class FeatureWorkspaceTests(unittest.TestCase):
         notebook = json.loads((ROOT / "Notebooks/Geo_001_ingest_energy_context.Notebook/.platform").read_text())
         properties = pipeline["properties"]
         self.assertEqual(properties["concurrency"], 1)
-        self.assertEqual(len(properties["activities"]), 1)
+        self.assertEqual(len(properties["activities"]), 2)
         activity = properties["activities"][0]
         self.assertEqual(activity["typeProperties"]["notebookId"], notebook["config"]["logicalId"])
-        self.assertEqual(set(properties["parameters"]), {"workspace_id", "env_suffix", "refresh_mode", "force_refresh"})
-        for name in properties["parameters"]:
+        self.assertEqual(set(properties["parameters"]), {"workspace_id", "env_suffix", "geo_lakehouse_id", "map_agent_name", "refresh_mode", "force_refresh"})
+        for name in set(properties["parameters"]) - {"map_agent_name"}:
             self.assertEqual(activity["typeProperties"]["parameters"][name]["value"]["value"], f"@pipeline().parameters.{name}")
         self.assertEqual(properties["parameters"]["force_refresh"]["defaultValue"], False)
         self.assertEqual(properties["parameters"]["refresh_mode"]["defaultValue"], "all")
-        self.assertNotIn(feature.MAP_AGENT_NOTEBOOK, json.dumps(properties["activities"]))
+        self.assertEqual(properties["parameters"]["env_suffix"]["defaultValue"], "")
+        publisher = properties["activities"][1]
+        self.assertEqual(publisher["name"], feature.MAP_AGENT_NOTEBOOK)
+        self.assertEqual(publisher["dependsOn"], [{"activity": feature.ENERGY_NOTEBOOK, "dependencyConditions": ["Succeeded"]}])
+        publisher_id = json.loads((ROOT / "Notebooks/Geo_002_publish_map_agent.Notebook/.platform").read_text())["config"]["logicalId"]
         rebound = feature.rebind_pipeline(
-            pipeline, {notebook["config"]["logicalId"]: "target-notebook"}, WORKSPACE,
+            pipeline, {notebook["config"]["logicalId"]: "target-notebook", publisher_id: "target-publisher"}, WORKSPACE,
             {"workspace_id": WORKSPACE, "env_suffix": "V8"},
         )
         self.assertEqual(rebound["properties"]["activities"][0]["typeProperties"]["workspaceId"], WORKSPACE)
@@ -365,7 +397,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 }
                 workspace.fabric.list_workspace_items.return_value = [lakehouse]
                 with (
-                    patch.object(workspace, "_item", side_effect=lambda name, kind: {"id": name}),
+                    patch.object(workspace, "_item", side_effect=lambda name, kind: lakehouse if kind == "Lakehouse" else {"id": name}),
                     patch.object(feature, "notebook_definition", return_value={}),
                     patch.object(feature, "bind_notebook_definition", return_value=False) as bind,
                     patch.object(workspace, "_publish_energy_read_models"),
@@ -373,12 +405,14 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     patch.object(workspace, "_run", return_value=source_ran) as run,
                 ):
                     workspace._prepare_energy_map()
-                self.assertEqual(bind.call_count, 2)
-                self.assertEqual(run.call_count, 2)
-                run.assert_called_with(feature.MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
-                    {"name": "workspace_id", "value": WORKSPACE, "type": "Text"},
-                    {"name": "env_suffix", "value": "V6", "type": "Text"},
-                ]})
+                self.assertEqual(bind.call_count, 2 if source_ran else 3)
+                self.assertEqual(run.call_count, 1 if source_ran else 2)
+                if not source_ran:
+                    run.assert_called_with(feature.MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
+                        {"name": "workspace_id", "value": WORKSPACE, "type": "Text"},
+                        {"name": "env_suffix", "value": "V6", "type": "Text"},
+                        {"name": "geo_lakehouse_id", "value": SUBSCRIPTION, "type": "Text"},
+                    ]})
                 self.assertEqual(workspace.state["map_agent_id"], "Hydro_Map_Agent_V6")
 
     def test_terminal_chat_publisher_can_retry_without_discarding_other_checkpoints(self):
@@ -759,7 +793,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         deploy, "validate_rayfin_endpoint_contract",
                         side_effect=lambda *args: readiness("endpoint") or api_url,
                     ))
-                    cors = stack.enter_context(patch.object(deploy, "validate_appbackend_cors", side_effect=lambda *args: readiness("cors")))
+                    cors = stack.enter_context(patch.object(deploy, "validate_appbackend_cors", side_effect=lambda *args, **kwargs: readiness("cors")))
                     if failure:
                         with self.assertRaisesRegex(deploy.DeployError, f"{failure} failed"):
                             deploy.deploy(args)
@@ -767,10 +801,10 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     else:
                         deploy.deploy(args)
                         self.assertEqual(events, [
-                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "app", "auth",
+                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "app", "app", "auth",
                             "endpoint", "cors", "auth-ready", "finish",
                         ])
-                        cors.assert_called_once_with(api_url, url, "pk-test")
+                        cors.assert_called_once_with(api_url, url, "pk-test", energy_enabled=True)
                     prepare_env.assert_called_once_with(
                         TENANT,
                         WORKSPACE,
@@ -787,6 +821,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         ("up", "--workspace-id", WORKSPACE, "--exclude-services", "staticHosting", "--yes"),
                         ("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
                         ("up", "connector", "apply", "--name", "hydrooperations", "--json"),
+                        ("up", "connector", "apply", "--name", "hydrogeo", "--json"),
                     ])
 
     def test_private_endpoint_is_ready_before_import_or_setup(self):

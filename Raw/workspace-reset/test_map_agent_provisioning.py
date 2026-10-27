@@ -131,6 +131,18 @@ class HelpersTest(unittest.TestCase):
 
 
 class OwnershipAndBindingTests(HelpersTest):
+    def test_runtime_binding_derives_current_suffix_and_allows_verified_custom_names(self):
+        context = {**self.context, "defaultLakehouseName": "Hydro_GeoContext_PROD_42"}
+        binding = self.call("binding_from_context", "", "", context)
+        self.assertEqual(binding["agent_name"], "Hydro_Map_Agent_PROD_42")
+        self.assertEqual(binding["lakehouse_id"], LAKEHOUSE)
+        renamed = {**context, "defaultLakehouseName": "Norwegian Energy Production"}
+        binding = self.call("binding_from_context", WORKSPACE, "", renamed, LAKEHOUSE, "Hydro_Map_Agent_PROD_42")
+        self.assertEqual(binding["lakehouse_name"], renamed["defaultLakehouseName"])
+        for target in ("", str(UUID(int=9))):
+            with self.subTest(target=target), self.assertRaises(self.error):
+                self.call("binding_from_context", "", "", renamed, target, "Hydro_Map_Agent_PROD_42")
+
     def test_exact_agent_convention_and_default_geo_binding(self):
         self.assertEqual(self.binding["agent_name"], "Hydro_Map_Agent_V6")
         self.assertEqual(self.binding["lakehouse_name"], "Hydro_GeoContext_V6")
@@ -562,7 +574,8 @@ class NotebookArtifactTests(HelpersTest):
         self.assertEqual(platform["metadata"]["type"], "Notebook")
         source = NOTEBOOK.read_text()
         self.assertIn('workspace_id = ""', source)
-        self.assertIn('env_suffix = "V6"', source)
+        self.assertIn('env_suffix = ""', source)
+        self.assertIn('geo_lakehouse_id = ""', source)
         self.assertNotIn('if __name__', source)
         self.assertNotIn("getSecret(", source)
         self.assertNotIn("notebook.run(", source)

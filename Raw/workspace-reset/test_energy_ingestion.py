@@ -849,12 +849,25 @@ class RepositoryContractTests(HelpersTest):
             with self.subTest(parameters=parameters), self.assertRaises(self.error):
                 self.call("validate_parameters", *parameters)
         source = NOTEBOOK.read_text(encoding="utf-8")
-        for line in ('workspace_id = ""', 'env_suffix = "V6"', 'refresh_mode = "all"', "force_refresh = False"):
+        for line in ('workspace_id = ""', 'env_suffix = ""', 'geo_lakehouse_id = ""', 'refresh_mode = "all"', "force_refresh = False"):
             self.assertIn(line, source)
         self.assertNotIn("__main__", source)
         self.assertNotIn("SparkSession.builder", source)
         self.assertNotIn("credentials.get", source)
         self.assertNotIn("api.fabric.microsoft.com", source)
+
+    def test_bound_geocontext_is_dynamic_and_explicit_ids_support_renamed_lakehouses(self):
+        workspace, lakehouse = str(UUID(int=100)), str(UUID(int=101))
+        context = {"currentWorkspaceId": workspace, "defaultLakehouseWorkspaceId": workspace,
+                   "defaultLakehouseName": "Hydro_GeoContext_PROD_42", "defaultLakehouseId": lakehouse}
+        self.assertEqual(self.call("validate_parameters", "", "", "all", False, context), (workspace, False))
+        renamed = {**context, "defaultLakehouseName": "Norway Energy - production"}
+        self.assertEqual(self.call("validate_parameters", workspace, "", "all", True, renamed, lakehouse), (workspace, True))
+        for target in ("", str(UUID(int=102)), "not-a-guid"):
+            with self.subTest(target=target), self.assertRaises(self.error):
+                self.call("validate_parameters", workspace, "", "all", False, renamed, target)
+        with self.assertRaises(self.error):
+            self.call("validate_parameters", "", "V6", "all", False, context)
 
     def test_spark_publication_is_partition_scoped_and_not_per_page(self):
         source = NOTEBOOK.read_text(encoding="utf-8")

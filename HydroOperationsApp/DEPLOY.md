@@ -250,6 +250,16 @@ resolves both Lakehouse SQL endpoint IDs from live workspace metadata, validates
 their distinct identities, and applies each connector with an explicit success receipt.
 Energy-disabled targets omit the GeoContext connector declaration.
 
+The **Norwegian Energy Map** uses the selected workspace's owned GeoContext
+Lakehouse and its verified SQL endpoint, not a saved workspace or `V6` default.
+Both Geo notebooks receive that Lakehouse binding; refresh passes its item ID and
+the current workspace ID. An empty environment suffix resolves from the bound
+GeoContext, while renamed Lakehouses require the verified item ID. Cross-workspace
+or mismatched bindings stop before writes. The refresh pipeline runs
+`Geo_002_publish_map_agent` only after successful ingestion, so map chat sees the
+new read models. Routine deployment also converges missing/stale map-agent
+publication independently, without rerunning ingestion or resetting core data.
+
 No standalone `Hydro_STID_API` setup or legacy GraphQL source-rebinding is performed.
 Existing standalone items are not automatically modified or deleted. Rayfin's managed
 GraphQL transport is still part of its connector implementation, not the retired API.

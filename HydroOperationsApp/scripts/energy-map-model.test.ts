@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   asFeatureCollection, validateMarketMessageAsset, validateEnergyMapRequest, capacityRadius, DEFAULT_LAYERS, INITIAL_VIEW,
-  isMapGeometry, MAP_LAYERS, MAP_VISIBLE_LAYERS, parseEnergyFeature, renderLayerSignature, safeSourceUrl, sourceIsStale, visibleLayerIds,
+  isMapGeometry, MAP_LAYERS, MAP_VISIBLE_LAYERS, parseEnergyFeature, parseSourceStatus, renderLayerSignature, safeSourceUrl, sourceIsStale, visibleLayerIds,
 } from '../src/ui-shared/energyMapModel.ts'
 
 test('the layer contract includes all five energy sources and no aviation layers', () => {
@@ -49,6 +49,26 @@ test('unmapped events remain records rather than being turned into fake coordina
   })
   assert.equal(feature.geometry, null)
   assert.equal(asFeatureCollection([feature]).features.length, 0)
+})
+
+test('Rayfin-deserialized Date timestamps preserve map features and source freshness', () => {
+  const timestamp = new Date('2026-10-27T15:00:00Z')
+  const feature = parseEnergyFeature({
+    feature_id: 'statnett:NO', layer_id: 'power-balance', label: 'Norway',
+    properties_json: '{}', ingested_at: timestamp, observed_at: timestamp,
+  })
+  assert.equal(feature.ingestedAt, timestamp.toISOString())
+  assert.equal(feature.observedAt, timestamp.toISOString())
+  const status = parseSourceStatus({
+    layer_id: 'power-balance', state: 'ready', last_attempt_at: timestamp, last_success_at: timestamp,
+    row_count: 1, unmapped_count: 0, rejected_count: 0,
+  })
+  assert.equal(status.lastSuccessAt, timestamp.toISOString())
+  assert.equal(sourceIsStale(status, timestamp.getTime()), false)
+  assert.throws(() => parseEnergyFeature({
+    feature_id: 'bad', layer_id: 'power-balance', label: 'Bad date', properties_json: '{}',
+    ingested_at: new Date(NaN),
+  }))
 })
 
 test('frequency, country balance and messages are not global map markers', () => {

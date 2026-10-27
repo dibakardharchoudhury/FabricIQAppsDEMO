@@ -23,6 +23,8 @@
 # schema-disabled `Hydro_GeoContext_{env_suffix}`. No provider downloads, Foundry
 # resources, tenant switches, permission grants, synthetic STID tables, or changes
 # to `RTI_Demo_Agent_*` / `rti_demo_settings` are performed.
+# The suffix defaults to the bound GeoContext, not a fixed deployment version.
+# Explicit verified Lakehouse IDs and map-agent names support renamed resources.
 #
 # This notebook owns ONLY `Hydro_Map_Agent_{env_suffix}` and three new Delta read
 # models: `geo_map_agent_entities`, `geo_map_agent_links`, `geo_map_agent_state`.
@@ -69,7 +71,9 @@
 # PARAMETERS CELL ********************
 
 workspace_id = ""
-env_suffix = "V6"
+env_suffix = ""
+geo_lakehouse_id = ""
+map_agent_name = ""
 
 # METADATA ********************
 
@@ -313,19 +317,32 @@ def guid(value, label):
     return str(result)
 
 
-def binding_from_context(workspace, suffix, context):
-    if not isinstance(suffix, str) or not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
-        raise ProvisioningError("env_suffix must be a safe explicit environment suffix")
+def binding_from_context(workspace, suffix, context, target_lakehouse_id="", agent_name=""):
+    if not isinstance(suffix, str) or (suffix and not re.fullmatch(r"[A-Za-z0-9_]+", suffix)):
+        raise ProvisioningError("env_suffix must be safe or empty for the bound GeoContext")
     current = guid(context.get("currentWorkspaceId"), "runtime workspace")
     workspace = guid(workspace or current, "workspace_id")
-    expected_lakehouse = f"Hydro_GeoContext_{suffix}"
+    lakehouse_name = context.get("defaultLakehouseName")
+    lakehouse_id = guid(context.get("defaultLakehouseId"), "default lakehouse")
     if workspace != current or guid(context.get("defaultLakehouseWorkspaceId"), "lakehouse workspace") != current:
         raise ProvisioningError("Geo_002 refuses a cross-workspace/default-lakehouse mismatch")
-    if context.get("defaultLakehouseName") != expected_lakehouse:
-        raise ProvisioningError(f"Attach the existing {expected_lakehouse}; synthetic/default alternatives are refused")
+    if not isinstance(lakehouse_name, str) or not lakehouse_name.strip():
+        raise ProvisioningError("The bound GeoContext Lakehouse name is missing")
+    if target_lakehouse_id:
+        if guid(target_lakehouse_id, "geo_lakehouse_id") != lakehouse_id:
+            raise ProvisioningError("geo_lakehouse_id does not match the bound Lakehouse")
+    elif lakehouse_name != f"Hydro_GeoContext_{suffix}" and (suffix or not re.fullmatch(r"Hydro_GeoContext_[A-Za-z0-9_]+", lakehouse_name)):
+        raise ProvisioningError("Attach the selected GeoContext; custom names require its verified geo_lakehouse_id")
+    suffix = suffix or lakehouse_name.removeprefix("Hydro_GeoContext_")
+    if not agent_name:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
+            raise ProvisioningError("Custom GeoContext names require an explicit map_agent_name or safe env_suffix")
+        agent_name = f"Hydro_Map_Agent_{suffix}"
+    if not isinstance(agent_name, str) or not agent_name.startswith("Hydro_Map_Agent_") or not re.fullmatch(r"[A-Za-z0-9_]+", agent_name):
+        raise ProvisioningError("map_agent_name must be a dedicated Hydro_Map_Agent name")
     return {
-        "workspace_id": workspace, "lakehouse_id": guid(context.get("defaultLakehouseId"), "default lakehouse"),
-        "lakehouse_name": expected_lakehouse, "agent_name": f"Hydro_Map_Agent_{suffix}", "env_suffix": suffix,
+        "workspace_id": workspace, "lakehouse_id": lakehouse_id,
+        "lakehouse_name": lakehouse_name, "agent_name": agent_name, "env_suffix": suffix,
     }
 
 
@@ -1241,7 +1258,7 @@ def publish_map_agent(api, models, mcp_factory):
 import requests
 import notebookutils
 
-binding = binding_from_context(workspace_id, env_suffix, notebookutils.runtime.context)
+binding = binding_from_context(workspace_id, env_suffix, notebookutils.runtime.context, geo_lakehouse_id, map_agent_name)
 
 
 def current_fabric_token():

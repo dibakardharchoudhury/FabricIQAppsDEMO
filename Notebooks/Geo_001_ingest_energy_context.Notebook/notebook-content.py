@@ -21,7 +21,8 @@
 #
 # Bind this notebook to **Hydro_GeoContext_{env_suffix}**, never the synthetic STID
 # lakehouse. Deployment supplies the binding; no service principal, secret, or Fabric
-# control-plane call is needed here. `workspace_id` defaults to runtime context.
+# control-plane call is needed here. Workspace and suffix default to runtime context.
+# A supplied `geo_lakehouse_id` must match that binding and supports custom names.
 # Use separate workspace/bindings and an explicit suffix for dev/test/prod promotion.
 # Create a **schema-disabled** GeoContext Lakehouse by omitting `creationPayload`
 # from the REST create request (`enableSchemas` only accepts `true`). The aliases
@@ -129,7 +130,8 @@
 # PARAMETERS CELL ********************
 
 workspace_id = ""
-env_suffix = "V6"
+env_suffix = ""
+geo_lakehouse_id = ""
 refresh_mode = "all"
 force_refresh = False
 
@@ -2180,22 +2182,29 @@ def run_auxiliary_outputs(store, fs, root, run_id, session, mode, force, clock,
     return results
 
 
-def validate_parameters(workspace, suffix, mode, force, context):
+def validate_parameters(workspace, suffix, mode, force, context, target_lakehouse_id=""):
     if mode not in ("all", "operational"):
         raise SourceError("refresh_mode must be 'all' or 'operational'")
     if isinstance(force, str) and force.lower() in ("true", "false"):
         force = force.lower() == "true"
     if not isinstance(force, bool):
         raise SourceError("force_refresh must be boolean (or true/false pipeline text)")
-    if not isinstance(suffix, str) or not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
-        raise SourceError("env_suffix must be an explicit safe environment suffix")
-    expected = f"Hydro_GeoContext_{suffix}"
-    if context.get("defaultLakehouseName") != expected or not context.get("defaultLakehouseId"):
-        raise SourceError(f"Bind the notebook to default lakehouse {expected}; refusing writes to another lakehouse")
+    if not isinstance(suffix, str) or (suffix and not re.fullmatch(r"[A-Za-z0-9_]+", suffix)):
+        raise SourceError("env_suffix must be a safe environment suffix or empty for the bound GeoContext")
+    bound_name = context.get("defaultLakehouseName")
+    bound_id = context.get("defaultLakehouseId")
+    if not isinstance(bound_name, str) or not bound_name.strip() or not bound_id:
+        raise SourceError("Bind the notebook to this workspace's GeoContext Lakehouse before importing energy data")
+    if not target_lakehouse_id:
+        expected = f"Hydro_GeoContext_{suffix}" if suffix else None
+        if (expected and bound_name != expected) or not re.fullmatch(r"Hydro_GeoContext_[A-Za-z0-9_]+", bound_name):
+            raise SourceError("The default Lakehouse is not the selected GeoContext; pass its verified geo_lakehouse_id for a custom name")
     current = context.get("currentWorkspaceId")
     workspace = workspace or current
     try:
-        if str(UUID(workspace)) != str(UUID(current)):
+        if not UUID(str(bound_id)).int or (target_lakehouse_id and UUID(str(target_lakehouse_id)) != UUID(str(bound_id))):
+            raise SourceError("geo_lakehouse_id does not match the notebook's bound Lakehouse; refusing writes")
+        if not UUID(str(workspace)).int or str(UUID(workspace)) != str(UUID(current)):
             raise SourceError("workspace_id does not match the runtime workspace")
         lakehouse_workspace = context.get("defaultLakehouseWorkspaceId")
         if not lakehouse_workspace or str(UUID(lakehouse_workspace)) != str(UUID(workspace)):
@@ -2225,7 +2234,7 @@ from pyspark.errors import PySparkException
 
 context = notebookutils.runtime.context
 workspace_id, force_refresh = validate_parameters(
-    workspace_id, env_suffix, refresh_mode, force_refresh, context,
+    workspace_id, env_suffix, refresh_mode, force_refresh, context, geo_lakehouse_id,
 )
 is_for_pipeline = context["isForPipeline"]
 run_id = str(uuid4())

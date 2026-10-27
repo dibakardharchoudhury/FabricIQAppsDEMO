@@ -3268,7 +3268,7 @@ if enable_energy_map:
         raise RuntimeError(f"Cannot verify energy context ownership: HTTP {geo_response.status_code}.")
     if geo_response.json().get("description") != f"Feature bootstrap {workspace_id}: energy context":
         raise RuntimeError("Refusing to ingest into an unowned energy context Lakehouse.")
-    chain_notebooks.append("Geo_001_ingest_energy_context")
+    chain_notebooks.extend(["Geo_001_ingest_energy_context", "Geo_002_publish_map_agent"])
 
 
 def _rebind_lakehouse(nb_name: str) -> tuple:
@@ -3283,7 +3283,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             "default_lakehouse_workspace_id": workspace_id,
             "known_lakehouses": [{"id": lakehouse_id}],
         }
-        if nb_name == "Geo_001_ingest_energy_context":
+        if nb_name in {"Geo_001_ingest_energy_context", "Geo_002_publish_map_agent"}:
             deps["lakehouse"] = {
                 "default_lakehouse": geo_lakehouse_id,
                 "default_lakehouse_name": geo_lakehouse_name,
