@@ -158,12 +158,18 @@ ownership from names or remove valid time-series bindings to force eligibility.
 | Energy | Loads GeoContext alongside Core/Weather, then verifies twelve layers and nine area polygons | **Refresh energy sources** |
 | Weather | Creates tables and enables its schedule | **Connect weather** in the hosted app, or scheduled ingestion |
 
-Weather ingestion still requires valid provider credentials/connectivity.
+Weather ingestion defaults to UKMet and requires its Global Spot and Land
+Observations keys/connectivity. Aurora is optional (`enable_aurora=false` by default);
+its MAI key remains in Key Vault but is not read in the default flow.
 Energy map chat is separate from ingestion. Neither a successful import nor app
 publication proves chat or alert delivery.
 
 Weather setup creates its tables; `03_Pipe_Weather` fetches forecasts and computes
-area metrics on its six-hour schedule. Energy is different: its first import runs
+area metrics on its six-hour schedule. It prepares shared operating areas without
+Aurora, ingests and serves UKMet first, then runs Aurora only when explicitly enabled.
+An opted-in Aurora failure remains visible but cannot block the preceding UKMet
+serving refresh. Existing schedules are not changed by a website update.
+Energy is different: its first import runs
 inside Core; `04_Pipe_EnergyMap` is retained for later on-demand refreshes and no
 energy schedule is enabled automatically. Network/plant snapshots cache for 24h;
 reservoir statistics, Statnett and UMM refresh on each eligible run. Use
@@ -314,7 +320,7 @@ publication does not configure provider authentication or ingest data.
 | Permission, consent or private endpoint | Give the exact error to the resource owner; do not weaken access controls |
 | Stale agent/source configuration | Foundry setup, then app deployment |
 | Native graph not materialized | Use the explicitly labelled live-source mode, or complete the portal action for native GQL; never fabricate graph ownership |
-| Weather provider HTTP 401 | Credential owner checks `mai-weather-api-key` in Key Vault; rerun Weather only |
+| Weather provider HTTP 401 | Credential owner checks the named provider's Key Vault key: UKMet Global Spot/Land Observations by default; `mai-weather-api-key` only for opted-in Aurora. Rerun Weather only |
 | Energy/Weather source failure | Fix that source's credentials/connectivity, then refresh it |
 | Paused capacity or unsupported region | Fix the target prerequisite, not the app build |
 | Sign-in popup blocked | Allow normal browser sign-in and retry |

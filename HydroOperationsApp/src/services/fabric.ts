@@ -918,7 +918,7 @@ async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: strin
   return runJob(pipelineId, 'Pipeline', onStatus, { timeoutMs: 80 * 60_000, reuseActive: true })
 }
 
-/** Run the coordinated Weather_002 -> Weather_003 -> Weather_020 pipeline. */
+/** Prepare shared areas, ingest/serve UKMet, then run Aurora only when explicitly enabled. */
 export const runWeatherNotebooks = createSingleFlight(
   async (onStatus?: JobProgress): Promise<JobStatus> => runWeatherSequence(onStatus),
 )

@@ -45,6 +45,7 @@
 import json
 
 table_prefix = "weather"
+prepare_only = False  # The UKMet-first pipeline prepares shared areas without calling Aurora.
 endpoint = "https://mai-weather-api.azure-api.net"
 api_version = "2025-04-30-preview"
 collection = "mai-aurora"
@@ -491,6 +492,36 @@ def load_station_points(
     print(f"Loaded {len(points)} weather locations from {facilities_table_name}")
     return points
 
+
+def persist_station_areas(areas, updated_at, selected_facility_ids):
+    area_rows = []
+    for area in areas:
+        area_rows.append({
+            "area_id": area["area_id"],
+            "area_name": area["area_name"],
+            "geometry_geojson": area["geometry_json"],
+            "crs": "EPSG:4326",
+            "metadata_json": json.dumps({
+                "geodesic_area_m2": geodesic_area_m2(area["geometry"]),
+                "generation_method": "station_geodesic_buffer",
+                "location_id": area["location_id"],
+                "radius_km": area["radius_km"],
+            }),
+            "updated_at_utc": updated_at,
+        })
+    areas_df = spark.createDataFrame(area_rows)
+    areas_df.createOrReplaceTempView("incoming_weather_areas")
+    if not selected_facility_ids:
+        active_area_ids = [area["area_id"] for area in areas]
+        active_area_ids_sql = ", ".join(f"'{area_id.replace(chr(39), chr(39) * 2)}'" for area_id in active_area_ids)
+        spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id NOT IN ({active_area_ids_sql})")
+    spark.sql(f"""
+MERGE INTO {TABLES['areas']} target USING incoming_weather_areas source
+ON target.area_id = source.area_id
+WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
+""")
+    return areas_df
+
 # METADATA ********************
 
 # META {
@@ -500,18 +531,8 @@ def load_station_points(
 
 # CELL ********************
 
-if not key_vault_uri.strip():
-    settings_rows = (
-        spark.table("rti_demo_settings")
-        .filter(F.col("setting_name") == F.lit("key_vault_uri"))
-        .select("setting_value")
-        .limit(2)
-        .collect()
-    )
-    if len(settings_rows) != 1 or not str(settings_rows[0]["setting_value"]).strip():
-        raise ValueError("rti_demo_settings must contain one non-empty key_vault_uri setting")
-    key_vault_uri = str(settings_rows[0]["setting_value"]).strip()
-
+if not isinstance(prepare_only, bool):
+    raise ValueError("prepare_only must be a boolean")
 selected_facility_ids = json.loads(facility_ids_json)
 if not isinstance(selected_facility_ids, list) or not all(
     isinstance(facility_id, str) for facility_id in selected_facility_ids
@@ -535,8 +556,27 @@ areas = [
 ]
 print(f"Created {len(areas)} station aggregation areas at {aggregation_radius_km:g} km radius")
 
-run_id = str(uuid4())
 started_at = pd.Timestamp.now(tz="UTC").to_pydatetime()
+areas_df = persist_station_areas(areas, started_at, selected_facility_ids)
+display(areas_df.orderBy("area_id"))
+if prepare_only:
+    notebookutils.notebook.exit(json.dumps({
+        "status": "prepared", "areas": len(areas), "aurora": "disabled",
+    }))
+
+if not key_vault_uri.strip():
+    settings_rows = (
+        spark.table("rti_demo_settings")
+        .filter(F.col("setting_name") == F.lit("key_vault_uri"))
+        .select("setting_value")
+        .limit(2)
+        .collect()
+    )
+    if len(settings_rows) != 1 or not str(settings_rows[0]["setting_value"]).strip():
+        raise ValueError("rti_demo_settings must contain one non-empty key_vault_uri setting")
+    key_vault_uri = str(settings_rows[0]["setting_value"]).strip()
+
+run_id = str(uuid4())
 
 # Fabric aborts the remaining cells on error, so the audit row is written before any
 # external credential or network call. A run left in 'started' is a failed run.
@@ -751,53 +791,6 @@ WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
 """)
 
 display(forecasts_df.orderBy("location_id", "valid_time_utc").limit(20))
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# MARKDOWN ********************
-
-# ## Operating areas
-#
-# Persist the reusable area geometry and its representative location. Vendor-neutral
-# metrics are calculated from canonical forecasts by Weather_020.
-
-# CELL ********************
-
-area_rows = []
-
-for area in areas:
-    area_size_m2 = geodesic_area_m2(area["geometry"])
-    area_rows.append({
-        "area_id": area["area_id"],
-        "area_name": area["area_name"],
-        "geometry_geojson": area["geometry_json"],
-        "crs": "EPSG:4326",
-        "metadata_json": json.dumps({
-            "geodesic_area_m2": area_size_m2,
-            "generation_method": "station_geodesic_buffer",
-            "location_id": area["location_id"],
-            "radius_km": area["radius_km"],
-        }),
-        "updated_at_utc": started_at,
-    })
-areas_df = spark.createDataFrame(area_rows)
-areas_df.createOrReplaceTempView("incoming_weather_areas")
-if not selected_facility_ids:
-    active_area_ids = [area["area_id"] for area in areas]
-    active_area_ids_sql = ", ".join(f"'{area_id.replace(chr(39), chr(39) * 2)}'" for area_id in active_area_ids)
-    spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id NOT IN ({active_area_ids_sql})")
-spark.sql(f"""
-MERGE INTO {TABLES['areas']} target USING incoming_weather_areas source
-ON target.area_id = source.area_id
-WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
-""")
-
-display(areas_df.orderBy("area_id"))
 
 # METADATA ********************
 

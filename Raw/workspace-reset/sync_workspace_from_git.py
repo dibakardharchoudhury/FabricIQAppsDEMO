@@ -860,7 +860,7 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
 
     print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
     print("  In the Key Vault passed to Pipe_Setup, create secrets:")
-    print("    'mai-weather-api-key' for Aurora")
+    print("    'mai-weather-api-key' only for optional Aurora (disabled by default)")
     print("    'ukmet-global-spot-api-key' for UKMet Global Spot")
     print("    'ukmet-land-observations-api-key' for UKMet Land Observations")
     print("  Portal: Key Vault > Objects > Secrets > Generate/Import")

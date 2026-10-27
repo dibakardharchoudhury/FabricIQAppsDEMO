@@ -24,6 +24,9 @@ Fabric calls this storage item a Lakehouse. The four notebooks are deployable Fa
 
 - `Weather_001_create_lakehouse` initializes source-neutral Delta dimensions, facts, and audit tables in an attached Lakehouse.
 - `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, mean sea-level pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction, and maintains facility operating-area geometry. It reads the operational (`oper`) stream of the `mai-aurora` STAC collection, which publishes one global NetCDF item per valid hour with a kerchunk byte-range index; the adapter range-reads only the required variables of the 72 hourly items. The earlier `aurora-1p5-zarr-staging` collection stopped publishing on 2026-09-30, and an issue older than `max_issue_age_hours` (default 36) now fails the run instead of silently reloading stale forecasts.
+- Its `prepare_only=true` mode prepares shared station areas and exits before any
+  Key Vault lookup, provider request or Aurora ingestion audit. The default pipeline
+  uses this mode, so UKMet does not require the MAI credential or an Aurora response.
 - `Weather_003_fetch_ukmet` implements UKMet Global Spot forecasts and Land Observations for the same facility locations and canonical tables.
 - `Weather_020_area_calculations` reads canonical forecasts after all adapters finish and rebuilds area metrics independently by vendor, variable, issue, valid time, and forecast type.
 
@@ -72,7 +75,18 @@ The same notebook enforces retention (`retention_days`, default 7) on forecasts,
 
 Fabric aborts a notebook's remaining cells when one raises, so a `finally` block cannot record a failure. Each adapter instead appends its audit row with `status='started'` before the first network call and promotes it to `succeeded` by merge on completion. A run left in `started` is a failed run.
 
-`03_Pipe_Weather` chains on `Succeeded`, so an adapter failure stops downstream ingestion and aggregation rather than allowing incomplete results to be published. `Weather_020` also reports, per vendor, the last successful completion and the number of incomplete runs, and warns when a vendor has not succeeded within `staleness_hours` (default 13, just over one missed run on the six-hour schedule).
+`03_Pipe_Weather` prepares shared areas, ingests UKMet and publishes UKMet serving
+projections first, chaining on `Succeeded`. Its `enable_aurora` parameter defaults
+to **false**. Only explicit opt-in runs Aurora afterwards and refreshes the metrics
+again on Aurora success. An enabled Aurora failure is reported as a pipeline error;
+it cannot prevent the preceding UKMet ingestion/serving refresh. Disabled Aurora
+does not read its key or produce a fictitious successful ingestion audit.
+Pipeline concurrency is one to prevent overlapping serving-table writers.
+`Weather_020` reports, per vendor, the last successful completion and incomplete
+runs, and warns when a vendor has not succeeded within `staleness_hours`
+(default 13, just over one missed run on the six-hour schedule). Historical Aurora
+rows retain their provenance and issue timestamps; disabling ingestion does not
+relabel or delete them, and ordinary retention still applies.
 
 ## Multi-source adapter contract
 
@@ -84,7 +98,7 @@ Each additional adapter should:
 4. Convert units centrally, validate ranges and coordinates, and reject unknown variable mappings.
 5. Merge by the canonical natural key and finish the ingestion audit record.
 
-Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming its variables and temporal semantics. MAI adapters use the shared `mai-weather-api-key` Key Vault secret. UKMet Global Spot and Land Observations use `ukmet-global-spot-api-key` and `ukmet-land-observations-api-key`; all secret values remain in Key Vault.
+Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming its variables and temporal semantics. Optional MAI adapters use the retained `mai-weather-api-key` Key Vault secret; it is not required in the default UKMet-only mode. UKMet Global Spot and Land Observations use `ukmet-global-spot-api-key` and `ukmet-land-observations-api-key`; all secret values remain in Key Vault.
 
 ## Incremental loading and quality
 
@@ -97,7 +111,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 ## Orchestration and tests
 
 1. Attach the same Lakehouse and Fabric Environment to all four weather notebooks.
-2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs Aurora, UKMet, and `Weather_020_area_calculations` in that order, every six hours. Both vendors derive from 00/06/12/18 UTC model runs and the canonical reporting interval is six hours, so a shorter schedule only drifts across issues and re-ingests them; runs start at 03:20/09:20/15:20/21:20 UTC to allow for publication latency. Downstream activities depend on `Succeeded`, so a failed adapter stops the pipeline before subsequent work runs.
+2. Run the setup notebook once per environment. `03_Pipe_Weather` then prepares metadata, ingests UKMet, and runs `Weather_020_area_calculations`, with optional Aurora ingestion/metric refresh last. Both vendors derive from 00/06/12/18 UTC model runs and the canonical reporting interval is six hours, so a shorter schedule only drifts across issues and re-ingests them; runs start at 03:20/09:20/15:20/21:20 UTC to allow for publication latency. Existing environment-specific schedule enablement is preserved.
 3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 20 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
 5. Unit-test precipitation decoding, longitude wrapping, nearest-cell selection, polygon validation, overlap area, depth-to-volume conversion, and merge-key deduplication.
@@ -106,9 +120,9 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 ## Delivery sequence
 
 1. Create or attach a Weather Lakehouse and configure the Fabric Environment dependencies.
-2. Store the Aurora and UKMet API keys in Key Vault and grant the pipeline run identity secret-read access.
+2. Store the two UKMet API keys in Key Vault and grant the pipeline run identity secret-read access. Keep the Aurora key for optional use; do not delete it to disable ingestion.
 3. Run `Weather_001_create_lakehouse` and verify all ten tables.
-4. Run `Weather_002_fetch_area_weather` with one point and one small polygon; compare the point result with the local extractor.
+4. Run `03_Pipe_Weather` with its default `enable_aurora=false`; confirm preparation makes no Aurora request and UKMet forecasts reach serving tables.
 5. Validate representative-point rainfall depth and cubic metres against an independently calculated sample.
-6. Run `Weather_003_fetch_ukmet`, then `Weather_020_area_calculations`, and verify separate Aurora/UKMet metrics for every forecast type. Provisioning creates and enables the six-hour `03_Pipe_Weather` schedule.
+6. Only after independently validating an Aurora credential, opt in with `enable_aurora=true` and verify separate Aurora/UKMet metrics for every available forecast type. UKMet Global Spot does not map solar radiation; unavailable variables and missing recent observations must remain explicit rather than filled with invented values.
 7. Add a GridHD adapter after confirming its product semantics.

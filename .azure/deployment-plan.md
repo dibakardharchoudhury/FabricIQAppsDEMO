@@ -1,6 +1,68 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## October 27 UKMet-first weather follow-up
+
+The user approved implementing the UKMet-first recommendation autonomously.
+Reuse the existing FEATURE tenant/workspace, Sweden Central capacity, SPA,
+connectors, Weather Environment and notebook/Lakehouse bindings. No new resource,
+role, permission, provider key or target is requested.
+
+- Prepare shared operating-area metadata using Weather_002 `prepare_only=true`,
+  before any vault lookup, ingestion audit or Aurora request.
+- Ingest UKMet, then publish its metrics and serving projections. Aurora is an
+  explicit `enable_aurora` pipeline opt-in, default false, after UKMet is served.
+  An explicitly enabled Aurora failure remains an error, but cannot prevent the
+  preceding UKMet serving refresh. No provider failure is silently swallowed.
+- Preserve the MAI key and historical vendor provenance. Update hosted setup and
+  progress text so Aurora is no longer presented as a prerequisite.
+- Update only the existing Weather_002 notebook and weather pipeline definitions,
+  preserving live bindings and backing up previous definitions. Do not run Core,
+  seed, reset, change schedules or reconfigure private networking.
+- Publish the frontend only through the canonical deployment orchestrator in
+  the existing recipe below; verify its SUCCESS/DEPLOYED_APP_URL and signed UI.
+
+Validation:
+- [x] 17 weather contract tests, including no-key preparation and UKMet-first
+  dependency/opt-in regressions; generated notebook AST parity.
+- [x] `validate-env`, production TypeScript/Vite build and scoped ESLint.
+- [x] Pylance Python syntax check.
+- [x] Independent actual UKMet run `785fcd48-77d5-414e-a2b7-30bed3b2969e`
+  completed at `2026-10-27T03:03:11Z`, without running Aurora.
+- [x] Two focused nested pipeline rebinding/inventory tests; mirror drift check.
+- [ ] Actual UKMet-first pipeline run, serving rows and authenticated app.
+
+All validation checks pass for this scoped change:
+- [x] Core CLI/auth/build: existing tenant credentials, successful real UKMet
+  notebook execution, `validate-env`, focused tests, build and lint as above.
+- [x] Docker build: not applicable; no agent/container source change.
+- [x] Azure Policy/what-if: not applicable; no ARM/IaC/resource/network/RBAC change.
+- [x] Static roles: same existing workspace item read/update/execute operations;
+  no new principal or provider permission. Actual UKMet execution verifies the
+  existing notebook identity can read its vault secrets and contact the provider.
+
+The broader feature suite exposed an existing deployment-mock mismatch:
+`validate_appbackend_cors` now receives `energy_enabled`, but the unchanged test's
+lambda does not accept it; its expected connector call list is also outdated.
+Neither production deploy code nor that test is changed by this weather work.
+Record focused relevant results separately, without claiming the whole suite passes.
+
+### Section 7: UKMet-first validation proof
+
+- `python -m unittest discover -s Raw\workspace-reset -p test_weather_source_contracts.py`:
+  17 passed, including three newly reproduced/fixed regressions.
+- Focused `test_pipeline_rebinding_handles_nested_notebook_activities` and
+  `test_local_inventory_has_resolvable_pipeline_references`: two passed.
+- `python Raw\workspace-reset\sync_ontology_notebooks.py --check`: passed.
+- `npm run validate-env`, `npm run build`, and ESLint on the three changed
+  TypeScript/TSX files: passed under Node 24. Existing bundle-size/dynamic-import
+  warnings remain non-fatal.
+- Pylance found no syntax errors in the changed Weather_002 Python source.
+- Actual isolated UKMet job completed successfully from `02:58:28Z` to
+  `03:03:11Z`, without Aurora. Azure CLI confirms the same tenant and an Enabled
+  subscription; no Azure subscription resource mutation is part of this change.
+- Git whitespace validation passed. No identity, role, network or secret change.
 
 ## October 27 graph freshness and fault-pulse publication
 

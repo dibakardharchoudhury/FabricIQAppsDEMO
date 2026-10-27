@@ -1,11 +1,24 @@
 {
   "properties": {
+    "concurrency": 1,
+    "parameters": {
+      "enable_aurora": {
+        "type": "Bool",
+        "defaultValue": false
+      }
+    },
     "activities": [
       {
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "4b38d28b-2901-43ea-964b-4695025be17e",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "prepare_only": {
+              "value": true,
+              "type": "bool"
+            }
+          }
         },
         "policy": {
           "timeout": "0.12:00:00",
@@ -62,6 +75,67 @@
             ]
           }
         ]
+      },
+      {
+        "name": "Optional_Aurora",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "Weather_020_area_calculations",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@pipeline().parameters.enable_aurora",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "Ingest_Aurora",
+              "type": "TridentNotebook",
+              "typeProperties": {
+                "notebookId": "4b38d28b-2901-43ea-964b-4695025be17e",
+                "workspaceId": "00000000-0000-0000-0000-000000000000",
+                "parameters": {
+                  "prepare_only": {
+                    "value": false,
+                    "type": "bool"
+                  }
+                }
+              },
+              "policy": {
+                "timeout": "0.12:00:00",
+                "retry": 0,
+                "retryIntervalInSeconds": 60,
+                "secureInput": false,
+                "secureOutput": false
+              },
+              "dependsOn": []
+            },
+            {
+              "name": "Refresh_metrics_with_Aurora",
+              "type": "TridentNotebook",
+              "typeProperties": {
+                "notebookId": "8db338fe-635b-4e64-9e10-c19cff6a1957",
+                "workspaceId": "00000000-0000-0000-0000-000000000000"
+              },
+              "policy": {
+                "timeout": "0.12:00:00",
+                "retry": 2,
+                "retryIntervalInSeconds": 60,
+                "secureInput": false,
+                "secureOutput": false
+              },
+              "dependsOn": [
+                {
+                  "activity": "Ingest_Aurora",
+                  "dependencyConditions": ["Succeeded"]
+                }
+              ]
+            }
+          ]
+        }
       }
     ]
   }

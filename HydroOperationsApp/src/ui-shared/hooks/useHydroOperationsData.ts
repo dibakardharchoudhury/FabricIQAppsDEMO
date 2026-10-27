@@ -358,11 +358,11 @@ function useHydroOperationsDataController() {
     try {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setWeatherState('idle'); setNotice('Sign in with Fabric to load weather data.'); return }
-      beginProgress('weather', 'Loading Aurora and UKMet forecasts, then rebuilding weather metrics (Weather_002, Weather_003, Weather_020)...', WEATHER_ETA_MS)
+      beginProgress('weather', 'Preparing operating areas, loading UKMet weather and rebuilding serving metrics. Aurora is opt-in and disabled by default...', WEATHER_ETA_MS)
       const status = await runWeatherNotebooks(update => updateJob('weather', humanStatus(update)))
       if (status === 'Completed') {
         setWeatherState('complete')
-        setNotice('Aurora and UKMet weather data loaded and serving metrics refreshed.')
+        setNotice('Configured weather ingestion completed and serving metrics refreshed. UKMet is the default provider.')
       } else {
         setWeatherState('error')
         setNotice(`Weather load ${humanStatus(status).toLowerCase()}.`)

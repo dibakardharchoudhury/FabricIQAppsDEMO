@@ -10,6 +10,91 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_ukmet_is_served_before_optional_aurora(self):
+        pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
+        properties = pipeline["properties"]
+        self.assertIs(properties["parameters"]["enable_aurora"]["defaultValue"], False)
+        activities = {activity["name"]: activity for activity in properties["activities"]}
+        prepare = activities["Weather_002_fetch_area_weather"]
+        self.assertIs(prepare["typeProperties"]["parameters"]["prepare_only"]["value"], True)
+        self.assertEqual(activities["Weather_003_fetch_ukmet"]["dependsOn"], [
+            {"activity": prepare["name"], "dependencyConditions": ["Succeeded"]},
+        ])
+        self.assertEqual(activities["Weather_020_area_calculations"]["dependsOn"], [
+            {"activity": "Weather_003_fetch_ukmet", "dependencyConditions": ["Succeeded"]},
+        ])
+        optional = activities["Optional_Aurora"]
+        self.assertEqual(optional["dependsOn"], [
+            {"activity": "Weather_020_area_calculations", "dependencyConditions": ["Succeeded"]},
+        ])
+        self.assertEqual(optional["typeProperties"]["expression"]["value"], "@pipeline().parameters.enable_aurora")
+        aurora, refresh = optional["typeProperties"]["ifTrueActivities"]
+        self.assertIs(aurora["typeProperties"]["parameters"]["prepare_only"]["value"], False)
+        self.assertEqual(refresh["dependsOn"], [
+            {"activity": aurora["name"], "dependencyConditions": ["Succeeded"]},
+        ])
+
+    def test_metadata_preparation_never_reads_aurora_credentials(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertLess(source.index("persist_station_areas(areas, started_at, selected_facility_ids)"),
+                        source.index("if prepare_only:"))
+        self.assertLess(source.index("if prepare_only:"), source.index("if not key_vault_uri.strip():"))
+        self.assertLess(source.index("if prepare_only:"), source.index("run_id = str(uuid4())"))
+        guard = next(node for node in ast.parse(source).body
+                     if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "prepare_only")
+
+        class NotebookExit(Exception):
+            pass
+
+        class Notebook:
+            @staticmethod
+            def exit(value):
+                raise NotebookExit(value)
+
+        class Utilities:
+            notebook = Notebook
+
+        with self.assertRaises(NotebookExit) as result:
+            exec(compile(ast.Module(body=[guard], type_ignores=[]), "prepare_only", "exec"),
+                 {"prepare_only": True, "notebookutils": Utilities, "json": json, "areas": [1, 2, 3]})
+        self.assertEqual(json.loads(str(result.exception)), {
+            "status": "prepared", "areas": 3, "aurora": "disabled",
+        })
+
+    def test_station_areas_are_prepared_without_a_vendor_response(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        function = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef) and node.name == "persist_station_areas")
+        queries = []
+        rows = []
+
+        class Frame:
+            def createOrReplaceTempView(self, name):
+                self.name = name
+
+        class Spark:
+            @staticmethod
+            def createDataFrame(values):
+                rows.extend(values)
+                return Frame()
+
+            @staticmethod
+            def sql(query):
+                queries.append(query)
+
+        context = {"spark": Spark, "json": json, "TABLES": {"areas": "weather_areas"},
+                   "geodesic_area_m2": lambda geometry: 123.0}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "station_areas", "exec"), context)
+        area = {"area_id": "weather_F001_20km", "area_name": "Station", "location_id": "F001",
+                "radius_km": 20.0, "geometry": object(), "geometry_json": "{}"}
+        context["persist_station_areas"]([area], datetime(2026, 10, 27), ["F001"])
+        self.assertEqual(rows[0]["area_id"], area["area_id"])
+        self.assertEqual(json.loads(rows[0]["metadata_json"])["geodesic_area_m2"], 123.0)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("MERGE INTO weather_areas", queries[0])
+        context["persist_station_areas"]([area], datetime(2026, 10, 27), [])
+        self.assertIn("DELETE FROM weather_areas WHERE area_id NOT IN", queries[1])
+
     def test_project_identity_producers_preserve_the_complete_natural_grain(self):
         expected = {
             "Weather_020_area_calculations": [
@@ -134,7 +219,7 @@ class WeatherSourceContractTests(unittest.TestCase):
     def test_scoped_area_run_does_not_execute_global_cleanup(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
         compile(source, "Weather_002", "exec")
-        self.assertIn("if not selected_facility_ids:\n    active_area_ids", source)
+        self.assertIn("if not selected_facility_ids:\n        active_area_ids", source)
 
     def test_canonical_metrics_keep_types_until_serving(self):
         source = (ROOT / "Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py").read_text(encoding="utf-8")

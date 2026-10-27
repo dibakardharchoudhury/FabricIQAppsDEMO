@@ -47,7 +47,7 @@ export function AdministrationPage() {
     {
       n: 5,
       title: 'Connect Weather',
-      why: 'Loads Aurora area forecasts and UKMet Global Spot forecasts + Land Observations, then builds area metrics and serving projections (runs Weather_002, Weather_003 and Weather_020). Weather tables are initialized during setup. Needs the Aurora and UKMet API keys in Key Vault.',
+      why: 'Uses UKMet Global Spot forecasts + Land Observations by default, then builds area metrics and serving projections. Shared operating areas are prepared without calling Aurora. Requires the two UKMet API keys in Key Vault. Aurora is optional and disabled by default; its existing key is retained.',
       done: data.weatherState === 'complete',
       busy: data.weatherState === 'running' || Boolean(data.jobs.weather),
       action: 'Connect weather',
