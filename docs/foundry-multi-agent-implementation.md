@@ -237,7 +237,58 @@ the requested analytical population/prior selection. Existing per-run frozen
 scope, eight-equipment detail bound, source/permission checks and conditional
 work gates remain. **200 Python tests** and Pyright passed. Native rejection now
 logs a response ID, without raw provider output or credentials, for authorized
-receipt diagnostics. Publication and new RCA/native acceptance remain pending.
+receipt diagnostics.
+
+### October 27 v22 publication: operational RCA passed, native provider blocked
+
+Canonical publication of **`bb184aa`** returned final
+`SUCCESS`/`DEPLOYED_APP_URL` at **00:36:23 UTC**, after **721.750 seconds**.
+The signed browser verified app **1.0.1119 / `bb184aa`**, coordinator **v22**
+on image `src-b850ab2a1ec1e3fc` (ACR `dtk`). All five prompt specialists were
+reused, all 42 redirects preserved, and all three connector/backend readiness
+checks passed. The assigned capacity remained Active.
+
+Signed session `00ecc4ad-7c2d-47cb-9560-40bc73a3e12b` asked which T005 signals
+had BAD quality in the last 24 hours, requested RCA/open-work review and a
+diagnostic work-order draft only where uncovered. **Gauge -> Sleuth -> Fixer
+all completed in 97 seconds.** The answer used T005's actual six-signal quality
+history, inspections, notifications, compatible spares and empty open-work
+inventory. It distinguished historical BAD samples from five latest GOOD
+signals and one UNCERTAIN signal; probable causes remained unconfirmed
+assessments. One **T005-only**, Medium-priority diagnostic draft was staged.
+No approval/rejection/create control was used and no production write occurred.
+The complete 89-row signal-quality source table was retained.
+
+The answer explicitly disclosed that the diagnostic history uses a 48-hour
+context but only one hour has source data, readings are about five hours old,
+and no independent measurement, ingestion-health record or approved diagnostic
+limit confirms a physical cause. This is a source-backed RCA, not a certificate
+of current turbine condition or full-period telemetry coverage.
+
+Native-only facility count remains **blocked**, not passed. A separate signed
+session `6dbb19a5-cecf-4445-aa96-a30cae170c34` failed in **42.2 seconds** with
+an actual provider error envelope; run
+`09bce05b-42b2-47f0-bf65-bc13e1842655`, response
+`resp_048617c0ce336967016adff2d67a34819087c878a02a1b7d14`.
+Sparky and Supervisor correctly showed **Needs attention**, with no certified
+count, direct fallback or write. Supported stored-response retrieval returned
+404 and was not treated as source evidence.
+
+An independent Azure CLI diagnostic invoked the **existing** native specialist
+with the same benign facility-count request, no new agent, and zero SDK retries.
+Its actual MCP receipt contained an **output-moderation marker**, not facility
+records (response `resp_009f71fa563f62fc016adff3c911c88194b0fb3c84b25f26cc`).
+That different-client diagnostic is not signed-browser acceptance. No prompt,
+model, policy or moderation control was changed to route around the refusal.
+The Fabric Data Agent/service owner must review that provider-side refusal
+before native business acceptance can continue.
+
+Operational connector QA/drafting and the three-specialist RCA are now verified.
+**Overall acceptance is still incomplete:** native provider execution is
+blocked; Weather separately still requires the credential owner to replace the
+invalid Aurora subscription key in the private vault and rerun authorized
+Weather ingestion. Neither blocker is hidden by a deployment success or a
+model-only answer.
 
 ## October 26 publication and main-merge readiness
 

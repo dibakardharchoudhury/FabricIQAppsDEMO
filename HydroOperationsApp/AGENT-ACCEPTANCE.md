@@ -81,7 +81,7 @@ or unqualified snapshots and aligns operator context with the certified
 records the root cause and regressions. New publication and authenticated
 RCA and native-result acceptance are still required.
 
-### v21 signed-browser result: full fleet passed; RCA/native remain open
+### Earlier v21 signed-browser result: full fleet passed; RCA/native remained open
 
 Canonical publication succeeded on **October 27 at 00:05:23 UTC**, coordinator
 **v21**, signed app **1.0.1118 / `f660a39`**. Capacity was resumed from Paused to
@@ -97,8 +97,36 @@ precedence defects; three failing repros now pass within **200 Python tests**,
 with zero Pyright diagnostics. Native-only facility count failed explicitly
 in **42.9 seconds** on a real provider error envelope, with no count or direct
 fallback certified. The [RCA follow-up](../docs/foundry-multi-agent-implementation.md#rca-prerequisite-and-scope-follow-up)
-remains unpublished/unaccepted at this checkpoint; neither crew animation nor
+was unpublished/unaccepted at that checkpoint; neither crew animation nor
 the fleet pass is a substitute for those remaining gates.
+
+### Current v22: three-specialist RCA passed; native provider remains blocked
+
+Canonical publication of **`bb184aa`** succeeded on October 27 at **00:36:23 UTC**.
+The signed browser verified **1.0.1119**, coordinator **v22**, image
+`src-b850ab2a1ec1e3fc` (ACR `dtk`), with unchanged specialists and 42 preserved
+redirects. All 200 Python regressions and type checks passed before publication;
+the unchanged complete-fleet source layer had passed 107 Node contracts.
+
+Signed session `00ecc4ad-7c2d-47cb-9560-40bc73a3e12b` completed **Gauge -> Sleuth
+-> Fixer in 97 seconds** for T005's historical BAD signals, RCA, open-work check
+and conditional diagnostic draft. Actual history for all six T005 signals,
+inspections, notifications and compatible spares reached the analysis. It
+staged one T005-only draft, retained the full 89-row source table, distinguished
+latest GOOD/UNCERTAIN from prior BAD, and disclosed stale/one-hour-only data and
+unconfirmed physical causes. No production write or approval action occurred.
+
+A separate signed native-only count failed in **42.2 seconds** with a provider
+error envelope, correctly showing **Needs attention** instead of a false pass.
+A different-client Azure CLI diagnostic of the same existing specialist and
+benign question surfaced output moderation in its actual MCP receipt; that is
+diagnosis, not browser acceptance. Provider moderation was not bypassed or
+disabled and no direct-source fallback was used.
+
+The [v22 publication and remaining blockers](../docs/foundry-multi-agent-implementation.md#october-27-v22-publication-operational-rca-passed-native-provider-blocked)
+contain exact sessions/response IDs. Native acceptance needs provider-owner
+review of that refusal. Weather remains separately blocked by the invalid
+Aurora credential/private-vault prerequisite. Overall acceptance is not complete.
 
 ## October 12 v77 canonical-prompt release
 

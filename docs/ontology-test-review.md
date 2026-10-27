@@ -3,6 +3,10 @@
 Reviewed on October 24, 2026. This is an assessment, not a migration or runtime
 acceptance certificate. `ws-vteam-demoV3` was accessed read-only.
 
+For the October 27 **v22 / app 1.0.1119** Foundry follow-up, see the
+[current operational RCA receipts and native/Weather blockers](foundry-multi-agent-implementation.md#october-27-v22-publication-operational-rca-passed-native-provider-blocked).
+The older agent/runtime results below remain historical, not current acceptance.
+
 ## Decision
 
 **The expanded domain model is useful, but do not adopt `Ontology_Test` as-is.**
