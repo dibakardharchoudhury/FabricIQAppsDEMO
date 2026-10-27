@@ -63,6 +63,13 @@ Record focused relevant results separately, without claiming the whole suite pas
   `03:03:11Z`, without Aurora. Azure CLI confirms the same tenant and an Enabled
   subscription; no Azure subscription resource mutation is part of this change.
 - Git whitespace validation passed. No identity, role, network or secret change.
+- A final coupled UI correction makes UKMet the default forecast vendor even when
+  retained historical Aurora rows are present. Explicit user selections and
+  unavailable/empty-source behavior are preserved. Five Node weather summary/
+  selection tests, `validate-env`, a fresh production build and scoped ESLint all
+  passed for this correction. The initial UKMet-first app publication succeeded.
+- Live pipeline preparation succeeded in 281.312 seconds and returned exactly
+  `{"status":"prepared","areas":3,"aurora":"disabled"}` before UKMet ingestion.
 
 ## October 27 graph freshness and fault-pulse publication
 

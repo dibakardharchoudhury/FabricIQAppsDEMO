@@ -13,6 +13,11 @@ export type PrecipitationWindowSummary = {
   coveredHours: number
 }
 
+export function resolveWeatherVendor(vendors: readonly string[], selected: string): string {
+  if (vendors.includes(selected)) return selected
+  return vendors.includes('ukmet') ? 'ukmet' : vendors[0] ?? ''
+}
+
 const finiteValue = (value?: number | null) => value == null || !Number.isFinite(Number(value)) ? undefined : Number(value)
 
 const sumValues = (buckets: PrecipitationBucket[], field: 'precipitation' | 'rainfall_volume_m3') => {

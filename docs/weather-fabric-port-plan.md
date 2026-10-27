@@ -87,6 +87,8 @@ runs, and warns when a vendor has not succeeded within `staleness_hours`
 (default 13, just over one missed run on the six-hour schedule). Historical Aurora
 rows retain their provenance and issue timestamps; disabling ingestion does not
 relabel or delete them, and ordinary retention still applies.
+The Weather page defaults to UKMet when available, even if historical Aurora
+serving rows remain. An explicit available vendor selection is preserved.
 
 ## Multi-source adapter contract
 

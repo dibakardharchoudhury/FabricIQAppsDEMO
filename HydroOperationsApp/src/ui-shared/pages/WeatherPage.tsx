@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CloudSun, Eye, RefreshCw } from 'lucide-react'
 import { queryWeatherData, type WeatherData, type WeatherForecast, type WeatherObservation } from '../../services/fabric'
 import { WeatherMap, type WeatherSelection } from '../components/weather/WeatherMap'
-import { summarizePrecipitation } from '../weatherSummary'
+import { resolveWeatherVendor, summarizePrecipitation } from '../weatherSummary'
 
 const RANGES = [6, 12, 24, 48, 72]
 const VARIABLE_LABELS: Record<string, string> = {
@@ -107,7 +107,7 @@ export function WeatherPage() {
     () => [...new Set(weather?.forecasts.map(item => item.source_id) ?? [])].sort(),
     [weather],
   )
-  const selectedVendor = forecastVendors.includes(forecastVendor) ? forecastVendor : forecastVendors[0] || ''
+  const selectedVendor = resolveWeatherVendor(forecastVendors, forecastVendor)
 
   // An area reports observations through the station its metadata names as representative.
   const observedLocationId = useMemo(() => {
