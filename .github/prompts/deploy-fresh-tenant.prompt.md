@@ -151,10 +151,12 @@ Rayfin CLI. Agents must not wrap, nest, or reconstruct its Node/npm/Rayfin comma
    orchestrator must also run its minimal GraphQL and token POST probes; GraphQL failure or a
    persistent token HTTP 5xx is not success.
 
-9. **Finish** with DEPLOY.md Steps 1 (`01_Pipe_Setup` in Fabric), 7 (seed SQL + wire GraphQL via
-   `RTI_011`), 8 (already covered by `setup-live-auth`), 9 (start the OPC-UA stream). A brand-new
-   workspace is EMPTY of RTI artifacts, so live telemetry/STID panels stay blank until
-   `01_Pipe_Setup` and the stream run.
+9. **Finish** using the current numbered steps in DEPLOY.md: Core setup runs
+   `01_Pipe_Setup` and NB11 prepares shared SQL, ontology extensions and the Data Agent
+   SQL source. Both Lakehouses and operational SQL use separate delegated Rayfin
+   connectors. NB11 does not create a standalone GraphQL API. Preserve direct Eventhouse
+   access and its automated Entra authentication setup, then start the OPC-UA stream
+   when needed. A new workspace has no RTI data until setup and ingestion complete.
    - **No in-app consent popup** should appear on **Seed & provision** or **Connect telemetry** —
      `setup-live-auth` pre-grants all Fabric REST scopes (`GraphQLApi.Execute.All`,
      `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`) tenant-wide. If one still shows

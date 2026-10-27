@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -107,7 +108,180 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertNotIn("Module timings", page)
         self.assertNotIn('aria-label="Deployment timings"', page)
         self.assertIn('class="elapsed" title="Elapsed time"', page)
-        self.assertIn('escapeHtml((job.lines || []).join("\\n")', page)
+
+    def test_live_output_scroll_selection_and_keyboard_during_streaming(self):
+        """Exercise the real renderer and layout in an isolated headless browser, never the app/server."""
+        candidates = [
+            os.environ.get("FABRIC_UI_TEST_BROWSER"),
+            shutil.which("chrome"), shutil.which("chromium"), shutil.which("msedge"),
+            str(Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe"),
+            str(Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
+        ]
+        browser = next((candidate for candidate in candidates if candidate and Path(candidate).is_file()), None)
+        if not browser:
+            self.skipTest("Chromium browser missing; set FABRIC_UI_TEST_BROWSER to run real scrolling tests")
+        profile = Path(__file__).parent / f".ui-scroll-regression-{uuid.uuid4().hex}"
+        profile.mkdir()
+        script = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const {spawn} = require("node:child_process");
+const [browserPath, profile, htmlPath] = process.argv.slice(1);
+const browser = spawn(browserPath, [
+  "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+  "--remote-debugging-port=0", "--remote-allow-origins=*", "--user-data-dir="+profile, "about:blank",
+], {stdio:["ignore", "ignore", "pipe"]});
+const watchdog = setTimeout(() => browser.kill(), 30000);
+let socket;
+let nextId = 0;
+const pending = new Map();
+async function call(method, params = {}) {
+  const id = ++nextId;
+  return new Promise((resolve, reject) => {
+    pending.set(id, {resolve, reject});
+    socket.send(JSON.stringify({id, method, params}));
+  });
+}
+async function evaluate(expression) {
+  const result = await call("Runtime.evaluate", {expression, returnByValue:true, awaitPromise:true});
+  if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+  return result.result.value;
+}
+(async () => {
+  try {
+    const endpoint = await new Promise((resolve, reject) => {
+      let stderr = "";
+      browser.stderr.on("data", data => {
+        stderr = (stderr + data).slice(-16000);
+        const match = stderr.match(/DevTools listening on (ws:\/\/[^\s]+)/);
+        if (match) resolve(match[1]);
+      });
+      browser.on("error", reject);
+      browser.on("exit", code => reject(new Error("Browser exited: "+code+" "+stderr)));
+    });
+    const targets = await (await fetch("http://"+new URL(endpoint).host+"/json/list")).json();
+    socket = new WebSocket(targets.find(target => target.type === "page").webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {socket.onopen=resolve; socket.onerror=reject;});
+    socket.onmessage = event => {
+      const message = JSON.parse(event.data);
+      const request = pending.get(message.id);
+      if (!request) return;
+      pending.delete(message.id);
+      if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+      else request.resolve(message.result);
+    };
+    await call("Page.enable");
+    await call("Page.bringToFront");
+    await call("Emulation.setFocusEmulationEnabled", {enabled:true});
+    await call("Emulation.setDeviceMetricsOverride", {width:1000, height:900, deviceScaleFactor:1, mobile:false});
+    const html = fs.readFileSync(htmlPath, "utf8");
+    const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+    const renderer = html.slice(html.indexOf("function renderPanel("), html.indexOf("let subscriptionLoad"));
+    const helpers = html.slice(html.indexOf("const WORKFLOW_PHASE_GROUPS"), html.indexOf("// Starts a job"));
+    await evaluate(`document.head.innerHTML = ${JSON.stringify("<style>"+style+"</style>")};
+      document.body.innerHTML = '<div id="deployPanel"></div><div id="energyPanel"></div><div id="workflowPanel"></div>';
+      ${helpers}\n${renderer}
+      var panel = document.getElementById("deployPanel");
+      var job = {status:"running", phases:["Start","Deploy"], phaseIndex:0,
+        lines:Array.from({length:160}, (_,i) => "Output line "+i+" <safe & literal>")};
+      renderPanel(panel, job);
+      var out = panel.querySelector(".output");
+      var original = out;
+      var originalText = out.firstChild;
+      var bottom = () => out.scrollHeight-out.clientHeight-out.scrollTop < 2;
+      var update = () => {job.lines.push("Streamed "+job.lines.length); renderPanel(panel,job);};
+      var check = (condition, message) => {if (!condition) throw new Error(message);};
+      check(bottom(), "Initial output should follow tail");
+      check(out.clientHeight <= 340 && out.scrollHeight > out.clientHeight, "Log must be bounded");
+      for (var i=0;i<20;i++) {update(); check(bottom(), "Streaming should follow tail");}
+      out.scrollTop=400;
+      for (var i=0;i<20;i++) {
+        var scrollBefore=out.scrollTop;
+        update();
+        check(out===panel.querySelector(".output"), "Scroll surface replaced");
+        check(Math.abs(out.scrollTop-scrollBefore)<1, "Manual scroll reset by streaming: "+scrollBefore+" -> "+out.scrollTop);
+        out.scrollTop+=30;
+        check(out.scrollTop>scrollBefore, "Cannot scroll downward while streaming");
+      }
+      var range=document.createRange();
+      range.setStart(originalText,20); range.setEnd(originalText,35);
+      getSelection().addRange(range);
+      var selected=getSelection().toString();
+      for (var i=0;i<10;i++) {
+        update();
+        check(getSelection().toString()===selected, "Selection lost during append");
+        check(getSelection().anchorNode===originalText, "Selected text node replaced");
+      }
+      out.scrollTop=out.scrollHeight;
+      var selectedTop=out.scrollTop;
+      update();
+      check(out.scrollTop===selectedTop && !bottom(), "Selection at tail should pause following");
+      getSelection().removeAllRanges();
+      out.scrollTop=out.scrollHeight-out.clientHeight-20;
+      update();
+      check(bottom(), "Near-bottom should resume following");
+      out.scrollTop=100;
+      panel.querySelector("button").click();
+      check(bottom(), "Jump to latest failed");
+      for (var i=0;i<10;i++) {update();check(bottom(), "Jump must resume following");}
+      check(out.textContent.includes("<safe & literal>") && !out.querySelector("safe"), "Log must remain literal text");
+      renderPanel(panel,job);
+      check(out.firstChild===originalText, "Clock-only refresh replaced text");
+      var other=document.getElementById("energyPanel");
+      renderPanel(other,{status:"running",lines:["Other module"]});
+      check(other.querySelector(".output")!==out, "Module output must remain independent");
+      var workflow=document.getElementById("workflowPanel");
+      renderPanel(workflow,{status:"running",phases:["Sync · Start","Pipeline · Setup"],phaseIndex:0,lines:["Workflow"]});
+      check(workflow.querySelector(".workflow-phase-group"), "Workflow module groups lost");
+      out.scrollTop=200;
+      out.focus();
+      check(document.activeElement===out, "Output must accept keyboard focus");
+    `);
+    await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const before = await evaluate("out.scrollTop");
+    await evaluate("var streamedUpdates=0; var stream=setInterval(() => {update();streamedUpdates++;},40)");
+    await call("Input.dispatchKeyEvent", {type:"rawKeyDown", key:"PageDown", code:"PageDown", windowsVirtualKeyCode:34});
+    await call("Input.dispatchKeyEvent", {type:"keyUp", key:"PageDown", code:"PageDown", windowsVirtualKeyCode:34});
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.ok(await evaluate("out.scrollTop") > before, "PageDown should scroll the focused log: "+JSON.stringify(
+      await evaluate("({top:out.scrollTop,focused:document.activeElement===out,documentFocus:document.hasFocus()})")));
+    const keyboardTop = await evaluate("out.scrollTop");
+    await evaluate("for(var i=0;i<10;i++) update()");
+    assert.equal(await evaluate("out.scrollTop"), keyboardTop, "Streaming resets keyboard scroll");
+    const position = await evaluate("(() => {const r=out.getBoundingClientRect();return {x:r.x+30,y:r.y+30};})()");
+    await call("Input.dispatchMouseEvent", {type:"mouseWheel", ...position, deltaX:0, deltaY:200});
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.ok(await evaluate("out.scrollTop") > keyboardTop, "Wheel should scroll down while streaming");
+    assert.ok(await evaluate("streamedUpdates") >= 5, "Output must update during real keyboard/wheel interaction");
+    await evaluate("clearInterval(stream)");
+    await evaluate(`panel.querySelector("button").focus()`);
+    await call("Input.dispatchKeyEvent", {type:"keyDown", key:"Enter", code:"Enter", windowsVirtualKeyCode:13, text:"\r"});
+    await call("Input.dispatchKeyEvent", {type:"keyUp", key:"Enter", code:"Enter", windowsVirtualKeyCode:13});
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(await evaluate("bottom()"), true, "Keyboard jump should reach latest output");
+    await evaluate(`job.status="failed";job.error="Final failure";job.returncode=1;renderPanel(panel,job);
+      check(out===original && bottom(), "Completion should keep the scroll surface and follow tail");
+      check(out.classList.contains("error") && out.textContent.endsWith("exit code: 1"), "Completion output lost");
+      check(out.textContent.includes("[error] Final failure"), "Error output lost");`);
+    console.log("PASS: streaming, manual/near-tail scroll, selection, wheel, PageDown, keyboard jump, module groups and completion");
+  } finally {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {await call("Browser.close");} catch {}
+      socket.close();
+    }
+    browser.kill();
+    clearTimeout(watchdog);
+  }
+})().catch(error => {console.error(error); process.exitCode=1;});
+"""
+        try:
+            result = subprocess.run(
+                ["node", "-e", script, browser, str(profile.resolve()), str(SERVER.STATIC_DIR / "index.html")],
+                capture_output=True, text=True, timeout=40,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        finally:
+            shutil.rmtree(profile)
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
         starter = "_start_workflow" if endpoint in ("/api/full-workflow", "/api/run-pipeline") else "_start"
@@ -736,7 +910,8 @@ for(const prefix of ["pp_","wf_pp_"]){
     def test_browser_parameter_storage_and_identity_suggestions(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         functions = (
-            page[page.index("let pipelineSpec ="):page.index("function renderPipelineFields(")]
+            page[page.index("const spaClientIds ="):page.index("function renderFoundryFields(")]
+            + page[page.index("let pipelineSpec ="):page.index("function renderPipelineFields(")]
             + page[page.index("function updatePipelineDefaultsSummary("):page.index("async function loadPipelineParams(")]
         )
         script = """
@@ -813,9 +988,27 @@ for (const prefix of ["deploy", "workflow"]) {
     fields.set(prefix + suffix, {value:"",checked:false,dispatchEvent(){}});
   }
 }
-fields.set("foundryClientId", {value:""});
-fields.set("workflowDeployClientId", {value:""});
+for (const clientId of spaClientIds) {
+  fields.set(clientId, {value:""});
+  fields.set(clientId+"UseExisting", {checked:false});
+  fields.set(clientId+"Fields", {hidden:true});
+  fields.set(clientId+"Status", {textContent:""});
+}
 restoreFoundrySettings();
+for (const clientId of spaClientIds) {
+  assert.equal(spaClientValue(clientId), "");
+  assert.equal($(clientId+"UseExisting").checked, false);
+}
+$("foundryClientId").value="12345678-1234-1234-1234-123456789abc";
+$("foundryClientIdUseExisting").checked=true;
+saveFoundrySettings("deploy");
+for (const clientId of spaClientIds) {
+  assert.equal(spaClientValue(clientId), "12345678-1234-1234-1234-123456789abc");
+  assert.equal($(clientId+"Fields").hidden, false);
+}
+$("foundryClientIdUseExisting").checked=false;
+saveFoundrySettings("deploy");
+for (const clientId of spaClientIds) assert.equal(spaClientValue(clientId), "");
 $("workflowFoundryModel").value="approved-model";
 $("workflowFoundryCreate").checked=true;
 saveFoundrySettings("workflow");
@@ -825,10 +1018,33 @@ $("workspace").value="Other";
 restoreFoundrySettings();
 assert.equal($("workflowFoundryModel").value, "");
 assert.equal($("workflowFoundryCreate").checked, false);
+for (const clientId of spaClientIds) {
+  assert.equal($(clientId).value, "");
+  assert.equal($(clientId+"UseExisting").checked, false);
+}
 $("workspace").value="Demo";
 restoreFoundrySettings();
 assert.equal($("workflowFoundryModel").value, "approved-model");
 assert.equal($("workflowFoundryCreate").checked, false);
+for (const clientId of spaClientIds) {
+  assert.equal($(clientId+"UseExisting").checked, false);
+  assert.equal(spaClientValue(clientId), "");
+}
+const legacyProject = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p";
+stored.set(foundryTarget, JSON.stringify({
+  FoundryProjectResourceId:legacyProject, FoundryProjectName:"duplicate-name",
+  clientId:"12345678-1234-1234-1234-123456789abc", FoundryEndpoint:"retired-override",
+  ProductionWrites:"true",
+}));
+foundryTarget="";
+restoreFoundrySettings();
+for (const prefix of ["deploy", "workflow"]) assert.equal($(prefix+"FoundryProjectName").value, legacyProject);
+for (const clientId of spaClientIds) assert.equal($(clientId+"UseExisting").checked, true);
+saveFoundrySettings("deploy");
+assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryEndpoint, undefined);
+assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryProjectResourceId, undefined);
+assert.equal(foundrySettingSuffixes.includes("ProductionWrites"), false);
+assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
 (async () => {
   await pipelineSaveQueue;
   const requests = [];
@@ -1220,7 +1436,7 @@ assert.equal($("workflowFoundryCreate").checked, false);
 
     def test_both_deploy_forms_explain_reuse_and_confirm_resource_creation(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        renderer = page[page.index("function renderFoundryFields("):page.index('$("workflowFoundryFields").innerHTML')]
+        renderer = page[page.index("function renderSpaFields("):page.index('$("workflowFoundryFields").innerHTML')]
         script = renderer + """
 console.log(JSON.stringify([
   renderFoundryFields("deploy", "foundryClientId"),
@@ -1231,7 +1447,7 @@ console.log(JSON.stringify([
         self.assertEqual(result.returncode, 0, result.stderr)
         forms = json.loads(result.stdout)
         for prefix, form in zip(("deploy", "workflow"), forms):
-            for suffix in ("AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryModel", "AcrName", "ProductionWrites",
+            for suffix in ("AzureSubscriptionId", "FoundryModel",
                            "FoundryCreate", "FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
                            "FoundryModelSku", "FoundryModelCapacity"):
                 self.assertIn(f'id="{prefix}{suffix}"', form)
@@ -1244,7 +1460,17 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", normal_fields).split()), 40)
             self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
             self.assertIn(f'<details id="{prefix}FoundryNewProjectOptions" class="foundry-block">', form)
-            self.assertIn("<summary>Advanced settings</summary>", form)
+            self.assertNotIn("<summary>Advanced settings</summary>", form)
+            for suffix in ("OntologyGraphBinding", "FoundryEndpoint", "AcrName", "FoundryProjectResourceId"):
+                self.assertNotIn(f'id="{prefix}{suffix}"', form)
+            self.assertNotIn("Work-order permissions", form)
+            self.assertNotIn("ProductionWrites", form)
+            self.assertIn("<summary>Fabric App authentication</summary>", form)
+            client_id = "foundryClientId" if prefix == "deploy" else "workflowDeployClientId"
+            self.assertIn(f'id="{client_id}UseExisting" type="checkbox"', form)
+            self.assertIn(f'<div id="{client_id}Fields" hidden>', form)
+            self.assertIn("Use a pre-created app registration", form)
+            self.assertNotIn("Keep this target's current setting", form)
             self.assertIn("Enter the existing project name to reuse it.", form)
             self.assertIn("Without a name, setup uses a saved, target-named or sole available project.", form)
             self.assertNotIn("usage charges", form)
@@ -1270,6 +1496,50 @@ console.log(JSON.stringify([
         self.assertIn("Deletes every workspace item.", page)
         self.assertIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
+
+    def test_precreated_spa_is_explicit_validated_and_used_by_each_submission(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        helpers = page[page.index("const spaClientIds ="):page.index("function renderFoundryFields(")]
+        script = """
+const assert = require("node:assert/strict");
+const fields = {};
+const $ = id => fields[id];
+""" + helpers + """
+for (const clientId of spaClientIds) {
+  for (const suffix of ["", "UseExisting", "Fields", "Status"]) fields[clientId+suffix] = {value:"",checked:false};
+  updateSpaChoice(clientId);
+  assert.equal(spaClientValue(clientId), "");
+  assert.equal(spaClientValid(clientId), true);
+  assert.equal($(clientId).disabled, true);
+  assert.equal($(clientId+"Fields").hidden, true);
+  $(clientId).value = "stale-value";
+  assert.equal(spaClientValue(clientId), "");
+  $(clientId+"UseExisting").checked = true;
+  for (const invalid of ["", "not-a-guid", "12345678-1234-1234-1234-123456789abz"]) {
+    $(clientId).value = invalid;
+    updateSpaChoice(clientId);
+    assert.equal(spaClientValid(clientId), false);
+    assert.equal($(clientId).disabled, false);
+    assert.equal($(clientId+"Fields").hidden, false);
+    assert.match($(clientId+"Status").textContent, /Enter a valid/);
+  }
+  $(clientId).value = " 12345678-1234-1234-1234-123456789ABC ";
+  updateSpaChoice(clientId);
+  assert.equal(spaClientValid(clientId), true);
+  assert.equal(spaClientValue(clientId), "12345678-1234-1234-1234-123456789ABC");
+  $(clientId+"UseExisting").checked = false;
+  updateSpaChoice(clientId);
+  assert.equal(spaClientValue(clientId), "");
+  assert.equal(spaClientValid(clientId), true);
+}
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('renderSpaFields("deployClientId")', page)
+        for client_id in ("deployClientId", "foundryClientId", "workflowDeployClientId"):
+            self.assertIn(f'clientId: spaClientValue("{client_id}")', page)
+            self.assertIn(f'spaClientValid("{client_id}")', page)
+        self.assertNotIn("appOntologyGraphBinding", page)
 
     def test_foundry_creation_requires_only_model_and_valid_optional_capacity(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -1309,9 +1579,9 @@ const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
 const suffixes = [
-  "AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryProjectName", "FoundryProjectResourceId",
-  "FoundryModel", "FoundryNewModel", "AcrName", "FoundryLocation", "FoundryModelName",
-  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity", "ProductionWrites",
+  "AzureSubscriptionId", "FoundryProjectName",
+  "FoundryModel", "FoundryNewModel", "FoundryLocation", "FoundryModelName",
+  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
   "FoundryCreate", "FoundryCreation", "FoundryNewProjectOptions", "FoundryNewProjectSummary",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
@@ -1327,20 +1597,25 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(foundryPayload(prefix).createFoundry, false);
   assert.equal(foundryPayload(prefix).foundryModel, "");
   assert.equal(foundryValid(prefix), true);
-  $(prefix+"FoundryProjectResourceId").value = "existing-project";
   $(prefix+"FoundryProjectName").value = "existing-project-name";
   $(prefix+"FoundryModel").value = "existing-model";
-  $(prefix+"FoundryEndpoint").value = "existing-endpoint";
-  $(prefix+"AcrName").value = "existing-registry";
-  assert.equal(foundryPayload(prefix).foundryProjectResourceId, "existing-project");
+  assert.equal(foundryPayload(prefix).foundryProjectResourceId, "");
+  const projectId = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p";
+  $(prefix+"FoundryProjectName").value = projectId;
+  assert.equal(foundryPayload(prefix).foundryProjectResourceId, projectId);
+  assert.equal(foundryPayload(prefix).foundryProjectName, "");
+  $(prefix+"FoundryProjectName").value = "existing-project-name";
   assert.equal(foundryPayload(prefix).foundryModel, "existing-model");
+  for (const key of ["foundryEndpoint", "acrName", "ontologyGraphBinding", "productionWrites"]) {
+    assert.equal(Object.hasOwn(foundryPayload(prefix), key), false);
+  }
   $(prefix+"FoundryCreate").checked = true;
   updateFoundryMode(prefix);
   assert.equal(foundryValid(prefix), false);
   assert.equal($(prefix+"FoundryCreation").hidden, false);
   assert.equal($(prefix+"FoundryNewProjectOptions").open, true);
   assert.equal($(prefix+"FoundryNewModel").disabled, false);
-  assert.equal($(prefix+"FoundryProjectResourceId").disabled, true);
+  assert.equal($(prefix+"FoundryProjectName").disabled, true);
   assert.match($(prefix+"FoundryModeSummary").textContent, /Create new resources/);
   assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "New project selected");
   assert.ok(!$(prefix+"FoundryModeSummary").textContent.includes("billable"));
@@ -1354,18 +1629,15 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(creating.foundryModel, "approved-new-model");
   assert.equal(creating.foundryProjectResourceId, "");
   assert.equal(creating.foundryProjectName, "");
-  assert.equal(creating.foundryEndpoint, "");
-  assert.equal(creating.acrName, "");
+  assert.equal(Object.hasOwn(creating, "productionWrites"), false);
   $(prefix+"FoundryCreate").checked = false;
   updateFoundryMode(prefix);
   assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "Create a new project");
   const reused = foundryPayload(prefix);
   assert.equal(reused.createFoundry, false);
   assert.equal(reused.foundryModel, "existing-model");
-  assert.equal(reused.foundryProjectResourceId, "existing-project");
+  assert.equal(reused.foundryProjectResourceId, "");
   assert.equal(reused.foundryProjectName, "existing-project-name");
-  assert.equal(reused.foundryEndpoint, "existing-endpoint");
-  assert.equal(reused.acrName, "existing-registry");
   assert.equal(reused.foundryModelVersion, "");
   assert.equal(reused.foundryModelCapacity, "");
 }
@@ -1625,11 +1897,11 @@ assert.ok(coreOnly.includes("Publishing map read models"));
             "workflowDirectory",
             "workflowKeepConnected",
             "workflowPat",
-            "workflowDeployClientId",
         ):
             self.assertIn(f'$("{field_id}")', handler)
         self.assertIn('workflowConnValue()', handler)
         self.assertIn('collectPipelineParams("wf_pp_")', handler)
+        self.assertIn('spaClientValue("workflowDeployClientId")', handler)
         self.assertNotIn('$("repository")', handler)
         self.assertNotIn('$("deployClientId")', handler)
 

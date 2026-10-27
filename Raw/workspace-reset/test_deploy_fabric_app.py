@@ -1294,7 +1294,9 @@ class DeployOrderTests(unittest.TestCase):
         prepare.assert_not_called()
         ensure_dependencies.assert_not_called()
 
-    def test_reuses_existing_backend_for_static_deploy(self):
+    @patch.object(DEPLOY, "current_rayfin_target", return_value=({}, {}))
+    @patch.object(DEPLOY, "configure_geo_connector")
+    def test_reuses_existing_backend_for_static_deploy(self, configure_geo, current_target):
         client_id = "11111111-1111-1111-1111-111111111111"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -1366,8 +1368,10 @@ class DeployOrderTests(unittest.TestCase):
         provision_agents.assert_not_called()
         verify_agents.assert_called_once_with("11111111-1111-4111-8111-111111111111", "workspace-id")
 
+    @patch.object(DEPLOY, "current_rayfin_target", return_value=({}, {}))
+    @patch.object(DEPLOY, "configure_geo_connector")
     @patch.object(DEPLOY, "provision_foundry_agents")
-    def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents):
+    def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents, configure_geo, current_target):
         hosting_url = "https://fast.webapp.fabricapps.net"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -1623,6 +1627,31 @@ class DeployOrderTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(DEPLOY.DeployError, "/connectors/hydrolakehouse/graphql"):
                     DEPLOY.validate_appbackend_cors("https://api.test", "https://app.test", "pk-test")
+
+    def test_energy_connector_readiness_is_required_only_when_enabled(self):
+        ready = Mock(status_code=200, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "authorization,content-type,x-publishable-key",
+        })
+        for status in (401, 404, 500):
+            with (
+                self.subTest(status=status),
+                patch.object(DEPLOY, "APPBACKEND_READINESS_DELAYS", (0,)),
+                patch.object(DEPLOY.requests, "options", return_value=ready) as options,
+                patch.object(DEPLOY.requests, "post", side_effect=[
+                    Mock(status_code=200, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=400, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=401, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=401, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=status, headers={"Access-Control-Allow-Origin": "*"}),
+                ]),
+            ):
+                if status == 401:
+                    DEPLOY.validate_appbackend_cors("https://api.test", "https://app.test", "pk-test", energy_enabled=True)
+                else:
+                    with self.assertRaisesRegex(DEPLOY.DeployError, "/connectors/hydrogeo/graphql"):
+                        DEPLOY.validate_appbackend_cors("https://api.test", "https://app.test", "pk-test", energy_enabled=True)
+                self.assertTrue(options.call_args.args[0].endswith("/connectors/hydrogeo/graphql"))
 
     def test_cors_validation_rejects_missing_allow_origin(self):
         response = Mock(
@@ -1905,6 +1934,28 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             self.details["lakehouse-v3"]["properties"]["sqlEndpointProperties"] = endpoint or {}
             with self.assertRaisesRegex(DEPLOY.DeployError, "SQL analytics endpoint"):
                 self.resolve()
+
+    def test_geo_connector_uses_its_own_live_endpoint_and_clears_stale_configuration(self):
+        geo_id = "90909090-9090-4090-8090-909090909090"
+        endpoint = "80808080-8080-4080-8080-808080808080"
+        self.items.append({"id": geo_id, "type": "Lakehouse", "displayName": "Hydro_GeoContext_V3"})
+        self.details[geo_id] = {
+            "id": geo_id, "workspaceId": self.workspace,
+            "properties": {"sqlEndpointProperties": {"id": endpoint}},
+        }
+        self.config["RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID"] = "stale"
+        values = self.resolve()
+        self.assertEqual(values["RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID"], endpoint)
+        self.assertEqual(values["RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID"], geo_id)
+        self.details[geo_id]["properties"]["sqlEndpointProperties"]["id"] = values["RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID"]
+        with self.assertRaisesRegex(DEPLOY.DeployError, "distinct verified SQL"):
+            self.resolve()
+        self.details[geo_id]["properties"]["sqlEndpointProperties"]["id"] = endpoint
+        self.details[geo_id]["workspaceId"] = "different-workspace"
+        with self.assertRaisesRegex(DEPLOY.DeployError, "distinct verified SQL"):
+            self.resolve()
+        self.items.pop()
+        self.assertEqual(self.resolve()["RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID"], "")
 
     def test_verified_archive_does_not_ambigously_select_the_previous_operational_store(self):
         from operational_store_support import OPERATIONAL_ARCHIVE_PREFIX, OPERATIONAL_STORE_DESCRIPTION
@@ -2271,77 +2322,57 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             write.assert_not_called()
 
 
-class OperationalGraphQLRebindTests(unittest.TestCase):
-    def parts(self, workspace="workspace", target_objects=None):
-        source = {"sourceItemId": "archived", "sourceWorkspaceId": workspace, "sourceType": "SqlDbNative",
-                  "custom": {"keep": True}, "objects": [
-                      {"sourceObject": "[dbo].[WorkOrders]", "sourceObjectType": "Table",
-                       "graphqlType": "WorkOrder", "fieldMappings": {"id": "customId"}},
-                      {"sourceObject": "[dbo].[CustomTable]", "sourceObjectType": "Table",
-                       "graphqlType": "CustomTable"},
-                  ]}
-        body = {"datasources": [source], "customRoot": True}
-        if target_objects is not None:
-            body["datasources"].append({**source, "sourceItemId": "target", "objects": target_objects})
-        return [{"path": "graphql-definition.json", "payloadType": "InlineBase64",
-                 "payload": base64.b64encode(json.dumps(body).encode()).decode()},
-                {"path": "unknown.bin", "payload": "AAEC", "payloadType": "InlineBase64"}]
+class GeoConnectorConfigurationTests(unittest.TestCase):
+    def test_new_geo_sources_exist_before_all_stage_endpoint_discovery(self):
+        args = argparse.Namespace(
+            tenant="tenant-id", workspace="workspace-id", client_id=None,
+            push_config=False, stage="all", energy_map="enabled",
+        )
+        energy = Mock()
 
-    def test_removes_old_nodes_before_rebinding_and_preserves_custom_content(self):
-        before = self.parts()
-        detached, rebound = DEPLOY.operational_graphql_rebind_plan(before, "workspace", {"archived"}, "target")
-        first = json.loads(base64.b64decode(detached[0]["payload"]))
-        final = json.loads(base64.b64decode(rebound[0]["payload"]))
-        self.assertEqual([node["graphqlType"] for node in first["datasources"][0]["objects"]], ["CustomTable"])
-        self.assertEqual(final["datasources"][0], first["datasources"][0])
-        self.assertEqual(final["datasources"][1]["sourceItemId"], "target")
-        self.assertEqual(final["datasources"][1]["custom"], {"keep": True})
-        self.assertEqual(final["datasources"][1]["objects"][0]["fieldMappings"], {"id": "customId"})
-        self.assertTrue(final["customRoot"])
-        self.assertEqual(detached[1], before[1])
-        self.assertEqual(rebound[1], before[1])
-        self.assertIsNone(DEPLOY.operational_graphql_rebind_plan(rebound, "workspace", {"archived"}, "target"))
+        def discover_endpoints(*args, **kwargs):
+            energy.prepare_energy.assert_called_once_with()
+            raise DEPLOY.DeployError("configuration boundary")
 
-    def test_foreign_workspace_and_conflicting_existing_projection_are_rejected(self):
-        with self.assertRaisesRegex(DEPLOY.DeployError, "conflicting workspace"):
-            DEPLOY.operational_graphql_rebind_plan(self.parts("foreign"), "workspace", {"archived"}, "target")
-        conflicting = [{"sourceObject": "[dbo].[WorkOrders]", "sourceObjectType": "Table",
-                        "graphqlType": "WorkOrder", "fieldMappings": {"id": "different"}}]
-        with self.assertRaisesRegex(DEPLOY.DeployError, "custom operational object"):
-            DEPLOY.operational_graphql_rebind_plan(self.parts(target_objects=conflicting),
-                                                  "workspace", {"archived"}, "target")
+        with (
+            patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": ""}),
+            patch.object(DEPLOY, "prefer_tenant_scoped_azure_cli_config"),
+            patch.object(DEPLOY, "ensure_azure_tenant", return_value="tenant-id"),
+            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo", "capacity-id")),
+            patch.object(DEPLOY, "resolve_spa", return_value="client-id"),
+            patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
+            patch.object(DEPLOY, "write_rayfin_redirects"),
+            patch.object(DEPLOY, "energy_workspace", return_value=energy),
+            patch.object(DEPLOY, "prepare_rayfin_env", side_effect=discover_endpoints),
+            patch.object(DEPLOY, "ensure_deploy_dependencies") as dependencies,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "configuration boundary"):
+                DEPLOY.deploy(args)
+        dependencies.assert_not_called()
 
-    def test_unrelated_sources_are_not_changed(self):
-        self.assertIsNone(DEPLOY.operational_graphql_rebind_plan(self.parts(), "workspace", {"other"}, "target"))
+    def test_optional_connector_roundtrip_preserves_the_other_connectors(self):
+        original = "connectors:\n  - name: hydrolakehouse\n    type: fabric-sqlanalytics\n"
+        with tempfile.TemporaryDirectory() as directory, patch.object(DEPLOY, "RAYFIN_DIR", Path(directory)):
+            config = Path(directory) / "rayfin.yml"
+            config.write_text(original)
+            DEPLOY.configure_geo_connector(enabled=True)
+            enabled = config.read_text()
+            self.assertIn("itemId: ${RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID}", enabled)
+            self.assertEqual(enabled.count("name: hydrogeo"), 1)
+            DEPLOY.configure_geo_connector(enabled=True)
+            self.assertEqual(config.read_text(), enabled)
+            DEPLOY.configure_geo_connector(enabled=False)
+            self.assertEqual(config.read_text(), original)
 
-    def test_reconciliation_uses_core_item_definitions_and_verifies_both_steps(self):
-        from operational_store_support import OPERATIONAL_ARCHIVE_PREFIX, OPERATIONAL_STORE_DESCRIPTION
-        before = self.parts()
-        plan = DEPLOY.operational_graphql_rebind_plan(before, "workspace", {"archived"}, "target")
-        fabric = Mock()
-        with tempfile.TemporaryDirectory() as directory, \
-                patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}), \
-                patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                    {"RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "target"}, None)), \
-                patch.object(DEPLOY, "fabric_headers", return_value={}), \
-                patch.object(DEPLOY, "_workspace_artifacts", return_value=[
-                    {"type": "SQLDatabase", "id": "archived",
-                     "description": OPERATIONAL_ARCHIVE_PREFIX + "target."},
-                    {"type": "GraphQLApi", "id": "graphql"},
-                ]), patch.object(DEPLOY, "fabric_get", return_value={
-                    "id": "target", "description": OPERATIONAL_STORE_DESCRIPTION,
-                }), patch.object(DEPLOY.tempfile, "mkdtemp", return_value=directory), \
-                patch("sync_workspace_from_git.Fabric", return_value=fabric), \
-                patch("provision_foundry_agents.read_data_agent_definition", side_effect=[
-                    {"definition": {"parts": parts}} for parts in (before, *plan)
-                ]) as read:
-            DEPLOY.reconcile_archived_operational_graphql("workspace", "tenant")
-        self.assertEqual(fabric.request.call_count, 2)
-        for index, call in enumerate(fabric.request.call_args_list):
-            self.assertTrue(call.args[1].endswith("/items/graphql/updateDefinition"))
-            self.assertEqual(call.kwargs["json"], {"definition": {"parts": plan[index]}})
-        self.assertEqual(read.call_count, 3)
-        self.assertTrue(all(call.kwargs["collection"] == "items" for call in read.call_args_list))
+    def test_custom_or_duplicate_connector_is_not_silently_overwritten(self):
+        for block in ("  - name: hydrogeo\n    type: custom\n", "  - name: hydrogeo\n  - name: hydrogeo\n"):
+            with tempfile.TemporaryDirectory() as directory, patch.object(DEPLOY, "RAYFIN_DIR", Path(directory)):
+                config = Path(directory) / "rayfin.yml"
+                original = "connectors:\n" + block
+                config.write_text(original)
+                with self.assertRaises(DEPLOY.DeployError):
+                    DEPLOY.configure_geo_connector(enabled=True)
+                self.assertEqual(config.read_text(), original)
 
 
 class ProtectedHostingTests(unittest.TestCase):

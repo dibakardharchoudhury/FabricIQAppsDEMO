@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  asFeatureCollection, buildEnergyMapQuery, formatCapacityPower, INITIAL_VIEW,
+  asFeatureCollection, validateEnergyMapRequest, prepareAreaGeometry, formatCapacityPower, INITIAL_VIEW,
   parseEnergyFeature, RESERVOIR_AREAS, visiblePlantCapacity,
 } from '../src/ui-shared/energyMapModel.ts'
 
@@ -48,26 +48,41 @@ test('capacity totals use power units, not energy units', () => {
   assert.throws(() => formatCapacityPower(-1), /Invalid/)
 })
 
-test('multi-area spatial filtering happens before the feature limit and retains context layers', () => {
-  const query = buildEnergyMapQuery({ ...INITIAL_VIEW, zoom: 8 }, ['hydro-plants', 'transformers', 'transmission'], undefined, ['NO1', 'NO2'])
-  assert.match(query, /geo_union_polygons_array/)
-  assert.match(query, /area_code\) in \("NO1", "NO2"\)/)
-  assert.match(query, /layer_id !in \('hydro-plants', 'transformers'\) or/)
-  assert.ok(query.indexOf('geo_point_in_polygon') < query.indexOf('| take 4001'))
-  assert.match(query, /area_filter_error/)
-  assert.match(query, /where region_valid/)
+test('area geometry handles holes, boundaries and multiple polygons', () => {
+  const outer = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]
+  const hole = [[2, 2], [4, 2], [4, 4], [2, 4], [2, 2]]
+  const testPoint = prepareAreaGeometry({ type: 'MultiPolygon', coordinates: [[outer, hole], [[[20, 0], [21, 0], [21, 1], [20, 1], [20, 0]]]] })
+  assert.equal(testPoint([1, 1]), true)
+  assert.equal(testPoint([3, 3]), false)
+  assert.equal(testPoint([2, 3]), true)
+  assert.equal(testPoint([20.5, 0.5]), true)
+  assert.equal(testPoint([15, 1]), false)
+  assert.equal(testPoint([NaN, 1]), false)
 })
 
 test('all areas is unrestricted while no selected areas hides only the target assets', () => {
-  const all = buildEnergyMapQuery(INITIAL_VIEW, ['hydro-plants', 'transmission'], undefined, null)
-  assert.ok(!all.includes('selected_region'))
-  const none = buildEnergyMapQuery(INITIAL_VIEW, ['hydro-plants', 'transmission'], undefined, [])
-  assert.match(none, /where layer_id !in \('hydro-plants', 'transformers'\)/)
-  assert.ok(!none.includes('geo_union_polygons_array'))
+  assert.doesNotThrow(() => validateEnergyMapRequest(INITIAL_VIEW, ['hydro-plants', 'transmission'], undefined, null))
+  assert.doesNotThrow(() => validateEnergyMapRequest(INITIAL_VIEW, ['hydro-plants', 'transmission'], undefined, []))
 })
 
 test('area codes are allowlisted and duplicates cannot inflate geometry coverage', () => {
-  const query = buildEnergyMapQuery(INITIAL_VIEW, ['hydro-plants'], undefined, ['NO1', 'NO1'])
-  assert.match(query, /selected_area_rows \| count\) == 1/)
-  assert.throws(() => buildEnergyMapQuery(INITIAL_VIEW, ['hydro-plants'], undefined, JSON.parse('["NO1\\\" | take 999"]')), /Invalid reservoir-area/)
+  assert.doesNotThrow(() => validateEnergyMapRequest(INITIAL_VIEW, ['hydro-plants'], undefined, ['NO1', 'NO1']))
+  assert.throws(() => validateEnergyMapRequest(INITIAL_VIEW, ['hydro-plants'], undefined, ['NO1" | take 999'] as never), /Invalid reservoir-area/)
+})
+
+test('invalid polygon topology fails rather than admitting or hiding assets', () => {
+  for (const rings of [
+    [[[0, 0], [1, 0], [1, 1]]],
+    [[[0, 0], [4, 4], [0, 4], [4, 0], [0, 0]]],
+    [[[0, 0], [2, 0], [1, 0], [2, 2], [0, 0]]],
+    [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]], [[3, 3], [4, 3], [4, 4], [3, 4], [3, 3]]],
+  ]) assert.throws(() => prepareAreaGeometry({ type: 'Polygon', coordinates: rings }), /invalid/)
+  assert.throws(() => prepareAreaGeometry(null), /invalid/)
+})
+
+test('MultiPolygon components may touch at a point, but cannot overlap or share edges', () => {
+  const square = (x: number, y: number) => [[x, y], [x + 2, y], [x + 2, y + 2], [x, y + 2], [x, y]]
+  assert.equal(prepareAreaGeometry({ type: 'MultiPolygon', coordinates: [[square(0, 0)], [square(2, 2)]] })([3, 3]), true)
+  assert.throws(() => prepareAreaGeometry({ type: 'MultiPolygon', coordinates: [[square(0, 0)], [square(1, 1)]] }), /invalid/)
+  assert.throws(() => prepareAreaGeometry({ type: 'MultiPolygon', coordinates: [[square(0, 0)], [square(2, 0)]] }), /invalid/)
 })

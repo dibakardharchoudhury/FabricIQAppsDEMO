@@ -122,7 +122,7 @@ test('hosted Rayfin exchange never submits a lease that can expire during a boun
   assert.match(source, /const HOSTED_RUN_TOKEN_LIFETIME_MS = 12 \* 60_000/)
   assert.match(source, /silentToken\(\[\.\.\.new Set\(\[\.\.\.FABRIC_JOB_SCOPES, \.\.\.DATA_AGENT_SCOPES\]\)\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
   assert.match(source, /silentToken\(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
-  assert.match(source, /silentToken\(\[GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
+  assert.match(source, /silentToken\(\[CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
   assert.match(source, /silentToken\(\[kustoScope\(cluster\)\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
 })
 
@@ -147,19 +147,20 @@ test('a cached lease is reused only while it outlives the bounded operation, oth
   assert.deepEqual(state.silent.map(request => request.forceRefresh), [false])
 })
 
-test('explicit source connection preserves the user gesture for deployment-bound resource consent', () => {
+test('Lakehouse connection uses Rayfin while Eventhouse retains explicit delegated consent', () => {
   const source = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
   const connect = source.slice(
     source.indexOf('export async function beginInteractiveConnect'),
     source.indexOf('export type Facility'),
   )
   const knownConfig = connect.indexOf('const knownConfig = configCache ?? envConfig()')
-  const stidPopup = connect.indexOf('await popupToken([GRAPHQL_SCOPE])')
+  const lakehouseSignIn = connect.indexOf('await signInToRayfin()')
   const telemetryPopup = connect.indexOf('await popupToken([kustoScope(knownConfig.eventhouseQueryUri)])')
   const discovery = connect.indexOf('const config = await ensureConfig(true)')
   assert.ok(knownConfig >= 0)
-  assert.ok(stidPopup > knownConfig && stidPopup < discovery)
+  assert.ok(lakehouseSignIn >= 0 && lakehouseSignIn < knownConfig)
+  assert.match(connect, /if \(target === 'stid'\) \{\s+lakehouseConnectionKey\(\)\s+await signInToRayfin\(\)\s+return/)
   assert.ok(telemetryPopup > knownConfig && telemetryPopup < discovery)
-  assert.match(connect, /Click Connect STID again to authorize the GraphQL API/)
+  assert.doesNotMatch(connect, /GRAPHQL_SCOPE|authorize the GraphQL API/)
   assert.match(connect, /Click Connect telemetry again to authorize the Eventhouse/)
 })

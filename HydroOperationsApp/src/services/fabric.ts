@@ -8,7 +8,8 @@ import { createOntologyCache, OntologyCacheInvalidatedError } from './ontologyCa
 import { parseOntologyContract, type OntologyContract } from './ontologyContract'
 import { waitForDefinitionResult } from './ontologyDefinition'
 import type { OntologyGraph } from './ontologyGraph'
-import { parseGraphBinding, queryBoundOntologyGraph } from './ontologyGraphQuery'
+import { readOntologySourceGraph, type OntologySourceGraph } from './ontologySourceGraph'
+import { parseGraphBinding, queryBoundOntologyGraph, readOntologyGraphReadiness, type GraphReader, type OntologyGraphReadiness } from './ontologyGraphQuery'
 import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
 import { createEntraTokens } from './entraTokens'
@@ -16,7 +17,7 @@ import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
-import { connectedLakehouse, lakehouseConnectionKey, signInToRayfin } from './rayfin'
+import { connectedLakehouse, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin } from './rayfin'
 import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
   requireLakehouseNumber, requireLakehouseText } from './lakehouseConnector'
 
@@ -46,7 +47,7 @@ const msal = clientId && tenantId ? new PublicClientApplication({
   cache: { cacheLocation: 'localStorage' },
 }) : undefined
 
-const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
+const CONNECTOR_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
 const POWER_BI_ITEM_EXECUTE_SCOPE = 'https://analysis.windows.net/powerbi/api/Item.Execute.All'
 const HOSTED_RUN_TOKEN_LIFETIME_MS = 12 * 60_000
 // A named scope, not `.default`: `.default` only returns permissions already statically configured
@@ -287,7 +288,7 @@ export async function hostedSourceTokens() {
   const [fabric, foundry, graphql, kusto] = await Promise.all([
     silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
     silentToken(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken([CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
     silentToken([kustoScope(cluster)], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
   ])
   if (!fabric || !foundry || !graphql || !kusto) {
@@ -305,6 +306,8 @@ export function clearWorkspaceConfigCache() {
   invalidateDataAgentMcpSession()
   dataAgentMcpTool = undefined
   dataAgentUserQuestions = []
+  ontologySourceGraphCache.clear()
+  lastOntologySourceConnection = undefined
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -571,6 +574,9 @@ export type System = {
 const ONTOLOGY_CONTRACT_TTL_MS = 15 * 60_000
 const ontologyContractCache = createOntologyCache<OntologyContract>(ONTOLOGY_CONTRACT_TTL_MS)
 const ontologyGraphCache = createOntologyCache<OntologyGraph>(5 * 60_000)
+const ontologyGraphReadinessCache = createOntologyCache<OntologyGraphReadiness>(5 * 60_000)
+const ontologySourceGraphCache = createOntologyCache<OntologySourceGraph>(30_000)
+let lastOntologySourceConnection: string | undefined
 const configuredGraphBindingValue = import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined
 
 async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Promise<T>): Promise<T> {
@@ -646,45 +652,59 @@ export async function queryOntologyContract(force = false): Promise<OntologyCont
 }
 
 async function readBoundOntologyGraph(binding: ReturnType<typeof parseGraphBinding>, force: boolean): Promise<OntologyGraph | null> {
+  let request: GraphReader | undefined
+  const getRequest = async (): Promise<GraphReader> => {
+    if (request) return request
+    const token = await fabricToken(false)
+    if (!token) throw new Error('Sign in with Fabric graph read access before checking ontology graph readiness.')
+    request = (url, init) => {
+      const headers = new Headers(init?.headers)
+      headers.set('Authorization', `Bearer ${token}`)
+      return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
+    }
+    return request
+  }
+  const readiness = await ontologyGraphReadinessCache.read(JSON.stringify(binding), force, async () =>
+    readOntologyGraphReadiness(binding, await getRequest())).catch(error => {
+    ontologyGraphCache.clear()
+    throw error
+  })
+  if (!readiness) {
+    ontologyGraphCache.clear()
+    throw new Error('Graph readiness could not be verified. Materialize and refresh the selected ontology graph, then retry.')
+  }
   const ontology = await queryOntologyContract(force)
   if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) {
     throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
   }
   return ontologyGraphCache.read(JSON.stringify([binding, ontology]), force, async () => {
-    const token = await fabricToken(false)
-    if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
-    const request = (url: string, init?: RequestInit) => {
-      const headers = new Headers(init?.headers)
-      headers.set('Authorization', `Bearer ${token}`)
-      return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
-    }
-    return queryBoundOntologyGraph(binding, ontology, request)
+    return queryBoundOntologyGraph(binding, ontology, await getRequest(), readiness)
   })
 }
 
 export async function queryOntologyGraph(force = false): Promise<OntologyGraph | null> {
-  if (configuredGraphBindingValue?.trim()) {
-    return readBoundOntologyGraph(parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId()), force)
-  }
-  return withCurrentConfig(async config => {
-    if (config?.ontologyError) throw new Error(config.ontologyError)
-    if (!config?.ontologyId) throw new Error('Sign in and select an Ontology v2 before querying its graph.')
-    const binding = parseGraphBinding(
-      import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined,
-      requireWorkspaceId(), config.ontologyId,
-    )
-    const ontology = await queryOntologyContract()
-    if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
-    return ontologyGraphCache.read(JSON.stringify([binding, ontology]), force, async () => {
-      const token = await fabricToken(false)
-      if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
-      const request = (url: string, init?: RequestInit) => {
-        const headers = new Headers(init?.headers)
-        headers.set('Authorization', `Bearer ${token}`)
-        return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
-      }
-      return queryBoundOntologyGraph(binding, ontology, request)
-    })
+  return readBoundOntologyGraph(parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId()), force)
+}
+
+export async function connectOntologyAccess(): Promise<void> {
+  ontologySourceGraphCache.clear()
+  ontologyGraphCache.clear()
+  ontologyGraphReadinessCache.clear()
+  ontologyContractCache.clear()
+  if (!await fabricToken(true)) throw new Error('Fabric ontology-read sign-in did not establish access. Retry from the graph connection control.')
+}
+
+export async function queryOntologySourceGraph(force = false): Promise<OntologySourceGraph | null> {
+  const connection = ontologySourceConnectionKey()
+  const changedUserOrTarget = lastOntologySourceConnection !== connection
+  if (force || changedUserOrTarget) ontologySourceGraphCache.clear()
+  lastOntologySourceConnection = connection
+  const ontology = await queryOntologyContract(force || changedUserOrTarget)
+  if (!ontology) throw new Error('No verified Ontology is selected for the live graph.')
+  return ontologySourceGraphCache.read(JSON.stringify([connection, ontology]), force, async () => {
+    const graph = await readOntologySourceGraph(ontology, ontologySourceReaders())
+    if (ontologySourceConnectionKey() !== connection) throw new Error('The signed-in user or connector target changed while reading the graph. Refresh to query the current identity.')
+    return graph
   })
 }
 

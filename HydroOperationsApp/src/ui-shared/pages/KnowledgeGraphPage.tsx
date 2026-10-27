@@ -1,7 +1,8 @@
 import type { Core } from 'cytoscape'
 import { Activity, Box, ChevronRight, CircleDot, Database, Download, Focus, GitBranch, Maximize2, Minimize2, Radio, RefreshCw, Scan, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { queryOntologyContract, queryOntologyGraph, type OntologyContract, type OntologyGraph } from '../../services/fabric'
+import { connectOntologyAccess, queryOntologyContract, queryOntologyGraph, queryOntologySourceGraph, type OntologyContract } from '../../services/fabric'
+import type { OntologyInstanceGraph } from '../../services/ontologySourceGraph'
 import { knowledgeGraphExportFileName, serializeNativeKnowledgeGraph, type KnowledgeGraphExportFormat } from '../../services/knowledgeGraphExport'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
@@ -34,14 +35,6 @@ const LAYOUT_DESCRIPTION: Record<GraphLayout, string> = {
 type GraphScope = 'asset' | 'facility' | 'all'
 const GRAPH_REFRESH_POLL_MS = 5 * 60_000
 
-const graphVersion = (graph: OntologyGraph | null) => graph ? JSON.stringify({
-  ontologyId: graph.ontologyId,
-  graphModelId: graph.graphModelId,
-  graphModelName: graph.graphModelName,
-  nodes: graph.nodes.map(item => [item.oid, item.labels, item.entityTypeId, item.properties]),
-  edges: graph.edges.map(item => [item.oid, item.labels, item.relationshipTypeId, item.sourceOid, item.targetOid, item.properties]),
-}) : ''
-
 function navigateTo(tab: string) {
   const url = new URL(window.location.href)
   url.searchParams.set('tab', tab)
@@ -61,11 +54,16 @@ export function KnowledgeGraphPage() {
   const [types, setTypes] = useState<Set<KnowledgeNodeType>>(() => new Set(NODE_TYPES.map(item => item.type)))
   const [statuses, setStatuses] = useState(() => new Set<KnowledgeNode['status']>(['ok', 'warn', 'crit', 'nodata']))
   const [layout, setLayout] = useState<GraphLayout>('breadthfirst')
-  const [ontologyGraph, setOntologyGraph] = useState<OntologyGraph | null>(null)
+  const [execution, setExecution] = useState<'source-backed' | 'native'>('source-backed')
+  const [loadedGraph, setOntologyGraph] = useState<OntologyInstanceGraph | null>(null)
+  const [loadedUserId, setLoadedUserId] = useState<string>()
+  const userId = data.user?.id
+  const ontologyGraph = loadedUserId === userId ? loadedGraph : null
   const [ontology, setOntology] = useState<OntologyContract | null>(null)
   const [graphLoading, setGraphLoading] = useState(true)
   const [graphQueriedAt, setGraphQueriedAt] = useState<number>()
   const [graphError, setGraphError] = useState<string>()
+  const [graphLoadMs, setGraphLoadMs] = useState<number>()
   const [exportFormat, setExportFormat] = useState<KnowledgeGraphExportFormat>('owl-turtle')
   const [exportError, setExportError] = useState<string>()
   const graphRefreshVersion = useRef(0)
@@ -73,17 +71,24 @@ export function KnowledgeGraphPage() {
 
   const loadOntologyGraph = useCallback(async (force = false) => {
     const version = ++graphRefreshVersion.current
+    const started = performance.now()
     setGraphLoading(true)
     try {
-      const { ontology: contract, ontologyGraph: next } = await loadNativeGraphSnapshot(() => queryOntologyGraph(force), queryOntologyContract)
+      if (execution === 'source-backed' && !userId) throw new Error('Sign in to Fabric before reading the ontology-governed live graph.')
+      const { ontology: contract, ontologyGraph: next } = await loadNativeGraphSnapshot<OntologyInstanceGraph>(
+        () => execution === 'source-backed' ? queryOntologySourceGraph(force) : queryOntologyGraph(force),
+        queryOntologyContract, execution === 'source-backed' ? 25_000 : undefined,
+      )
       if (version !== graphRefreshVersion.current) return
       setOntology(contract)
-      setOntologyGraph(current => graphVersion(current) === graphVersion(next) ? current : next)
-      setGraphQueriedAt(next ? Date.now() : undefined)
-      setGraphError(next ? undefined : 'No verified native backing graph is loaded for the selected Ontology. Materialize it through Manage graph in the Ontology portal, then configure the verified workspace, Ontology, and graph mapping and retry.')
+      setOntologyGraph(next)
+      setLoadedUserId(userId)
+      setGraphQueriedAt(next ? next.execution === 'source-backed' ? Date.parse(next.evidence.completedAt) : Date.now() : undefined)
+      setGraphLoadMs(performance.now() - started)
+      setGraphError(next ? undefined : 'No verified graph was returned for the selected execution mode. Check its source access and ontology bindings.')
     } catch (error) {
       if (version !== graphRefreshVersion.current) return
-      console.warn('Native ontology graph query failed; graph topology is unavailable.', error)
+      console.warn('Ontology graph query failed; no partial or fallback topology is displayed.', error)
       setOntologyGraph(null)
       setGraphQueriedAt(undefined)
       setGraphError(error instanceof Error ? error.message : 'Ontology graph query failed. Refresh and check Fabric access.')
@@ -91,9 +96,24 @@ export function KnowledgeGraphPage() {
     finally {
       if (version === graphRefreshVersion.current) setGraphLoading(false)
     }
-  }, [])
+  }, [execution, userId])
 
-  const refreshAll = () => loadOntologyGraph(true)
+  const refreshAll = async () => {
+    const authorizationVersion = ++graphRefreshVersion.current
+    setGraphLoading(true)
+    try {
+      await connectOntologyAccess()
+      if (authorizationVersion !== graphRefreshVersion.current) return
+      await loadOntologyGraph(true)
+    } catch (error) {
+      if (authorizationVersion !== graphRefreshVersion.current) return
+      setOntologyGraph(null)
+      setGraphQueriedAt(undefined)
+      setGraphError(error instanceof Error ? error.message : 'Fabric graph authorization failed. Connect and retry.')
+      setGraphLoading(false)
+      console.warn('Fabric ontology authorization failed; graph data is unavailable.', error)
+    }
+  }
 
   useEffect(() => {
     let inFlight = false
@@ -213,15 +233,17 @@ export function KnowledgeGraphPage() {
   const exportNativeGraph = () => {
     setExportError(undefined)
     if (!ontology || !ontologyGraph) {
-      setExportError('RDF/OWL export requires the verified native Ontology graph; compatibility-mode topology is not exported.')
+      setExportError('Export requires a verified ontology and complete graph result.')
       return
     }
     try {
-      const content = serializeNativeKnowledgeGraph(ontology, ontologyGraph, exportFormat)
-      const url = URL.createObjectURL(new Blob([content], { type: 'text/turtle;charset=utf-8' }))
+      const sourceBacked = ontologyGraph.execution === 'source-backed'
+      const content = sourceBacked ? JSON.stringify({ ontology, graph: ontologyGraph }, null, 2)
+        : serializeNativeKnowledgeGraph(ontology, ontologyGraph, exportFormat)
+      const url = URL.createObjectURL(new Blob([content], { type: sourceBacked ? 'application/json;charset=utf-8' : 'text/turtle;charset=utf-8' }))
       const link = document.createElement('a')
       link.href = url
-      link.download = knowledgeGraphExportFileName(ontology, exportFormat)
+      link.download = sourceBacked ? `${ontology.id}-ontology-governed-live.json` : knowledgeGraphExportFileName(ontology, exportFormat)
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -241,8 +263,15 @@ export function KnowledgeGraphPage() {
     if (controller) controller.animate({ center: { eles: controller.getElementById(effectiveSelectedId) }, zoom: 1.25 }, { duration: 300 })
   }
 
-  if (!graph.nodes.length && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Querying the Fabric Graph Model for governed entities and relationships.</p></section>
-  if (graph.error || !graph.nodes.length) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
+  const executionControl = <label className="kg-execution-control">Graph execution <select aria-label="Graph execution" value={execution} onChange={event => {
+    cancelGraphQuery()
+    setOntologyGraph(null)
+    setGraphError(undefined)
+    setGraphLoading(true)
+    setExecution(event.target.value === 'native' ? 'native' : 'source-backed')
+  }}><option value="source-backed">Live ontology-governed sources</option><option value="native">Materialized native graph (GQL)</option></select></label>
+  if (!graph.nodes.length && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1>{executionControl}<p className="v2-empty-copy">{execution === 'source-backed' ? 'Verifying live ontology source identities and reading bounded connector pages in parallel. Only declared relationships are joined.' : 'Checking graph readiness first. Native graph data is queried only after Fabric returns a queryable schema.'}</p></section>
+  if (graph.error || !graph.nodes.length) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1>{executionControl}<p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Connect Fabric and retry</button></section>
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
@@ -252,12 +281,13 @@ export function KnowledgeGraphPage() {
   const primaryProperties = selectedProperties.slice(0, 6)
   const additionalProperties = selectedProperties.slice(6)
   const activeOntology = ontology ?? data.ontology
-  const graphInstanceSummary = `${graph.nodes.length} materialized and operational instances · ${graph.edges.length} links`
+  const sourceEvidence = ontologyGraph?.execution === 'source-backed' ? ontologyGraph.evidence : undefined
+  const graphInstanceSummary = `${graph.nodes.length} ${sourceEvidence ? 'live source' : 'materialized and operational'} instances · ${graph.edges.length} links`
 
   return <div className={`kg-page${graphView.expanded ? ' kg-page-maximized' : ''}`}>
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Native Ontology graph unavailable'}</span><strong title={graphInstanceSummary}>{activeOntology?.entityTypes.length ?? 0} entity types · {activeOntology?.relationshipTypes.length ?? 0} relationship types{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
+      <div className="kg-source-state"><span className="kg-live-dot" /><span role="status">{graphLoading ? 'Refreshing verified graph...' : sourceEvidence ? 'Live ontology sources · not materialized' : ontologyGraph?.execution !== 'source-backed' ? `${ontologyGraph?.graphModelName} · GQL` : ''}</span><strong title={`${graphInstanceSummary}${graphLoadMs !== undefined ? ` · loaded in ${(graphLoadMs / 1000).toFixed(2)}s` : ''}`}>{sourceEvidence ? `${sourceEvidence.entities.filter(item => item.included).length}/${activeOntology?.entityTypes.length} entity types · ${sourceEvidence.relationships.filter(item => item.included).length}/${activeOntology?.relationshipTypes.length} relationship types` : `${activeOntology?.entityTypes.length ?? 0} entity types · ${activeOntology?.relationshipTypes.length ?? 0} relationship types`}{graphQueriedAt ? ` · observed ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
 
     <div className={`kg-workspace${graphView.expanded ? ' kg-workspace-maximized' : ''}`}>
@@ -271,7 +301,7 @@ export function KnowledgeGraphPage() {
       <section className="kg-stage">
         <div className="kg-toolbar">
           <div className="kg-view-controls"><div className="kg-layout-control"><GitBranch size={14} /><select value={layout} title={LAYOUT_DESCRIPTION[layout]} aria-label={`Graph layout. ${LAYOUT_DESCRIPTION[layout]}`} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div></div>
-          <div className="kg-graph-actions"><select value={exportFormat} aria-label="Knowledge Graph export format" title="Export the verified native graph schema and instances" onChange={event => setExportFormat(event.target.value as KnowledgeGraphExportFormat)}><option value="owl-turtle">OWL 2 · Turtle</option><option value="rdf-turtle">RDF 1.1 · Turtle</option></select><button type="button" title="Export verified native Knowledge Graph" aria-label="Export verified native Knowledge Graph" disabled={!ontologyGraph} onClick={exportNativeGraph}><Download size={16} /></button><button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => zoomGraph(.8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => zoomGraph(1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" onClick={fitGraph}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={focusGraph}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
+          <div className="kg-graph-actions">{sourceEvidence ? <span className="kg-export-format" title="JSON export includes topology, ontology and provenance">JSON</span> : <select value={exportFormat} aria-label="Knowledge Graph export format" title="Export the verified native graph schema and instances" onChange={event => setExportFormat(event.target.value as KnowledgeGraphExportFormat)}><option value="owl-turtle">OWL 2 · Turtle</option><option value="rdf-turtle">RDF 1.1 · Turtle</option></select>}<button type="button" title="Export verified Knowledge Graph" aria-label="Export verified Knowledge Graph" disabled={!ontologyGraph} onClick={exportNativeGraph}><Download size={16} /></button><button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => zoomGraph(.8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => zoomGraph(1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" onClick={fitGraph}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={focusGraph}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
         </div>
         {exportError && <div className="kg-no-results" role="alert"><p>{exportError}</p></div>}
         {visibleNodes.length
@@ -289,10 +319,14 @@ export function KnowledgeGraphPage() {
           {selectedNode.reading && <section className="kg-live-reading"><div><Radio size={15} /><span>Live bound signal</span><small>{new Date(selectedNode.reading.eventTime).toLocaleString()}</small></div><strong>{selectedNode.reading.value.toLocaleString()} <small>{String(selectedNode.properties.Unit ?? '')}</small></strong><p><span>Quality</span><b>{selectedNode.reading.quality}</b></p></section>}
           <section className="kg-property-section"><div className="kg-section-title"><span>Overview</span><small>{selectedProperties.length} properties</small></div><dl>{primaryProperties.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>{additionalProperties.length > 0 && <details className="kg-more-properties"><summary>Show {additionalProperties.length} more properties</summary><dl>{additionalProperties.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}</section>
           <section><div className="kg-section-title"><span>Connected context</span><small>{connectedEdges.length} links</small></div><div className="kg-connections">{connectedEdges.slice(0, 10).map(item => { const otherId = item.source === selectedNode.id ? item.target : item.source; const other = graph.nodes.find(node => node.id === otherId); return other ? <button key={item.id} onClick={() => selectNode(other.id)}><i className={`kg-type-dot type-${other.type}`} /><span><strong>{other.label}</strong><small>{item.label} · {other.type.replace('-', ' ')}</small></span><ChevronRight size={14} /></button> : null })}</div></section>
-          <section><div className="kg-section-title"><span>Data lineage</span><ShieldCheck size={14} /></div><div className="kg-lineage"><div><span>Fabric Ontology</span><ChevronRight size={12} /><span>Native graph</span><ChevronRight size={12} /><span>Operational context</span></div><p><Database size={14} />{selectedNode.provenance}</p></div></section>
+          <section><div className="kg-section-title"><span>Data lineage</span><ShieldCheck size={14} /></div><div className="kg-lineage"><div><span>Fabric Ontology</span><ChevronRight size={12} /><span>{sourceEvidence ? 'Verified bound source' : 'Native graph'}</span><ChevronRight size={12} /><span>Operational context</span></div><p><Database size={14} />{selectedNode.provenance}</p></div></section>
           {selectedNode.equipmentId && <div className="kg-open-actions"><button onClick={() => openRelatedView('digital-twin')}><Box size={15} />Digital Twin</button><button onClick={() => openRelatedView('telemetry')}><Activity size={15} />Telemetry</button><button onClick={() => openRelatedView('maintenance')}><Wrench size={15} />Maintenance</button></div>}
         </> : <div className="kg-no-selection"><CircleDot size={28} /><h2>Select an entity</h2><p>Inspect properties, bound values, relationships, and provenance.</p></div>}
       </aside>
     </div>
+    <details className="kg-source-coverage"><summary>Graph details · {graph.nodes.length} instances · {graph.edges.length} links</summary>{executionControl}
+      <p>{graphLoadMs !== undefined ? `Graph loaded in ${(graphLoadMs / 1000).toFixed(2)}s. ` : ''}Moving dashes appear only after telemetry readings are loaded; starting the stream can take several minutes. Static dashed signal bindings do not mean broken relationships.</p>
+      {sourceEvidence && <><p>Verified coverage: {sourceEvidence.entities.filter(item => item.included).length}/{activeOntology?.entityTypes.length} entity types · {sourceEvidence.relationships.filter(item => item.included).length}/{activeOntology?.relationshipTypes.length} relationship types · not native materialization</p><p>Live reads use the signed-in Rayfin connector session and its configured source credentials. Tables are observed independently, not as an atomic cross-source snapshot. Successful results are cached in memory for 30 seconds per user and target; Refresh bypasses the cache. Eventhouse readings remain separate contextual observations.</p><ul>{sourceEvidence.entities.map(item => <li key={item.id}>{item.name}: {item.included ? `${item.count} verified instances` : `not projected — ${item.reason}`}</li>)}</ul><details><summary>Declared relationship coverage</summary><ul>{sourceEvidence.relationships.map(item => <li key={item.id}>{item.name}: {item.included ? `${item.count} verified links` : `not projected — ${item.reason}`}</li>)}</ul></details>{sourceEvidence.warnings.map(warning => <p key={warning}>{warning}</p>)}</>}
+    </details>
   </div>
 }

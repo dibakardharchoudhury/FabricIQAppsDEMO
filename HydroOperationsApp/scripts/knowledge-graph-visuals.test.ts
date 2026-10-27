@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import test from 'node:test'
 import type { KnowledgeEdge, KnowledgeNode } from '../src/ui-shared/knowledgeGraphModel.ts'
@@ -35,6 +36,33 @@ test('telemetry flow follows only governed topology toward the facility', () => 
     'instrument-equipment',
     'system-facility',
   ])
+})
+
+test('flow starts when telemetry arrives, not when topology is loaded', () => {
+  const edges: KnowledgeEdge[] = [
+    { id: 'binding', source: 'instrument', target: 'equipment', type: 'has-instrument', label: 'instrument' },
+  ]
+  assert.equal(telemetryFlowEdgeIds([node('instrument', 'instrument'), node('equipment', 'equipment')], edges).size, 0)
+  assert.deepEqual([...telemetryFlowEdgeIds([
+    node('instrument', 'instrument', true), node('equipment', 'equipment'),
+  ], edges)], ['binding'])
+})
+
+test('compact graph presentation retains earlier fluid strokes and keeps diagnostics below the canvas', () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  const page = read('../src/ui-shared/pages/KnowledgeGraphPage.tsx')
+  const canvas = read('../src/ui-shared/components/knowledgeGraph/KnowledgeGraphCanvas.tsx')
+  const styles = read('../src/ui-shared/styles/app.css')
+  assert.ok(page.indexOf('<details className="kg-source-coverage">') > page.indexOf('<div className={`kg-workspace'))
+  assert.doesNotMatch(page, /JSON · topology, ontology/)
+  assert.match(page, /Live ontology sources · not materialized/)
+  assert.match(page, /Moving dashes appear only after telemetry readings are loaded/)
+  assert.match(canvas, /width: 3\.2, opacity: 0\.92/)
+  assert.match(canvas, /'line-dash-pattern': \[10, 12\]/)
+  assert.match(canvas, /% 22/)
+  assert.match(canvas, /graph\.edges\(\)\.length > 150/)
+  assert.match(canvas, /prefers-reduced-motion/)
+  assert.match(styles, /\.kg-source-state button \{[^}]*grid-row: 1 \/ span 2/)
 })
 
 test('maximum supported graph visual preparation stays within an interactive budget', () => {

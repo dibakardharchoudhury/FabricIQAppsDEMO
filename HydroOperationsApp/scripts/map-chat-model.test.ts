@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createEnergyPropertyFilters } from '../src/ui-shared/energyMapFilters.ts'
 import { INITIAL_VIEW, parseEnergyFeature } from '../src/ui-shared/energyMapModel.ts'
 import {
-  buildMapPlaceQuery, buildMapPlaceResolveQuery, isMapNavigationRequest, mapChatPrompt,
+  validateMapPlaceSearch, validReference, isMapNavigationRequest, mapChatPrompt,
   navigationLayer, navigationSearch, parseMapChatAnswer, parseMapPlace, type MapChatContext,
 } from '../src/ui-shared/mapChatModel.ts'
 
@@ -48,21 +48,17 @@ test('map actions allow only one terminal typed reference, never coordinates or 
   assert.deepEqual(parseMapChatAnswer('No navigation needed.'), { text: 'No navigation needed.' })
 })
 
-test('asset name and reference queries quote untrusted values and retain bounded results', () => {
+test('asset name and reference validation accepts data, not query fragments', () => {
   const term = 'Adamselv"\\line\n| take 999999'
-  const query = buildMapPlaceQuery(term)
-  assert.ok(query.includes(JSON.stringify(term)))
-  assert.match(query, /order by exact_match desc/)
-  assert.match(query, /take 11/)
-  assert.match(buildMapPlaceQuery('Adamselv', 'hydro-plants'), /where layer_id == "hydro-plants"/)
-  assert.throws(() => buildMapPlaceQuery(''), /specific/)
-  assert.throws(() => buildMapPlaceQuery('x'.repeat(181)), /specific/)
+  assert.equal(validateMapPlaceSearch(term), term)
+  assert.equal(validateMapPlaceSearch('Adamselv', 'hydro-plants'), 'Adamselv')
+  assert.throws(() => validateMapPlaceSearch(''), /specific/)
+  assert.throws(() => validateMapPlaceSearch('x'.repeat(181)), /specific/)
+  assert.throws(() => validateMapPlaceSearch('x', 'umm'), /Invalid/)
   const reference = { feature_id: term, layer_id: 'hydro-plants' as const }
-  const resolve = buildMapPlaceResolveQuery(reference)
-  assert.ok(resolve.includes(JSON.stringify(term)))
-  assert.match(resolve, /layer_id == "hydro-plants"/)
-  assert.match(resolve, /take 2/)
-  assert.match(buildMapPlaceResolveQuery({ feature_id: 'NO2', layer_id: 'reservoirs' }), /HydroGeoReservoirAreas/)
+  assert.equal(validReference(reference), true)
+  assert.equal(validReference({ feature_id: 'NO2', layer_id: 'reservoirs' }), true)
+  assert.equal(validReference({ ...reference, coordinate: 1 }), false)
 })
 
 test('places require verified bounds; missing coordinates never become zero coordinates', () => {

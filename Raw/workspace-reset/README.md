@@ -123,15 +123,25 @@ Invalid local configuration produces a visible error. The Teams ID fields link
 directly to Microsoft's channel-link documentation; see also
 [how to get the IDs](../../HydroOperationsApp/DEPLOY.md#find-your-teams-team-and-channel-ids).
 
-Foundry setup now shows just subscription, optional existing project resource ID,
-and optional model deployment for the normal reuse path. A verified matching
-subscription is selected automatically when unambiguous. SPA, endpoint, registry,
-graph-binding and write-policy overrides are under **Change automatic settings
-(optional)**. The creation checkbox is always visible; checking it reveals the
-required model version/SKU/capacity directly. No model availability or quota is
-guessed. Creation remains an explicit billable opt-in and is never remembered.
-Other Foundry overrides are shared between the standalone and full-workflow
-forms and saved separately per tenant/workspace. See the
+Foundry setup starts with the subscription. **Project and model choices** accepts
+an existing project name (or full ARM ID for duplicate names/scoped access) and
+an optional model deployment. A verified matching subscription is selected
+automatically when unambiguous. Endpoints, connected registries and ontology graph
+ownership are resolved internally; the launcher has no catch-all advanced settings
+or graph-binding JSON inputs.
+**Fabric App authentication** offers **Use a pre-created app registration** when
+an administrator has prepared a specific target-tenant SPA. Otherwise registration
+discovery/reuse or creation is automatic. Selecting this option requires a valid
+Application (client) ID; unchecking it stops sending the ID, including any saved value.
+This choice is shared across Foundry, full workflow and app publication, scoped to
+the tenant/workspace. Registration verification and automated auth setup remain required.
+The launcher preserves the target's existing work-order write policy; it does not
+offer or submit a write-permission override. Enabled writes still require human approval.
+**Create a new project** contains the explicit resource-creation approval and chat
+model input, with optional model deployment settings. Approval is never remembered.
+Existing saved project ARM IDs migrate into the project-name field; retired browser
+endpoint/registry/graph overrides are no longer submitted. Other choices are shared
+between the standalone and full-workflow forms and saved per tenant/workspace. See the
 [three-step quick start and defaults table](../../HydroOperationsApp/DEPLOY.md#quick-start-one-path-for-each-job).
 
 For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
@@ -817,15 +827,18 @@ so otherwise each person consents for themselves at first sign-in and the app wo
   `https://<host>.webapp.fabricapps.net` origin plus `http://localhost:5173`. CLI equivalent for
   the missing enterprise application: `az ad sp create --id <spa-client-id>`.
 2. **Application Administrator / Cloud Application Administrator:** add delegated Azure Data
-  Explorer `user_impersonation` and Power BI Service `GraphQLApi.Execute.All`,
-  `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
+  Explorer `user_impersonation`, Foundry Agent Service `user_impersonation`, and
+  Power BI Service `GraphQLApi.Execute.All` (Rayfin managed connector transport),
+  `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`, `DataAgent.Execute.All`
+  and `Fabric.Embed`. No standalone STID GraphQL API is required.
 3. **Application Administrator / Cloud Application Administrator:** select **Grant admin consent
   for the directory**. None of these scopes is directory-privileged, so Global Administrator and
   Privileged Role Administrator are not required. Per-user `Principal` consent works only for that
   user; suppressing the prompt for everyone requires tenant-wide `AllPrincipals` consent.
 4. Enter the administrator-provided Application (client) ID in the local app's optional **SPA
-  client id** field and redeploy, or put it in `rayfin/.env` and run `npm run setup-live-auth`.
-  The workflow is idempotent and validates redirects, scopes, and consent after redeployment.
+  client id** field only if automatic discovery cannot select it, then rerun the
+  canonical deployer. Do not hand-edit generated environment files. The workflow
+  configures and validates redirects, scopes, and consent automatically.
 
 KQL Database Viewer is granted to the signed-in **user**, not this service principal. Eventhouse
 CORS separately allows the deployed hosting origin; neither setting is an OAuth consent grant.

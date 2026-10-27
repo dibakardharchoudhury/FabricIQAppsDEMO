@@ -1,7 +1,9 @@
 import { initEmbeddedAuth, ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric'
 import { ConnectorsRayfinClient } from '@microsoft/rayfin-client'
-import { lakehouseConnectorConfig, type LakehouseConnectors } from './lakehouseConnector'
+import { lakehouseConnectorConfig, type LakehouseConnectors, type LakehousePage } from './lakehouseConnector'
+import type { OntologySourceReader } from './ontologySourceGraph'
 import { operationalConnectorConfig, type OperationalConnectors } from './operationalConnector'
+import { geoConnectorConfig, type GeoConnectors } from './geoConnector'
 import {
   seedWorkOrders, seedNotifications, seedInspections, seedSpareParts, seedAsset3DModels,
 } from './seedData'
@@ -90,12 +92,12 @@ const fabricPortalUrl = (import.meta.env.VITE_FABRIC_PORTAL_URL ?? import.meta.e
 
 const configured = Boolean(apiUrl && publishableKey && workspaceId && projectId)
 const WORK_ORDERS_CHANGED_EVENT = 'hydro:work-orders-changed'
-const client = configured ? new ConnectorsRayfinClient<HydroSchema, Record<string, never>, LakehouseConnectors & OperationalConnectors>({
+const client = configured ? new ConnectorsRayfinClient<HydroSchema, Record<string, never>, LakehouseConnectors & OperationalConnectors & GeoConnectors>({
   baseUrl: apiUrl!.endsWith('/') ? apiUrl! : `${apiUrl}/`,
   publishableKey: publishableKey!,
   useProxy: false,
   authStorage: true,
-  connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig },
+  connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig, hydrogeo: geoConnectorConfig },
 }) : undefined
 
 function options() {
@@ -123,6 +125,63 @@ export function lakehouseConnectionKey(): string {
 export function connectedLakehouse() {
   lakehouseConnectionKey()
   return isRayfinSignedIn() ? client!.connectors.hydrolakehouse : undefined
+}
+
+export function ontologySourceConnectionKey(): string {
+  const sqlId = import.meta.env.VITE_RAYFIN_OPERATIONAL_SQL_DATABASE_ID as string | undefined
+  if (!sqlId) throw new Error('Operational SQL connector identity is not configured. Run the canonical app deployer.')
+  if (!isRayfinSignedIn()) throw new Error('Sign in to Fabric before reading the ontology-governed live graph.')
+  return JSON.stringify([lakehouseConnectionKey(), sqlId])
+}
+
+export function ontologySourceReaders(): OntologySourceReader[] {
+  ontologySourceConnectionKey()
+  const lakehouse = client!.connectors.hydrolakehouse
+  const operations = client!.connectors.hydrooperations
+  const lake = lakehouseConnectorConfig.entities
+  const sql = operationalConnectorConfig.entities
+  const reader = <T extends object>(
+    itemKind: OntologySourceReader['itemKind'], table: string, columns: readonly string[],
+    read: (cursor?: string) => Promise<LakehousePage<T>>,
+  ): OntologySourceReader => ({
+    workspaceId: workspaceId!,
+    itemId: (itemKind === 'Lakehouse' ? import.meta.env.VITE_RAYFIN_LAKEHOUSE_ID : import.meta.env.VITE_RAYFIN_OPERATIONAL_SQL_DATABASE_ID) as string,
+    itemKind, schema: 'dbo', table, columns,
+    read: async cursor => {
+      const page = await read(cursor)
+      return { ...page, items: page.items.map(row => Object.fromEntries(Object.entries(row))) }
+    },
+  })
+  return [
+    reader('Lakehouse', 'silver_facilities', lake.SilverFacilities, cursor => lakehouse.SilverFacilities.select([...lake.SilverFacilities]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'silver_systems', lake.SilverSystems, cursor => lakehouse.SilverSystems.select([...lake.SilverSystems]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'silver_equipment', lake.SilverEquipment, cursor => lakehouse.SilverEquipment.select([...lake.SilverEquipment]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'silver_instruments', lake.SilverInstruments, cursor => lakehouse.SilverInstruments.select([...lake.SilverInstruments]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'silver_signal_master', lake.SilverSignalMaster, cursor => lakehouse.SilverSignalMaster.select([...lake.SilverSignalMaster]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_sources', lake.WeatherSources, cursor => lakehouse.WeatherSources.select([...lake.WeatherSources]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_ingestion_runs', lake.WeatherIngestionRuns, cursor => lakehouse.WeatherIngestionRuns.select([...lake.WeatherIngestionRuns]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'gold_instrument_classification', lake.InstrumentClassification, cursor => lakehouse.InstrumentClassification.select([...lake.InstrumentClassification]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_locations', lake.WeatherLocations, cursor => lakehouse.WeatherLocations.select([...lake.WeatherLocations]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_areas', lake.WeatherAreas, cursor => lakehouse.WeatherAreas.select([...lake.WeatherAreas]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_variables', lake.WeatherVariables, cursor => lakehouse.WeatherVariables.select([...lake.WeatherVariables]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_latest_observations', lake.WeatherLatestObservations, cursor => lakehouse.WeatherLatestObservations.select([...lake.WeatherLatestObservations]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'weather_latest_forecasts', lake.WeatherLatestForecasts, cursor => lakehouse.WeatherLatestForecasts.select([...lake.WeatherLatestForecasts]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'WorkOrders', sql.WorkOrder, cursor => operations.WorkOrder.select([...sql.WorkOrder]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'Inspections', sql.Inspection, cursor => operations.Inspection.select([...sql.Inspection]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'SpareParts', sql.SparePart, cursor => operations.SparePart.select([...sql.SparePart]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'Asset3DModels', sql.Asset3DModel, cursor => operations.Asset3DModel.select([...sql.Asset3DModel]).first(200).after(cursor).executePaginated()),
+    reader('SQLDatabase', 'MaintenanceNotifications', sql.MaintenanceNotification, cursor => operations.MaintenanceNotification.select([...sql.MaintenanceNotification]).first(200).after(cursor).executePaginated()),
+  ]
+}
+
+export function connectedGeo() {
+  const lakehouseId = import.meta.env.VITE_RAYFIN_GEO_LAKEHOUSE_ID as string | undefined
+  const endpointId = import.meta.env.VITE_RAYFIN_GEO_SQL_ENDPOINT_ID as string | undefined
+  if (!configured || !lakehouseId || !endpointId) {
+    throw new Error('GeoContext connector identity is not configured. Run the canonical app deployer.')
+  }
+  if (!isRayfinSignedIn()) throw new Error('Sign in to Fabric to read the GeoContext Lakehouse.')
+  return client!.connectors.hydrogeo
 }
 
 export function subscribeWorkOrdersChanged(listener: () => void): () => void {

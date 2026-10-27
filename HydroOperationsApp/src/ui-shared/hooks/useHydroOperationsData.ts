@@ -1,14 +1,14 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
-  queryLatestTelemetry, queryOntologyContract, queryOntologyGraph, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
+  beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isStidConfigured,
+  queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks,
   runWeatherNotebooks,
   refreshEnergyMap, resumeEnergyMapRefresh,
   startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
   createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
-  listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
+  listMaintenanceNotifications, listSpareParts, listWorkOrders, signInToRayfin,
   subscribeWorkOrdersChanged, updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from '../../services/rayfin'
@@ -39,7 +39,6 @@ const SETUP_STORAGE_KEY = scopedStorageKey('hydro.v2.setup.v1')
 const LEGACY_DATA_CACHE_PREFIX = 'hydro.data-cache.v1.'
 const JOBS_STORAGE_KEY = scopedStorageKey('hydro.jobs.v1')
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
-const SEED_ETA_MS = 6 * 60_000
 const STREAM_ETA_MS = 5 * 60_000
 const WEATHER_ETA_MS = 12 * 60_000
 const MAP_REFRESH_MAX_AGE_MS = 3 * 60 * 60_000
@@ -108,7 +107,6 @@ function useHydroOperationsDataController() {
   const [ontologyError, setOntologyError] = useState<string>()
   const [ontologyLoading, setOntologyLoading] = useState(false)
   const ontologyRefreshVersion = useRef(0)
-  const prefetchedOntologyRef = useRef<string | undefined>(undefined)
   const [stidSyncedAt, setStidSyncedAt] = useState<number>()
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>([])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
@@ -198,15 +196,6 @@ function useHydroOperationsDataController() {
     }
     return data
   }, [applyStid, clearStid, refreshOntology])
-
-  useEffect(() => {
-    if (!ontology) { prefetchedOntologyRef.current = undefined; return }
-    if (prefetchedOntologyRef.current === ontology.id) return
-    prefetchedOntologyRef.current = ontology.id
-    void queryOntologyGraph().catch(error => {
-      console.warn('Native graph prefetch failed; opening Knowledge Graph will retry the verified source.', error)
-    })
-  }, [ontology])
 
   const loadOperationalData = useCallback(async () => {
     const [loadedOrders, loadedModels, loadedInspections, loadedParts, loadedNotifications] = await Promise.allSettled([
@@ -362,29 +351,6 @@ function useHydroOperationsDataController() {
     } finally { endJob('seed') }
     if (completed) await connectStid({ interactive: false })
   }, [connectStid, loadOperationalData])
-
-  const seedAndProvision = useCallback(async () => {
-    if (provisionState === 'running' || jobs.seed) return
-    setProvisionState('running'); setNotice(undefined)
-    try {
-      const activeUser = user ?? await authenticate()
-      if (!activeUser) { setProvisionState('idle'); setNotice('Sign in with Fabric to seed operational data.'); return }
-      if (isPostSeedConfigured()) {
-        beginProgress('seed', 'Seeding independent operational SQL and refreshing its verified Data Agent source (RTI_011)...', SEED_ETA_MS)
-        await awaitProvision(() => runPostSeedNotebook(status => updateJob('seed', humanStatus(status))))
-      } else {
-        const result = await seedOperationalDataIfEmpty(activeUser)
-        await loadOperationalData()
-        setProvisionState('complete')
-        writePersistedSetup({ provisioned: true })
-        const created = result.filter(item => !item.skipped)
-        setNotice(created.length ? `Seeded ${created.map(item => `${item.created} ${item.entity}`).join(', ')}.` : 'Operational data already present.')
-      }
-    } catch (error) {
-      setProvisionState('error')
-      setNotice(error instanceof Error ? error.message : 'Seed and provision failed.')
-    }
-  }, [authenticate, awaitProvision, jobs.seed, loadOperationalData, provisionState, user])
 
   const connectWeather = useCallback(async () => {
     if (weatherState === 'running' || jobs.weather) return
@@ -947,7 +913,6 @@ function useHydroOperationsDataController() {
     actions: {
       authenticate,
       refreshOperationalData,
-      seedAndProvision,
       startStream,
       connectWeather,
       updateAllMapData,

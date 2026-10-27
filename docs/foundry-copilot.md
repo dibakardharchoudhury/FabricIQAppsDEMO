@@ -351,7 +351,7 @@ requested as **named scopes rather than `.default`**.
 | --- | --- | --- |
 | Supervisor and specialists | `https://ai.azure.com/user_impersonation` | Microsoft Foundry Agent Service (`18a66f5f-…`) |
 | Telemetry (Kusto) | `<cluster>/user_impersonation` | Azure Data Explorer (`2746ea77-…`) |
-| Asset metadata | `…/powerbi/api/GraphQLApi.Execute.All` | Power BI Service (`00000009-…`) |
+| Rayfin delegated connector transport | `…/powerbi/api/GraphQLApi.Execute.All` | Power BI Service (`00000009-…`) |
 | Workspace discovery | `Workspace.Read.All`, `Item.Read.All` | Power BI Service |
 | Start provisioning/streaming jobs | Read scopes plus `Item.Execute.All` | Power BI Service |
 | Direct Data Agent execution (Battle) | `DataAgent.Execute.All` with the Fabric scopes | Power BI Service / Microsoft Fabric |
@@ -373,8 +373,11 @@ flowchart TD
   U[Signed-in user] --> M[MSAL<br/>authority = Fabric tenant]
   M -->|user_impersonation| F[Foundry data plane]
   M -->|cluster/user_impersonation| K[Eventhouse / Kusto]
-  M -->|GraphQLApi.Execute.All| G[Lakehouse GraphQL]
-  R[Rayfin session] --> S[(App SQL database)]
+  M -->|GraphQLApi.Execute.All| G[Rayfin delegated source connectors]
+  R[Rayfin session] --> G
+  G --> L[(Core/Weather Lakehouse)]
+  G --> E[(GeoContext Lakehouse)]
+  G --> S[(Independent operational SQL database)]
   F -.->|RBAC check in resource tenant| RB{{Foundry User}}
 ```
 

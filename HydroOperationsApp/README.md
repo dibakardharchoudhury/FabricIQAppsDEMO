@@ -2,12 +2,13 @@
 
 A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
-**three independent data stores** — plus an in‑browser 3D digital‑twin viewer.
+**independent Fabric data stores** — plus an in‑browser 3D digital‑twin viewer.
 
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
 > The local launcher separates Fabric/energy source setup, Foundry multi-agent
 > provisioning, and final app publication. The hosted Administration page manages
-> operational data and source connections; it is not a Foundry deployment interface.
+> source connections and refreshes; workspace setup owns operational seeding.
+> It is not a Foundry deployment interface.
 > **Agent behavior and acceptance:** see [AGENT-ACCEPTANCE.md](AGENT-ACCEPTANCE.md) for the
 > complete routing policy, actual tools/runtime, scientific RCA criteria, proposed enterprise
 > specialists, and ten multi-turn test scenarios with verified versus pending outcomes.
@@ -35,7 +36,7 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 | **Lakehouse (STID/weather)** | Engineering master data and weather serving tables | Read-only delegated Rayfin `hydrolakehouse` connector (`fabric-sqlanalytics`) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | KQL query |
 | **Independent Fabric SQL (`RTI_Demo_SQLDatabase_<env_suffix>`)** | Work orders, notifications, inspections, spare parts, 3D models | Writable delegated Rayfin `hydrooperations` connector (`fabric-sqldatabase`) |
-| **GeoContext Lakehouse (optional)** | Imported public energy features and source-health snapshots | Bounded Eventhouse queries over `HydroGeoFeatures` / `HydroGeoStatus` Delta external tables |
+| **GeoContext Lakehouse (optional)** | Imported public energy features, boundaries, revision-qualified links and source-health snapshots | Read-only delegated Rayfin `hydrogeo` connector (`fabric-sqlanalytics`) |
 
 The stores are **never merged server‑side** — the app queries each independently and joins in the
 browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows its source. Demo
@@ -74,9 +75,19 @@ information.
 NB11 does not provision a separate GraphQL API. SPA and hosted reads use the source-bound
 Lakehouse and independent SQL connectors; `Hydro_STID_API` is retired.
 The retained AppBackend-managed SQL/GraphQL children are not the active operational store.
-This does not change Eventhouse telemetry or ontology-owned native graph topology.
+The deployer applies and checks all three source connectors, including each Lakehouse's
+distinct SQL analytics endpoint. GeoContext reads do not fall back to Eventhouse.
+External GeoContext aliases remain available for the optional Fabric map Data Agent;
+they are not the browser map's transport.
+This does not change Eventhouse telemetry/live frequency or ontology-owned native graph topology.
 The connector reads SQL-visible tables, not OneLake files,
 and is unrelated to ontology generation. See [Rayfin connectors](https://microsoft.github.io/rayfin/docs/guide/cli/connectors/).
+
+The Entra SPA is retained for direct Eventhouse access, Fabric jobs/ontology/Data Agent
+calls and the Foundry supervisor's delegated-user checks. Connector migration does
+not replace those token flows. Setup remains automatic; no standalone STID GraphQL
+API or separate legacy GraphQL setup is required. Rayfin's own GraphQL-backed
+connector transport and its delegated permission remain required.
 
 The initial HTML stays small and references browser-compressible, cacheable application JavaScript
 and CSS. Each layout loads only the selected navigation page; graph, map, telemetry embed,
@@ -91,17 +102,16 @@ The **Knowledge Graph** visualizes this composition as a scoped property graph. 
 Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a
 WebGL dependency. It defaults to the selected turbine and synchronizes that selection with Overview,
 Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
-**generation-2 Ontology** and an explicitly bound,
-ontology-managed native GraphModel. Native entities and relationships are the topology authority;
-Eventhouse KQL readings and operational SQL records enrich actual native entities as external context.
-The explicit graph binding lets startup read the exact Ontology directly—without enumerating the
-workspace. The graph stays in its loading or explicit unavailable state until verified native
-GraphModel entities are returned; STID rows cannot create canvas, tree or scope topology.
-No legacy Ontology, guessed GraphModel association, or STID/FK-fabricated graph is queried.
-When the native graph is loaded, the toolbar exports its verified Ontology schema and materialized
-instances as either **OWL 2 in Turtle** or **RDF 1.1 in Turtle**. Operational
-SQL/KQL overlays are intentionally excluded so an export never claims external context is
-governed Ontology data.
+**generation-2 Ontology**. Default live-source mode reads its verified primary scalar
+bindings through the Lakehouse and independent SQL connectors and joins only declared
+relationships. All 18 current entity types and 17 relationship types have connector
+projections, including signals, classification and weather identities. A readable empty
+table contributes zero instances; it is not an unsupported binding. Rules and bound
+time-series properties are not evaluated; Eventhouse readings remain external context.
+The separate native mode requires an explicitly bound, materialized ontology-owned
+GraphModel and never silently falls back. Native exports use OWL/RDF Turtle; live
+exports use JSON with topology, coverage and source evidence. Missing access, invalid
+identities, incomplete reads and overflow fail closed.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
 scenarios, historical screenshots, freshness behavior, and native graph prerequisites.
@@ -415,7 +425,7 @@ STID Lakehouse row, so cross‑store joins always land.
   NB01 provisions `RTI_Demo_SQLDatabase_<env_suffix>` inside `RTI_DEMO_<env_suffix>`;
   setup Stage 2 automatically runs NB11 to insert missing demo rows and publish the
   SQL Data Agent source. Existing values are never overwritten. Normal app deployment
-  does not reseed. **Seed & provision** can explicitly repeat the insert-only operation;
+  does not reseed. The hosted Administration page has no duplicate seed action;
   the reference SQL is
   [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql).
   Fabric rejects renaming existing SQL databases: FEATURE uses the verified replacement
@@ -460,7 +470,7 @@ HydroOperationsApp/
 │   ├── seed-operational-data.sql  # Idempotent MERGE seed (sqlcmd/SSMS path)
 │   └── validate-seed.sql          # Post‑seed verification
 └── src/
-    ├── App.tsx                     # Composed operations view + facility selector + Seed button
+    ├── App.tsx                     # Legacy composed operations view + facility selector
     ├── components/FacilityMap.tsx  # Multi‑facility Leaflet map
     ├── components/AssetModelViewer.tsx # Inline GLB digital‑twin viewer
     └── services/

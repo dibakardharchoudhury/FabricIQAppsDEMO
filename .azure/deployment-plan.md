@@ -2,6 +2,203 @@
 
 > **Status:** Deployed
 
+## Knowledge Graph live-source publication
+
+### Coverage completion and visual restoration follow-up
+
+The completed publication expands the existing read-only Lakehouse connector, not
+permissions or graph resources: signal master, weather sources/ingestion history,
+classification and all missing primary scalar/identity columns. It removes the
+duplicate browser seeding action from every layout, retains monitoring for older
+in-flight jobs, and restores earlier fluid stroke/arrow styling with the compact
+header and diagnostics below the canvas. Animation remains telemetry-driven and
+bounded for large graphs.
+
+Read-only SQL preflight on October 26 verified every new physical column and type:
+90 signals, three weather sources, nine variables, five ingestion runs and 15
+classification rows. Locations, areas, latest observations and latest forecasts
+were readable but empty at preflight. Empty tables are not missing projection
+support and must not be filled with synthetic graph instances.
+
+The safely restored FEATURE ontology definition was checked against the updated
+server/client projections: all 18 primary entity bindings and all 17 declared
+relationships are compatible. This local check used synthetic empty readers;
+actual signed-in connector acceptance passed as recorded below.
+No SQL seed, data deletion, new role assignment or manual Entra changes were performed.
+
+#### Coverage completion publication and authenticated acceptance
+
+The canonical orchestrator completed at `2026-10-26T19:46:44Z` in 874.454 seconds,
+printing `SUCCESS` and
+`DEPLOYED_APP_URL=https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+Authenticated acceptance confirmed build `1.0.1110` / `9b67be9`.
+Five specialists were reused; the changed shared source fingerprint required
+supervisor image `src-c1bce63d8dac1277`, with version 15 active. All three connectors,
+runtime/CORS preflights and POST readiness checks passed; 42 SPA redirects were
+preserved. No NB11 execution or seed DML ran.
+
+- All 18 entity bindings and 17 declared relationship types are included.
+  Actual export: 309 unique instances / 322 unique directed links. Every entity
+  type and relationship direction matches the selected contract. Source evidence
+  identifies the verified Core Lakehouse and operational SQL; no GraphModel
+  identity or atomic-snapshot claim is present.
+- Four weather tables are readable but empty. Six ingestion runs were observed,
+  rather than five at preflight. Ten inspections have signal references; no
+  missing weather instances or inspection links were invented.
+- The existing combined instrument/signal presentation yields 219 All-scope
+  nodes / 232 links, with 219 distinct finite positions. Full export is retained.
+  Earlier fluid strokes/arrows and compact controls are restored; detailed
+  execution/coverage controls are collapsed below the canvas.
+- Full reload plus opening Graph details: 7.728 s; loader 4.67 s.
+  Explicit refresh: 5.508 s; loader 5.44 s. Warm return: 181 ms with the
+  original observation timestamp. These are single-session measurements.
+- Existing telemetry loaded 90 signals without starting a stream. All scope
+  had 108 telemetry-bearing edges; selected T001 had eight, with verified
+  changing dash offset, 3.2 px width and 10/12 dash pattern. Above 150 edges,
+  animation remains bounded to the selected immediate neighborhood.
+- Administration has no seed action and uses steps 1-5, with STID/telemetry
+  chips 3/4. No notebook-start controls were clicked.
+- Page-only ontology HTTP 403 removed the canvas and exposed the explicit
+  retry control. Removing the route and retrying recovered in 5.225 s.
+- Native mode rejected HTTP 204 in 2.951 s, with no canvas or silent source
+  fallback. Live mode was explicitly restored afterward.
+
+Full current receipts are in [Knowledge Graph documentation](../docs/knowledge-graph.md).
+Native eligibility is still blocked; complete primary binding coverage does not
+certify rule/time-series execution, atomic reads, per-user SQL RLS or production readiness.
+
+#### Section 7: Follow-up validation proof
+
+On October 26, the 100-test graph suite passed, followed by the two additional
+visual regressions (four visual tests total). Seven connector/Administration tests
+and 26 discovery/service tests passed: 135 distinct focused tests in total.
+Scoped ESLint and TypeScript passed; final production `npm run build` ran its
+`validate-env` prerequisite and Vite finished in 24.43 seconds, with only the
+existing mixed-import/chunk-size warnings.
+
+Azure CLI confirmed the expected tenant and Enabled subscription
+`dac16501-5c35-4c91-aff0-11af8de17f2e`; live Lakehouse metadata verified SQL
+endpoint `95b16845-30e6-4be8-bee2-73935396f18b` in Success state. Authenticated
+read-only SQL verified the nine previously excluded bindings' columns and counts.
+No new infrastructure or principal is introduced: expanded entities remain
+`@authenticated('read')`, keyless and relationship-free at connector level.
+The app still verifies source identities and declared ontology joins itself.
+New ARM validation/what-if, role creation and a standalone Docker build are not
+applicable to this existing Fabric publication; the canonical deployer owns
+source fingerprinting and any shared supervisor image update.
+
+Target: existing FEATURE workspace `c7da7c28-0dee-4f45-bc9e-5628bb882732`,
+tenant `ad340c84-1886-4202-a483-2da2cb9168eb`. Existing Python AZCLI/Fabric
+orchestrator recipe; no new infrastructure, role assignment, Entra registration
+or graph resource. The orchestrator owns shared supervisor image fingerprinting
+and any required image publication.
+
+All validation checks pass (current publication checklist):
+- [x] Load the approved existing target and canonical deployment recipe.
+- [x] Core CLI/auth validation: enabled subscription and expected tenant.
+- [x] Core build validation: environment validation, TypeScript and production build.
+- [x] Core behavioral validation: governed source graph and native/discovery regressions.
+- [x] Core target preflight: verified the existing workspace capacity assignment and source item identities.
+- [x] Container validation: canonical orchestrator verified the changed shared
+      supervisor image on first publication and reused it on the follow-up.
+- [x] Static role review: existing signed-in connectors, read-only graph operations,
+      no added permission, principal or role scope.
+- [x] Policy review: no ARM/IaC resource, SKU, region, tag, network or RBAC changes.
+      ARM validation/what-if does not apply to this existing Fabric app publication.
+
+### Section 7: Validation Proof (Knowledge Graph)
+
+Production compilation/bundling passed after `npm run validate-env`.
+100 graph/ontology tests and 26 discovery/service regressions pass. The new source
+graph has separate provenance, verifies physical item/table/column bindings,
+joins only declared ontology relationships, bounds reads and rejects incomplete
+results. User/target cache isolation and failed-refresh invalidation are tested.
+A 2,000-node/1,999-edge source assembly/presentation fixture completed in 44 ms
+on this machine, below its 1,000 ms regression threshold; this is not a hosted
+or network latency measurement. Native source eligibility is still blocked
+for FEATURE and is not represented as repaired or materialized.
+
+Live read-only Fabric preflight confirmed workspace `ws-FabricIQAppsDemoFEATURE`
+on capacity `0f4dac6b-ad68-483d-8027-3d8bf9655d53`, Core Lakehouse
+`cdda0e9f-3fc2-48c1-a14e-179bd5140464`, operational SQL
+`dc020068-3b9f-42b5-9437-3599f97aee4f` and ontology
+`21ea4b9c-b41b-4da2-b5a1-cfee2c700987`. Parsing the safely restored real
+18-entity definition verified its primary physical source/key mappings;
+unsupported connector projections remain visibly excluded.
+
+Publication used only the repository deployment orchestrator with
+`--push-config`. Final deployment markers and signed-in hosted acceptance passed
+as recorded below.
+
+Commands: `npm --prefix HydroOperationsApp run validate-env`,
+`npm --prefix HydroOperationsApp run build`, `npm --prefix HydroOperationsApp run
+test:knowledge-graph`, `node --import tsx --test scripts\workspace-discovery.test.mjs`
+from the app directory, and scoped `npx eslint` over changed TypeScript/tests.
+Local production bundling passed in 20.75 seconds (existing chunk/mixed-import
+warnings only). Local tooling uses Node 26; the canonical deployer remains
+responsible for selecting Node 24 for the actual publication.
+
+### First publication and authenticated acceptance
+
+The canonical command completed at `2026-10-26T17:52:49Z` with `SUCCESS` and
+`DEPLOYED_APP_URL=https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+It reused the existing backend and five specialist versions, preserved all 42
+SPA redirects, reapplied runtime/SQL/three connectors, and passed all endpoint
+and browser-CORS checks. Changed shared ontology code required supervisor image
+`src-2825b7c3af4a018a`; hosted version 14 became active. No NB11 or seed DML ran.
+
+Signed-in browser acceptance of build `1.0.1105` / `764188e` confirmed:
+- 186 source-backed instances / 183 declared directed links.
+- Coverage: 9/18 entity types and 8/17 relationship types, visibly disclosed.
+- Three facilities, three systems, 15 equipment, 90 instruments, 12 work orders,
+  30 inspections, 12 spare parts, 15 models and six notifications.
+- JSON payload maps every edge to its declared ontology type/directed endpoints,
+  includes only the verified Core Lakehouse and operational SQL source IDs, has
+  a 64-character contract signature and no GraphModel identity.
+- First authorized graph fetch: 4.58 s application time / 5.05 s UI wait.
+  Forced refresh: 5.20 s. Warm return: 139 ms with zero connector requests,
+  retaining the original source observation timestamp.
+
+First-visit testing exposed separate app-session versus Fabric-read consent.
+The follow-up adds an explicit graph-only `Connect Fabric and retry` action:
+only Workspace.Read.All/Item.Read.All, no telemetry or connector scope; obsolete
+authorization completions are discarded and failed authorization clears graph
+caches. Production build, typecheck, scoped lint and 26 service tests pass.
+The follow-up publication and final browser acceptance passed as recorded below.
+
+### Final publication and acceptance
+
+The canonical follow-up finished at `2026-10-26T18:11:33Z` in 489.641 seconds,
+printing `SUCCESS` and the same `DEPLOYED_APP_URL`. Signed-in browser verification
+confirmed build `1.0.1107` / `f499dc4`. All five specialists and supervisor image
+`src-2825b7c3af4a018a` were current and reused; all 42 SPA redirects were preserved.
+All backend/connector preflights and POST readiness checks passed.
+
+- A full browser reload with cold application-memory caches rendered the graph
+  in 5.804 s; the graph loader reported 4.76 s. This is not a cleared HTTP-cache
+  or multi-user load test.
+- Explicit refresh: 5.479 s browser wait / 5.40 s loader time.
+- Immediate return from Overview: 192 ms, zero connector requests and the
+  original observation timestamp retained.
+- The actual Cytoscape canvas contained 186 nodes and 183 edges, with 186
+  distinct finite positions, matching the disclosed 9/18 entity and 8/17
+  relationship coverage.
+- Selected, Facility and All scopes showed 14, 58 and 186 nodes respectively.
+  Exact equipment-ID search selected the correct inspector in 306 ms; its six
+  results legitimately include operational rows referencing that equipment.
+- A page-scoped synthetic ontology-metadata HTTP 403 removed the canvas and
+  exposed `Connect Fabric and retry`, without fallback data. Removing the test
+  route and clicking that action recovered the graph in 4.843 s.
+- Native mode failed honestly on HTTP 204 in 2.434 s, with zero graph execution
+  requests and no source canvas. Explicitly switching back restored live mode.
+- Final rerun: 100 graph/ontology tests, 26 service tests, scoped ESLint and
+  TypeScript checks passed. The canonical deployment built the final source.
+
+Native materialization remains blocked by Fabric source eligibility. Supported
+live projections are genuine ontology-bound reads, not complete 18-entity
+execution, an atomic snapshot, per-user SQL RLS certification or blanket
+enterprise/production certification.
+
 ## October 26, 2026: V12 setup failure recovery and live verification
 
 The current request is to verify the real deployment after NB01 rejected the

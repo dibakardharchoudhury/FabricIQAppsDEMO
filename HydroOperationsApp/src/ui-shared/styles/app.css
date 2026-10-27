@@ -217,6 +217,12 @@
 .kg-source-state { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 2px 7px; color: var(--cp-success); font-size: 11px; }
 .kg-source-state strong { grid-column: 2; color: var(--cp-text-muted); font-weight: 500; }
 .kg-source-state button { width: 30px; height: 30px; grid-column: 3; grid-row: 1 / span 2; display: grid; place-items: center; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface); color: var(--cp-text-muted); cursor: pointer; }
+.kg-execution-control { display: flex; align-items: center; gap: 8px; color: var(--cp-text-muted); font-size: 12px; }
+.kg-execution-control select { padding: 6px 8px; border: 1px solid var(--cp-border); border-radius: 0.625rem; background: var(--cp-surface); color: var(--cp-text); font: inherit; }
+.kg-source-coverage { max-height: 36vh; overflow: auto; padding: 12px 0; margin-top: 12px; color: var(--cp-text-muted); font-size: 12px; }
+.kg-source-coverage summary { color: var(--cp-text); cursor: pointer; }
+.kg-source-coverage > .kg-execution-control { margin-top: 12px; }
+.kg-source-coverage li { margin-block: 4px; }
 .kg-source-state button:hover { border-color: var(--cp-accent); color: var(--cp-accent-hover); }
 .kg-live-dot { width: 8px; height: 8px; grid-row: 1 / span 2; border-radius: 50%; background: var(--cp-success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--cp-success) 16%, transparent); }
 .kg-workspace { height: calc(100vh - 220px); min-height: 620px; display: grid; grid-template-columns: 244px minmax(520px, 1fr) 322px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--cp-accent) 12%, var(--cp-border)); border-radius: 18px; background: var(--cp-border); box-shadow: 0 24px 70px rgba(15, 23, 42, .14); }
@@ -279,6 +285,7 @@
 .kg-layout-control select { border: 0; }
 .kg-graph-actions { display: flex; padding: 3px; border: 1px solid var(--cp-border); border-radius: 11px; background: var(--kg-glass); box-shadow: 0 10px 28px rgba(2, 12, 27, .14); backdrop-filter: blur(14px); }
 .kg-graph-actions select { height: 29px; border: 0; padding: 0 8px; background: transparent; color: var(--cp-text-muted); font: inherit; }
+.kg-export-format { display: flex; align-items: center; padding: 0 8px; color: var(--cp-text-muted); font-size: 11px; }
 .kg-graph-actions button { width: 31px; height: 29px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--cp-border); background: transparent; color: var(--cp-text-muted); cursor: pointer; }
 .kg-graph-actions button:first-child { border-left: 0; }
 .kg-graph-actions button:hover { color: var(--cp-accent); background: var(--cp-accent-soft); }

@@ -50,6 +50,15 @@ export function validateEnv(content) {
       problems.push(`${key} must be true or false`)
     }
   }
+  if (values.RAYFIN_PUBLIC_ENABLE_ENERGY_MAP === 'true') {
+    for (const key of ['RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID', 'RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID']) {
+      if (!GUID.test(values[key] ?? '')) problems.push(`${key} must be a verified target-workspace GUID when energy maps are enabled`)
+    }
+    if (values.RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID
+      && values.RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID.toLowerCase() === values.RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID?.toLowerCase()) {
+      problems.push('GeoContext must use its own SQL analytics endpoint, not the Core Lakehouse endpoint')
+    }
+  }
   return problems
 }
 

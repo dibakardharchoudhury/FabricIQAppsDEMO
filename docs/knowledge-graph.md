@@ -7,9 +7,147 @@ navigable operational context. It is designed for an operator who starts with a 
 and needs to move quickly between the affected facility, system, equipment, instruments, current
 readings, inspections, notifications, work orders, and 3D model.
 
+## Ontology context versus native graph execution
+
+Fabric's ontology is a semantic/context layer, not a general-purpose instance-data query
+engine. Graph materialization is optional in Fabric: consumers can use ontology definitions
+and bindings while querying the owning sources.
+[Microsoft's ontology overview](https://learn.microsoft.com/fabric/iq/ontology/overview#optional-graph-execution).
+
+The **Graph execution** selector exposes two separate modes:
+
+- **Live ontology-governed sources** (default) reads real instances through the existing signed-in
+  Rayfin Lakehouse and independent SQL connectors. It verifies the selected generation-2 ontology,
+  exact OneLake workspace/item identities, partition table/schema, scalar property/key mappings and
+  declared physical relationships. It does not execute arbitrary M or infer edges from familiar
+  foreign-key names. It has no GraphModel identity and is not native materialization.
+- **Materialized native graph (GQL)** retains the verified ontology-owned GraphModel reader.
+  Missing materialization fails this mode; it never silently switches to source-backed execution.
+
+Live mode shows entity/relationship coverage, excluded-binding reasons, counts and observation
+times. Unsupported entities/properties are disclosed, not fabricated. Connectors must expose a
+complete scalar projection and a physical scalar identity. Rules, complex/time-series properties
+and unsupported additional-table projections are not executed. Eventhouse readings remain
+separately timestamped contextual enrichment, not invented ontology edges.
+
+Source reads run at most four tables concurrently, with bounded pages, a 20-second read deadline,
+2,000 nodes, 4,000 edges and an 8 MiB topology payload. Duplicate/invalid identities, unresolved
+references, denied reads, non-advancing cursors and overflow fail closed. Sources are not an atomic
+cross-store snapshot. Authorization is the signed-in Rayfin session plus each connector's configured
+source credentials; this does not establish per-user SQL impersonation or an RLS certification.
+
+Successful live results are cached only in memory for 30 seconds, scoped by user, target and full
+ontology contract. Refresh bypasses contract/result caches and invalidates failed refreshes.
+Switching execution cancels obsolete UI results. Live export is JSON containing the exact ontology,
+complete accepted topology and source/coverage evidence; RDF/OWL native exports remain separate.
+
+The app-host/connector session and direct Fabric ontology-read consent are distinct.
+**Connect Fabric and retry** establishes the latter from an explicit user gesture using only
+`Workspace.Read.All` and `Item.Read.All`; it does not request Eventhouse or connector scopes.
+Automatic/background graph reads never open a consent popup.
+
+### FEATURE coverage completion acceptance: October 26, 2026
+
+The canonical deployment completed at `2026-10-26T19:46:44Z` with `SUCCESS`.
+Authenticated acceptance confirmed build **1.0.1110 / 9b67be9** at
+[the FEATURE application](https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net/?ui=v1&tab=knowledge-graph).
+
+All **18/18 primary entity bindings and 17/17 declared relationship types** are
+included. The actual JSON export contains **309 instances / 322 directed links**.
+Every exported node has a verified entity type and unique identity; every edge
+has a unique identity and matches its declared relationship's directed endpoints.
+Source evidence identifies only the verified FEATURE Core Lakehouse and independent
+operational SQL database, with contract signature
+`f9aa128ec368019bdcc8593952ea917b6d45b40d51572f2d771552515f82c4b0`.
+The result is source-backed, non-atomic and has no GraphModel identity.
+
+Added coverage includes 90 signals, three weather sources, nine weather variables,
+six ingestion runs and 15 instrument classifications. Weather locations, areas,
+latest observations and latest forecasts are readable but contain zero rows.
+Their relationships are supported with zero matching instances, not fabricated.
+Only ten inspection rows have a signal reference, so `Inspection_for_signal` has
+ten links, not thirty. Live counts supersede the earlier preflight prediction.
+
+The All-scope canvas has **219 nodes / 232 links**, with 219 distinct finite
+positions. The existing presentation combines each verified one-to-one signal
+and instrument into one node and removes its resulting self-link; the export
+retains all 309 instances and 322 relationships. The earlier stroke/arrow styling,
+compact header and JSON control are restored. Graph details and execution selection
+remain available in a collapsed footer below the canvas.
+
+| Hosted check | Observed result |
+| --- | --- |
+| Full reload with cold application-memory caches, including opening Graph details | 7.728 s; graph loader 4.67 s |
+| Explicit refresh through successful new observation | 5.508 s; graph loader 5.44 s |
+| Immediate return from Overview | 181 ms; original observation timestamp retained |
+| Actual telemetry | 90 loaded signals; 108 telemetry-bearing edges in All scope |
+| Selected T001 canvas | 14 nodes / 17 links; eight telemetry-bearing edges |
+| Selected telemetry animation | Dash offset changed from -0.536 to -1.0704; 3.2 px stroke, 10/12 dashes |
+| Administration | No browser seed action; guided steps 1-5; STID/telemetry chips 3/4 |
+| Page-only synthetic ontology HTTP 403 | Canvas removed; explicit failure and Connect Fabric and retry |
+| Recovery after removing the test route | 5.225 s through explicit authorization/retry |
+| Separate native execution | HTTP 204 rejected in 2.951 s; no canvas or source fallback |
+
+No stream was started and no browser seeding or notebook-start action was clicked
+during these checks. The app loaded existing telemetry. Large graphs retain bounded
+animation: above 150 edges, only the selected node's immediate telemetry neighborhood
+animates; with no selection, moving dashes are paused. Visibility and reduced-motion
+guards remain enabled.
+
+These are single-session observations, not cleared HTTP-cache, multi-user load or
+production certification. All primary bindings are supported, but complex/time-series
+properties, rules and metrics are not executed. Native materialization remains blocked.
+Local validation passed 135 distinct focused tests, scoped ESLint, TypeScript and
+the production build.
+
+### Historical FEATURE hosted acceptance: October 26, 2026
+
+The canonical deployment completed at `2026-10-26T18:11:33Z` with `SUCCESS`.
+Authenticated acceptance used build **1.0.1107 / f499dc4** at
+[the FEATURE application](https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net/?ui=v1&tab=knowledge-graph).
+
+The live-source view returned **186 nodes / 183 declared directed relationships**:
+three facilities, three systems, 15 equipment, 90 instruments, 12 work orders,
+30 inspections, 12 spare parts, 15 models and six notifications. Coverage is
+explicitly **9/18 entity types and 8/17 relationship types**, not the entire ontology.
+The exported payload was checked against the actual ontology relationship IDs
+and directed endpoints, verified Core Lakehouse/operational SQL identities and
+contract signature; it has no fabricated GraphModel identity.
+
+| Hosted check | Observed result |
+| --- | --- |
+| Full browser reload, cold application-memory caches | 5.804 s to rendered graph; 4.76 s graph loader |
+| Explicit refresh | 5.479 s browser wait; 5.40 s graph loader |
+| Immediate return from Overview | 192 ms; zero connector requests; original observation timestamp |
+| Actual All-scope canvas | 186 nodes, 183 edges, 186 distinct finite positions |
+| Selected / Facility / All scopes for T001 | 14 / 58 / 186 visible nodes |
+| Exact equipment-ID search | Correct inspector in 306 ms; six matching/reference-bearing records |
+| Synthetic ontology-metadata HTTP 403 | Canvas removed; explicit error and Connect Fabric and retry |
+| Recovery after removing the page-only test route | 4.843 s through the graph authorization/retry control |
+| Separate native execution | HTTP 204 rejected in 2.434 s; zero executeQuery requests; no source fallback |
+
+These are single-session browser observations, not cleared HTTP-cache,
+multi-user load, availability or production certification results. Final local
+validation passed 100 graph/ontology tests, 26 service tests, scoped ESLint and
+TypeScript checks; the canonical deployer built the published source.
+
+**Remaining platform limitation:** FEATURE's native graph is still not
+materialized because Fabric reports ineligible sources. Live mode does not
+repair that eligibility or claim full entity coverage, atomic cross-source reads
+or per-user SQL impersonation. Its coverage, provenance and consistency limits
+remain visible rather than replacing missing ontology instances with synthetic data.
+
+For a native cold read or explicit refresh, the app checks GraphModel metadata and queryable schema
+before fetching the ontology definition or executing graph queries. Readiness network checks
+have a shared ten-second deadline, separate from the native query budget. HTTP 204, missing
+or empty schemas, and access failures stop that path without querying graph data. A failed
+readiness refresh invalidates cached topology; negative readiness results are not cached,
+so materialization can be retried immediately. Successful readiness and graph results retain
+the existing five-minute in-memory caching; an explicit refresh rechecks live readiness.
+
 ## Fluid 2D presentation
 
-The graph opens in the performant 2D analysis view. Directed arrowheads preserve the native
+The graph opens in the performant 2D analysis view. Directed arrowheads preserve the declared
 Ontology relationship orientation, while animated cyan/status-colored dashes show current
 telemetry moving from a reading-bearing instrument through equipment, system, and facility
 relationships. Maintenance and other SQL overlays are never treated as telemetry paths.
@@ -23,12 +161,19 @@ freshness must be read from the telemetry status and timestamps rather than infe
 The graph intentionally provides only the 2D Cytoscape presentation. Removing the optional WebGL
 mode avoids Three.js startup, download, GPU, animation-loop, and memory costs while preserving the
 hierarchy, semantic-network, and concentric layouts. Reduced-motion preferences disable animated
-telemetry flow. Telemetry strokes are 1.5 px with a short 4/8 dash pattern and
-time-based, gentle motion. Views over 150 edges animate only the selected
+telemetry flow. The earlier fluid appearance is retained: 1.9 px base strokes,
+2.8 px selected relationships and 3.2 px telemetry paths with a 10/12 dash pattern.
+Motion remains time-based and gentle. Views over 150 edges animate only the selected
 neighborhood; other relationships remain visible and static. Off-screen/hidden
 views stop their animation loop. Labels disappear below a readable zoom size
 instead of crowding the overview. Expanding a scope lays out newly added nodes
 rather than leaving them stacked at the origin, and theme changes retain the graph.
+The compact two-line source header and icon toolbar keep the canvas prominent.
+Execution selection, per-type coverage, observation consistency and read timing are
+available in the collapsed **Graph details** below the canvas. The header still
+discloses source-backed versus native execution and entity/relationship coverage.
+Moving dashes start only when loaded telemetry readings establish a governed path;
+they do not wait for graph materialization and do not indicate broken links.
 
 The graph is not a replacement for the Fabric IQ Ontology, Real-Time Dashboard, or SQL system of
 record. It is an application view that composes those governed sources and preserves their
@@ -77,8 +222,9 @@ signal_master -> instruments -> equipment -> systems -> facilities
 ```
 
 **This project requires Ontology v2.** Existing generation-1 items are rejected, not consumed through
-a legacy parser or used as agent sources. Graph materialization is required for canvas, tree and
-scopes; missing native topology is not replaced with Ontology-bound STID entities.
+a legacy parser or used as agent sources. Graph materialization is required only for native
+execution. The explicit live-source mode builds its accepted projection from verified ontology
+bindings; it does not use a guessed STID hierarchy as a fallback.
 
 Fabric does not establish a published ontology-owned REST materialization endpoint.
 **Manage graph → select eligible entities and relationships → Continue → Materialize** is a portal
@@ -96,6 +242,13 @@ ineligible under the documented limitation. Preserve that stitch for telemetry e
 for a focused initial graph; use the portal's Ineligible tooltip for each additional type.
 Do not assume all operational SQL or weather entities are eligible merely because the ontology
 can query them. Large historical facts need not be materialized for every ontology/agent question.
+
+On October 26, 2026, the configured V12 GraphModel returned metadata HTTP 200 but queryable
+schema HTTP 204. Running the readiness gate against those live endpoints failed explicitly
+in 2.752 seconds, with no ontology-definition read or native graph execution. This checks
+the fast-failure path under the deployment identity, not signed-in SPA acceptance or a
+successful graph query. The earlier populated-graph observations below do not establish
+that the current V12 projection is materialized.
 
 The earlier native graph read measured on FEATURE on October 25 returned 201 nodes / 198 edges, no isolated
 nodes, and three components of 67 nodes each (one per facility). These are legitimate independent
@@ -165,22 +318,24 @@ proves ownership. Live contract/type validation checks consistency, not ownershi
 
 ## Application implementation
 
-The SPA uses the live Fabric IQ Ontology v2 definition for semantic metadata and its explicitly
-bound native GraphModel for topology:
+The SPA uses the live Fabric IQ Ontology v2 definition for both execution modes. Live mode resolves
+verified connector rows and exact declared joins; native mode uses its explicitly bound GraphModel:
 
 ```mermaid
 flowchart LR
    DEF["Fabric IQ Ontology v2\nTMDL semantic contract"]
    GM["Ontology-managed GraphModel"]
+   SRC["Verified Rayfin bound-source projections"]
     EH["Eventhouse OPCUAEvents"]
     SQL["Rayfin SQL operational records"]
    GQL["Native Graph REST\nGQL queries"]
     KQL["KQL latest readings"]
-   BUILD["buildKnowledgeGraph()\nverified native topology + external enrichment"]
+   BUILD["buildKnowledgeGraph()\nexplicit governed execution + telemetry enrichment"]
     CY["Cytoscape canvas"]
 
    DEF -->|"getDefinition"| BUILD
    GM --> GQL --> BUILD
+   DEF -->|"verified source bindings and joins"| SRC --> BUILD
     EH --> KQL --> BUILD
     SQL --> BUILD
     BUILD --> CY
@@ -190,10 +345,10 @@ flowchart LR
 Physical TOM relationships in `relationships.tmdl` are not semantic ontology edges.
 `queryOntologyGraph()` verifies live numeric generation `2`, the live TMDL contract, configured
 GraphModel metadata, queryable aliases, node/edge types, and relationship endpoints before accepting
-native GQL results. `buildKnowledgeGraph()` requires native topology before any canvas, tree or
-scope nodes can be presented. Pending reads show a loading state; failed or empty reads show an
-explicit unavailable state. STID rows, declared binding keys and physical foreign keys never
-create replacement topology. KQL/SQL enrich only actual native entities.
+native GQL results. `queryOntologySourceGraph()` instead requires verified physical source
+bindings and builds only explicitly supported entity/relationship projections. Pending reads show
+a loading state; failed or empty reads show an explicit unavailable state. No topology is substituted
+between modes. Live mode does not append the historical hardcoded SQL overlay relationships.
 
 Relative to `/v1/workspaces/{workspaceId}/`, native reads use
 `GET graphModels/{id}/getQueryableGraphType?beta=true` and
@@ -203,11 +358,9 @@ warnings, truncation, malformed responses, dangling edges, or limits exceeding *
 4,000 edges** fail closed; a partial result is never presented as a complete graph.
 
 For page-load performance, Cytoscape is route-lazy and
-single-flight requests prevent duplicate calls. Once the shared provider has a
-verified ontology contract, it starts one non-blocking native graph prefetch,
-independent of STID connectivity. Opening the graph reuses that request/result
-rather than starting the cold read at navigation. A failed prefetch is logged;
-opening the page retries and displays any source error, never a fabricated graph.
+single-flight requests prevent duplicate calls. Native graph execution is no longer prefetched
+from unrelated tabs; the selected mode runs when the graph opens. Cached results within that mode's
+lifetime are reused, never substituted across modes.
 Discovery's parsed ontology contract is reused, avoiding a second definition
 download on first graph load. The contract TTL is 15 minutes; native topology has
 a five-minute in-memory TTL matching its visible-page poll. Manual Refresh
@@ -226,10 +379,12 @@ visual node and retains both entities in the inspector provenance. This removes 
 without changing the governed v2 semantic contract. Unbound and non-one-to-one signals remain explicit nodes.
 The v2 adaptation retains the existing page layout, controls, friendly inspector labels, and
 one-to-one signal presentation. Native identity validation and errors do not introduce new panels.
-Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
+In native mode only, Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
 `instrumentId`, or `opcuaNodeId` as explicit external overlays attached to the corresponding
 native equipment. GraphQL/STID reads are not dependencies or topology substitutes for the
-canvas, tree or scopes; missing native edges are never filled in from foreign keys.
+native canvas, tree or scopes; missing native edges are never filled in from foreign keys.
+Live mode reads operational entities through their ontology bindings and renders only relationships
+declared in the ontology, rather than these external overlays.
 
 The application does not execute GraphModel queries without an explicit, validated v2 graph binding.
 REST `/v1` does not mean Ontology generation 1.
@@ -266,6 +421,7 @@ Maintenance.
 | Source | Graph content | Stable join |
 | --- | --- | --- |
 | Ontology-managed native GraphModel + live v2 TMDL | Native entities and governed relationships, validated against the contract | Native identities and resolved ontology type aliases |
+| Verified ontology bindings + Rayfin connectors | Live supported entity projection and exact declared relationships | Physically backed scalar ontology keys and declared physical join columns |
 | Fabric Eventhouse | Latest and historical telemetry enrichment | `opcua_node_id` |
 | Rayfin SQL | Work orders, notifications, inspections, 3D models | `equipmentId`, `instrumentId`, `opcuaNodeId` |
 
@@ -293,15 +449,20 @@ or operational record, source timestamp, quality, and provenance.
 1. Discover the configured/versioned Ontology item, require generation 2, and read its live definition.
 2. Parse entity types, properties, relationship types, bindings, and contextualizations into a
    versioned semantic contract.
-3. Require the operator's explicit ontology-managed GraphModel binding; never infer ownership.
-4. Validate live graph metadata, queryable types/endpoints, and complete native query responses.
-5. Preserve native entity and relationship provenance, including exact ontology type mappings.
-6. Enrich actual native entities with KQL and explicit `hydro-operations` SQL overlays.
-7. Fail closed on missing prerequisites or invalid/incomplete native results; never substitute STID.
+3. Select an explicit execution mode; never infer GraphModel ownership or silently switch modes.
+4. For live sources, verify item/table/property/key bindings and supported declared joins before reads.
+   For native execution, validate graph metadata, queryable types/endpoints and complete responses.
+5. Preserve execution-specific identities, ontology type mappings and provenance; disclose coverage.
+6. Enrich loaded measurement points with separately observed KQL readings. Historical SQL overlays
+   remain native-only; live topology uses declared ontology relationships exclusively.
+7. Fail closed on denied, invalid, incomplete or over-budget reads; never substitute guessed STID.
 
 This reuses the deployed v2 contract without silently substituting an unrelated graph or a v1 ontology.
 
 ## RDF and OWL export
+
+In live-source mode the toolbar exports JSON with the ontology, topology, coverage and source
+observations. It never assigns GraphModel URNs to source-backed instances.
 
 The Knowledge Graph toolbar exports a successfully verified native graph as either **OWL 2 in
 Turtle** (`.owl.ttl`) or **RDF 1.1 in Turtle** (`.rdf.ttl`). Fabric's portal also exports the

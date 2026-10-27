@@ -14,7 +14,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -156,6 +156,10 @@ def hosted_runtime_identity(agent: dict) -> tuple[str, str]:
     if not version.isdecimal() or not match:
         raise RuntimeError("The active hosted runtime must expose a numeric version and immutable image digest.")
     return version, match.group("digest")
+
+
+def definition_matches(actual: dict, expected: dict) -> bool:
+    return all(actual.get(key) == value for key, value in expected.items())
 
 
 def source_configuration_digest(tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> str:
@@ -359,7 +363,7 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
         agent = response.json()
         latest = agent.get("versions", {}).get("latest", {})
         if name != "hydro-orchestrator":
-            if any(latest.get("definition", {}).get(key) != expected for key, expected in definitions[name].items()):
+            if not definition_matches(latest.get("definition", {}), definitions[name]):
                 raise deploy.DeployError(f"Foundry specialist {name} is stale. {guidance}")
             continue
         try:
@@ -435,7 +439,8 @@ def resolve_project(
     project_name = os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
     if project_name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):
         raise deploy.DeployError("Existing Foundry project name must contain only letters, digits, '.', '_' or '-'.")
-    if project_name and not explicit_project_id and not explicit_endpoint:
+    if project_name and not explicit_project_id and not explicit_endpoint \
+            and saved_project_id.rsplit("/", 1)[-1].casefold() != project_name.casefold():
         saved_project_id = ""
         saved_endpoint = ""
     endpoint = explicit_endpoint or saved_endpoint
@@ -449,6 +454,14 @@ def resolve_project(
             "--resource-type", "Microsoft.CognitiveServices/accounts/projects", "-o", "json",
         )))
         found = []
+        wanted_name = project_name or (urlparse(wanted).path.rstrip("/").rsplit("/", 1)[-1] if wanted else "")
+        if wanted_name:
+            projects = [
+                project for project in projects
+                if project["id"].rsplit("/", 1)[-1].casefold() == wanted_name.casefold()
+            ]
+            print(f"Foundry: checking {len(projects)} matching project resource(s) for '{wanted_name}'; "
+                  "unrelated project metadata is skipped.", flush=True)
         for project in projects:
             detail = json.loads(deploy.run_capture(deploy.az(
                 "resource", "show", "--ids", project["id"], "--api-version", "2025-06-01", "-o", "json",
@@ -466,6 +479,8 @@ def resolve_project(
         identity = PROJECT_RESOURCE_RE.fullmatch(project_id)
         if not identity or identity[1].casefold() != subscription.casefold():
             raise deploy.DeployError("The selected Foundry project resource ID must belong to the selected subscription.")
+        if project_name and project_id.rsplit("/", 1)[-1].casefold() != project_name.casefold():
+            raise deploy.DeployError("The selected Foundry project resource ID does not match the existing project name.")
         detail = json.loads(deploy.run_capture(deploy.az(
             "resource", "show", "--ids", project_id, "--api-version", "2025-06-01", "-o", "json",
         )))
@@ -565,7 +580,9 @@ def read_model_selection(deploy, tenant: str, project_id: str, wanted: str) -> s
     if not access:
         raise deploy.DeployError("No delegated Azure management token was returned.")
     account_id = project_id.rsplit("/projects/", 1)[0]
-    path = f"{account_id}/deployments"
+    path = f"{account_id}/deployments" + (f"/{quote(wanted, safe='')}" if wanted else "")
+    if wanted:
+        print(f"Foundry: verifying selected model deployment '{wanted}' directly; no model discovery.", flush=True)
     url = f"https://management.azure.com{path}?api-version=2025-06-01"
     deployments = []
     while url:
@@ -578,8 +595,8 @@ def read_model_selection(deploy, tenant: str, project_id: str, wanted: str) -> s
         if not response.ok:
             raise deploy.DeployError(f"Cannot read Foundry model deployments: HTTP {response.status_code}.")
         page = response.json()
-        deployments.extend(page.get("value", []))
-        url = page.get("nextLink")
+        deployments.extend([page] if wanted else page.get("value", []))
+        url = None if wanted else page.get("nextLink")
     try:
         return select_model_deployment(deployments, wanted)
     except RuntimeError as exc:
@@ -612,20 +629,6 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
             raise deploy.DeployError(f"Foundry provisioning failed: {method} {url}: HTTP {response.status_code}: {response.text[:800]}")
         return response
 
-    account_id = project_id.rsplit("/projects/", 1)[0]
-    models_url = f"https://management.azure.com{account_id}/deployments"
-    model_page = request("GET", models_url + "?api-version=2025-06-01", arm_headers).json()
-    deployments = model_page.get("value", [])
-    while model_page.get("nextLink"):
-        link = urlparse(model_page["nextLink"])
-        if link.scheme != "https" or link.netloc != "management.azure.com" or link.path != f"{account_id}/deployments":
-            raise deploy.DeployError("Unexpected Foundry model pagination URL.")
-        model_page = request("GET", model_page["nextLink"], arm_headers).json()
-        deployments.extend(model_page.get("value", []))
-    try:
-        model = select_model_deployment(deployments, model)
-    except RuntimeError as error:
-        raise deploy.DeployError(str(error)) from error
     print(f"Foundry: using verified model deployment {model}.", flush=True)
 
     project_connections = request("GET", f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview", arm_headers).json()
@@ -686,27 +689,45 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
             "category": "RemoteTool", "authType": "UserEntraToken", "target": target,
             "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False,
         }
-        request("PUT", connection_url, arm_headers, json={"properties": connection})
-        readback = request("GET", connection_url, arm_headers).json()["properties"]
-        if any(readback.get(key) != value for key, value in connection.items()):
-            raise deploy.DeployError(f"Fabric IQ connection {connection_name} readback did not match its requested identity/authentication.")
+        matching = [item for item in connections if item.get("name") == connection_name]
+        if len(matching) > 1:
+            raise deploy.DeployError(f"Foundry connection {connection_name} has duplicate live entries.")
+        if matching and definition_matches(matching[0].get("properties", {}), connection):
+            print(f"Foundry: reusing current connection {connection_name}; no update needed.", flush=True)
+        else:
+            print(f"Foundry: updating connection {connection_name}; source or authentication differs.", flush=True)
+            request("PUT", connection_url, arm_headers, json={"properties": connection})
+            readback = request("GET", connection_url, arm_headers).json()["properties"]
+            if not definition_matches(readback, connection):
+                raise deploy.DeployError(f"Fabric IQ connection {connection_name} readback did not match its requested identity/authentication.")
 
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
         deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, iq_name,
     ), cwd=deploy.APP_DIR))
-    print("Foundry: agents - provisioning the specialist prompt agents.", flush=True)
+    print("Foundry: agents - comparing live specialists with the current source definitions.", flush=True)
+    reused = updated = created = 0
     for name, definition in definitions.items():
         url = f"{endpoint}/agents/{name}"
         response = request_with_read_retry("GET", url + "?api-version=v1", headers=agent_headers, timeout=60)
         if response.status_code not in (200, 404):
             raise deploy.DeployError(f"Cannot read Foundry agent {name}: HTTP {response.status_code}")
         previous = response.json().get("versions", {}).get("latest", {}) if response.ok else {}
-        if previous.get("definition") != definition:
-            request("POST", url + "/versions?api-version=v1", agent_headers, json={"definition": definition})
+        if definition_matches(previous.get("definition", {}), definition):
+            reused += 1
+            print(f"Reusing current Foundry agent {name}:{previous['version']}; definition unchanged.", flush=True)
+            continue
+        changes = ", ".join(key for key, value in definition.items() if previous.get("definition", {}).get(key) != value)
+        print(f"Foundry: {'updating' if response.ok else 'creating'} {name}: {changes}.", flush=True)
+        if response.ok:
+            updated += 1
+        else:
+            created += 1
+        request("POST", url + "/versions?api-version=v1", agent_headers, json={"definition": definition})
         live = request("GET", url + "?api-version=v1", agent_headers).json()["versions"]["latest"]
-        if any(live["definition"].get(key) != value for key, value in definition.items()):
+        if not definition_matches(live["definition"], definition):
             raise deploy.DeployError(f"Foundry definition readback failed for {name}.")
         print(f"Verified persistent Foundry agent {name}:{live['version']}", flush=True)
+    print(f"Foundry: specialists current={reused}, updated={updated}, created={created}.", flush=True)
 
     kql = request(
         "GET", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/kqlDatabases/{public_values['RAYFIN_PUBLIC_KQL_DATABASE_ID']}",

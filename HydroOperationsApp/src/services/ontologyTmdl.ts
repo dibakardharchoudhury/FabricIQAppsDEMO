@@ -1,4 +1,4 @@
-import { decodeDefinitionText, type DefinitionPart, type OntologyContract, type OntologyEntityType, type OntologyProperty } from './ontologyContract'
+import { decodeDefinitionText, type DefinitionPart, type OntologyContract, type OntologyEntityType, type OntologyProperty, type OntologySourceProjection } from './ontologyContract'
 
 type Node = { text: string; children: Node[]; location: string }
 const MAX_BYTES = 8 * 1024 * 1024
@@ -84,6 +84,81 @@ function column(value: string, node: Node): { table: string; column: string } {
 }
 
 const primitive = /^(string|int64|double|dateTime|boolean|decimal)$/i
+
+function sourceProjections(parts: DefinitionPart[], entities: OntologyEntityType[]): OntologySourceProjection[] {
+  const tables = new Map<string, Node>()
+  for (const part of parts.filter(part => /^tables\/[^/]+\.tmdl$/.test(part.path))) {
+    const roots = tree(part)
+    if (roots.length !== 1 || !roots[0].text.startsWith('table ')) throw new Error(`Ontology ${part.path}: expected one table.`)
+    const table = name(roots[0].text.slice(6), roots[0])
+    if (tables.has(table)) fail(roots[0], 'duplicate table.')
+    tables.set(table, roots[0])
+  }
+  const expressions = new Map<string, Node>()
+  const expressionPart = parts.find(part => part.path === 'expressions.tmdl')
+  for (const expression of expressionPart ? tree(expressionPart) : []) {
+    const match = expression.text.match(/^expression (.+?)\s*=\s*$/)
+    if (!match) continue
+    const key = name(match[1], expression)
+    if (expressions.has(key)) fail(expression, 'duplicate source expression.')
+    expressions.set(key, expression)
+  }
+  const flatten = (node: Node): string => [node.text, ...node.children.map(flatten)].join(' ')
+  return entities.map(entity => {
+    const unsupported = (reason: string): OntologySourceProjection => ({ entityTypeId: entity.id, unsupportedReason: reason })
+    const table = entity.sourceTable ? tables.get(entity.sourceTable) : undefined
+    if (!table) return unsupported('No physical backing table definition.')
+    const partitions = table.children.filter(child => child.text.startsWith('partition '))
+    if (partitions.length !== 1 || !/ = entity$/.test(partitions[0].text)
+      || field(partitions[0], 'mode') !== 'directLake') return unsupported('Requires one DirectLake entity partition.')
+    const source = block(partitions[0], 'source')
+    const expressionName = source ? namedField(source, 'expressionSource') : undefined
+    const expression = expressionName ? expressions.get(expressionName) : undefined
+    if (!source || !expression) return unsupported('The partition has no supported shared source expression.')
+    const body = expression.children.filter(child => !/^(lineageTag:|annotation )/.test(child.text)).map(flatten).join(' ')
+    const match = body.match(/^let\s+Source\s*=\s*AzureStorage\.DataLake\("https:\/\/onelake\.dfs\.fabric\.microsoft\.com\/([0-9a-f-]{36})\/([0-9a-f-]{36})",\s*\[HierarchicalNavigation\s*=\s*true\]\)\s+in\s+Source$/i)
+    if (!match) return unsupported('Source expression is not a supported static OneLake item binding; M is not executed.')
+    const [, workspaceId, itemId] = match
+    const annotation = (key: string) => {
+      const entries = expression.children.filter(child => child.text.startsWith(`annotation ${key} = `))
+      if (entries.length > 1) fail(expression, `duplicate ${key}.`)
+      return entries[0]?.text.slice(`annotation ${key} = `.length).trim()
+    }
+    for (const [key, expected] of [['ONT_WorkspaceId', workspaceId], ['ONT_ItemId', itemId]]) {
+      const actual = annotation(key)
+      if (actual && actual.toLowerCase() !== expected.toLowerCase()) fail(expression, `${key} conflicts with the source URL.`)
+    }
+    const physicalTable = namedField(source, 'entityName')
+    if (!physicalTable) return unsupported('Partition does not declare its physical entityName.')
+    const columns: Record<string, string> = Object.create(null)
+    for (const child of table.children.filter(child => child.text.startsWith('column '))) {
+      const logical = name(child.text.slice(7), child)
+      if (Object.hasOwn(columns, logical)) fail(child, 'duplicate backing column.')
+      const physical = namedField(child, 'sourceColumn')
+      if (physical) columns[logical] = physical
+    }
+    const properties: Record<string, string> = Object.create(null)
+    const omittedProperties: string[] = []
+    for (const [propertyName, metadata] of Object.entries(entity.propertyMetadata ?? {})) {
+      const backing = metadata.backingConfiguration
+      const value = backing?.valueColumn
+      if (!primitive.test(metadata.dataType) || backing?.type !== 'default' || !value || typeof value !== 'object'
+        || !('table' in value) || value.table !== entity.sourceTable || !('column' in value)
+        || typeof value.column !== 'string' || !Object.hasOwn(columns, value.column)) {
+        omittedProperties.push(propertyName)
+        continue
+      }
+      properties[propertyName] = columns[value.column]
+    }
+    const keyProperty = Object.entries(entity.properties).find(([, id]) => entity.entityIdParts.length === 1 && id === entity.entityIdParts[0])?.[0]
+    if (!keyProperty || !Object.hasOwn(properties, keyProperty)) return unsupported('Identity is not one physically backed scalar property.')
+    return { entityTypeId: entity.id, binding: {
+      entityTypeId: entity.id, logicalTable: entity.sourceTable!, workspaceId: workspaceId.toLowerCase(),
+      itemId: itemId.toLowerCase(), itemKind: annotation('ONT_ItemKind'), schema: namedField(source, 'schemaName'),
+      table: physicalTable, columns, properties, keyProperty, keyColumn: properties[keyProperty], omittedProperties,
+    } }
+  })
+}
 
 function validateFields(value: unknown, member: string, node: Node, validate: (value: unknown) => void) {
   if (!Array.isArray(value) || !value.length) return fail(node, 'struct fields must be a non-empty JSON array.')
@@ -287,6 +362,8 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
     const binding = backingRelationship ? physical.get(backingRelationship) : undefined
     let sourceKeys: string[] = []
     let targetKeys: string[] = []
+    let sourceCardinality: 'one' | 'many' | undefined
+    let targetCardinality: 'one' | 'many' | undefined
     const backingType = backing ? field(backing, 'type') : undefined
     if (backingType && !['relationship', 'table', 'default'].includes(backingType)) fail(node, `unsupported relationship backing type ${backingType}.`)
     const compatibilityUnsupported = backingType === 'table' || !backingRelationship
@@ -303,10 +380,20 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
       if (!from || !to) fail(binding, 'only single-column physical relationship bindings are supported.')
       const fromRef = column(from!, binding)
       const toRef = column(to!, binding)
+      const cardinality = (key: string): 'one' | 'many' | undefined => {
+        const value = field(binding, key)
+        if (value === undefined) return undefined
+        if (value === 'one' || value === 'many') return value
+        return fail(binding, `unsupported ${key}.`)
+      }
+      const fromCardinality = cardinality('fromCardinality')
+      const toCardinality = cardinality('toCardinality')
       if (source.sourceTable === fromRef.table && target.sourceTable === toRef.table) {
         sourceKeys = [fromRef.column]; targetKeys = [toRef.column]
+        sourceCardinality = fromCardinality; targetCardinality = toCardinality
       } else if (source.sourceTable === toRef.table && target.sourceTable === fromRef.table) {
         sourceKeys = [toRef.column]; targetKeys = [fromRef.column]
+        sourceCardinality = toCardinality; targetCardinality = fromCardinality
       } else fail(node, 'physical relationship tables do not match the semantic endpoints.')
     }
     const relationshipId = namedField(node, 'lineageTag') ?? identity.name
@@ -318,6 +405,8 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
       sourceEntityTypeId: source.id, targetEntityTypeId: target.id,
       sourceEntityName: source.name, targetEntityName: target.name,
       sourceKeys, targetKeys, backingRelationship, compatibilityUnsupported,
+      ...(sourceCardinality ? { sourceCardinality } : {}),
+      ...(targetCardinality ? { targetCardinality } : {}),
     })
   }
   if (!entityTypes.length) {
@@ -326,5 +415,8 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
     warnings.add('This Ontology v2 definition contains no entities. Publish entity definitions to show governed topology.')
   }
   if (parts.some(part => /^(rules|metrics)\//.test(part.path))) warnings.add('Rules and metrics are not evaluated by the app.')
-  return { id, displayName, generation: 2, entityTypes, relationshipTypes, warnings: [...warnings] }
+  return {
+    id, displayName, generation: 2, entityTypes, relationshipTypes, warnings: [...warnings],
+    sourceBindings: sourceProjections(parts, entityTypes),
+  }
 }

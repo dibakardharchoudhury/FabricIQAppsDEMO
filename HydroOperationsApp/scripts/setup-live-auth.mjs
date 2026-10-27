@@ -2,16 +2,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // setup-live-auth.mjs
 //
-// ONE idempotent command that makes the Hydro Operations app's live-data Entra
-// (AAD) app self-configuring after a fresh deploy. The app reads TWO live
-// stores directly from the browser, and each needs a delegated permission that
-// interactive popup consent can fail to establish cleanly:
+// Idempotent delegated authentication setup, invoked by the canonical deployer.
+// Lakehouse/SQL data uses Rayfin connectors. Eventhouse, Fabric control-plane
+// operations and Foundry still require delegated Entra access:
 //
 //   • Telemetry  → the Eventhouse (a Kusto cluster) at *.kusto.fabric.microsoft.com
 //                  authenticates through **Azure Data Explorer**.
-//   • STID       → the Lakehouse **GraphQL API** at *.graphql.fabric.microsoft.com
-//                  authenticates through the **Power BI Service**
-//                  (GraphQLApi.Execute.All).
+//   • Connectors → Rayfin's managed GraphQL-backed source transport uses the
+//                  Power BI Service scope GraphQLApi.Execute.All. This is not
+//                  a separately provisioned Hydro_STID_API.
 //
 // It performs the one-time Azure steps that path needs, in order:
 //
@@ -23,7 +22,7 @@
 //   STEP 2  Delegated permissions + consent — add each required delegated scope
 //           to the app AND create the tenant-wide consent grant:
 //             - Azure Data Explorer  user_impersonation   (telemetry)
-//             - Power BI Service      GraphQLApi.Execute.All (STID GraphQL)
+//             - Power BI Service      GraphQLApi.Execute.All (Rayfin connectors)
 //             - Foundry Agent Service user_impersonation   (Supervisor and specialists)
 //           Scope ids are resolved live from each resource service principal so
 //           they stay correct across clouds/tenants. Without the permission you
@@ -95,10 +94,10 @@ export const REQUIRED_DELEGATED = [
     scopeValues: ['user_impersonation'],
   },
   {
-    label: 'Power BI Service / Microsoft Fabric (STID GraphQL + workspace discovery)',
-    // Resource behind *.graphql.fabric.microsoft.com and api.fabric.microsoft.com.
+    label: 'Power BI Service / Microsoft Fabric (Rayfin connectors + Fabric operations)',
+    // Resource used by GraphQL-backed Rayfin connectors and Fabric operations.
     resourceAppId: '00000009-0000-0000-c000-000000000000',
-    // GraphQLApi.Execute.All = STID GraphQL query. Workspace.Read.All = List Items.
+    // GraphQLApi.Execute.All = connector transport. Workspace.Read.All = List Items.
     // Item.Read.All = Get Eventhouse (telemetry queryServiceUri). Item.Execute.All = run jobs.
     // Fabric.Embed = render the Real-Time Dashboard in the RT Dashboard telemetry view.
     scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All', 'DataAgent.Execute.All', 'Fabric.Embed'],

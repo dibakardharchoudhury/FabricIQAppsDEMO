@@ -54,6 +54,15 @@ test('requires an explicit energy map feature flag', () => {
   assert.deepEqual(problems, ['RAYFIN_PUBLIC_ENABLE_ENERGY_MAP is missing or empty'])
 })
 
+test('energy maps require distinct verified GeoContext connector identities', () => {
+  const enabled = valid.replace('RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false', 'RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=true')
+  assert.equal(validateEnv(enabled).length, 2)
+  const endpoint = '12345678-1234-4234-8234-123456789012'
+  const configured = `${enabled}\nRAYFIN_PUBLIC_GEO_LAKEHOUSE_ID=23456789-2345-4345-8345-234567890123\nRAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID=${endpoint}\n`
+  assert.deepEqual(validateEnv(configured), [])
+  assert.match(validateEnv(`${configured}RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID=${endpoint}\n`)[0], /own SQL analytics endpoint/)
+})
+
 test('rejects malformed feature flags', () => {
   const problems = validateEnv(valid.replace(
     'RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false',

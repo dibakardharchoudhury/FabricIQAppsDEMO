@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, MessageSquare, RefreshCw, Search, SlidersHorizontal, X, Zap } from 'lucide-react'
-import { beginInteractiveConnect, refreshEnergyMap } from '../../services/fabric'
+import { refreshEnergyMap } from '../../services/fabric'
+import { signInToRayfin } from '../../services/rayfin'
 import {
   queryAssetMarketMessages, queryCountryPowerBalance, queryEnergyFeatureDetails, queryEnergyMap, queryEnergyPropertyOptions,
   queryEnergySourceStatus, queryReservoirAreas,
@@ -220,7 +221,7 @@ export function OperationsMapPage() {
 
   const connect = async () => {
     try {
-      await beginInteractiveConnect('telemetry')
+      await signInToRayfin()
       if (active.current) setRevision(value => value + 1)
     } catch (reason) {
       console.error('Map data sign-in failed.', reason)

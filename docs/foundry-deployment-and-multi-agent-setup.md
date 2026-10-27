@@ -4,6 +4,15 @@
 This page covers agent architecture and configuration.
 Both UI and CLI use [`deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py).
 
+The app reads Core/Weather and GeoContext through separate read-only Rayfin
+`fabric-sqlanalytics` connectors; operational SQL uses `fabric-sqldatabase`.
+Eventhouse telemetry/live frequency remains delegated KQL. Optional map Data Agent
+external aliases remain available, but browser GeoContext reads do not depend on them.
+No standalone STID GraphQL API is provisioned or rebound. Rayfin's managed connector
+transport still uses GraphQL internally. The automatically resolved Entra SPA remains
+required for Eventhouse, Fabric ontology/jobs/Data Agent and Foundry's delegated-user
+authorization; connector migration does not replace those identities.
+
 ### Finding Weather in Foundry
 
 Open the project's **Agents → hydro-weather-agent**. It is a prompt specialist
@@ -87,14 +96,26 @@ The separate setup stage (also used by combined CLI deployment;
 | 0. Backend identity | Creates a missing AppBackend without static hosting | Target already has one |
 | 1. Foundry project | Reuses the verified project, or creates target-named resources using `Azure-Samples/azd-ai-starter-basic` with explicit resource-creation approval | Existing project |
 | 2. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
-| 3. Connections | Writes `hydro-fabric-iq` and `hydro-fabric-ontology` and reads them back | never |
-| 4. Prompt agents | Exports the five definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
+| 3. Connections | Compares `hydro-fabric-iq` and `hydro-fabric-ontology` with the live project connections; writes and verifies only missing or changed connections | source/authentication already matches |
+| 4. Prompt agents | Compares the five exported source definitions with live versions, ignoring additional server-managed fields; creates and verifies only missing or changed versions | definition unchanged |
 | 5. Image | Fingerprints every file the [Dockerfile](../HydroOperationsService/Dockerfile) packages; builds `hydro-orchestrator:src-<fingerprint>` in the project's ACR with `az acr build` | that tag already exists |
 | 6. Configuration | Composes `HYDRO_ORCHESTRATOR_CONFIG` and `HYDRO_FABRIC_SOURCE_CONFIG` from the verified target | never (always compared) |
 | 7. Publish | Creates or refreshes the azd environment's project, tenant and registry identity from live metadata, applies runtime settings and publishes; waits until the active version has the exact image digest and configuration | live agent already matches |
 | 8. Verify | The existing gate: active, numeric version, immutable digest, source identity and native binding all match | never |
 
 The local app shows these as separate progress stages: *Foundry project*, *Foundry agents*, *Hosted Agent*.
+
+An existing project and model do not prove that the five specialists and hosted coordinator
+exist or match this checkout and Fabric target. Setup checks live state, but an unchanged
+setup performs no connection updates, specialist version creation, image builds or hosted
+publishes. It logs each reused specialist and a `current / updated / created` summary.
+Changed instructions, tools or model update only the affected specialists. A target/configuration
+change can require a hosted version without rebuilding an already available image.
+
+Entering the same saved project name retains its verified ARM ID for a direct metadata read.
+On first selection by name, only matching project names receive detailed metadata requests;
+unrelated projects are not inspected. An explicitly named model deployment is read directly,
+without listing other models, and validated once during project preflight.
 
 Consequences:
 

@@ -43,45 +43,28 @@ export function propertyFilterCount(filters: EnergyPropertyFilters): number {
   ].filter(Boolean).length
 }
 
-function stringLiteral(value: string): string {
+function validateString(value: string): void {
   if (typeof value !== 'string' || value.length > 2048) throw new Error('Invalid map property selection.')
-  return JSON.stringify(value)
 }
 
-function selectionPredicate(field: string, values: string[]): string | null {
+function validateSelection(values: string[]): void {
   if (!Array.isArray(values) || values.length > FACET_LIMIT) throw new Error('Invalid map property selection.')
-  return values.length ? `tostring(map_properties.${field}) in (${values.map(stringLiteral).join(', ')})` : null
+  values.forEach(validateString)
 }
 
-function rangePredicate(field: string, range: NumericRange | null): string | null {
-  if (range === null) return null
+function validateRange(range: NumericRange | null): void {
+  if (range === null) return
   if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min < 0 || range.max < range.min) {
     throw new Error('Invalid map property range.')
   }
-  return `todouble(map_properties.${field}) between (${range.min} .. ${range.max})`
 }
 
-export function buildEnergyPropertyPredicate(filters: EnergyPropertyFilters): string {
+export function validateEnergyPropertyFilters(filters: EnergyPropertyFilters): void {
   const { hydro, transformers } = filters
   if (!['all', 'true', 'false'].includes(hydro.inOperation)) throw new Error('Invalid in-operation filter.')
-  const hydroPredicates = [
-    selectionPredicate('owner', hydro.owners),
-    rangePredicate('installed_capacity_mw', hydro.capacity),
-    hydro.inOperation === 'all' ? null : `tobool(map_properties.in_operation) == ${hydro.inOperation}`,
-    selectionPredicate('price_area', hydro.priceAreas),
-    rangePredicate('gross_head_m', hydro.grossHead),
-    hydro.plantStatus === null ? null : `tostring(map_properties.plant_status) == ${stringLiteral(hydro.plantStatus)}`,
-  ].filter(Boolean)
-  const transformerPredicates = [
-    selectionPredicate('owner', transformers.owners),
-    selectionPredicate('source_layer', transformers.sourceLayers),
-    rangePredicate('voltage_kv', transformers.voltage),
-    selectionPredicate('network_level', transformers.networkLevels),
-  ].filter(Boolean)
-  return [
-    hydroPredicates.length ? `(layer_id != 'hydro-plants' or (${hydroPredicates.join(' and ')}))` : null,
-    transformerPredicates.length ? `(layer_id != 'transformers' or (${transformerPredicates.join(' and ')}))` : null,
-  ].filter(Boolean).join(' and ')
+  ;[hydro.owners, hydro.priceAreas, transformers.owners, transformers.sourceLayers, transformers.networkLevels].forEach(validateSelection)
+  ;[hydro.capacity, hydro.grossHead, transformers.voltage].forEach(validateRange)
+  if (hydro.plantStatus !== null) validateString(hydro.plantStatus)
 }
 
 function matchesSelection(value: unknown, selected: string[]): boolean {
@@ -122,18 +105,6 @@ export function matchesEnergyPropertyFilters(feature: Pick<EnergyFeature, 'layer
   }
   return true
 }
-
-export const ENERGY_PROPERTY_OPTIONS_QUERY = `external_table('HydroGeoFeatures')
-| where layer_id in ('hydro-plants', 'transformers')
-| project layer_id, p = parse_json(properties_json)
-| summarize owners = make_set(tostring(p.owner), ${FACET_LIMIT + 1}),
-    price_areas = make_set(tostring(p.price_area), ${FACET_LIMIT + 1}),
-    plant_statuses = make_set(tostring(p.plant_status), ${FACET_LIMIT + 1}),
-    source_layers = make_set(tostring(p.source_layer), ${FACET_LIMIT + 1}),
-    network_levels = make_set(tostring(p.network_level), ${FACET_LIMIT + 1}),
-    capacity_max = max(todouble(p.installed_capacity_mw)),
-    gross_head_max = max(todouble(p.gross_head_m)),
-    voltage_max = max(todouble(p.voltage_kv)) by layer_id`
 
 export function parseEnergyPropertyOptions(rows: Record<string, unknown>[]): EnergyPropertyOptions {
   const hydro = rows.find(row => row.layer_id === 'hydro-plants')

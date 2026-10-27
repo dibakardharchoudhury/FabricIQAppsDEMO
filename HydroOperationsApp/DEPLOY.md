@@ -37,6 +37,11 @@ browser storage. PATs and credential values are never saved by these forms.
 Use **Hide sidebar** for more space. Connection tests run only when you click
 **Test connection** in Full Deploy or GitHub Sync.
 
+Live output follows new lines while you are near the bottom. Scroll up or select text
+to read earlier output without refreshes resetting your position. Use **Jump to latest**
+to return to the newest output and resume following. The log also supports keyboard scrolling.
+After a local UI update, reload the page when safe; a server restart is not required.
+
 ### Find your Teams team and channel IDs
 
 In Teams, choose the channel's **Get link to channel**:
@@ -67,7 +72,7 @@ controls Fabric Git import, not local app or agent source.
 
 Global Administrator and subscription Owner are not routine requirements.
 For scoped access without subscription-wide discovery, use the existing project's
-full ARM ID under **Advanced settings**. Fabric and Foundry may use
+full ARM ID in **Existing project name** instead of its display name. Fabric and Foundry may use
 different subscriptions in the same tenant.
 
 ### No admin rights? Hand this to your Entra admin
@@ -117,10 +122,26 @@ Core refuses the old serial pipeline before starting a long run.
 Notebook completion is not agent runtime acceptance. NB09's exact unsupported-v2
 API response is a documented product limitation, not proof of a working query.
 
-## 4. Materialize the selected ontology graph
+## 4. Choose Knowledge Graph execution
 
-In Fabric: **Manage graph → select eligible entities/relationships → Continue →
-Materialize**. This is a manual portal prerequisite.
+The app defaults to **Live ontology-governed sources**. It verifies the live
+ontology's workspace/item/table/property/key bindings against the existing
+Rayfin Lakehouse and independent SQL connectors, then joins only declared
+relationships. Materialization is not required for this mode. The page reports
+supported/excluded coverage, source observation times, load duration and
+non-atomic cross-source consistency. It does not append inferred SQL topology.
+Denied, invalid, incomplete and over-budget reads fail closed, not to mock data.
+On a first visit, **Connect Fabric and retry** authorizes only Fabric workspace/item
+read access. The graph does not require connecting telemetry to establish this
+separate ontology-read session.
+
+For the separate **Materialized native graph (GQL)** mode, use Fabric:
+**Manage graph → select eligible entities/relationships → Continue →
+Materialize**. This remains a manual portal prerequisite for native execution.
+The app never silently switches modes or treats source-backed instances as a GraphModel.
+When Fabric returns HTTP 204 for the queryable schema, the graph path stops before loading
+the ontology definition or executing queries. Readiness network checks are bounded to ten
+seconds; **Retry graph query** rechecks failed readiness without waiting for a cache expiry.
 
 If setup stops here, materialize the graph, then retry **Foundry agents → Deploy
 app**. Do not reimport Git or rerun Core.
@@ -157,15 +178,31 @@ multiple writers to one energy snapshot.
 
 ### Persistent Foundry agents
 
-Confirm **Azure subscription**, then run **Set up Foundry agents**. It updates five
-specialists and `hydro-orchestrator`, reusing unchanged images and definitions.
-It does not publish the website.
+Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
+specialists and `hydro-orchestrator` against this checkout and the selected Fabric target.
+An existing project/model may still contain missing or older agents. Setup reuses matching
+connections and specialists, creates versions only for changed/missing agents, builds only
+missing source-fingerprinted images, and republishes the hosted coordinator only when its
+image or runtime configuration differs. Each reuse/update is logged, with specialist
+`current / updated / created` counts. It does not publish the website.
 
 - **Reuse a specific project:** enter its name under **Project and model
   choices**. Without a name, setup uses saved settings, the target-named project,
   or the sole available project. Choose a model only for a specific deployment.
-- **Advanced settings:** optional overrides for automatic detection, graph
-  binding and work-order writes; not required for normal setup.
+- **Duplicate project names or scoped access:** paste the full project ARM ID
+  into **Existing project name**. No separate resource-ID field is needed.
+- **Fabric App authentication:** automatic registration discovery/reuse is the
+  default. Select **Use a pre-created app registration** only to choose a specific
+  target-tenant SPA, then enter its Application (client) ID. The choice is shared
+  across Foundry, full workflow and app publication for this tenant/workspace.
+  An explicit selection requires a valid GUID and is verified before deployment;
+  redirect, permission and consent setup remains automated.
+- **Work-order permissions:** the launcher preserves this target's current policy
+  without a UI override; enabled writes require human approval.
+- **Automatic configuration:** project endpoints, connected registries and ontology
+  graph ownership are resolved internally. The launcher does not accept graph-binding
+  JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
+  overrides remain available through the documented command-line configuration.
 - **New project:** expand **Create a new project**, enter a chat model and
   explicitly approve resource creation.
   Approval resets on reload or target change.
@@ -183,7 +220,23 @@ silently replaced.
 Choose **Deploy app**. It verifies prepared agents, publishes the website and checks
 runtime/CORS, SQL and authentication. It does not rebuild agents or seed data.
 Readiness requires browser-equivalent preflights and POST checks for `/graphql`
-and `/api/auth/v1/token`; missing CORS headers or token HTTP 5xx fails deployment.
+and `/api/auth/v1/token`, plus `/connectors/hydrolakehouse/graphql`,
+`/connectors/hydrooperations/graphql` and, with energy enabled,
+`/connectors/hydrogeo/graphql`; missing CORS headers or token HTTP 5xx fails deployment.
+
+Both Lakehouses use separate delegated, read-only `fabric-sqlanalytics` connectors.
+Operational SQL uses the delegated `fabric-sqldatabase` connector. The deployer
+resolves both Lakehouse SQL endpoint IDs from live workspace metadata, validates
+their distinct identities, and applies each connector with an explicit success receipt.
+Energy-disabled targets omit the GeoContext connector declaration.
+
+No standalone `Hydro_STID_API` setup or legacy GraphQL source-rebinding is performed.
+Existing standalone items are not automatically modified or deleted. Rayfin's managed
+GraphQL transport is still part of its connector implementation, not the retired API.
+The automated Entra SPA setup remains necessary for direct Eventhouse/live-frequency,
+Fabric ontology/jobs/Data Agent and Foundry calls; it cannot be removed merely by
+switching the Lakehouse transport. GeoContext external aliases are retained for
+optional map Data Agent access, not browser map queries.
 
 Canonical agent/CLI command, from the repository root:
 
@@ -214,6 +267,11 @@ NB01 creates `RTI_Demo_SQLDatabase_<suffix>`; NB11 owns additive seeding and sou
 publication. The `hydrooperations` connector uses that independent database,
 not the AppBackend child. Routine app deployment needs no manual migrations or
 reseeding. Preserve retained legacy databases.
+The hosted Administration guide does not offer a second seeding action. Its
+steps are sign-in, start stream, connect STID, connect telemetry and connect
+weather. STID/weather can connect independently of telemetry startup. Existing
+in-flight seed jobs from older app versions can still be monitored to completion;
+the app no longer starts NB11 or a client-side seed fallback.
 [Cutover safeguards](../docs/ontology-test-review.md#october-25-canonical-sql-naming-cutover-completed).
 
 ## Redeploying to a different tenant, workspace, or region
@@ -255,7 +313,7 @@ publication does not configure provider authentication or ingest data.
 |---|---|
 | Permission, consent or private endpoint | Give the exact error to the resource owner; do not weaken access controls |
 | Stale agent/source configuration | Foundry setup, then app deployment |
-| Graph not materialized | Complete the portal action, then retry the stopped module |
+| Native graph not materialized | Use the explicitly labelled live-source mode, or complete the portal action for native GQL; never fabricate graph ownership |
 | Weather provider HTTP 401 | Credential owner checks `mai-weather-api-key` in Key Vault; rerun Weather only |
 | Energy/Weather source failure | Fix that source's credentials/connectivity, then refresh it |
 | Paused capacity or unsupported region | Fix the target prerequisite, not the app build |

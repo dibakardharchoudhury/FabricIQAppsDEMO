@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  buildEnergyPropertyPredicate, createEnergyPropertyFilters, ENERGY_PROPERTY_OPTIONS_QUERY,
+  validateEnergyPropertyFilters, createEnergyPropertyFilters,
   matchesEnergyPropertyFilters, parseEnergyPropertyOptions, propertyFilterCount,
 } from '../src/ui-shared/energyMapFilters.ts'
-import { asFeatureCollection, buildEnergyMapQuery, INITIAL_VIEW, parseEnergyFeature } from '../src/ui-shared/energyMapModel.ts'
+import { asFeatureCollection, validateEnergyMapRequest, INITIAL_VIEW, parseEnergyFeature } from '../src/ui-shared/energyMapModel.ts'
 
 test('property filters default to unrestricted and resets do not share mutable selections', () => {
   const first = createEnergyPropertyFilters()
   const second = createEnergyPropertyFilters()
-  assert.equal(buildEnergyPropertyPredicate(first), '')
+  assert.doesNotThrow(() => validateEnergyPropertyFilters(first))
   assert.equal(propertyFilterCount(first), 0)
   first.hydro.owners.push('Owner A')
   assert.deepEqual(second.hydro.owners, [])
@@ -66,42 +66,34 @@ test('missing categorical values can be selected explicitly', () => {
   filters.hydro.owners = ['']
   assert.equal(matchesEnergyPropertyFilters({ layerId: 'hydro-plants', properties: {} }, filters), true)
   assert.equal(matchesEnergyPropertyFilters({ layerId: 'hydro-plants', properties: { owner: 'Owner A' } }, filters), false)
-  assert.match(buildEnergyPropertyPredicate(filters), /owner\) in \(""\)/)
+  assert.doesNotThrow(() => validateEnergyPropertyFilters(filters))
 })
 
-test('map property predicates run before ordering and the feature cap', () => {
+test('map request validation checks all layer property filters', () => {
   const filters = createEnergyPropertyFilters()
   filters.hydro.owners = ['Owner A']
   filters.hydro.capacity = { min: 0.001, max: 1240 }
   filters.hydro.inOperation = 'false'
   filters.transformers.voltage = { min: 22, max: 420 }
-  const query = buildEnergyMapQuery({ ...INITIAL_VIEW, zoom: 12 }, ['hydro-plants', 'transformers', 'masts'], filters)
-  assert.match(query, /layer_id != 'hydro-plants' or/)
-  assert.match(query, /layer_id != 'transformers' or/)
-  assert.match(query, /installed_capacity_mw\) between \(0.001 \.\. 1240\)/)
-  assert.match(query, /in_operation\) == false/)
-  assert.ok(query.indexOf('voltage_kv') < query.indexOf('| order by'))
-  assert.ok(query.indexOf('voltage_kv') < query.indexOf('| take 4001'))
-  assert.ok(!buildEnergyMapQuery(INITIAL_VIEW, ['hydro-plants']).includes('map_properties'))
+  assert.deepEqual(validateEnergyMapRequest({ ...INITIAL_VIEW, zoom: 12 }, ['hydro-plants', 'transformers', 'masts'], filters),
+    ['masts', 'transformers', 'hydro-plants'])
 })
 
-test('categorical values are quoted as data and cannot inject KQL', () => {
+test('categorical values remain data and retain length validation', () => {
   const filters = createEnergyPropertyFilters()
   const name = 'Owner "A"\\branch\n| take 999999 //'
   filters.hydro.owners = [name, "O'Brien"]
-  const predicate = buildEnergyPropertyPredicate(filters)
-  assert.ok(predicate.includes(JSON.stringify(name)))
-  assert.ok(predicate.includes(JSON.stringify("O'Brien")))
-  assert.equal(predicate.split('\n').length, 1)
+  assert.doesNotThrow(() => validateEnergyPropertyFilters(filters))
+  assert.equal(matchesEnergyPropertyFilters({ layerId: 'hydro-plants', properties: { owner: name } }, filters), true)
   filters.hydro.owners = ['x'.repeat(2049)]
-  assert.throws(() => buildEnergyPropertyPredicate(filters), /Invalid/)
+  assert.throws(() => validateEnergyPropertyFilters(filters), /Invalid/)
 })
 
-test('malformed numeric intervals never reach KQL', () => {
+test('malformed numeric intervals never reach the connector', () => {
   for (const range of [{ min: -1, max: 2 }, { min: NaN, max: 2 }, { min: 2, max: 1 }, { min: 0, max: Infinity }]) {
     const filters = createEnergyPropertyFilters()
     filters.hydro.capacity = range
-    assert.throws(() => buildEnergyMapQuery(INITIAL_VIEW, ['hydro-plants'], filters), /Invalid map property range/)
+    assert.throws(() => validateEnergyMapRequest(INITIAL_VIEW, ['hydro-plants'], filters), /Invalid map property range/)
   }
 })
 
@@ -114,10 +106,6 @@ const facetRows = () => [
 ]
 
 test('facet metadata uses full imported layers rather than the current viewport', () => {
-  assert.ok(ENERGY_PROPERTY_OPTIONS_QUERY.includes("layer_id in ('hydro-plants', 'transformers')"))
-  assert.ok(!ENERGY_PROPERTY_OPTIONS_QUERY.includes('min_lon'))
-  assert.ok(!ENERGY_PROPERTY_OPTIONS_QUERY.includes('geometry_json'))
-  assert.ok(!ENERGY_PROPERTY_OPTIONS_QUERY.includes('| take'))
   const options = parseEnergyPropertyOptions(facetRows())
   assert.deepEqual(options.hydro.owners, ['', 'Owner A', 'Owner B'])
   assert.equal(options.hydro.capacityMax, 1240)

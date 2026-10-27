@@ -16,6 +16,7 @@ services:
       enabled: true
       externalEntraExchange: true
     allowedRedirectUris:
+      - https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net
       - https://jade-dew-88c8451584-swedencentral.webapp.fabricapps.net
       - https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net
       - https://lofty-coast-a9601204e1-swedencentral.webapp.fabricapps.net
@@ -90,6 +91,15 @@ connectors:
     config:
       workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
       itemId: ${RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID}
+    auth:
+      type: delegated
+    operations:
+      - name: read
+  - name: hydrogeo
+    type: fabric-sqlanalytics
+    config:
+      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
+      itemId: ${RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID}
     auth:
       type: delegated
     operations:
