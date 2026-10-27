@@ -125,7 +125,8 @@ def compose_runtime_configuration(
             },
         },
         "project_endpoint": project_endpoint.rstrip("/"),
-        "native_binding": {"source": source, "connections": {"data-agent": "hydro-fabric-iq"}},
+        "native_binding": {"source": source, "connections": {"data-agent": "hydro-fabric-iq"},
+                           "toolbox": "hydro-fabric-iq-tools"},
         "production_writes_enabled": production_writes,
     }
     fabric_source: dict[str, object] = {

@@ -1034,9 +1034,9 @@ Use the existing SQL database for work orders, maintenance notifications, inspec
 CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
 CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = """### Cross-source operational joins
 
-Join Eventhouse telemetry to Lakehouse signal/instrument metadata by exact opcua_node_id; then match equipment_id to SQL equipmentId, and opcuaNodeId where applicable. Do not assume one source can directly query another.
-If source tools cannot share results, include EVERY required returned identifier/count tuple in the next tool request. Use supported SQL joins/VALUES and aggregate in the source, not by counting prose. Conserve totals; report unmatched/duplicate keys. Include zero-order facilities for fleet rollups.
-Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open, not completedAt IS NULL. WorkOrders has no facility column; resolve it through equipment."""
+Use independent single-source queries; never cross-source SQL/KQL JOINs. Read Lakehouse equipment_id/facility_id/opcua_node_id mappings, Eventhouse aggregates, then SQL equipmentId/opcuaNodeId work. Pass EVERY required returned identifier/count tuple as literal filters; match returned keys in the answer, not across engines. Federation-disabled queries require one independent-read correction, not abandonment.
+Aggregate events per node; never dump raw events. 'Had BAD today' means any BAD event in today's UTC window, not latest-only. Conserve totals; report unmatched/duplicate keys; include zero-order facilities.
+Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative. Resolve facilities through equipment."""
 
 GLOBAL_SCOPE_MARKER = "### Conversation scope"
 GLOBAL_SCOPE_INSTRUCTIONS = """### Conversation scope

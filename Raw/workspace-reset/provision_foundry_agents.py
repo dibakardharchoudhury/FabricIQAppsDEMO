@@ -206,7 +206,8 @@ def verify_hosted_source(agent: dict, tenant: str, workspace: str, ontology: str
     }
     if source != expected:
         raise RuntimeError("The active hosted runtime source identity does not match the selected Fabric deployment.")
-    if native_binding != {"source": expected, "connections": {"data-agent": "hydro-fabric-iq"}}:
+    if native_binding != {"source": expected, "connections": {"data-agent": "hydro-fabric-iq"},
+                          "toolbox": "hydro-fabric-iq-tools"}:
         raise RuntimeError("The active hosted runtime must retain only the verified Data Agent native binding.")
 
 
@@ -305,6 +306,50 @@ def fabric_iq_connection_properties(target: str) -> dict:
         "metadata": {"type": "fabric_iq_preview"},
     }
 
+def ensure_native_toolbox(endpoint: str, headers: dict, *, verify_only: bool = False) -> str:
+    url = endpoint.rstrip("/") + "/toolboxes/hydro-fabric-iq-tools"
+    tools = [{
+        "type": "fabric_iq_preview", "name": "hydro-data", "server_label": "fabriciq-data-agent",
+        "project_connection_id": "hydro-fabric-iq", "require_approval": "never",
+    }]
+    response = request_with_read_retry("GET", url + "?api-version=v1", headers=headers, timeout=60)
+    if response.status_code not in (200, 404):
+        raise RuntimeError(f"Native Foundry toolbox read failed: HTTP {response.status_code}.")
+    current = {}
+    if response.ok:
+        version = response.json().get("default_version", "")
+        if not isinstance(version, str) or not re.fullmatch(r"[1-9][0-9]*", version):
+            raise RuntimeError("The native Foundry toolbox has no valid default version.")
+        response = request_with_read_retry(
+            "GET", f"{url}/versions/{version}?api-version=v1", headers=headers, timeout=60,
+        )
+        if not response.ok:
+            raise RuntimeError(f"Native Foundry toolbox version read failed: HTTP {response.status_code}.")
+        current = response.json()
+        if current.get("tools") == tools:
+            print(f"Foundry: reusing native toolbox hydro-fabric-iq-tools:{version}.", flush=True)
+            return version
+    if verify_only:
+        raise RuntimeError("The native Foundry toolbox is missing or its Data Agent binding has drifted.")
+    body = {key: current[key] for key in ("policies", "skills", "metadata", "description") if key in current}
+    body["tools"] = tools
+    response = request_with_read_retry(
+        "POST", url + "/versions?api-version=v1", headers=headers, json=body, timeout=60,
+    )
+    if not response.ok:
+        raise RuntimeError(f"Native Foundry toolbox creation failed: HTTP {response.status_code}.")
+    version = response.json().get("version", "")
+    if not isinstance(version, str) or not re.fullmatch(r"[1-9][0-9]*", version):
+        raise RuntimeError("Native Foundry toolbox creation returned no valid version.")
+    response = request_with_read_retry(
+        "PATCH", url + "?api-version=v1", headers=headers, json={"default_version": version}, timeout=60,
+    )
+    if not response.ok:
+        raise RuntimeError(f"Native Foundry toolbox publication failed: HTTP {response.status_code}.")
+    if ensure_native_toolbox(endpoint, headers, verify_only=True) != version:
+        raise RuntimeError("Native Foundry toolbox publication readback differs from the requested version.")
+    return version
+
 
 def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> None:
     value = lambda key: deploy._public_config_value(values, key)
@@ -345,6 +390,12 @@ def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: s
     verify_published_identity(definition, workspace, ontology)
     if not published_sql_source_ready(definition, workspace, value("RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")):
         raise RuntimeError("The connected Data Agent no longer exposes the verified operational SQL source.")
+    token = deploy.run_capture(deploy.az(
+        "account", "get-access-token", "--tenant", tenant, "--resource", "https://ai.azure.com",
+        "--query", "accessToken", "-o", "tsv",
+    ))
+    ensure_native_toolbox(value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"),
+                          {"Authorization": f"Bearer {token}"}, verify_only=True)
 
 
 def verify_existing(deploy, tenant: str, workspace: str) -> None:
@@ -766,6 +817,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
             raise deploy.DeployError(f"Foundry definition readback failed for {name}.")
         print(f"Verified persistent Foundry agent {name}:{live['version']}", flush=True)
     print(f"Foundry: specialists current={reused}, updated={updated}, created={created}.", flush=True)
+    ensure_native_toolbox(endpoint, agent_headers)
 
     kql = request(
         "GET", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/kqlDatabases/{public_values['RAYFIN_PUBLIC_KQL_DATABASE_ID']}",

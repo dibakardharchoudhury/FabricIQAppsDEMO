@@ -38,6 +38,8 @@ from hydro_orchestrator.foundry_supervisor import (
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
+from hydro_orchestrator.native_toolbox import NativeToolboxCall
+from mcp import types as mcp_types
 from hydro_orchestrator.presentation import client_presentation
 from hydro_orchestrator.service import ChatInput, create_app, follow_up_intent
 from test_durable_service import SOURCE, HEADERS, TOKEN
@@ -259,6 +261,122 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_toolbox_flow_preserves_source_answer_and_recovers_without_model_calls(self):
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "How are the facilities and the turbines related to the WOs?",
+            "native_sources": ("data-agent",),
+        })
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-toolbox", tools=())
+        self.versions["fabric-iq"] = version
+        self.seed(request)
+        text = "## Original source\r\n\r\n**T005** belongs to the source facility.\n\n" + "Full evidence. " * 400
+        call = NativeToolboxCall("actual-tool-execution", "dynamic-native-tool", {"userQuestion": request.question},
+                                mcp_types.CallToolResult(content=[mcp_types.TextContent(type="text", text=text)]))
+        binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                toolbox="hydro-fabric-iq-tools")
+        owner = self.make_owner(native_binding=binding, analysis_model="test-model")
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_toolbox",
+                   new_callable=AsyncMock, return_value=call) as invoke:
+            answer = await owner.run(request)
+            self.assertEqual(invoke.call_count, 1)
+            self.assertEqual(invoke.call_args.args[1:5],
+                             ("hydro-fabric-iq-tools", "2", "native-data", request.question))
+            self.assertEqual(client_presentation(answer).text.encode(), text.encode())
+            self.assertEqual(answer.native_answers[0].content_sha256, sha256(text.encode()).hexdigest())
+            self.assertEqual(owner.specialists[0].response_id, "actual-tool-execution")
+            self.assertEqual(owner.specialists[0].agent_name, "hydro-fabric-iq-tools")
+            self.assertFalse(self.calls)
+            self.assertEqual(self.tools.calls, 0)
+            self.assertIsNone(answer.analysis)
+            restarted = self.make_owner(native_binding=binding, analysis_model="test-model")
+            restarted.root = self.root / "restart-toolbox"
+            self.seed(request, root=restarted.root)
+            journal = RunJournal(self.root / str(request.run_id) / "receipts")
+            recovered = RunJournal(restarted.root / str(request.run_id) / "receipts")
+            recovered.save("prepared_answer", journal.read("prepared_answer"))
+            self.assertEqual(await restarted.run(request), answer)
+            self.assertEqual(invoke.call_count, 1)
+
+    async def test_native_toolbox_keeps_provider_moderation_errors_out_of_evidence(self):
+        binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                toolbox="hydro-fabric-iq-tools")
+        owner = self.make_owner(native_binding=binding)
+        call = NativeToolboxCall("actual-execution", "tool", {"userQuestion": self.request.question},
+                                mcp_types.CallToolResult.model_validate({
+                                    "content": [{"type": "text", "text": "Facilities have turbines."}],
+                                    "_meta": {"raiPostToolAnnotations": [{
+                                        "error": {"errorDetails": "Error during output moderation for general harms."},
+                                    }]},
+                                }))
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_toolbox",
+                   new_callable=AsyncMock, return_value=call):
+            with self.assertRaises(SourceFailure):
+                await owner.invoke_toolbox(
+                    self.request.question, self.request,
+                    RunJournal(self.root / "moderation-receipts"),
+                    AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-toolbox", tools=()),
+                )
+        self.assertFalse(owner.evidence)
+
+    async def test_native_toolbox_manifest_pins_the_verified_immutable_version(self):
+        binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                toolbox="hydro-fabric-iq-tools")
+        owner = self.make_owner(native_binding=binding)
+        name = "hydro-fabric-iq-tools"
+        tools = [{"type": "fabric_iq_preview", "server_label": "fabriciq-data-agent",
+                  "project_connection_id": "native-data"}]
+        requests = []
+
+        def respond(request):
+            requests.append(str(request.url))
+            if "/toolboxes/" in request.url.path:
+                body = {"name": name, "default_version": "2"}
+                if "/versions/" in request.url.path:
+                    body = {"name": name, "version": "2", "tools": tools}
+                return httpx.Response(200, json=body)
+            version = next(item for item in self.versions.values() if request.url.path.endswith("/agents/" + item.name))
+            return httpx.Response(200, json={
+                "name": version.name, "versions": {"latest": {
+                    "version": version.version,
+                    "definition": {"kind": "prompt", "model": version.model, "tools": list(version.tools)},
+                }},
+            })
+
+        real_client = httpx.AsyncClient
+
+        def client(**kwargs):
+            return real_client(transport=httpx.MockTransport(respond), **kwargs)
+
+        journal = RunJournal(self.root / "toolbox-manifest")
+        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient", side_effect=client):
+            versions = await owner.versions(journal)
+            self.assertEqual(versions["fabric-iq"].name, name)
+            self.assertEqual(versions["fabric-iq"].version, "2")
+            self.assertEqual(versions["fabric-iq"].model, "native-toolbox")
+            self.assertFalse(any("/agents/hydro-fabric-iq-agent" in url for url in requests))
+            self.assertEqual(await owner.versions(journal), versions)
+        self.assertEqual(sum("/toolboxes/" in url for url in requests), 2)
+
+    async def test_native_toolbox_cannot_certify_unverified_quality_work_prose(self):
+        question = "Which turbines had BAD telemetry quality today, and what work is already open for these?"
+        request = self.request.model_copy(update={"question": question, "native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(
+            source=SOURCE, connections={"data-agent": "native-data"}, toolbox="hydro-fabric-iq-tools",
+        ))
+        call = NativeToolboxCall("actual-execution", "tool", {"userQuestion": question},
+                                mcp_types.CallToolResult(content=[mcp_types.TextContent(
+                                    type="text", text="90 signals have BAD data. Work-order linkage is unavailable.",
+                                )]))
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_toolbox",
+                   new_callable=AsyncMock, return_value=call):
+            with self.assertRaisesRegex(SourceFailure, "inspectable JSON bundle"):
+                await owner.invoke_toolbox(
+                    question, request, RunJournal(self.root / "quality-receipts"),
+                    AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-toolbox", tools=()),
+                )
+        self.assertFalse(owner.evidence)
+
     async def test_native_framework_flow_preserves_question_and_completed_receipt_without_projection(self):
         self.native_text = "## Source answer\r\n\r\n**T005** belongs to the source facility.\n\n"
         self.native_text += "Original source details and limitations. " * 100

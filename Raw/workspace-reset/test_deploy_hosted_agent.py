@@ -211,7 +211,8 @@ class ConfigurationTests(unittest.TestCase):
             "generation": 2, "configuration_digest": digest,
         })
         self.assertEqual(orchestrator["native_binding"], {"source": orchestrator["source"],
-                                                          "connections": {"data-agent": "hydro-fabric-iq"}})
+                                                          "connections": {"data-agent": "hydro-fabric-iq"},
+                                                          "toolbox": "hydro-fabric-iq-tools"})
         authorization = orchestrator["authorization"]
         self.assertEqual(authorization["audiences"]["kusto"], [KUSTO])
         self.assertEqual(authorization["scopes"]["kusto"], KUSTO + "/.default")

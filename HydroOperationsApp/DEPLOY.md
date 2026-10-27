@@ -226,6 +226,17 @@ fresh targets otherwise use the documented generic Fabric MCP endpoint.
 Conflicting workspace-specific endpoints fail rather than choosing an arbitrary
 connection. Portal-created connections are not deleted.
 
+The app's native route uses the `hydro-fabric-iq-tools` Foundry toolbox bound to
+the verified `hydro-fabric-iq` connection. Setup creates or versions it only when
+needed, preserves existing toolbox policies/skills/metadata, promotes its default
+version and verifies readback. Prepared app deployment verifies it without
+repairing it. Each run pins the immutable version and discovers its single
+read-only Data Agent query tool. This removes the intermediate Fabric IQ model
+from the app's answer path; the prompt specialist remains for playground use.
+Delegated tokens and policy enforcement stay in Foundry's managed MCP gateway.
+Original source text and resource receipts are retained; downstream analysis and
+approval drafts are separate, never replacements for the source answer.
+
 The ontology supplies the associated Lakehouse and Eventhouse execution sources;
 standalone duplicates of those sources are removed. The explicit operational SQL
 adapter remains necessary while the ontology's SQL association supplies context

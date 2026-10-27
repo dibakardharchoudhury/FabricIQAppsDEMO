@@ -341,7 +341,16 @@ required normal sign-in, so current delegated-source/UI acceptance remains pendi
 
 ## Thin-client contract
 
-For a Fabric Data Agent-only answer, the supervisor executes one Fabric IQ handoff
+The deployed native binding uses the version-pinned `hydro-fabric-iq-tools`
+Foundry toolbox, not the Fabric IQ prompt-agent wrapper. The deterministic
+Agent Framework workflow discovers the single verified, read-only Fabric IQ tool
+and sends the exact question through Foundry's managed MCP gateway. Foundry retains
+delegated authentication and toolbox governance; no direct-Fabric fallback is used.
+The standalone Fabric IQ prompt agent remains available for playground use but
+is not an extra model hop in the app. Setup converges the toolbox onto the stable
+connection, preserves existing policies/skills/metadata, and verifies publication.
+
+For a Fabric Data Agent-only answer, the supervisor executes one native handoff
 and returns the original tool `response` without a Q&A handoff, narrative projection,
 analysis-model call, Markdown escaping, or answer truncation. A sole native step
 receives the original operator question rather than a planner rewrite. The answer

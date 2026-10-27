@@ -292,6 +292,9 @@ class DataAgentInstructionTests(unittest.TestCase):
             "actual query results", "EVERY required returned identifier/count tuple",
             "Treat null/0001 timestamps as missing", "Compare active-node coverage",
             "report missing counts", "equate empty BAD results with healthy turbines",
+            "independent single-source queries", "never cross-source SQL/KQL JOINs",
+            "one independent-read correction", "Aggregate events per node; never dump raw events",
+            "any BAD event in today's UTC window, not latest-only",
         ):
             self.assertIn(phrase, text)
         for phrase in (

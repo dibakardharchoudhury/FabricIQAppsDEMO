@@ -69,6 +69,68 @@ class FabricIQConnectionTests(unittest.TestCase):
             module.fabric_iq_target(workspace, item, connections)
 
 
+class NativeToolboxProvisionTests(unittest.TestCase):
+    tools = [{
+        "type": "fabric_iq_preview", "name": "hydro-data", "server_label": "fabriciq-data-agent",
+        "project_connection_id": "hydro-fabric-iq", "require_approval": "never",
+    }]
+
+    def run_convergence(self, *, current=None, verify_only=False, broken_readback=False):
+        saved = copy.deepcopy(current)
+        calls = []
+
+        def request(method, url, **kwargs):
+            nonlocal saved
+            calls.append((method, url, kwargs))
+            if method == "POST":
+                saved = {**kwargs["json"], "version": "2"}
+                return Mock(ok=True, status_code=200, json=lambda: saved)
+            if method == "PATCH":
+                return Mock(ok=True, status_code=200, json=lambda: {"default_version": "2"})
+            if saved is None:
+                return Mock(ok=False, status_code=404)
+            body = saved if "/versions/" in url else {
+                "default_version": "1" if broken_readback else saved["version"],
+            }
+            return Mock(ok=True, status_code=200, json=lambda: body)
+
+        with patch.object(module, "request_with_read_retry", side_effect=request):
+            version = module.ensure_native_toolbox("https://foundry.example/api/projects/hydro", {},
+                                                   verify_only=verify_only)
+        return version, calls, saved
+
+    def test_existing_verified_toolbox_is_read_only_reused(self):
+        version, calls, _ = self.run_convergence(current={"version": "1", "tools": self.tools})
+        self.assertEqual(version, "1")
+        self.assertEqual([item[0] for item in calls], ["GET", "GET"])
+
+    def test_missing_toolbox_is_created_promoted_and_read_back(self):
+        version, calls, saved = self.run_convergence()
+        self.assertEqual(version, "2")
+        self.assertEqual([item[0] for item in calls], ["GET", "POST", "PATCH", "GET", "GET"])
+        self.assertEqual(saved["tools"], self.tools)
+
+    def test_connection_convergence_preserves_existing_governance(self):
+        old = copy.deepcopy(self.tools)
+        old[0]["project_connection_id"] = "portal-prototype"
+        governance = {"policies": {"sample": {"type": "test-policy"}},
+                      "skills": [{"name": "existing-skill"}], "metadata": {"owner": "operator"},
+                      "description": "Existing read-only native tools."}
+        version, calls, saved = self.run_convergence(current={"version": "1", "tools": old, **governance})
+        self.assertEqual(version, "2")
+        for key, value in governance.items():
+            self.assertEqual(saved[key], value)
+        self.assertEqual([item[0] for item in calls], ["GET", "GET", "POST", "PATCH", "GET", "GET"])
+
+    def test_prepared_verification_does_not_create_or_repair_missing_toolboxes(self):
+        with self.assertRaisesRegex(RuntimeError, "missing or.*drifted"):
+            self.run_convergence(verify_only=True)
+
+    def test_default_version_must_match_publication_readback(self):
+        with self.assertRaisesRegex(RuntimeError, "publication readback"):
+            self.run_convergence(broken_readback=True)
+
+
 class IncrementalProvisionTests(unittest.TestCase):
     def run_provision(self, *, drift=None, missing=None, broken_readback=False, denied=False):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
@@ -115,7 +177,14 @@ class IncrementalProvisionTests(unittest.TestCase):
         hosted_module.ensure_hosted_agent.return_value = hosted
 
         def response(method, url, **kwargs):
-            if url == f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview":
+            if "/toolboxes/" in url:
+                body = {"default_version": "1"}
+                if "/versions/" in url:
+                    body = {"tools": [{
+                        "type": "fabric_iq_preview", "name": "hydro-data", "server_label": "fabriciq-data-agent",
+                        "project_connection_id": "hydro-fabric-iq", "require_approval": "never",
+                    }]}
+            elif url == f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview":
                 body = {"value": [
                     {"name": name, "properties": copy.deepcopy(properties)} for name, properties in connections.items()
                 ] + [insights]}
@@ -346,7 +415,8 @@ class PreparedFoundryTests(unittest.TestCase):
                 "kind": "hosted", "container_configuration": {"image": "registry/image@sha256:" + "a" * 64},
                 "environment_variables": {"HYDRO_ORCHESTRATOR_CONFIG": json.dumps({
                     "source": source,
-                    "native_binding": {"source": source, "connections": {"data-agent": "hydro-fabric-iq"}},
+                    "native_binding": {"source": source, "connections": {"data-agent": "hydro-fabric-iq"},
+                                       "toolbox": "hydro-fabric-iq-tools"},
                 })},
             },
         }}}
@@ -409,6 +479,15 @@ class PreparedFoundryTests(unittest.TestCase):
                 deploy.run_capture.side_effect = None
                 deploy.run_capture.return_value = "token"
                 def respond(method, url, **kwargs):
+                    if "/toolboxes/" in url:
+                        body = {"default_version": "1"}
+                        if "/versions/" in url:
+                            body = {"tools": [{
+                                "type": "fabric_iq_preview", "name": "hydro-data",
+                                "server_label": "fabriciq-data-agent",
+                                "project_connection_id": "hydro-fabric-iq", "require_approval": "never",
+                            }]}
+                        return Mock(ok=True, status_code=200, json=lambda: body)
                     props = {"endpoints": {"AI Foundry API": values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]}}
                     if "/connections/" in url:
                         target_workspace = tenant if wrong_workspace else workspace
@@ -769,7 +848,8 @@ class PublishedIdentityTests(unittest.TestCase):
             "tenant_id": tenant, "workspace_id": workspace, "ontology_id": ontology,
             "generation": 2, "configuration_digest": digest,
         }
-        native_binding = {"source": source, "connections": {"data-agent": "hydro-fabric-iq"}}
+        native_binding = {"source": source, "connections": {"data-agent": "hydro-fabric-iq"},
+                          "toolbox": "hydro-fabric-iq-tools"}
         agent = {"versions": {"latest": {"definition": {"environment_variables": {
             "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({"source": source, "native_binding": native_binding}),
         }}}}}

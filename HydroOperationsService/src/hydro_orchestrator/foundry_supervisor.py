@@ -29,6 +29,7 @@ from pydantic import AwareDatetime, Field, ValidationError, model_validator
 from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentity, WorkOrderDraft, utc_now
 from .live_sources import Bridge, NativeSourceRefusal, NativeSourceServiceError, SourceFailure
 from .foundry_rca import verified_project_endpoint
+from .native_toolbox import call_native_toolbox
 from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation
 from .workflow import RequiredCheckpointStorage
 
@@ -765,6 +766,7 @@ def normalize_filter_conjunctions(arguments: dict[str, object]) -> dict[str, obj
 class NativeBinding(Contract):
     source: SourceIdentity
     connections: dict[NativeSource, str]
+    toolbox: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
 
 
 class EvidenceDataset(Contract):
@@ -2055,6 +2057,8 @@ class FoundrySupervisor:
         names, expected = contracts.get("names"), contracts.get("tools")
         if not isinstance(names, dict) or not isinstance(expected, dict):
             raise SourceFailure("Shared deployed-agent contracts are unavailable.")
+        if self.native_binding is not None and self.native_binding.toolbox is not None:
+            names = {**names, "fabric-iq": self.native_binding.toolbox}
         saved = journal.read("agent_versions")
         control_plane = AgentVersion(
             name=CONTROL_PLANE_AGENT, version=CONTROL_PLANE_VERSION,
@@ -2073,6 +2077,26 @@ class FoundrySupervisor:
         token = await self.credential.get_token("https://ai.azure.com/.default")
 
         async def read(role: Role, name: str, client: httpx.AsyncClient) -> tuple[Role, AgentVersion]:
+            if role == "fabric-iq" and self.native_binding is not None and self.native_binding.toolbox is not None:
+                headers = {"Authorization": f"Bearer {token.token}"}
+                response = await client.get(f"{self.endpoint}/toolboxes/{name}?api-version=v1", headers=headers)
+                response.raise_for_status()
+                toolbox = response.json()
+                revision = toolbox.get("default_version", "")
+                if toolbox.get("name") != name or not isinstance(revision, str) or not re.fullmatch(r"[1-9][0-9]*", revision):
+                    raise SourceFailure("The native Foundry toolbox has no verified immutable version.")
+                response = await client.get(
+                    f"{self.endpoint}/toolboxes/{name}/versions/{revision}?api-version=v1", headers=headers,
+                )
+                response.raise_for_status()
+                value = response.json()
+                tools = value.get("tools", [])
+                if (value.get("name") != name or value.get("version") != revision or len(tools) != 1
+                        or tools[0].get("type") != "fabric_iq_preview"
+                        or tools[0].get("server_label") != "fabriciq-data-agent"
+                        or tools[0].get("project_connection_id") != self.native_binding.connections.get("data-agent")):
+                    raise SourceFailure("The native Foundry toolbox differs from its verified Data Agent binding.")
+                return role, AgentVersion(name=name, version=revision, model="native-toolbox", tools=tuple(tools))
             response = await client.get(f"{self.endpoint}/agents/{name}?api-version=v1",
                                         headers={"Authorization": f"Bearer {token.token}"})
             if not response.is_success:
@@ -2432,18 +2456,21 @@ class FoundrySupervisor:
                             "receipts": [item.receipt() for item in self.evidence.values()],
                         })
                 else:
-                    response, assessment, elapsed = await self.invoke(
-                        selected, delegation.question, request, journal, versions, selected_native,
-                        targeted_context=targeted_context, maintenance_gate_required=maintenance_gate_required,
-                    )
-                    if not response.response_id:
-                        raise SourceFailure("Specialist invocation has no service response identity.")
-                    result = SpecialistResult(
-                        role=selected, agent_name=versions[selected].name, version=versions[selected].version,
-                        response_id=response.response_id, duration_ms=elapsed,
-                        model_round_count=sum(message.role == "assistant" for message in response.messages),
-                        input_digest=self.invocation_inputs[response.response_id], text=response.text, report=assessment,
-                    )
+                    if selected == "fabric-iq" and self.native_binding is not None and self.native_binding.toolbox is not None:
+                        result = await self.invoke_toolbox(delegation.question, request, journal, versions[selected])
+                    else:
+                        response, assessment, elapsed = await self.invoke(
+                            selected, delegation.question, request, journal, versions, selected_native,
+                            targeted_context=targeted_context, maintenance_gate_required=maintenance_gate_required,
+                        )
+                        if not response.response_id:
+                            raise SourceFailure("Specialist invocation has no service response identity.")
+                        result = SpecialistResult(
+                            role=selected, agent_name=versions[selected].name, version=versions[selected].version,
+                            response_id=response.response_id, duration_ms=elapsed,
+                            model_round_count=sum(message.role == "assistant" for message in response.messages),
+                            input_digest=self.invocation_inputs[response.response_id], text=response.text, report=assessment,
+                        )
                     journal.save(key, CachedHandoff(specialist=result, evidence=tuple(self.evidence.values()))
                                  .model_dump(mode="json"))
             except Exception:
@@ -2483,6 +2510,92 @@ class FoundrySupervisor:
                 self.specialists.append(result)
             return {"specialist": result.model_dump(mode="json"),
                     "evidence": [item.receipt() for item in self.evidence.values()]}
+
+    async def invoke_toolbox(
+        self, question: str, request: ChatRequest, journal: RunJournal, version: AgentVersion,
+    ) -> SpecialistResult:
+        self.healthy(request)
+        binding = self.native_binding
+        if binding is None or binding.toolbox is None or binding.toolbox != version.name or version.model != "native-toolbox":
+            raise SourceFailure("Native execution requires a pinned, target-verified Foundry toolbox.")
+        started = perf_counter()
+        call = await call_native_toolbox(
+            self.endpoint, binding.toolbox, version.version, binding.connections["data-agent"], question,
+            self.credential,
+            timeout=min(FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS, (request.deadline - utc_now()).total_seconds()),
+        )
+        self.healthy(request)
+        journal.save(f"native_response:{call.request_id}", {
+            "source": "data-agent", "toolbox": version.name, "version": version.version,
+            "tool_name": call.tool_name, "arguments": call.arguments,
+            "request_id": call.request_id, "result": call.result.model_dump(mode="json", by_alias=True),
+        })
+        result = _validated_native_result(json.dumps(call.source_payload()))
+        if self.semantic_decision is None:
+            checked = await self.bridge.call({
+                "action": "validate_quality_work_evidence", "question": request.question,
+                "result": {"native_outputs": [result]}, "requested_at_utc": request.requested_at.isoformat(),
+            })
+            if checked.get("required") is True:
+                checked_result = checked.get("result")
+                if not isinstance(checked_result, dict):
+                    raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
+                result = {**checked_result, "response": result["response"]}
+        required = initial_equipment_selection(request)
+        if required and not required.issubset(_native_equipment_ids(result)):
+            raise SourceFailure("Native identity coverage missing: the selected source omitted requested equipment.")
+        self.record_native_result(request, call.request_id, result, question, "data-agent")
+        return SpecialistResult(
+            role="fabric-iq", agent_name=version.name, version=version.version,
+            response_id=call.request_id, duration_ms=(perf_counter() - started) * 1000,
+            input_digest=sha256(_encoded(call.arguments)).hexdigest(),
+            text=str(result["response"]),
+        )
+
+    def record_native_result(
+        self, request: ChatRequest, identity: str, native_result: dict[str, object],
+        question: str, native_source: NativeSource,
+    ) -> None:
+        native_units, native_presentation = _native_count_chart_metadata(native_result)
+        if request.charts_requested and native_presentation is not None and not isinstance(native_result.get("presentation"), dict):
+            native_result["presentation"] = native_presentation
+        native_text = next((
+            value for key in ("response", "native_text")
+            if isinstance((value := native_result.get(key)), str) and len(value) > 2400
+        ), None)
+        if native_text is not None:
+            native_result["citation_fragments"] = list(_bounded_citation_fragments(native_text))
+        fields = tuple(
+            key for key, value in native_result.items()
+            if isinstance(value, list) and all(isinstance(item, dict) for item in value)
+        )
+        group_by: Literal["equipment_id", "facility_id"] | None = None
+        if native_presentation is not None:
+            chart = native_presentation.get("chart")
+            x_key = chart.get("x_key") if isinstance(chart, dict) else None
+            if x_key in ("equipment_id", "equipmentId"):
+                group_by = "equipment_id"
+            elif x_key in ("facility_id", "facilityId", "Station"):
+                group_by = "facility_id"
+        scopes: set[Literal["population", "focus"]] = {
+            item.scope for item in self.answer_contract.requirements
+            if item.kind == "native_claims" and item.authority == "native"
+        } if self.answer_contract is not None else set()
+        self.evidence[identity] = ToolEvidence(
+            id=identity, source=request.source, tool=f"fabriciq-{native_source}",
+            arguments={"assignment": question}, completed_at=utc_now(), result=native_result,
+            resolved_equipment_ids=tuple(sorted(_native_equipment_ids(native_result))), column_units=native_units,
+            datasets=tuple(
+                EvidenceDataset(
+                    kind="native_claims", field=field, authority="native", scope=scope, complete=True,
+                    identity_fields=("source_identity",),
+                    group_by=group_by if native_presentation is not None and native_presentation.get("table_field") == field else None,
+                    role="primary" if index == 0 else "support",
+                )
+                for scope in sorted(scopes) for index, field in enumerate(fields)
+            ),
+            limitations=("Native connection receipt does not attest SQL/combined-source provenance.",),
+        )
 
     async def invoke(
         self, role: Role, question: str, request: ChatRequest, journal: RunJournal,
@@ -3133,59 +3246,7 @@ class FoundrySupervisor:
                 raise SourceFailure("Sleuth returned prose without its required grounded assessment.")
             if role == "fabric-iq":
                 for identity, native_result in native_results.items():
-                    native_units, native_presentation = _native_count_chart_metadata(native_result)
-                    if (
-                        request.charts_requested
-                        and native_presentation is not None
-                        and not isinstance(native_result.get("presentation"), dict)
-                    ):
-                        native_result["presentation"] = native_presentation
-                    native_text = next((
-                        value for key in ("response", "native_text")
-                        if isinstance((value := native_result.get(key)), str) and len(value) > 2400
-                    ), None)
-                    if native_text is not None:
-                        native_result["citation_fragments"] = list(_bounded_citation_fragments(native_text))
-                    native_fields = tuple(
-                        key for key, value in native_result.items()
-                        if isinstance(value, list)
-                        and all(isinstance(item, dict) for item in value)
-                    )
-                    native_group_by: Literal["equipment_id", "facility_id"] | None = None
-                    if native_presentation is not None:
-                        chart_value = native_presentation.get("chart")
-                        x_key = chart_value.get("x_key") if isinstance(chart_value, dict) else None
-                        if x_key in ("equipment_id", "equipmentId"):
-                            native_group_by = "equipment_id"
-                        elif x_key in ("facility_id", "facilityId", "Station"):
-                            native_group_by = "facility_id"
-                    native_scopes: set[Literal["population", "focus"]] = {
-                        item.scope for item in self.answer_contract.requirements
-                        if item.kind == "native_claims" and item.authority == "native"
-                    } if self.answer_contract is not None else set()
-                    receipt = ToolEvidence(id=identity, source=request.source, tool=f"fabriciq-{native_source}",
-                                           arguments={"assignment": question}, completed_at=utc_now(),
-                                           result=native_result,
-                                           resolved_equipment_ids=tuple(sorted(_native_equipment_ids(native_result))),
-                                           column_units=native_units,
-                                           datasets=tuple(
-                                               EvidenceDataset(
-                                                   kind="native_claims", field=field, authority="native",
-                                                   scope=scope, complete=True,
-                                                   identity_fields=("source_identity",),
-                                                   group_by=(
-                                                       native_group_by
-                                                       if native_presentation is not None
-                                                       and native_presentation.get("table_field") == field
-                                                       else None
-                                                   ),
-                                                   role="primary" if index == 0 else "support",
-                                               )
-                                               for scope in sorted(native_scopes)
-                                               for index, field in enumerate(native_fields)
-                                           ),
-                                           limitations=("Native connection receipt does not attest SQL/combined-source provenance.",))
-                    self.evidence[receipt.id] = receipt
+                    self.record_native_result(request, identity, native_result, question, "data-agent")
                 if not native_results:
                     raise SourceFailure("Native specialist returned prose without a successful selected-source receipt.")
             if role == "work-order" and completed_report is None and not any(
