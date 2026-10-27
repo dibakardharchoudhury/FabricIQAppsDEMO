@@ -61,6 +61,19 @@ on activated hierarchy and WO edges, preserved semantic colors/triangle arrows,
 readable facility ancestry, dimmed siblings and unchanged node positions on
 selection. This fixture is not live-source performance or native-query acceptance.
 
+Published to FEATURE as **v1.0.1141 / b7087f1** at
+`2026-10-27T09:01:08.737252Z`. Canonical deployment readiness checks and
+preservation of all 42 SPA redirects passed. Authenticated hosted acceptance
+verified WO-2851's three correctly typed targets, the separate **Signal ·
+power_output** inspector entry, zero active/selected edge overlay, preserved
+semantic colors/arrows, readable facility/system ancestry and unchanged node
+positions when changing selection. The T008 scope contained 16 nodes/19 edges.
+The hosted graph reported **18/18 entity types and 17/17 relationship types**;
+one forced refresh completed in **6.217 s**. A separate synthetic visual-helper
+preparation run for 2,000 nodes/4,000 edges took **37.86 ms** against 250 ms.
+Neither measurement is a full-render/load-test or native-query certification.
+No Ontology binding was changed and no operational record was written.
+
 ## Loading and refresh interaction
 
 The graph workspace, toolbar, filters and inspector render immediately. First-load
@@ -376,7 +389,7 @@ the existing five-minute in-memory caching; an explicit refresh rechecks live re
 The graph opens in the performant 2D analysis view. Directed arrowheads preserve the declared
 Ontology relationship orientation, while animated cyan/status-colored dashes show current
 telemetry moving from a reading-bearing instrument through equipment, system, and facility
-relationships. Maintenance and other SQL overlays are never treated as telemetry paths.
+relationships. Maintenance and other contextual links are never treated as telemetry paths.
 
 Solid arrows are governed relationships without a telemetry-path highlight. Static dashed arrows
 are governed signal bindings; they do not mean that a relationship is broken. Fine moving
@@ -553,7 +566,7 @@ flowchart LR
    GM["Ontology-managed GraphModel"]
    SRC["Verified Rayfin bound-source projections"]
     EH["Eventhouse OPCUAEvents"]
-    SQL["Rayfin SQL operational records"]
+    SQL["Native maintenance health observations"]
    GQL["Native Graph REST\nGQL queries"]
     KQL["KQL latest readings"]
    BUILD["buildKnowledgeGraph()\nexplicit governed execution + telemetry enrichment"]
@@ -574,7 +587,7 @@ GraphModel metadata, queryable aliases, node/edge types, and relationship endpoi
 native GQL results. `queryOntologySourceGraph()` instead requires verified physical source
 bindings and builds only explicitly supported entity/relationship projections. Pending reads show
 a loading state; failed or empty reads show an explicit unavailable state. No topology is substituted
-between modes. Live mode does not append the historical hardcoded SQL overlay relationships.
+between modes. Neither mode appends the historical hardcoded SQL overlay relationships.
 
 Relative to `/v1/workspaces/{workspaceId}/`, native reads use
 `GET graphModels/{id}/getQueryableGraphType?beta=true` and

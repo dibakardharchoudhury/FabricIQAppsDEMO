@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Knowledge Graph endpoint and edge interaction repair
 
@@ -80,6 +80,37 @@ Azure MCP policy readback returned ten applicable assignments, including the
 resource-creation block and write/delete MFA policies. This app-only publication
 does not request new ARM resources or change protected infrastructure properties;
 this is not a subscription-wide compliance certification.
+
+### Hosted acceptance - endpoint and interaction repair
+
+- Canonical orchestrator exited 0 with `SUCCESS` and `DEPLOYED_APP_URL` at
+  `2026-10-27T09:01:08.737252Z`; total duration **684.906 seconds**.
+  URL: `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+- Authenticated hosted browser confirmed **v1.0.1141 / b7087f1**. The orchestrator's
+  protected sign-in-gate check was followed by actual signed-in source execution;
+  it was not treated as UI/data acceptance on its own.
+- All 42 Entra SPA redirects were preserved. AppBackend GraphQL/token paths and
+  all three connector paths passed browser-equivalent preflight/POST readiness.
+  The existing five specialists and coordinator image/configuration were reused.
+- The hosted graph reported **18/18 entity types and 17/17 relationship types**.
+  A forced authenticated graph refresh completed in **6,217 ms** (one observed
+  end-to-end browser sample, not a load-test/SLO certification).
+- WO-2851's actual three relationships retain equipment, instrument and signal
+  targets, respectively. `WorkOrder_for_signal` now targets
+  `signal:ns=2;s=T008.power_output`, not `instrument:INST_T008_POWER_OUTPUT`.
+  The inspector displays **Signal · power_output** with a signal type.
+- Live computed-style checks reproduced the old hierarchy-edge overlay at
+  opacity 0.25/padding 10 px, then verified the deployed hierarchy and WO edges
+  have zero overlay opacity/padding when active/selected. Semantic stroke/arrow
+  colors and triangle arrowheads are preserved.
+- Selecting WO-2851 and then T008 retained readable facility/system ancestry;
+  node positions were unchanged. The T008 scope contains 16 nodes and 19 edges.
+- A separate synthetic 2,000-node/4,000-edge visual-preparation measurement
+  (flow, routes and focus) took **37.86 ms** against the 250 ms budget.
+  This is not a native-query, full-render or live-source latency measurement.
+- Azure MCP live role readback confirmed the existing project-scoped Foundry
+  User assignment. No access or infrastructure was added; no operational record
+  was created, approved or deleted. Ontology bindings/relationships were unchanged.
 
 ## Knowledge Graph in-workspace loading update
 
