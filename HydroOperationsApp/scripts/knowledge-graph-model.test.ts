@@ -150,6 +150,26 @@ test('keeps non-bijective signals separate and redirects other edges of collapse
   assert.equal(collapsed.edges.find(edge => edge.nativeOid === 'signal-document')?.target, 'ontology:d1')
 })
 
+test('native maintenance relationships preserve direction and identity without masquerading as signal topology', () => {
+  const native = nativeGraph()
+  native.nodes.push({
+    oid: 'work', labels: ['WorkOrder'], properties: { id: 'NW1', workOrderNumber: 'WO-native', priority: 'High', status: 'Open' },
+  })
+  native.edges.push(
+    { oid: 'for-instrument', labels: ['WorkOrder_for_instrument'], sourceOid: 'work', targetOid: 'i1', properties: {} },
+    { oid: 'for-signal', labels: ['WorkOrder_for_signal'], sourceOid: 'work', targetOid: 'v1', properties: {} },
+  )
+  const contract = { ...ontology, entityTypes: [...ontology.entityTypes, {
+    ...ontology.entityTypes[0], id: 'work-entity', name: 'WorkOrder', localName: 'WorkOrder', sourceTable: 'WorkOrder', entityIdParts: ['id'],
+  }] }
+  const graph = buildKnowledgeGraph(input({ ontologyGraph: native, ontology: contract }))
+  assert.equal(graph.error, undefined)
+  const maintenance = graph.edges.filter(edge => ['for-instrument', 'for-signal'].includes(edge.nativeOid ?? ''))
+  assert.equal(maintenance.length, 2)
+  assert.ok(maintenance.every(edge => edge.type === 'affects' && edge.source === 'work-order:NW1' && edge.target === 'instrument:I1'))
+  assert.notEqual(maintenance[0].id, maintenance[1].id)
+})
+
 test('missing native topology cannot expose SQL overlay nodes or guessed relationships', () => {
   const graph = buildKnowledgeGraph(input({
     ontologyGraph: null, ontology: { ...ontology, relationshipTypes: [] },

@@ -275,7 +275,13 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       && (name === 'signals_from_instruments' || relationship?.name.endsWith('#signals_from_instruments'))) {
       signalBindings.push({ source, target })
     }
-    const type = source.type === 'signal' || target.type === 'signal' ? 'has-signal' : source.type === 'instrument' || target.type === 'instrument' ? 'has-instrument' : 'contains'
+    const endpoints = [source.type, target.type]
+    const type: KnowledgeEdgeType = endpoints.includes('work-order') ? 'affects'
+      : endpoints.includes('inspection') ? 'documents'
+        : endpoints.includes('notification') ? 'reports'
+          : endpoints.includes('model') ? 'has-model'
+            : endpoints.includes('signal') ? 'has-signal'
+              : endpoints.includes('instrument') ? 'has-instrument' : 'contains'
     edges.push({
       id: `${sourceBacked ? 'source' : 'native'}-edge:${raw.oid}`, nativeOid: sourceBacked ? undefined : raw.oid,
       source: source.id, target: target.id, type,

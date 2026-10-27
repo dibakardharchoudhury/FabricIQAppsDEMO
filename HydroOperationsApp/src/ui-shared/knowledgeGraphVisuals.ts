@@ -44,25 +44,72 @@ export const KNOWLEDGE_NODE_SIZE: Record<KnowledgeNode['type'], number> = {
 }
 
 const topologyEdges = new Set<KnowledgeEdge['type']>(['contains', 'has-instrument', 'has-signal'])
+const topologyRanks: Partial<Record<KnowledgeNode['type'], number>> = {
+  facility: 0, system: 1, equipment: 2, instrument: 3, signal: 4,
+}
 
-export function telemetryFlowEdgeIds(nodes: KnowledgeNode[], edges: KnowledgeEdge[]): Set<string> {
+export function knowledgeTelemetryState(eventTime: string | undefined, nowMs = Date.now()): 'live' | 'delayed' | 'stale' | 'unavailable' {
+  const age = eventTime ? nowMs - Date.parse(eventTime) : NaN
+  if (!Number.isFinite(age) || age < 0) return 'unavailable'
+  return age < 60_000 ? 'live' : age < 300_000 ? 'delayed' : 'stale'
+}
+
+export function knowledgeFaultPulse(status: 'crit' | 'warn', timeMs: number): { opacity: number; padding: number } {
+  const phase = (1 - Math.cos(timeMs * Math.PI * 2 / (status === 'crit' ? 1600 : 2200))) / 2
+  return status === 'crit'
+    ? { opacity: 0.14 + phase * 0.3, padding: 9 + phase * 13 }
+    : { opacity: 0.12 + phase * 0.22, padding: 9 + phase * 10 }
+}
+
+export function knowledgeEdgeRoutes(edges: KnowledgeEdge[]): Map<string, { distance: number; labelOffset: number }> {
+  const groups = new Map<string, KnowledgeEdge[]>()
+  for (const edge of edges) {
+    const key = JSON.stringify([edge.source, edge.target].sort())
+    const group = groups.get(key)
+    if (group) group.push(edge)
+    else groups.set(key, [edge])
+  }
+  const routes = new Map<string, { distance: number; labelOffset: number }>()
+  for (const group of groups.values()) {
+    group.sort((a, b) => a.id.localeCompare(b.id))
+    group.forEach((edge, index) => {
+      const lane = index - (group.length - 1) / 2
+      routes.set(edge.id, {
+        distance: lane * 208 * (edge.source > edge.target ? -1 : 1),
+        labelOffset: group.length > 1 ? (lane < 0 ? -7 : 7) : -4,
+      })
+    })
+  }
+  return routes
+}
+
+export function telemetryFlowEdgeIds(nodes: KnowledgeNode[], edges: KnowledgeEdge[], nowMs = Date.now()): Set<string> {
   const flowing = new Set<string>()
-  const queue = nodes.filter(node => node.reading).map(node => node.id)
+  const byId = new Map(nodes.map(node => [node.id, node]))
+  const queue = nodes.filter(node => node.reading && knowledgeTelemetryState(node.reading.eventTime, nowMs) === 'live').map(node => node.id)
   const visited = new Set(queue)
-  const outgoing = new Map<string, KnowledgeEdge[]>()
+  const parents = new Map<string, Array<{ edge: KnowledgeEdge; parentId: string }>>()
   for (const edge of edges) {
     if (!topologyEdges.has(edge.type)) continue
-    const group = outgoing.get(edge.source)
-    if (group) group.push(edge)
-    else outgoing.set(edge.source, [edge])
+    const source = byId.get(edge.source)
+    const target = byId.get(edge.target)
+    const sourceRank = source && topologyRanks[source.type]
+    const targetRank = target && topologyRanks[target.type]
+    if (sourceRank === undefined || targetRank === undefined || sourceRank === targetRank) continue
+    // Trace ancestors without changing the Ontology's directed relationship endpoints.
+    const childId = sourceRank > targetRank ? edge.source : edge.target
+    const parentId = childId === edge.source ? edge.target : edge.source
+    const group = parents.get(childId)
+    if (group) group.push({ edge, parentId })
+    else parents.set(childId, [{ edge, parentId }])
   }
   for (let index = 0; index < queue.length; index++) {
     const nodeId = queue[index]
-    for (const edge of outgoing.get(nodeId) ?? []) {
+    for (const { edge, parentId } of parents.get(nodeId) ?? []) {
       flowing.add(edge.id)
-      if (visited.has(edge.target)) continue
-      visited.add(edge.target)
-      queue.push(edge.target)
+      if (visited.has(parentId)) continue
+      visited.add(parentId)
+      queue.push(parentId)
     }
   }
   return flowing

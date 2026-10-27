@@ -7,6 +7,64 @@ navigable operational context. It is designed for an operator who starts with a 
 and needs to move quickly between the affected facility, system, equipment, instruments, current
 readings, inspections, notifications, work orders, and 3D model.
 
+## Relationship strokes, freshness and health alerts
+
+The current visual contract supersedes the older telemetry-bearing-path behavior in the
+historical acceptance tables below:
+
+- **Solid arrows** are valid, governed relationships, including signal bindings. A relationship
+  does not disappear or become broken when telemetry stops.
+- **Dashed telemetry highlights** require a valid event timestamp with age **0 <= age < 60 s**,
+  matching the application shell's live tier. At 60 s the reading is delayed; at 300 s it is
+  stale. Missing, invalid and future timestamps never activate flow. A one-second local check
+  expires highlights even when no new data arrives; returning to the visible page rechecks
+  freshness before animating. One fresh branch cannot activate its stale siblings.
+- Highlights trace only existing signal/instrument/equipment/system/facility ancestry, in either
+  declared relationship orientation. Maintenance and other contextual links are never telemetry
+  paths. Arrowheads and dash motion retain the Ontology's **declared source-to-target direction**;
+  neither is a claim about physical process flow.
+- **Red and amber halos breathe** on critical and warning nodes, respectively, including when
+  all telemetry is stale. They reflect last-known quality or recorded maintenance, not a confirmed
+  current physical fault. Stale signal cards say **Stale bound signal**, show event age and
+  last-known quality, and no longer use the live-green treatment.
+- Both halo animations and dash motion pause offscreen, in hidden tabs and for reduced motion.
+  Reduced motion retains static colored halos. Above 150 displayed edges, dash motion is limited
+  to the selected immediate neighborhood; fault halos remain noticeable across the whole map,
+  including dimmed context.
+
+Hierarchy layout starts at the highest visible facility/system/equipment level rather than
+mistaking incoming maintenance records for roots. Parallel links, including separate instrument
+and signal relationships on a combined one-to-one node, retain their identities and labels in
+separate curved lanes. The inspector explicitly identifies incoming and outgoing relationships.
+Changing only readings or selection does not relayout or recenter the map; **Focus selected
+entity** and **Fit graph** remain explicit camera actions. Topology changes relayout the visible
+scope, including when returning to previously cached nodes.
+
+### October 27 visual regression validation
+
+The focused graph suite passes **108 tests**; production TypeScript/Vite build and scoped ESLint
+also pass. The 2,000-node/4,000-edge flow-and-route preparation fixture completed in **12.93 ms**
+against a 250 ms budget.
+
+An explicitly synthetic, browser-only fixture exercised the actual React/Cytoscape component:
+
+| Check | Observation |
+| --- | --- |
+| Fresh reading ages past 60 seconds without another render/fetch | Four highlighted edges became zero; all seven relationships remained solid |
+| Critical halo across time | Opacity 0.1402-0.4395; padding 9.01-21.98 px |
+| Warning halo across time | Opacity 0.1214-0.3373 |
+| Reduced motion | Both halos static at opacity 0.26 / padding 13 px |
+| Offscreen / return | Static 0.26 / 0.26, then resumed breathing 0.1567 / 0.3588 |
+| Quality recovers to healthy | Restored stylesheet halo; no stale animation style bypass |
+| Only readings change | Exact node positions, zoom and pan retained |
+| Parallel instrument/signal context | Separate labeled curves; unchanged source and target identities |
+| Initial hierarchy / selection | Facility remained in view; selecting context did not recenter |
+
+These are component regressions, not fabricated operational telemetry or proof of a running
+stream. A separate read-only check on the real source-backed All scope confirmed **225 nodes /
+238 links**, all 225 positions finite and distinct under the revised hierarchy options, including
+disconnected ontology components. Live source counts may change with ingestion.
+
 ## Ontology context versus native graph execution
 
 Fabric's ontology is a semantic/context layer, not a general-purpose instance-data query
