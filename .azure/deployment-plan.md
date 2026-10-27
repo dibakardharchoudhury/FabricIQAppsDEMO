@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Facility-count acceptance follow-up
 
@@ -45,7 +45,36 @@ over source, operational-routing, weather, orchestration, source-access,
 transport and Entra tests; `python -m unittest discover -s
 HydroOperationsService\tests -p test_foundry_supervisor.py` with the service's
 `src` on `PYTHONPATH`; scoped ESLint; environment validation; production build.
-Actual hosted facility-count acceptance is still pending, not inferred from mocks.
+Actual hosted facility-count acceptance passed as recorded below, independently
+of these local tests.
+
+### Hosted acceptance - facility-count follow-up
+
+- The first canonical attempt built ACR image `src-028b83cbb98cf220` successfully
+  (`dtq`) but stopped during Azure CLI registry authentication on a transient
+  `RemoteDisconnected` token-network error. No validation was bypassed.
+- Re-running the same canonical command reused the built image and exited 0
+  with final `SUCCESS` and `DEPLOYED_APP_URL` at
+  `2026-10-27T10:18:31.327005Z`, **591.469 seconds** for the successful attempt.
+  URL: `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+- Signed browser verified **v1.0.1145 / 3a64402**, coordinator **v27**.
+  Five specialist definitions, all 42 redirects, source permissions and the
+  explicit write-approval policy were preserved. AppBackend runtime/SQL/CORS
+  and GraphQL, token and three connector preflight/POST readiness checks passed.
+- In a fresh signed browser session, the exact previously failed facility-count
+  question returned HTTP 200 in **13,494 ms**, with **one run request**, **zero
+  sign-in popups**, no access setup control and no alert. The certified answer
+  reported **3 facilities**, matching all three rendered source rows:
+  `FACILITY_RTI_001`, `FACILITY_RTI_002`, `FACILITY_RTI_003`; no truncation.
+- A second explicit question, “How many facilities are registered?”, returned
+  HTTP 200 in **7,048 ms**, again one request, zero sign-in popups, no alert and
+  the same three source rows. Session:
+  `296e05fd-a9fb-4705-aff1-7449f11c950b`.
+- These are two observed browser samples, not a latency SLO. The old failed run
+  remains an immutable failure receipt; only deliberate post-fix tests were sent.
+  No work-order action, approval, rejection or production write was performed.
+- Live Azure MCP readback confirmed unchanged project-scoped Foundry User access.
+  The facility-count guard failure is resolved without relaxing that guard.
 
 ## Implicit agent access
 
@@ -76,9 +105,10 @@ mixed-import/chunk warnings remain. Hosted packaging/fingerprint tests exit 0.
 Azure CLI confirms the expected tenant and Enabled subscription.
 
 Validation workflow and authenticated hosted authorization acceptance are
-complete, as recorded below. This is not acceptance of every orchestration
-intent; an independent facility-count planner failure remains open. Earlier
-receipts below remain historical. No ARM provisioning or extra quota requested.
+complete, as recorded below. This is scope-specific acceptance, not acceptance
+of every orchestration intent. The facility-count failure recorded here was
+resolved by the follow-up above. Earlier receipts remain historical.
+No ARM provisioning or extra quota requested.
 
 ### Section 7: Validation Proof - implicit agent access
 

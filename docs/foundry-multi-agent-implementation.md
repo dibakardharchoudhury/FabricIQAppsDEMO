@@ -301,7 +301,8 @@ failed its existing planner contract with `unexpected-evidence:telemetry`
 (HTTP 500; no certified answer). Read-only session logs identified failed run
 `28968fae-2e54-4792-8637-9b3d814ea29f` in session
 `1a5f69ed-7d76-4e40-8c52-949c28796ba2`. It was not resubmitted; the independent
-routing defect remains open, not suppressed or repaired by this UX change.
+routing defect was not suppressed or repaired by that UX change; the following
+count-evidence follow-up resolves it.
 No operational write, approval or rejection was performed in either test.
 
 ### Facility-count evidence-selection follow-up
@@ -317,8 +318,24 @@ population coverage. No dataset permission or unexpected-evidence check is relax
 The exact browser question and six count variants now pass complete-contract
 regressions for facilities, equipment and spare parts. The 128 Node regressions,
 119 backend supervisor tests, scoped lint, configuration validation and production
-build pass. Publication and a fresh authenticated count are still required;
-the earlier failed run remains immutable and is not automatically replayed.
+build pass. The earlier failed run remains immutable and is not automatically
+replayed.
+
+Canonical publication subsequently completed at **10:18:31 UTC on October 27**:
+signed app **1.0.1145 / 3a64402**, coordinator **v27**, image
+`src-028b83cbb98cf220`, ACR build `dtq`. The first attempt's transient Azure CLI
+token-network disconnect was resolved by rerunning the canonical command, which
+reused the successful image build. Five specialists and 42 redirects were retained.
+
+Authenticated session `296e05fd-a9fb-4705-aff1-7449f11c950b` retested the exact
+previously failing question. It returned HTTP 200 in **13,494 ms**, reporting
+**3 facilities**, with all three source IDs shown and no truncation. A separate
+short question, “How many facilities are registered?”, returned the same count
+and IDs in **7,048 ms**. Each question submitted one run, opened zero sign-in
+popups and produced no alert; the separate access setup control remains absent.
+The source-backed table contains `FACILITY_RTI_001`, `FACILITY_RTI_002` and
+`FACILITY_RTI_003`, matching the claimed count. These are individual browser
+observations, not a latency SLO. No work-order action, approval or write occurred.
 
 Ordinary operational questions use governed direct sources. Explicit Data Agent
 requests stay native, with no silent fallback. The specialized native quality/work
