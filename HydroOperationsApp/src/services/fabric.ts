@@ -98,9 +98,9 @@ async function silentToken(scopes: string[], forceRefresh = false, minimumLifeti
 
 /** Acquire a token interactively via popup (redirects are blocked inside the Fabric iframe).
  *  Must be invoked from a user gesture. */
-async function popupToken(scopes: string[]): Promise<string> {
+async function popupToken(scopes: string[], extraScopesToConsent: string[] = []): Promise<string> {
   if (!entraTokens) throw new Error('Microsoft Entra client configuration is missing.')
-  return entraTokens.popup(scopes)
+  return entraTokens.popup(scopes, extraScopesToConsent)
 }
 
 /** Fabric discovery/read token. Job execution explicitly requests its additional scope. */
@@ -295,13 +295,8 @@ async function hostedSourceAccess() {
   })
 }
 
-export async function hostedSourceTokens() {
-  return (await hostedSourceAccess()).acquire()
-}
-
-/** Explicit user gesture only. One resource per click; never resubmit a question or write decision. */
-export async function connectHostedSourceAccess(): Promise<string[]> {
-  return (await hostedSourceAccess()).connectNext()
+export async function hostedSourceTokens(interactive = false) {
+  return (await hostedSourceAccess()).acquire(interactive)
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */

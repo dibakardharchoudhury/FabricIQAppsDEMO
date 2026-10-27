@@ -3,13 +3,13 @@ export type HostedAccessRequirement = { kind: HostedTokenKind; label: string; sc
 export type HostedAccessTokens = Record<HostedTokenKind, string>
 type TokenProvider = {
   silent: (scopes: string[]) => Promise<string | null>
-  popup: (scopes: string[]) => Promise<string>
+  popup: (scopes: string[], extraScopesToConsent: string[]) => Promise<string>
 }
 
 export class HostedSourceAccessError extends Error {
   readonly resources: string[]
   constructor(resources: string[]) {
-    super(`Connect agent access to authorize: ${resources.join(', ')}. No agent request was sent.`)
+    super(`Sign-in is required for ${resources.join(', ')}. Retry your question or approval to continue sign-in. No agent request was sent.`)
     this.name = 'HostedSourceAccessError'
     this.resources = resources
   }
@@ -25,8 +25,15 @@ export function createHostedSourceAccess(requirements: HostedAccessRequirement[]
   })))
 
   return {
-    async acquire(): Promise<HostedAccessTokens> {
-      const results = await inspect()
+    async acquire(interactive = false): Promise<HostedAccessTokens> {
+      let results = await inspect()
+      const next = results.find(result => !result.token)
+      if (next && interactive) {
+        const extraScopes = [...new Set(results.filter(result => !result.token && result.kind !== next.kind)
+          .flatMap(result => result.scopes))]
+        await provider.popup(next.scopes, extraScopes)
+        results = await inspect()
+      }
       const missing = results.filter(result => !result.token)
       if (missing.length) throw new HostedSourceAccessError(missing.map(result => result.label))
       const tokens: HostedAccessTokens = { fabric: '', foundry: '', graphql: '', kusto: '' }
@@ -35,15 +42,6 @@ export function createHostedSourceAccess(requirements: HostedAccessRequirement[]
         tokens[result.kind] = result.token
       }
       return tokens
-    },
-    async connectNext(): Promise<string[]> {
-      const results = await inspect()
-      const next = results.find(result => !result.token)
-      if (!next) return []
-      await provider.popup(next.scopes)
-      // Recheck the lease instead of treating popup completion as proof of usable access.
-      const refreshed = await inspect()
-      return refreshed.filter(result => !result.token).map(result => result.label)
     },
   }
 }

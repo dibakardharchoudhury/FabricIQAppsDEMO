@@ -7,7 +7,6 @@ import { askFoundryCopilot, isHostedFoundryConfigured, resetFoundryConversation,
 import { runAgentBattle, type AgentBattleEngine } from '../services/copilot/agentBattle'
 import { CopilotResponse, type CopilotMessage } from './CopilotExperience'
 import { AgentElapsedTime } from './AgentElapsedTime'
-import { AgentAccessControl } from './AgentAccessControl'
 import { useExpandedView } from '../ui-shared/hooks/useExpandedView'
 
 type BattleSide = {
@@ -163,7 +162,6 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
       </div>
       <small>Runs one agent at a time so shared Fabric and Foundry capacity cannot distort results or cause duplicate source pressure.</small>
       <span>
-        <AgentAccessControl disabled={running} />
         <button type="button" aria-label={battleView.expanded ? 'Restore battle' : 'Maximize battle'} aria-pressed={battleView.expanded} onClick={battleView.toggleExpanded}>{battleView.expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}{battleView.expanded ? 'Restore' : 'Maximize'}</button>
         <button type="button" disabled={running} onClick={reset}><RotateCcw size={14} />Reset</button>
         <button type="button" disabled={running} onClick={onExit}>Exit battle</button>

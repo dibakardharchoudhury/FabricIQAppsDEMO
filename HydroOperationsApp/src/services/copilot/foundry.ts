@@ -54,11 +54,11 @@ function hostedClient(engine: 'foundry' | 'data-agent') {
   if (!cached || cached.key !== key) {
     cached?.client.reset()
     cached = { key, client: new HostedTransport(project, invocationUrl, source,
-      async () => {
+      async interactive => {
         if (requireProjectEndpoint(loadCopilotSettings().projectEndpoint) !== project) {
           throw new Error('The selected Foundry project changed. Request fresh evidence before approving work.')
         }
-        return (await import('../fabric.ts')).hostedSourceTokens()
+        return (await import('../fabric.ts')).hostedSourceTokens(interactive)
       }, undefined, undefined, `${engine}.${__APP_VERSION__}`) }
     clients.set(engine, cached)
   }

@@ -1,6 +1,68 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Implicit agent access
+
+Remove the separate agent-access control from chat and comparison views.
+Normal operator actions reuse/refresh the signed-in session silently; when
+Entra actually requires interaction, request it within that action, with one
+consent step covering the remaining audiences. Verify each audience separately
+afterwards. Background warm-up and run recovery remain silent-only.
+
+Do not broaden permissions, bypass tenant/lease validation, automatically replay
+failed invocations, or weaken explicit human approval for operational writes.
+Reuse the canonical repository deployment recipe and existing FEATURE target:
+tenant `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, Sweden Central, subscription
+`ME-MngEnvMCAP218279-didharch-2` (`dac16501-5c35-4c91-aff0-11af8de17f2e`).
+No new resources or RBAC changes. Shared runtime source changes may require
+the orchestrator to rebuild the existing hosted image.
+
+Publication/context confirmation was offered; the user was unavailable.
+Continue with the existing approved FEATURE target and unchanged infrastructure.
+
+Local verification: 43 focused token/source-access/transport tests pass,
+including original-question submission exactly once after implicit consent,
+background warm-up/recovery never prompting, per-audience token validation,
+and explicit approval/no ambiguous-write replay. Scoped ESLint, Node 24
+`npm run validate-env`, and production TypeScript/Vite build pass; existing
+mixed-import/chunk warnings remain. Hosted packaging/fingerprint tests exit 0.
+Azure CLI confirms the expected tenant and Enabled subscription.
+
+Pending: validation workflow proof and authenticated hosted chat acceptance
+after canonical deployment. Earlier receipts below remain historical, not
+acceptance for this change. No ARM provisioning or extra quota is requested.
+
+### Section 7: Validation Proof - implicit agent access
+
+Validation date: 2026-10-27. Recipe: existing canonical Python/Azure CLI
+orchestrator; no ARM templates or resource provisioning.
+
+All validation checks pass:
+- [x] Core: authenticated expected tenant/Enabled subscription, Node 24,
+  configuration validation, production TypeScript/Vite build, scoped ESLint,
+  and 43 focused authorization/transport tests. No ARM template validation
+  or what-if is applicable to this application-only change.
+- [x] Container context: 43 hosted deployment tests pass, including exact
+  Docker COPY/fingerprint closure, isolated ACR context and failed-build
+  propagation. Existing Dockerfile and locks are unchanged. The shared
+  source-access module is packaged, so the canonical orchestrator must build
+  the changed source-fingerprinted image through ACR and gate publication on
+  activation. No separate hand-assembled image deployment is permitted.
+- [x] Static roles: no permission, identity, role scope or source-operation
+  changes; delegated audience/tenant/lease guards and human approval remain.
+- [x] Policy readback: Azure MCP returned applicable assignments for the
+  existing resource group. No infrastructure/SKU/region/network change.
+- [x] Functional: production-build browser renders the existing chat design
+  without the setup button/banner. Warm-up did not open sign-in. Temporary
+  preview process stopped; no operational record or approval was submitted.
+
+Commands: `node --import tsx --test` for source-access, Entra and transport
+tests; scoped `npm exec -- eslint`; `npm run validate-env`; `npm run build`;
+`.venv\Scripts\python.exe -m unittest discover -s Raw\workspace-reset -p
+test_deploy_hosted_agent.py`. All exit 0. Existing chunk/mixed-import warnings
+are unchanged. Hosted acceptance remains pending, not inferred from mocks.
 
 ## Knowledge Graph endpoint and edge interaction repair
 

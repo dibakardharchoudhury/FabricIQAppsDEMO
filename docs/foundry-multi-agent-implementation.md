@@ -262,12 +262,20 @@ application acceptance remains a separate outstanding check.
 The immediate zero-second authorization error occurs in the browser's delegated
 source preflight, before an invocation is sent. Signing into the Fabric hosting
 session does not establish all four source audiences: Fabric, Foundry,
-Lakehouse/SQL connectors and Eventhouse. The shared Foundry chat and Battle view
-now provide **Connect agent access**. Each click authorizes one missing audience,
-then checks all four again. Cancellation and network failures remain visible;
-connecting never resubmits a question or an approval decision. Missing access
-identifies its resource and explicitly reports that no agent request was sent.
-Forced token renewal must still meet the bounded operation's minimum lease.
+Lakehouse/SQL connectors and Eventhouse. Chat and Battle no longer expose a
+separate access setup button or connected-status banner. A normal question or
+explicit approval action silently obtains/refreshes all four audience-specific
+tokens. Only if Entra requires interaction does that same action open sign-in,
+using `extraScopesToConsent` for the other missing audiences, followed by
+separate silent token/lease checks. One token is never reused across audiences.
+This follows Microsoft's
+[resource and scope guidance](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/resources-and-scopes).
+
+Background warm-up, evidence reads and interrupted-run polling remain silent-only.
+Cancellation, blocked popups, missing consent and network failures are surfaced;
+no invocation starts until the source preflight succeeds. Authentication does
+not approve work, and transport failures never automatically replay a question
+or decision. Forced renewal must still meet the bounded operation's minimum lease.
 
 Ordinary operational questions use governed direct sources. Explicit Data Agent
 requests stay native, with no silent fallback. The specialized native quality/work

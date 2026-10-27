@@ -36,17 +36,18 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
 
   const pending = new Map<string, Promise<string>>()
   let interactiveQueue: Promise<void> = Promise.resolve()
-  const popup = async (scopes: string[]): Promise<string> => {
+  const popup = async (scopes: string[], extraScopesToConsent: string[] = []): Promise<string> => {
     await initialize()
-    const key = JSON.stringify([selectAccount()?.homeAccountId, [...new Set(scopes)].sort()])
+    const key = JSON.stringify([selectAccount()?.homeAccountId, [...new Set(scopes)].sort(), [...new Set(extraScopesToConsent)].sort()])
     const existing = pending.get(key)
     if (existing) return existing
     const current = interactiveQueue.then(async () => {
       const cached = await silent(scopes)
-      if (cached) return cached
+      if (cached && !extraScopesToConsent.length) return cached
       const account = selectAccount()
       const result = await client.acquireTokenPopup({
         scopes, account,
+        ...(extraScopesToConsent.length ? { extraScopesToConsent: [...new Set(extraScopesToConsent)] } : {}),
         ...(!account && client.getAllAccounts().filter(item => item.tenantId === tenantId).length > 1
           ? { prompt: 'select_account' } : {}),
       })

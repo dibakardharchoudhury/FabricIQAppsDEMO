@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createHostedSourceAccess } from '../src/services/hostedSourceAccess.ts'
 import assert from 'node:assert/strict'
 import {
   hostedDecisionEdits, HostedTransport, HostedInvocationError, type SourceTokens,
@@ -16,6 +17,56 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
   presentation: { schema_version: 1, text: 'Backend-provided answer.', visualizations: [], execution_events: [] } })
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
+
+test('normal Send acquires missing access before submitting exactly once, with no background popup', async () => {
+  const cached = new Map<string, string>()
+  let popups = 0
+  let requests = 0
+  const requirements = (['fabric', 'foundry', 'graphql', 'kusto'] as const)
+    .map(kind => ({ kind, label: kind, scopes: [kind] }))
+  const access = createHostedSourceAccess(requirements, {
+    silent: async scopes => cached.get(scopes[0]) ?? null,
+    popup: async (scopes, extraScopes) => {
+      popups++
+      for (const scope of [...scopes, ...extraScopes]) cached.set(scope, `${scope}-token`)
+      return `${scopes[0]}-token`
+    },
+  })
+  const client = new HostedTransport(project, endpoint, source, interactive => access.acquire(interactive), async () => {
+    requests++
+    assert.equal(cached.size, 4)
+    return response(reply())
+  })
+  await client.warm()
+  assert.equal(popups, 0)
+  assert.equal(requests, 0)
+  await client.run({ question: 'Count facilities.' })
+  assert.equal(popups, 1)
+  assert.equal(requests, 1)
+  await client.run({ question: 'Count equipment.' })
+  assert.equal(popups, 1)
+  assert.equal(requests, 2)
+})
+
+test('only explicit operator requests can request interactive authorization, never warm-up or evidence reads', async () => {
+  const accessModes: boolean[] = []
+  const client = new HostedTransport(project, endpoint, source, async interactive => {
+    accessModes.push(interactive)
+    return tokens()
+  }, async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    return response(body.operation === 'decide' || body.operation === 'reconcile'
+      ? { run_id: 'run-1', proposal_id: 'draft-1', status: 'rejected', production_write_executed: false }
+      : reply())
+  })
+  await client.warm()
+  await client.run({ question: 'Count facilities.' })
+  await client.evidence('run-1')
+  const decision = { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: false }
+  await client.decide('run-1', decision)
+  await client.decide('run-1', decision, true)
+  assert.deepEqual(accessModes, [false, true, false, true, true])
+})
 
 test('native refusal is actionable and not presented as connectivity or retried', async () => {
   for (const delivery of ['json', 'stream', 'recovery'] as const) {
@@ -235,8 +286,12 @@ test('streaming transport paints only backend execution events and returns the c
 
 test('stream interruption recovers the exact server run without starting a duplicate', async () => {
   const operations: string[] = []
+  const accessModes: boolean[] = []
   const encoder = new TextEncoder()
-  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+  const client = new HostedTransport(project, endpoint, source, async interactive => {
+    accessModes.push(interactive)
+    return tokens()
+  }, async (_input, init) => {
     const body = JSON.parse(String(init?.body))
     operations.push(body.operation)
     if (body.operation === 'result') {
@@ -258,6 +313,7 @@ test('stream interruption recovers the exact server run without starting a dupli
   const answer = await client.run({ question: 'Recover this run.' }, () => {})
   assert.equal(answer.runId, 'run-recover')
   assert.deepEqual(operations, ['run', 'result'])
+  assert.deepEqual(accessModes, [true, false])
 })
 
 test('missing stream heartbeat enters exact-run recovery without imposing an answer deadline', async () => {

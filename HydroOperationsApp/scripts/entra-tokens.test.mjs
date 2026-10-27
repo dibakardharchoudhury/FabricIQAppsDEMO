@@ -62,6 +62,20 @@ test('concurrent requests for the same resource coalesce into one interaction', 
   assert.equal(await tokens.silent(['foundry']), 'token-foundry')
 })
 
+test('upfront consent keeps token scopes audience-specific and coalesces matching consent requests', async () => {
+  const { state, tokens } = fixture()
+  await Promise.all([
+    tokens.popup(['foundry'], ['fabric', 'kusto']),
+    tokens.popup(['foundry'], ['kusto', 'fabric']),
+  ])
+  assert.equal(state.popups.length, 1)
+  assert.deepEqual(state.popups[0].scopes, ['foundry'])
+  assert.deepEqual(state.popups[0].extraScopesToConsent, ['fabric', 'kusto'])
+  assert.equal(state.popups[0].prompt, undefined)
+  await tokens.popup(['foundry'], ['sql'])
+  assert.deepEqual(state.popups[1].extraScopesToConsent, ['sql'])
+})
+
 test('different resources serialize their required interactions and retry silently after waiting', async () => {
   const { state, tokens } = fixture()
   const results = await Promise.all([tokens.popup(['foundry']), tokens.popup(['fabric'])])

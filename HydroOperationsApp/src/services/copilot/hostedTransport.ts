@@ -126,7 +126,7 @@ export class HostedTransport {
   private inFlight = 0
   private readonly endpoint: URL
   private readonly source: HostedSource
-  private readonly credentials: () => Promise<SourceTokens>
+  private readonly credentials: (interactive: boolean) => Promise<SourceTokens>
   private readonly fetcher: typeof fetch
   private readonly streamLivenessMs: number
   private previousRunId: string | undefined
@@ -136,7 +136,7 @@ export class HostedTransport {
 
   constructor(
     projectEndpoint: string, invocationUrl: string, source: HostedSource,
-    credentials: () => Promise<SourceTokens>,
+    credentials: (interactive: boolean) => Promise<SourceTokens>,
     fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init),
     streamLivenessMs = 45_000,
     sessionScope?: string,
@@ -202,7 +202,7 @@ export class HostedTransport {
     if (this.warmed || this.running || this.inFlight) return
     this.warmed = true
     try {
-      const token = (await this.credentials()).foundry
+      const token = (await this.credentials(false)).foundry
       if (typeof token !== 'string' || !token) { this.warmed = false; return }
       const endpoint = new URL(this.endpoint)
       endpoint.searchParams.set('agent_session_id', this.sessionId)
@@ -219,7 +219,7 @@ export class HostedTransport {
     this.inFlight++
     let tokens: SourceTokens | undefined
     try {
-      tokens = await this.credentials()
+      tokens = await this.credentials(body.operation === 'run' || body.operation === 'decide' || body.operation === 'reconcile')
       if ((['fabric', 'foundry', 'graphql', 'kusto'] as const).some(kind => {
         const token = tokens?.[kind]
         return typeof token !== 'string' || !token
