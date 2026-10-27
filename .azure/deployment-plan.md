@@ -36,6 +36,9 @@ then required Microsoft/Azure CLI sign-in renewal at existing-SPA discovery (ste
 The user was unavailable, so the owned waiting process was stopped before Rayfin
 publication. This plan remains Validated, not newly Deployed. Hosted acceptance is
 pending; the signed-in page still reports `1.0.1121 / 1673261`.
+Autonomous retry confirmed Graph CAE `InteractionRequired /
+TokenCreatedWithOutdatedPolicies` on the actual read-only SPA lookup, despite
+a future cached-token expiry. Fresh interactive sign-in remains required.
 
 ## Knowledge Graph live-source publication
 

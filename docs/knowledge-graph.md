@@ -76,6 +76,14 @@ After legitimate sign-in renewal, rerun the canonical command and verify actual
 stale edges, both halo pulses, directed relationships and graph timing on the new
 hosted build. The component checks above do not substitute for that hosted acceptance.
 
+An autonomous retry confirmed the exact authentication blocker:
+`az account get-access-token` returned a future Graph expiry, but the actual
+read-only SPA lookup was rejected with **Continuous Access Evaluation:
+InteractionRequired / TokenCreatedWithOutdatedPolicies**. The canonical retry
+also stopped at step 2. Token expiry alone is not proof of usable Graph access;
+fresh interactive tenant sign-in is required. No alternate identity or policy
+bypass was used.
+
 ## Ontology context versus native graph execution
 
 Fabric's ontology is a semantic/context layer, not a general-purpose instance-data query
