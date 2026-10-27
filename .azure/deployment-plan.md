@@ -1,6 +1,61 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## FEATURE human-approved work-order policy restoration
+
+The user reported that the approved-creation action is disabled. Read-only live
+inspection confirmed active coordinator v24 has
+`production_writes_enabled=false` for the expected FEATURE workspace. The
+deployer intentionally preserves the existing policy unless the documented
+`HYDRO_PRODUCTION_WRITES_ENABLED` override is supplied; this was not a SQL error.
+
+Restore the capability to create a work order only after explicit human approval,
+using `HYDRO_PRODUCTION_WRITES_ENABLED=true` with the same canonical root
+deployment command. Do not edit runtime JSON, add permissions, change the SPA,
+submit the screenshot's decision, or automatically create any SQL record.
+The screenshot's displayed draft expiry is in the past: it must be replaced with
+fresh evidence and a new review, not replayed after the setting changes.
+
+All validation checks pass (required before deployment):
+- [x] Core CLI/auth/build: expected tenant/subscription, environment validation
+  and existing Node 24 production build.
+- [x] Write-policy behavior: supported explicit true override and subsequent
+  same-target policy preservation; existing approval/digest/expiry/source/
+  readback/no-replay tests.
+- [x] Container: reuse the already built unchanged source-fingerprinted image.
+  No new image or source-code change is required.
+- [x] Static roles and Azure Policy: no ARM/IaC, identity, network, delegated
+  permission or RBAC change; the application-level approved-write flag changes.
+- [ ] Canonical publication and live readback: active coordinator flag true,
+  unchanged target and source image; preserved redirects and endpoint readiness.
+
+### Section 7: Work-order policy validation proof
+
+Validation performed 2026-10-27T07:09Z through 07:13Z:
+
+- `az account show` confirmed the expected tenant and Enabled subscription
+  `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+- Under Node 24, `npm run validate-env` and `npm run build` passed. Vite built
+  in 33.24 seconds; existing mixed-import/chunk warnings only.
+- Root `.venv` ran `python -m unittest
+  test_deploy_hosted_agent.ConfigurationTests
+  test_deploy_hosted_agent.ConvergenceTests test_source_auth`:
+  **48 tests passed in 34.596 seconds**. The targeted regression now exercises
+  both deliberate false-to-true and true-to-false policy transitions, plus
+  preservation of an enabled policy without an override. The delegated service
+  tests cover explicit signed approval, principal isolation, idempotency,
+  rejection, disabled writes, expiry and uncertain-write reconciliation.
+- Static role verification: no application permission, principal, role
+  assignment or source transport changes. The unchanged backend continues using
+  the signed-in user's delegated SQL authority, not a newly privileged identity.
+- Existing container image `src-ae2d589b20c8d8bd` was built by successful ACR
+  build `dtn` and is active in v24. No packaged runtime source or dependency changed;
+  no new image or ARM validate/what-if/Azure Policy resource delta is applicable.
+
+Canonical publication and independent active-version readback are pending. Do
+not claim a production SQL creation: no acceptance work order will be submitted
+without a separate explicit approval of its actual draft.
 
 ## Agent authorization and source-routing repair validation
 

@@ -205,6 +205,14 @@ image or runtime configuration differs. Each reuse/update is logged, with specia
   redirect, permission and consent setup remains automated.
 - **Work-order permissions:** the launcher preserves this target's current policy
   without a UI override; enabled writes require human approval.
+  A new coordinator defaults to disabled writes. To deliberately change the
+  existing target's policy, set the process-local
+  `$env:HYDRO_PRODUCTION_WRITES_ENABLED = 'true'` (or `'false'`) before the
+  canonical combined CLI command in section 7. Later deployments without this
+  override preserve that live value. This does not grant SQL permissions or
+  create a work order: each creation still requires a fresh draft, explicit
+  human approval and backend validation/readback. Remove the process-local
+  override afterwards so it cannot affect another target.
 - **Automatic configuration:** project endpoints, connected registries and ontology
   graph ownership are resolved internally. The launcher does not accept graph-binding
   JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
@@ -266,6 +274,11 @@ Never replace the engine with bare `npm run deploy` or `rayfin up`.
 Require **`SUCCESS` and `DEPLOYED_APP_URL`**, then open the URL and sign in.
 Test the sources, graph and agent flows you use. Validate approved writes and
 Teams/email delivery separately; hosting success is not runtime acceptance.
+
+If a draft reports **Production work-order writes are disabled; no SQL write was
+attempted**, the coordinator's write-policy flag is off, not a SQL write failure.
+Review the target policy using section 6. Do not retry an expired or previously
+blocked card after changing it: request fresh evidence and review a new draft.
 
 ### Independent operational SQL lifecycle
 

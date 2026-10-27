@@ -142,7 +142,7 @@ Consequences:
   Deploying another workspace into the same explicitly selected Foundry project rebinds that coordinator and its
   connections. Use a separate target-specific project for each concurrently deployed Fabric workspace.
 - **Production writes are preserved.** The live agent's `production_writes_enabled` is kept. Set
-  `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` (or the form's *Work-order writes*) to change it deliberately. A
+  process-local `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` before the canonical combined CLI deployment to change it deliberately. A
   brand-new agent defaults to `false`. An unreadable or non-boolean live policy stops deployment unless you explicitly
   choose a write policy; it is never silently reset or coerced from a string.
 - **Versions are never deleted.** Each publish is a new immutable version.
@@ -286,7 +286,7 @@ including the independent `operational_sql_database_id`,
 | `Hosted Agent … did not become active with the expected image and configuration within 15 minutes: <reason>` | The new version failed to start or its settings differ. Check `azd ai agent monitor`, fix, rerun. |
 | `Rayfin created the backend but did not record its identity…` | Fresh-target bootstrap did not produce `rayfin/.env` values. Stop and report the output. |
 | `HYDRO_PRODUCTION_WRITES_ENABLED must be true or false.` | Fix the value. |
-| `Cannot preserve the live production-write policy…` | Review the existing agent, then deliberately select enabled/disabled in the local form or set `HYDRO_PRODUCTION_WRITES_ENABLED=true|false`. No implicit policy change is made. |
+| `Cannot preserve the live production-write policy…` | Review the existing agent, then deliberately set process-local `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` for the canonical combined CLI deployment. The launcher preserves the policy without a UI override. No implicit policy change is made. |
 | `Foundry definition readback failed for <agent>` | The live definition differs from the exported one after creation. Rerun; if persistent compare with `agentDefinitions.ts`. |
 | Browser 401 from Foundry | Foundry resource is in another tenant, or the user lacks **Foundry User**. |
 | Chat shows *Source limitations: the written briefing could not be verified* | Not a deployment fault: the briefing failed its checks and only verified tables are shown. |

@@ -414,11 +414,15 @@ class ConvergenceTests(unittest.TestCase):
             run(fake, [live, live, agent(DIGEST_B, env=environment(writes=True))])
         sets = fake.environment_settings()
         self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], True)
-        fake = FakeDeploy()
-        with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": "false"}):
-            run(fake, [live, live, agent(DIGEST_B)])
-        sets = fake.environment_settings()
-        self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
+        for value, expected in (("false", False), ("true", True)):
+            with self.subTest(override=value):
+                fake = FakeDeploy()
+                before = agent(DIGEST_A, env=environment(writes=not expected))
+                after = agent(DIGEST_B, env=environment(writes=expected))
+                with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": value}):
+                    run(fake, [before, before, after])
+                sets = fake.environment_settings()
+                self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], expected)
         with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": "maybe"}):
             with self.assertRaisesRegex(FakeDeploy.DeployError, "true or false"):
                 run(FakeDeploy(), [live])
