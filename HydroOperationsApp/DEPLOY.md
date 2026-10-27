@@ -131,6 +131,12 @@ relationships. Materialization is not required for this mode. The page reports
 supported/excluded coverage, source observation times, load duration and
 non-atomic cross-source consistency. It does not append inferred SQL topology.
 Denied, invalid, incomplete and over-budget reads fail closed, not to mock data.
+Successful work-order creation, status changes and deletion invalidate graph
+snapshots immediately. Returning to the Knowledge Graph reads the committed
+records without a page refresh; an already-open graph refreshes automatically
+(or when the browser tab becomes visible). In-flight pre-mutation reads cannot
+replace the refreshed snapshot. Native GQL mode still reflects Fabric's latest
+materialization, not unmaterialized SQL changes.
 On a first visit, **Connect Fabric and retry** authorizes only Fabric workspace/item
 read access. The graph does not require connecting telemetry to establish this
 separate ontology-read session.

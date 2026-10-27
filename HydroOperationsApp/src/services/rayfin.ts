@@ -190,6 +190,10 @@ export function subscribeWorkOrdersChanged(listener: () => void): () => void {
   return () => window.removeEventListener(WORK_ORDERS_CHANGED_EVENT, listener)
 }
 
+function notifyWorkOrdersChanged() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORK_ORDERS_CHANGED_EVENT))
+}
+
 export async function initializeRayfin(): Promise<AppUser | null> {
   if (!client) return null
   const existing = currentUser()
@@ -247,7 +251,7 @@ export async function createWorkOrder(
     createdByOid: user.id,
     createdAt: new Date(),
   }) as WorkOrderRecord
-  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORK_ORDERS_CHANGED_EVENT))
+  notifyWorkOrdersChanged()
   return record
 }
 
@@ -256,11 +260,13 @@ export async function updateWorkOrderStatus(id: string, status: string): Promise
   const patch: { status: string; completedAt?: Date | null } = { status }
   patch.completedAt = ['completed', 'closed', 'done'].includes(status.toLowerCase()) ? new Date() : null
   await client.connectors.hydrooperations.WorkOrder.update({ id }, patch)
+  notifyWorkOrdersChanged()
 }
 
 export async function deleteWorkOrder(id: string): Promise<void> {
   if (!client) throw new Error('Rayfin backend is not configured.')
   await client.connectors.hydrooperations.WorkOrder.delete({ id })
+  notifyWorkOrdersChanged()
 }
 
 export async function listInspections(): Promise<InspectionRecord[]> {

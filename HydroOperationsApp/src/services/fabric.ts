@@ -18,7 +18,7 @@ import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
-import { connectedLakehouse, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin } from './rayfin'
+import { connectedLakehouse, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin, subscribeWorkOrdersChanged } from './rayfin'
 import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
   requireLakehouseNumber, requireLakehouseText } from './lakehouseConnector'
 
@@ -580,6 +580,11 @@ const ontologyGraphReadinessCache = createOntologyCache<OntologyGraphReadiness>(
 const ontologySourceGraphCache = createOntologyCache<OntologySourceGraph>(30_000)
 let lastOntologySourceConnection: string | undefined
 const configuredGraphBindingValue = import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined
+
+subscribeWorkOrdersChanged(() => {
+  ontologySourceGraphCache.clear()
+  ontologyGraphCache.clear()
+})
 
 async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Promise<T>): Promise<T> {
   for (;;) {

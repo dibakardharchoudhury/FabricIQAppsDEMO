@@ -4,6 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { connectOntologyAccess, queryOntologyContract, queryOntologyGraph, queryOntologySourceGraph, type OntologyContract } from '../../services/fabric'
 import type { OntologyInstanceGraph } from '../../services/ontologySourceGraph'
 import { knowledgeGraphExportFileName, serializeNativeKnowledgeGraph, type KnowledgeGraphExportFormat } from '../../services/knowledgeGraphExport'
+import { subscribeWorkOrdersChanged } from '../../services/rayfin'
 import { ageLabel } from '../../twin'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
@@ -120,17 +121,31 @@ export function KnowledgeGraphPage() {
 
   useEffect(() => {
     let inFlight = false
+    let pendingMutation = false
+    let disposed = false
     const refresh = async (force = false) => {
-      if (inFlight || document.hidden) return
+      pendingMutation ||= force
+      if (disposed || inFlight || document.hidden) return
+      const refreshAfterMutation = pendingMutation
+      pendingMutation = false
       inFlight = true
-      try { await loadOntologyGraph(force) }
-      finally { inFlight = false }
+      try { await loadOntologyGraph(refreshAfterMutation) }
+      finally {
+        inFlight = false
+        if (pendingMutation && !disposed) void refresh()
+      }
     }
+    const unsubscribe = subscribeWorkOrdersChanged(() => {
+      cancelGraphQuery()
+      void refresh(true)
+    })
     void refresh()
     const interval = window.setInterval(() => void refresh(), GRAPH_REFRESH_POLL_MS)
     const handleVisibility = () => { if (!document.hidden) void refresh() }
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
+      disposed = true
+      unsubscribe()
       cancelGraphQuery()
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibility)

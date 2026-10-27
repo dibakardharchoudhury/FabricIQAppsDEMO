@@ -425,7 +425,7 @@ function useHydroOperationsDataController() {
 
   useEffect(() => subscribeWorkOrdersChanged(() => {
     void loadOperationalData().catch(error => {
-      setNotice(error instanceof Error ? error.message : 'Created work order, but refreshing operational data failed.')
+      setNotice(error instanceof Error ? error.message : 'Work order changed, but refreshing operational data failed.')
     })
   }), [loadOperationalData])
 
@@ -776,7 +776,7 @@ function useHydroOperationsDataController() {
       const activeUser = user ?? await authenticate()
       if (!activeUser) return
       const record = await createWorkOrder(activeUser, equipmentId, instrumentId, opcuaNodeId)
-      setOrders(current => [record, ...current])
+      setOrders(current => [record, ...current.filter(order => order.id !== record.id)])
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Work order creation failed.')
     } finally { setMutationKey(undefined) }

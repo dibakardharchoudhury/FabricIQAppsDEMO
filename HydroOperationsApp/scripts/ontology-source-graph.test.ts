@@ -173,6 +173,21 @@ test('live presentation does not append inferred SQL nodes or native provenance'
       const ids = new Set(graph.nodes.map(node => node.id))
       assert.ok(graph.edges.every(edge => ids.has(edge.source) && ids.has(edge.target)))
     }
+    const renderFresh = async () => buildKnowledgeGraph({
+      ontology, ontologyGraph: await readOntologySourceGraph(ontology, sources),
+      facilities: [], systems: [], equipment: [], instruments: [], telemetry: [],
+      workOrders: [], inspections: [], notifications: [], models: [],
+    })
+    rows.WorkOrder.push({ id: 'W2', equipmentId: 'E1', instrumentId: '', opcuaNodeId: '' })
+    const afterCreate = await renderFresh()
+    assert.ok(afterCreate.nodes.some(node => node.id === 'work-order:W2'))
+    assert.ok(afterCreate.edges.some(edge => edge.source === 'work-order:W2'
+      && edge.target === 'equipment:E1' && edge.ontologyRelationshipName === 'WorkOrder_for_equipment'))
+    assert.ok(!afterCreate.edges.some(edge => edge.source === 'work-order:W2' && edge.target === 'signal:power'))
+    rows.WorkOrder.pop()
+    const afterDelete = await renderFresh()
+    assert.ok(!afterDelete.nodes.some(node => node.id === 'work-order:W2'))
+    assert.ok(!afterDelete.edges.some(edge => edge.source === 'work-order:W2'))
   })
 
 test('checks every source identity before starting any connector read', async () => {
