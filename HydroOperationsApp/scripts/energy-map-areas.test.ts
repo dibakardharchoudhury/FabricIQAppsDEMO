@@ -12,6 +12,30 @@ function plant(id: string, capacity: unknown, layer = 'hydro-plants') {
   })
 }
 
+test('indexed ring containment preserves dense outer and hole boundaries across vertical buckets', () => {
+  const rectangle = (minimum: number, maximum: number) => {
+    const ring: number[][] = [], step = (maximum - minimum) / 64
+    for (let i = 0; i < 64; i++) ring.push([minimum + i * step, minimum])
+    for (let i = 0; i < 64; i++) ring.push([maximum, minimum + i * step])
+    for (let i = 0; i < 64; i++) ring.push([maximum - i * step, maximum])
+    for (let i = 0; i < 64; i++) ring.push([minimum, maximum - i * step])
+    return [...ring, ring[0]]
+  }
+  const inside = prepareAreaGeometry({ type: 'Polygon', coordinates: [rectangle(-10, 10), rectangle(-2, 2)] })
+  for (let x = -11; x <= 11; x += 0.5) {
+    for (let y = -11; y <= 11; y += 0.5) {
+      const expected = x >= -10 && x <= 10 && y >= -10 && y <= 10 && !(x > -2 && x < 2 && y > -2 && y < 2)
+      assert.equal(inside([x, y]), expected, `Point ${x},${y}`)
+    }
+  }
+  for (let bucket = 0; bucket <= 17; bucket++) {
+    const y = -10 + bucket * 20 / 17
+    assert.equal(inside([-10, y]), true)
+    assert.equal(inside([10, y]), true)
+    assert.equal(inside([11, y]), false)
+  }
+})
+
 test('each reservoir area has a distinct stable color, including no-data countries', () => {
   assert.equal(RESERVOIR_AREAS.length, 9)
   assert.equal(new Set(RESERVOIR_AREAS.map(area => area.color)).size, 9)
