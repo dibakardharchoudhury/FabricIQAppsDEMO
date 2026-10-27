@@ -39,6 +39,7 @@ def functions(number, *names, **overrides):
     included = set(names) | {
         "definition_parts", "is_ontology_context_path", "operational_source_path",
         "normalize_lakehouse_elements",
+        "selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources",
     }
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)

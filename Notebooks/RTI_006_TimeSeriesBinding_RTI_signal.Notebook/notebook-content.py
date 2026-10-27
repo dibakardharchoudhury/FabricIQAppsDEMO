@@ -191,6 +191,7 @@ parts are retained, not interpreted or regenerated. Ambiguous edits fail closed.
 import base64
 import json
 import re
+import time
 import uuid
 from collections import Counter
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -207,6 +208,50 @@ def _decode_part(part):
 def _encode_part(path, text):
     return {"path": path, "payload": base64.b64encode(text.encode("utf-8")).decode("ascii"),
             "payloadType": "InlineBase64"}
+
+
+def _pin_eventhouse_table_metadata(table, workspace_id, item_id, item_name, workspace_name, columns):
+    """Retain the source identity/schema emitted by Fabric's Eventhouse binding editor."""
+    partitions = _object_spans(table, "partition", 4)
+    if len(partitions) != 1:
+        raise RuntimeError("Eventhouse source metadata requires exactly one partition.")
+    partition = partitions[0][3]
+    original = partition
+    values = {
+        "ONT_WorkspaceId": workspace_id, "ONT_ItemId": item_id, "ONT_ItemKind": "KQLDatabase",
+        "ONT_ItemName": item_name, "ONT_WorkspaceName": workspace_name,
+    }
+    for key, value in values.items():
+        if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+            raise RuntimeError(f"Missing authoritative Eventhouse source metadata: {key}.")
+        pattern = r"(?m)^\t\tannotation " + key + r" = (.+?)[ \t]*$"
+        existing = re.findall(pattern, partition)
+        if len(existing) > 1 or (existing and key in ("ONT_WorkspaceId", "ONT_ItemId", "ONT_ItemKind")
+                                 and existing[0].casefold() != value.casefold()):
+            raise RuntimeError(f"Conflicting Eventhouse source metadata: {key}.")
+        if existing:
+            partition = re.sub(pattern, lambda _match: f"\t\tannotation {key} = {value}", partition)
+        else:
+            partition = partition.rstrip() + f"\n\n\t\tannotation {key} = {value}\n"
+    timestamps = re.findall(r"(?m)^\t\tannotation ONT_PinnedAtUtc = (.+?)[ \t]*$", partition)
+    if len(timestamps) > 1:
+        raise RuntimeError("Duplicate Eventhouse source pin timestamp.")
+    if not timestamps:
+        partition = partition.rstrip() + "\n\n\t\tannotation ONT_PinnedAtUtc = " + time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n"
+    table = table.replace(original, partition.rstrip() + "\n\n", 1)
+    schema = {"version": 1, "columns": [{"name": name, "dataType": dtype} for name, dtype in columns]}
+    pattern = r"(?m)^\tannotation ONT_SourceSchema = (.+?)[ \t]*$"
+    existing = re.findall(pattern, table)
+    if len(existing) > 1:
+        raise RuntimeError("Duplicate Eventhouse source schema.")
+    value = json.dumps(schema, separators=(",", ":"))
+    if existing:
+        if json.loads(existing[0]) != schema:
+            raise RuntimeError("Eventhouse source schema does not match the verified physical columns.")
+    else:
+        table = table.rstrip() + f"\n\n\tannotation ONT_SourceSchema = {value}\n"
+    return table
 
 
 def _parts_by_path(parts):
@@ -3842,7 +3887,7 @@ def _bind_eventhouse_parts(parts):
             raise RuntimeError(f"Existing {event_path} points to another Eventhouse source; inspect it before replacing")
         for annotation, expected in (("ONT_ItemId", KQL_DB_ID), ("ONT_WorkspaceId", WORKSPACE_ID),
                                      ("ONT_ItemKind", "KQLDatabase")):
-            values = re.findall(r"(?m)^[ \t]+annotation " + annotation + r" = (.+?)\s*$", partition)
+            values = re.findall(r"(?m)^[ \t]+annotation " + annotation + r" = (.+?)\s*$", table_text)
             if values and values != [expected]:
                 raise RuntimeError(f"Existing {event_path} has a different Eventhouse source: {annotation}")
         for name, dtype in columns:
@@ -3864,6 +3909,9 @@ def _bind_eventhouse_parts(parts):
               f'\t\t\t\t  Source = AzureDataExplorer.Contents("{CLUSTER_QUERY_URI}", "{KQL_DB_NAME}", "{event_table}")\n'
               f"\t\t\t\tin\n\t\t\t\t  Source\n")
 
+    result[event_path] = _pin_eventhouse_table_metadata(
+        result[event_path], WORKSPACE_ID, KQL_DB_ID, KQL_DB_NAME, WORKSPACE_NAME, columns,
+    )
     backings = [block for block in _unnamed_blocks(entity, "additionalBackingTable", 4)
                 if _local_name(_direct_setting(block, "table") or "") == event_table]
     result["relationships.tmdl"], relationship = _bind_physical_relationship(
@@ -3905,6 +3953,12 @@ def _bind_eventhouse_parts(parts):
             for path in [part["path"]]] + [_tmdl_part(path, result[path]) for path in result if path not in original], changed
 
 
+workspace_response = api_request("GET", f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}")
+workspace_response.raise_for_status()
+workspace_metadata = workspace_response.json()
+if workspace_metadata.get("id") != WORKSPACE_ID or not workspace_metadata.get("displayName"):
+    raise RuntimeError("Cannot verify the Eventhouse binding's workspace identity.")
+WORKSPACE_NAME = workspace_metadata["displayName"]
 updated_parts, changed_paths = _bind_eventhouse_parts(live_parts)
 semantic_parts = _enrich_project_semantics(updated_parts)
 previous_parts = {part["path"]: part for part in updated_parts}

@@ -156,6 +156,25 @@ def synchronize_data_agent(root=ROOT, check=False):
     canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
     raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
     content = canonical.read_text(encoding="utf-8")
+    support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8")
+    names = {"selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources"}
+    helpers = [ast.get_source_segment(support, node) for node in ast.parse(support).body
+               if isinstance(node, ast.FunctionDef) and node.name in names]
+    if len(helpers) != len(names):
+        raise RuntimeError("Incomplete Data Agent source topology support.")
+    content, count = re.subn(
+        r"(?ms)^# BEGIN ONTOLOGY SOURCE TOPOLOGY SUPPORT\n.*?^# END ONTOLOGY SOURCE TOPOLOGY SUPPORT",
+        lambda _match: "# BEGIN ONTOLOGY SOURCE TOPOLOGY SUPPORT\n" + "\n\n".join(helpers)
+                       + "\n# END ONTOLOGY SOURCE TOPOLOGY SUPPORT",
+        content,
+    )
+    if count != 1:
+        raise RuntimeError("Expected one Data Agent source topology support region.")
+    if canonical.read_text(encoding="utf-8") != content:
+        if check:
+            raise RuntimeError("NB009 source topology distribution drift; run --sync.")
+        compile(content, str(canonical), "exec")
+        canonical.write_text(content, encoding="utf-8", newline="\n")
     compile(content, str(canonical), "exec")
     notebook = json.loads(raw.read_text(encoding="utf-8"))
     chunks = re.findall(
@@ -180,7 +199,7 @@ def synchronize_data_agent(root=ROOT, check=False):
         if check:
             raise RuntimeError("NB009 distribution drift; run --sync.")
         raw.write_text(desired, encoding="utf-8", newline="\n")
-    return (raw,)
+    return (canonical, raw)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

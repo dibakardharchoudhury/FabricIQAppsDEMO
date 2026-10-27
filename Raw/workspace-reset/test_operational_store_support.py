@@ -16,6 +16,116 @@ def part(path, text):
     return {"path": path, "payload": base64.b64encode(text.encode()).decode(), "payloadType": "InlineBase64"}
 
 
+class OntologySourceTopologyTests(unittest.TestCase):
+    def fixtures(self, kind="Lakehouse"):
+        domains = ({"facilities": "silver_facilities", "equipment": "silver_equipment"}
+                   if kind == "Lakehouse" else support.SQL_PROJECT_ENTITIES)
+        item_id = "lakehouse" if kind == "Lakehouse" else "sql"
+        ontology = [part("expressions.tmdl",
+            f'expression Operations =\n\tAzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/ws/{item_id}")\n'
+            f'\tannotation ONT_WorkspaceId = ws\n\tannotation ONT_ItemId = {item_id}\n'
+            f'\tannotation ONT_ItemKind = {kind}\n')]
+        for entity, table in domains.items():
+            ontology += [
+                part(f"entities/{entity}.tmdl", f"entity {entity}\n\tbackingTable: {entity}\n"),
+                part(f"tables/{entity}.tmdl", f"table {entity}\n\tpartition {entity} = entity\n"
+                     f"\t\tmode: directLake\n\t\tsource\n\t\t\tentityName: {table}\n"
+                     "\t\t\texpressionSource: Operations\n"),
+            ]
+        context = {"artifactId": "ont", "workspaceId": "ws", "elements": [
+            {"display_name": name, "type": "ontology.entity", "is_selected": True}
+            for name in domains
+        ]}
+        source_type = "lakehouse_tables" if kind == "Lakehouse" else "sql_database"
+        source = {"artifactId": item_id, "workspaceId": "ws", "type": source_type,
+                  "dataSourceInstructions": "Keep operator guidance.", "elements": [
+                      {"type": source_type + ".table", "display_name": table, "is_selected": True}
+                      for table in domains.values()
+                  ]}
+        agent = [
+            part("Files/Config/draft/stage_config.json", json.dumps({"aiInstructions": "Existing guidance."})),
+            part("Files/Config/draft/ontologies/ont/ontology.json", json.dumps(context)),
+            part(f"Files/Config/draft/{item_id}-source/datasource.json", json.dumps(source)),
+        ]
+        return agent, ontology
+
+    def test_removes_only_covered_sources_and_preserves_guidance_idempotently(self):
+        agent, ontology = self.fixtures()
+        unrelated = part("Files/Config/draft/custom/datasource.json", json.dumps({
+            "type": "sql_database", "artifactId": "other", "workspaceId": "ws", "custom": True,
+        }))
+        agent.append(unrelated)
+        before = copy.deepcopy(agent)
+        result, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
+        self.assertEqual(removed, ["Files/Config/draft/lakehouse-source/datasource.json"])
+        self.assertEqual(agent, before)
+        self.assertEqual(result[-1], unrelated)
+        instructions = json.loads(base64.b64decode(result[0]["payload"]))["aiInstructions"]
+        self.assertIn("Existing guidance.", instructions)
+        self.assertIn("Keep operator guidance.", instructions)
+        self.assertEqual(support.prune_ontology_duplicate_sources(result, ontology, "ws", "ont"), (result, []))
+        self.assertEqual(support.selected_ontology_entities(result, "ws", "ont"), {"facilities", "equipment"})
+
+    def test_keeps_sources_with_unbound_tables_or_unselected_entities(self):
+        for mode in ("extra-table", "unselected", "custom-metadata", "wrong-item"):
+            with self.subTest(mode=mode):
+                agent, ontology = self.fixtures()
+                context = json.loads(base64.b64decode(agent[1]["payload"]))
+                source = json.loads(base64.b64decode(agent[2]["payload"]))
+                if mode == "extra-table":
+                    source["elements"].append({"type": "lakehouse_tables.table", "display_name": "Custom", "is_selected": True})
+                elif mode == "unselected":
+                    context["elements"][0]["is_selected"] = False
+                elif mode == "custom-metadata":
+                    source["metadata"] = {"operator": "retain"}
+                else:
+                    source["artifactId"] = "other"
+                agent[1] = part(agent[1]["path"], json.dumps(context))
+                agent[2] = part(agent[2]["path"], json.dumps(source))
+                self.assertEqual(support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont"), (agent, []))
+
+    def test_rejects_mismatched_physical_source_and_instruction_overflow(self):
+        agent, ontology = self.fixtures()
+        stale = copy.deepcopy(ontology)
+        text = base64.b64decode(stale[0]["payload"]).decode().replace("/ws/lakehouse", "/ws/other")
+        stale[0] = part(stale[0]["path"], text)
+        with self.assertRaisesRegex(RuntimeError, "physical binding"):
+            support.prune_ontology_duplicate_sources(agent, stale, "ws", "ont")
+        agent[0] = part(agent[0]["path"], json.dumps({"aiInstructions": "x" * 15000}))
+        with self.assertRaisesRegex(RuntimeError, "instruction limit"):
+            support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
+
+    def test_sql_context_association_does_not_remove_its_required_execution_adapter(self):
+        agent, ontology = self.fixtures("SQLDatabase")
+        self.assertEqual(support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont"), (agent, []))
+        bindings = support.ontology_source_bindings(ontology, "ws")
+        self.assertEqual(set(bindings[("SQLDatabase", "sql")]), set(support.SQL_PROJECT_ENTITIES.values()))
+
+    def test_additional_eventhouse_backing_requires_partition_source_identity(self):
+        agent, ontology = self.fixtures()
+        context = json.loads(base64.b64decode(agent[1]["payload"]))
+        context["elements"].append({"display_name": "signal_master", "type": "ontology.entity", "is_selected": True})
+        agent[1] = part(agent[1]["path"], json.dumps(context))
+        agent.append(part("Files/Config/draft/kusto/datasource.json", json.dumps({
+            "type": "kusto", "artifactId": "kql", "workspaceId": "ws",
+            "elements": [{"type": "kusto.table", "display_name": "OPCUAEvents", "is_selected": True}],
+        })))
+        ontology += [
+            part("entities/signal_master.tmdl", "entity signal_master\n\tadditionalBackingTable\n"
+                 "\t\ttable: OPCUAEvents\n\t\trelationship: Signals\n"),
+            part("tables/OPCUAEvents.tmdl", "table OPCUAEvents\n\tpartition OPCUAEvents = m\n"
+                 '\t\tmode: directQuery\n\t\tsource = AzureDataExplorer.Contents("https://cluster", "Telemetry", "OPCUAEvents")\n'
+                 "\t\tannotation ONT_WorkspaceId = ws\n\t\tannotation ONT_ItemId = kql\n"
+                 "\t\tannotation ONT_ItemKind = KQLDatabase\n\t\tannotation ONT_ItemName = Telemetry\n"),
+        ]
+        _, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
+        self.assertIn("Files/Config/draft/kusto/datasource.json", removed)
+        ontology[-1] = part(ontology[-1]["path"], base64.b64decode(ontology[-1]["payload"]).decode().replace(
+            "\t\tannotation ONT_ItemId = kql\n", ""))
+        _, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
+        self.assertNotIn("Files/Config/draft/kusto/datasource.json", removed)
+
+
 class OperationalItemLifecycleTests(unittest.TestCase):
     def prepare(self, existing=True, owned=True, move_succeeds=True,
                 creation_headers=None, operation_statuses=("Succeeded",)):

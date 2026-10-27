@@ -665,6 +665,140 @@ OPERATIONAL_DEMO_COUNTS = {
 }
 
 
+def selected_ontology_entities(parts, workspace_id, ontology_id, stage="draft"):
+    contexts = []
+    for part in parts:
+        if part["path"].startswith(f"Files/Config/{stage}/ontologies/") and part["path"].endswith("/ontology.json"):
+            context = json.loads(base64.b64decode(part["payload"], validate=True))
+            if context.get("artifactId") == ontology_id:
+                if context.get("workspaceId") != workspace_id:
+                    raise RuntimeError("Ontology context belongs to another workspace.")
+                contexts.append(context)
+    if len(contexts) > 1:
+        raise RuntimeError("Ambiguous Ontology context.")
+    if not contexts:
+        return set()
+    return {element["display_name"] for element in contexts[0].get("elements", [])
+            if element.get("type") == "ontology.entity" and element.get("is_selected") is True}
+
+
+def ontology_source_bindings(parts, workspace_id):
+    """Resolve physical tables only through source identities retained by the Fabric editor."""
+    texts = {part["path"]: base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+             for part in parts}
+    if len(texts) != len(parts):
+        raise RuntimeError("Duplicate Ontology definition paths.")
+    unquote = lambda value: value.strip().strip("'").replace("''", "'")
+    expressions = {}
+    for match in re.finditer(r"(?ms)^expression (.+?) =\n.*?(?=^expression |\Z)", texts.get("expressions.tmdl", "")):
+        name = unquote(match[1])
+        if name in expressions:
+            raise RuntimeError("Duplicate Ontology source expression.")
+        expressions[name] = match[0]
+    bindings = {}
+    for path, entity in texts.items():
+        if not path.startswith("entities/") or not path.endswith(".tmdl"):
+            continue
+        names = re.findall(r"(?m)^entity (.+?)[ \t]*$", entity)
+        if len(names) != 1:
+            raise RuntimeError(f"Ambiguous Ontology entity: {path}.")
+        entity_name = unquote(names[0])
+        tables = re.findall(r"(?m)^\tbackingTable:\s*(.+?)[ \t]*$", entity)
+        tables += re.findall(r"(?m)^\tadditionalBackingTable\n\t\ttable:\s*(.+?)[ \t]*$", entity)
+        for alias in tables:
+            table = texts.get(f"tables/{unquote(alias)}.tmdl", "")
+            sources = re.findall(r"(?m)^\s+expressionSource:\s*(.+?)[ \t]*$", table)
+            if len(sources) > 1:
+                raise RuntimeError("Ambiguous Ontology table source.")
+            metadata = expressions.get(unquote(sources[0]), "") if sources else table
+            identity = {}
+            for key in ("WorkspaceId", "ItemId", "ItemKind"):
+                values = re.findall(r"(?m)^\s+annotation ONT_" + key + r" = (.+?)[ \t]*$", metadata)
+                if len(values) > 1:
+                    raise RuntimeError("Ambiguous Ontology source identity.")
+                identity[key] = values[0] if values else None
+            if identity["WorkspaceId"] != workspace_id or not identity["ItemId"]:
+                continue
+            kind, item_id = identity["ItemKind"], identity["ItemId"]
+            if kind in ("Lakehouse", "SQLDatabase"):
+                expected = f"https://onelake.dfs.fabric.microsoft.com/{workspace_id}/{item_id}"
+                urls = re.findall(r'AzureStorage\.DataLake\(\s*"([^"]+)"', metadata)
+                physical = re.findall(r"(?m)^\s+entityName:\s*(.+?)[ \t]*$", table)
+                if urls != [expected] or len(physical) != 1:
+                    raise RuntimeError("Ontology source identity does not match its physical binding.")
+                physical_name = unquote(physical[0])
+            elif kind == "KQLDatabase":
+                queries = re.findall(r'AzureDataExplorer\.Contents\(\s*"(https://[^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)', table)
+                names = re.findall(r"(?m)^\s+annotation ONT_ItemName = (.+?)[ \t]*$", metadata)
+                if len(queries) != 1 or names != [queries[0][1]]:
+                    raise RuntimeError("Ontology Eventhouse source has no unambiguous physical table.")
+                physical_name = queries[0][2]
+            else:
+                continue
+            bindings.setdefault((kind, item_id), {}).setdefault(physical_name, set()).add(entity_name)
+    return bindings
+
+
+def prune_ontology_duplicate_sources(parts, ontology_parts, workspace_id, ontology_id):
+    selected = selected_ontology_entities(parts, workspace_id, ontology_id)
+    if not selected:
+        return parts, []
+    bindings = ontology_source_bindings(ontology_parts, workspace_id)
+    stage_path = "Files/Config/draft/stage_config.json"
+    stages = [part for part in parts if part["path"] == stage_path]
+    if len(stages) != 1:
+        raise RuntimeError("Ontology source cleanup requires one draft configuration.")
+    stage = json.loads(base64.b64decode(stages[0]["payload"], validate=True))
+    instructions = stage.get("aiInstructions", "")
+    removed = []
+    # SQLDatabase association currently supplies context, but no independent SQL tool.
+    kinds = {"lakehouse_tables": "Lakehouse", "kusto": "KQLDatabase"}
+    for part in parts:
+        if not part["path"].startswith("Files/Config/draft/") or not part["path"].endswith("/datasource.json"):
+            continue
+        source = json.loads(base64.b64decode(part["payload"], validate=True))
+        if source.get("workspaceId") != workspace_id or source.get("type") not in kinds:
+            continue
+        if source.get("metadata") or set(source) - {
+            "$schema", "artifactId", "workspaceId", "displayName", "type", "metadata",
+            "dataSourceInstructions", "userDescription", "elements",
+        }:
+            continue
+        covered = bindings.get((kinds[source["type"]], source.get("artifactId")), {})
+        tables = set()
+        notes = [source.get("dataSourceInstructions") or "", source.get("userDescription") or ""]
+        nodes = list(source.get("elements", []))
+        while nodes:
+            node = nodes.pop()
+            nodes.extend(node.get("children", []))
+            if node.get("is_selected") is True and str(node.get("type", "")).endswith(".table"):
+                tables.add(node["display_name"])
+            if node.get("description"):
+                notes.append(f"{node.get('display_name', '')}: {node['description']}")
+        if not tables or any(not (selected & covered.get(table, set())) for table in tables):
+            continue
+        marker = f"### Ontology source guidance: {kinds[source['type']]} {source['artifactId']}"
+        block = marker + "\n" + "\n".join(note for note in notes if note)
+        if block not in instructions:
+            if marker in instructions:
+                raise RuntimeError("Conflicting retained Ontology source guidance.")
+            instructions = instructions.rstrip() + "\n\n" + block
+        removed.append(part["path"])
+    if not removed:
+        return parts, []
+    if len(instructions) > 15000:
+        raise RuntimeError("Cannot remove duplicate sources without exceeding the instruction limit; retain their guidance.")
+    stage["aiInstructions"] = instructions
+    result = []
+    for part in parts:
+        if part["path"] in removed:
+            continue
+        if part["path"] == stage_path:
+            part = {**part, "payload": base64.b64encode(json.dumps(stage).encode()).decode()}
+        result.append(part)
+    return result, removed
+
+
 def operational_store_name(env_suffix):
     if not isinstance(env_suffix, str) or not re.fullmatch(r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*", env_suffix):
         raise RuntimeError("Operational SQL requires the explicit setup environment suffix.")
