@@ -31,6 +31,12 @@ separate directed parallel curves and unchanged camera on reading/selection chan
 The actual source-backed All scope also retained 225 finite distinct positions.
 Detailed measurements are recorded in `docs/knowledge-graph.md`.
 
+Publication attempt: the canonical orchestrator verified the Active FEATURE capacity,
+then required Microsoft/Azure CLI sign-in renewal at existing-SPA discovery (step 2/8).
+The user was unavailable, so the owned waiting process was stopped before Rayfin
+publication. This plan remains Validated, not newly Deployed. Hosted acceptance is
+pending; the signed-in page still reports `1.0.1121 / 1673261`.
+
 ## Knowledge Graph live-source publication
 
 ### Coverage completion and visual restoration follow-up

@@ -65,6 +65,17 @@ stream. A separate read-only check on the real source-backed All scope confirmed
 238 links**, all 225 positions finite and distinct under the revised hierarchy options, including
 disconnected ontology components. Live source counts may change with ingestion.
 
+**Publication is blocked, not complete.** The fixes are pushed in `162a6cd`, with
+validation proof in `209c8f8`. The canonical deployer verified the FEATURE workspace
+and Active capacity, then required renewed Microsoft/Azure CLI sign-in while
+discovering the existing tenant SPA (step 2/8). The user was unavailable to complete
+that sign-in, so the task-owned waiting process was stopped before Rayfin publication.
+No `SUCCESS` or `DEPLOYED_APP_URL` completion receipt was issued.
+The signed-in hosted page still reports **1.0.1121 / 1673261**, not these graph fixes.
+After legitimate sign-in renewal, rerun the canonical command and verify actual
+stale edges, both halo pulses, directed relationships and graph timing on the new
+hosted build. The component checks above do not substitute for that hosted acceptance.
+
 ## Ontology context versus native graph execution
 
 Fabric's ontology is a semantic/context layer, not a general-purpose instance-data query
