@@ -1208,20 +1208,24 @@ class MapAgentMCP:
             "Return the actual stored state and complete run ID from the one row. "
             "Do not invent values, use provider remarks, navigate, or emit a map-focus marker."
         )
-        result = self.rpc("tools/call", {"name": tool["name"], "arguments": {argument: question}}, 3)
-        if result.get("isError") is True:
-            raise ProvisioningError("Data Agent grounding canary failed; inspect AI readiness and SQL endpoint synchronization")
-        content = result.get("content")
-        if not isinstance(content, list):
-            raise ProvisioningError("Grounding canary returned no text content")
-        text = "\n".join(part["text"] for part in content if isinstance(part, dict)
-                         and part.get("type") == "text" and isinstance(part.get("text"), str))
-        if expected_run_id not in text or not re.search(r"\bready\b", text, re.IGNORECASE) or "<!--map-focus:" in text:
-            raise ProvisioningError(
-                "Published agent did not return the actual read-model run/state. "
-                "SQL metadata/data synchronization or AI access is not ready; no successful agent is fabricated."
-            )
-        return {"mcp_endpoint": self.url, "tool_name": tool["name"], "ai_readiness": "grounding_canary_passed"}
+        for attempt in range(3):
+            result = self.rpc("tools/call", {"name": tool["name"], "arguments": {argument: question}}, 3 + attempt)
+            content = result.get("content")
+            if not isinstance(content, list):
+                raise ProvisioningError("Grounding canary returned no text content")
+            text = "\n".join(part["text"] for part in content if isinstance(part, dict)
+                             and part.get("type") == "text" and isinstance(part.get("text"), str))
+            if (result.get("isError") is not True and expected_run_id in text
+                    and re.search(r"\bready\b", text, re.IGNORECASE) and "<!--map-focus:" not in text):
+                return {"mcp_endpoint": self.url, "tool_name": tool["name"], "ai_readiness": "grounding_canary_passed"}
+            detail = text[:1000] or "No text returned"
+            if attempt == 2:
+                raise ProvisioningError(
+                    "Data Agent grounding canary failed after 3 attempts; inspect AI readiness and SQL "
+                    f"endpoint synchronization. Last tool response: {detail}"
+                )
+            print(f"Grounding canary attempt {attempt + 1}/3 not ready: {detail}; retrying in 30 seconds.")
+            time.sleep(30)
 
 
 def publish_map_agent(api, models, mcp_factory):

@@ -530,15 +530,30 @@ class MCPAndOrchestrationTests(HelpersTest):
                          ["initialize", "notifications/initialized", "tools/list", "tools/call"])
 
     def test_published_but_ungrounded_is_not_success(self):
-        for last in ({"isError": True}, {"content": [{"type": "text", "text": "Ready, probably."}]}):
+        for last in ({"isError": True, "content": [{"type": "text", "text": "SQL metadata not ready"}]},
+                     {"content": [{"type": "text", "text": "Ready, probably."}]}):
             mcp = self.ns["MapAgentMCP"](Mock(), self.binding, AGENT, lambda: "offline")
             mcp.rpc = Mock(side_effect=[
                 {"protocolVersion": "2025-03-26"}, None,
                 {"tools": [{"name": "actual-tool", "inputSchema": {"properties": {"query": {"type": "string"}}}}]},
-                last,
+                last, last, last,
             ])
-            with self.assertRaises(self.error):
+            with self.assertRaisesRegex(self.error, "failed after 3 attempts"):
                 mcp.verify_grounding(RUN_ID)
+            self.assertEqual(mcp.rpc.call_count, 6)
+
+    def test_grounding_canary_waits_for_current_sql_snapshot_without_republishing(self):
+        mcp = self.ns["MapAgentMCP"](Mock(), self.binding, AGENT, lambda: "offline")
+        mcp.rpc = Mock(side_effect=[
+            {"protocolVersion": "2025-03-26"}, None,
+            {"tools": [{"name": "actual-tool", "inputSchema": {"properties": {"query": {"type": "string"}}}}]},
+            {"isError": True, "content": [{"type": "text", "text": "SQL metadata not ready"}]},
+            {"content": [{"type": "text", "text": f"state=ready read_model_run_id={str(UUID(int=99))}"}]},
+            {"content": [{"type": "text", "text": f"state=ready read_model_run_id={RUN_ID}"}]},
+        ])
+        self.assertEqual(mcp.verify_grounding(RUN_ID)["ai_readiness"], "grounding_canary_passed")
+        self.assertEqual(self.ns["time"].sleep.call_count, 2)
+        self.assertEqual([call.args[2] for call in mcp.rpc.call_args_list[-3:]], [3, 4, 5])
 
     def test_ownership_failure_precedes_read_model_or_agent_writes(self):
         api, models = Mock(), Mock()

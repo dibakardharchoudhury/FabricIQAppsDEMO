@@ -1,5 +1,10 @@
 # Deploy Hydro Operations
 
+Map-agent publication validates the current read-model run through its published
+MCP tool. It retries unsuccessful grounding checks up to three times, 30 seconds
+apart, to allow Lakehouse SQL synchronization; exhausted checks fail with the last
+tool response. Publication alone is not proof of working map chat.
+
 ## Quick start: one path for each job
 
 1. From the repository root, run `python Raw\workspace-reset\launch.py`.
