@@ -293,13 +293,17 @@ class DataAgentInstructionTests(unittest.TestCase):
             "Treat null/0001 timestamps as missing", "Compare active-node coverage",
             "report missing counts", "equate empty BAD results with healthy turbines",
             "independent single-source queries", "never cross-source SQL/KQL JOINs",
-            "one independent-read correction", "Aggregate events per node; never dump raw events",
+            "one independent-read correction", "Never dump raw events",
+            "1. Lakehouse: read facilities", "2. Eventhouse: BAD-history aggregates",
+            "3. SQL: independently query", "4. Match returned keys",
+            "bad_sample_count=count(),first_bad_utc=min(event_time),last_bad_utc=max(event_time)", "not previews",
             "any BAD event in today's UTC window, not latest-only",
         ):
             self.assertIn(phrase, text)
         for phrase in (
             "do not call the Ontology", "Do not search Ontology", "future ontology capability",
             "ontology-only execution", "RTI Demo Hydropower Plant",
+            "Federation-disabled queries",
         ):
             self.assertNotIn(phrase, text)
 

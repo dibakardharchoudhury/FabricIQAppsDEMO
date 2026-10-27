@@ -1034,8 +1034,12 @@ Use the existing SQL database for work orders, maintenance notifications, inspec
 CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
 CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = """### Cross-source operational joins
 
-Use independent single-source queries; never cross-source SQL/KQL JOINs. Read Lakehouse equipment_id/facility_id/opcua_node_id mappings, Eventhouse aggregates, then SQL equipmentId/opcuaNodeId work. Pass EVERY required returned identifier/count tuple as literal filters; match returned keys in the answer, not across engines. Federation-disabled queries require one independent-read correction, not abandonment.
-Aggregate events per node; never dump raw events. 'Had BAD today' means any BAD event in today's UTC window, not latest-only. Conserve totals; report unmatched/duplicate keys; include zero-order facilities.
+Plan independent single-source queries; never cross-source SQL/KQL JOINs.
+1. Lakehouse: read facilities and equipment_id/facility_id/opcua_node_id mappings.
+2. Eventhouse: BAD-history aggregates use opcua_node_id,bad_sample_count=count(),first_bad_utc=min(event_time),last_bad_utc=max(event_time). Never dump raw events. 'Had BAD today' means any BAD event in today's UTC window, not latest-only.
+3. SQL: independently query equipmentId/opcuaNodeId work using returned keys.
+4. Match returned keys; conserve totals; report unmatched/duplicate keys; include zero-order facilities.
+Pass EVERY required returned identifier/count tuple, not previews. Combined-query failure requires one independent-read correction.
 Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative. Resolve facilities through equipment."""
 
 GLOBAL_SCOPE_MARKER = "### Conversation scope"

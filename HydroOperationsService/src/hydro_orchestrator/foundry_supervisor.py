@@ -29,7 +29,7 @@ from pydantic import AwareDatetime, Field, ValidationError, model_validator
 from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentity, WorkOrderDraft, utc_now
 from .live_sources import Bridge, NativeSourceRefusal, NativeSourceServiceError, SourceFailure
 from .foundry_rca import verified_project_endpoint
-from .native_toolbox import call_native_toolbox
+from .native_data_agent import call_native_data_agent, quality_work_evidence
 from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation
 from .source_auth import SourceAuthorizationError
 from .workflow import RequiredCheckpointStorage
@@ -2108,7 +2108,7 @@ class FoundrySupervisor:
                         or tools[0].get("server_label") != "fabriciq-data-agent"
                         or tools[0].get("project_connection_id") != self.native_binding.connections.get("data-agent")):
                     raise SourceFailure("The native Foundry toolbox differs from its verified Data Agent binding.")
-                return role, AgentVersion(name=name, version=revision, model="native-toolbox", tools=tuple(tools))
+                return role, AgentVersion(name=name, version=revision, model="native-fabric-responses", tools=tuple(tools))
             response = await client.get(f"{self.endpoint}/agents/{name}?api-version=v1",
                                         headers={"Authorization": f"Bearer {token.token}"})
             if not response.is_success:
@@ -2469,7 +2469,7 @@ class FoundrySupervisor:
                         })
                 else:
                     if selected == "fabric-iq" and self.native_binding is not None and self.native_binding.toolbox is not None:
-                        result = await self.invoke_toolbox(delegation.question, request, journal, versions[selected])
+                        result = await self.invoke_data_agent(delegation.question, request, journal, versions[selected])
                     else:
                         response, assessment, elapsed = await self.invoke(
                             selected, delegation.question, request, journal, versions, selected_native,
@@ -2523,39 +2523,40 @@ class FoundrySupervisor:
             return {"specialist": result.model_dump(mode="json"),
                     "evidence": [item.receipt() for item in self.evidence.values()]}
 
-    async def invoke_toolbox(
+    async def invoke_data_agent(
         self, question: str, request: ChatRequest, journal: RunJournal, version: AgentVersion,
     ) -> SpecialistResult:
         self.healthy(request)
         binding = self.native_binding
-        if binding is None or binding.toolbox is None or binding.toolbox != version.name or version.model != "native-toolbox":
-            raise SourceFailure("Native execution requires a pinned, target-verified Foundry toolbox.")
-        if self.native_credential is not None and not self.foundry_call_id:
-            raise SourceAuthorizationError("The hosted invocation is missing its current Foundry caller context.")
+        if (binding is None or binding.toolbox is None or binding.toolbox != version.name
+                or version.model != "native-fabric-responses"):
+            raise SourceFailure("Native execution requires a pinned Foundry binding and the Fabric Responses transport.")
         started = perf_counter()
-        call = await call_native_toolbox(
-            self.endpoint, binding.toolbox, version.version, binding.connections["data-agent"], question,
-            self.native_credential if self.native_credential is not None else self.credential,
-            call_id=self.foundry_call_id,
+        call = await call_native_data_agent(
+            self.endpoint, binding.connections["data-agent"], binding.source.workspace_id, question,
+            self.credential,
             timeout=min(FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS, (request.deadline - utc_now()).total_seconds()),
         )
         self.healthy(request)
         journal.save(f"native_response:{call.request_id}", {
             "source": "data-agent", "toolbox": version.name, "version": version.version,
+            "transport": "fabric-responses",
             "tool_name": call.tool_name, "arguments": call.arguments,
-            "request_id": call.request_id, "result": call.result.model_dump(mode="json", by_alias=True),
+            "request_id": call.request_id, "result": call.result,
         })
         result = _validated_native_result(json.dumps(call.source_payload()))
         if self.semantic_decision is None:
+            bundle = quality_work_evidence(call, request.requested_at)
             checked = await self.bridge.call({
                 "action": "validate_quality_work_evidence", "question": request.question,
-                "result": {"native_outputs": [result]}, "requested_at_utc": request.requested_at.isoformat(),
+                "result": {"native_outputs": [bundle if bundle is not None else result]},
+                "requested_at_utc": request.requested_at.isoformat(),
             })
             if checked.get("required") is True:
                 checked_result = checked.get("result")
                 if not isinstance(checked_result, dict):
                     raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
-                result = {**checked_result, "response": result["response"]}
+                result = {**checked_result, "native_source_output": result, "response": result["response"]}
         required = initial_equipment_selection(request)
         if required and not required.issubset(_native_equipment_ids(result)):
             raise SourceFailure("Native identity coverage missing: the selected source omitted requested equipment.")

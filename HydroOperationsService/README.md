@@ -341,11 +341,23 @@ required normal sign-in, so current delegated-source/UI acceptance remains pendi
 
 ## Thin-client contract
 
-The deployed native binding uses the version-pinned `hydro-fabric-iq-tools`
-Foundry toolbox, not the Fabric IQ prompt-agent wrapper. The deterministic
-Agent Framework workflow discovers the single verified, read-only Fabric IQ tool
-and sends the exact question through Foundry's managed MCP gateway. Foundry retains
-delegated authentication and toolbox governance; no direct-Fabric fallback is used.
+The deployed native binding retains the version-pinned `hydro-fabric-iq-tools`
+Foundry toolbox as a verified connection manifest, not an additional agent or
+execution hop. The deterministic Agent Framework workflow verifies that binding,
+resolves the selected Data Agent from its connection, and sends the exact question
+to the published Fabric Data Agent's native Responses interface. It does not call
+the MCP query tool or the Fabric IQ prompt-agent wrapper on this path. This is the
+primary native Data Agent transport, not a fallback or a direct-table reader.
+The observed MCP runtime declined ordinary cross-source questions; the official
+[Fabric Responses client](https://github.com/microsoft/fabric-samples/blob/main/docs-samples/data-science/data-agent-sdk/responses-api/responses-api-notebook.ipynb)
+executed the same published ontology's sandboxed cross-source combine successfully.
+Workspace capacity and workload origin are rediscovered for every invocation;
+generated capacity hosts are never copied between targets or cached globally.
+The signed-in user's existing verified Fabric, Foundry and Power BI token leases
+authorize discovery, connection attestation and native execution respectively.
+No managed identity fallback or new consent screen is introduced. Managed toolbox
+execution policies are not claimed for this separate Responses transport: source
+authorization, native read-only execution and application approval gates remain explicit.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.
@@ -362,12 +374,12 @@ records. Combined workflows display the unchanged Fabric Data Agent answer
 separately from Hydro workflow analysis and approval cards. Source errors,
 content-filter failures, moderation-processing failures, and work-order approval
 gates remain enforced; wrapper prose never replaces a failed native receipt.
-Expected MCP discovery, transport and delegated-authorization failures are unwrapped
+Expected MCP compatibility-path discovery, transport and delegated-authorization failures are unwrapped
 from SDK task groups and reported with their execution phase and correlation ID.
 Execution diagnostics retain safe status/error codes, not native answer data or
 tokens. Discovery-only diagnostics retain the bounded service reason with
 credentials and URLs redacted, before any user question is sent to the source.
-Hosted toolbox requests authenticate with the agent's runtime credential and
+Compatibility-path hosted toolbox requests authenticate with the agent's runtime credential and
 forward the current invocation's `x-agent-foundry-call-id` unchanged. The platform
 uses that context to resolve the signed-in user for the Data Agent connection.
 It is not a generated trace ID, is never saved in run state, and is cleared with

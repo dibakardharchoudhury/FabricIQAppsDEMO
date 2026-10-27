@@ -226,18 +226,27 @@ fresh targets otherwise use the documented generic Fabric MCP endpoint.
 Conflicting workspace-specific endpoints fail rather than choosing an arbitrary
 connection. Portal-created connections are not deleted.
 
-The app's native route uses the `hydro-fabric-iq-tools` Foundry toolbox bound to
-the verified `hydro-fabric-iq` connection. Setup creates or versions it only when
+The app's native route pins the `hydro-fabric-iq-tools` Foundry toolbox as its
+connection manifest, bound to the verified `hydro-fabric-iq` connection.
+Setup creates or versions it only when
 needed, preserves existing toolbox policies/skills/metadata, promotes its default
 version and verifies readback. Prepared app deployment verifies it without
-repairing it. Each run pins the immutable version and discovers its single
-read-only Data Agent query tool. This removes the intermediate Fabric IQ model
-from the app's answer path; the prompt specialist is retained for compatibility.
-The hosted runtime must forward the invocation's `x-agent-foundry-call-id` on
+repairing it. Each run verifies the immutable version and connection target, then
+uses the published Data Agent's native Responses interface with the original
+question and the signed-in user's verified Power BI token lease. The current
+workspace capacity and workload endpoint are freshly discovered; never copy a
+generated capacity URL. No MCP query or intermediate Fabric IQ model runs in this
+answer path; the prompt specialist and MCP utility remain for compatibility.
+Native acceptance found that Fabric MCP declined ordinary cross-source questions,
+while the [official Responses interface](https://learn.microsoft.com/fabric/data-science/fabric-data-agent-sdk)
+successfully executed the ontology's sandboxed cross-source combine. This transport
+change is explicit, not a retry/fallback to direct tables or another identity.
+For compatibility-path MCP execution, the hosted runtime must forward `x-agent-foundry-call-id` on
 every toolbox request, using the agent credential for the toolbox boundary and
 the connection's delegated user identity downstream. A successful direct toolbox
 test does not certify this hosted caller-context boundary.
-Delegated tokens and policy enforcement stay in Foundry's managed MCP gateway.
+The primary Responses path instead uses the existing per-request delegated leases
+and application authorization; it does not claim managed MCP execution-policy enforcement.
 Original source text and resource receipts are retained; downstream analysis and
 approval drafts are separate, never replacements for the source answer.
 
@@ -246,7 +255,11 @@ standalone duplicates of those sources are removed. The explicit operational SQL
 adapter remains necessary while the ontology's SQL association supplies context
 but not an independent SQL execution tool. Only the five operational tables are
 selected; visible but unselected SQL control tables are not extra query sources.
-Check actual tool output during native acceptance: a completed Foundry response
+Native JSON result files and their typed tables are retained without rewriting the
+answer. Quality/work evidence must match successful native source-query and combine
+receipts; row-limited reads, unmatched keys or failed coverage cannot certify completeness.
+Existing temporal, identity and duplicate-work checks still apply before any approved write.
+Check actual tool output during compatibility-path native acceptance: a completed Foundry response
 can still include an error in `raiPostToolAnnotations`. Endpoint readiness or
 successful tool discovery alone does not establish a successful native answer.
 
