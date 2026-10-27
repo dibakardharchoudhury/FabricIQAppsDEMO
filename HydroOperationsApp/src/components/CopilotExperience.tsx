@@ -3,6 +3,7 @@ import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Ma
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
+import { AgentAccessControl } from './AgentAccessControl'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
 import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
@@ -108,6 +109,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
     <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
       style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
       <span className="v2-copilot-actions">
+        {engine === 'foundry' && <AgentAccessControl disabled={busy} />}
         {foundryAvailable && (onEngineChange || battleEnabled) && <span className="v2-engine-toggle" role="group" aria-label="Copilot options">
           {onEngineChange && (['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
             key={option}

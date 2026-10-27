@@ -176,6 +176,7 @@ class PackagingTests(unittest.TestCase):
             "HydroOperationsService/skills/work-order-review/SKILL.md",
             "HydroOperationsApp/scripts/local-fabric-sources.mjs",
             "HydroOperationsApp/src/services/operationalConnector.ts",
+            "HydroOperationsApp/src/services/hostedSourceAccess.ts",
             "HydroOperationsApp/src/services/copilot/orchestration.ts",
             "HydroOperationsApp/src/services/copilot/agentDefinitions.ts", "HydroOperationsApp/package-lock.json",
         ):

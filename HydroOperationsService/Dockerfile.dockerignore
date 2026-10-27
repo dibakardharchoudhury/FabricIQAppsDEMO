@@ -19,6 +19,7 @@
 !HydroOperationsApp/src/
 !HydroOperationsApp/src/services/
 !HydroOperationsApp/src/services/kustoResult.ts
+!HydroOperationsApp/src/services/hostedSourceAccess.ts
 !HydroOperationsApp/src/services/lakehouseConnector.ts
 !HydroOperationsApp/src/services/operationalConnector.ts
 !HydroOperationsApp/src/services/copilot/

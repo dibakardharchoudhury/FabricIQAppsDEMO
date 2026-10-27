@@ -13,6 +13,7 @@ import { parseGraphBinding, queryBoundOntologyGraph, readOntologyGraphReadiness,
 import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
 import { createEntraTokens } from './entraTokens'
+import { createHostedSourceAccess } from './hostedSourceAccess'
 import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
@@ -279,22 +280,28 @@ export async function foundryAgentToken(interactive: boolean): Promise<string | 
   return popupToken(FOUNDRY_AGENT_SCOPES)
 }
 
-export async function hostedSourceTokens() {
+async function hostedSourceAccess() {
   const config = await ensureConfig(false)
   const cluster = configuredEventhouseQueryUri ?? config?.eventhouseQueryUri
   if (!cluster) throw new Error('The hosted source requires the authoritative Eventhouse endpoint.')
-  // A hosted run can remain active for ten minutes, so never submit a lease that could expire during it. Cached
-  // leases with enough remaining life are reused; only near-expiry ones pay an Entra round trip.
-  const [fabric, foundry, graphql, kusto] = await Promise.all([
-    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken([CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken([kustoScope(cluster)], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-  ])
-  if (!fabric || !foundry || !graphql || !kusto) {
-    throw new Error('Renew Fabric, Foundry, STID and telemetry access through the existing sign-in/connection controls.')
-  }
-  return { fabric, foundry, graphql, kusto }
+  return createHostedSourceAccess([
+    { kind: 'fabric', label: 'Fabric', scopes: [...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])] },
+    { kind: 'foundry', label: 'Foundry', scopes: FOUNDRY_AGENT_SCOPES },
+    { kind: 'graphql', label: 'Lakehouse/SQL', scopes: [CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE] },
+    { kind: 'kusto', label: 'Eventhouse telemetry', scopes: [kustoScope(cluster)] },
+  ], {
+    silent: scopes => silentToken(scopes, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    popup: popupToken,
+  })
+}
+
+export async function hostedSourceTokens() {
+  return (await hostedSourceAccess()).acquire()
+}
+
+/** Explicit user gesture only. One resource per click; never resubmit a question or write decision. */
+export async function connectHostedSourceAccess(): Promise<string[]> {
+  return (await hostedSourceAccess()).connectNext()
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */

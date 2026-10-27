@@ -23,6 +23,10 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
         result = await client.acquireTokenSilent({ account, scopes, forceRefresh: true })
       }
       if (!result.accessToken) throw new Error('Entra returned no access token.')
+      if (minimumLifetimeMs > 0
+        && !(result.expiresOn && result.expiresOn.getTime() - Date.now() >= minimumLifetimeMs)) {
+        throw new Error('Entra returned a token lease shorter than the required operation lifetime. No request was sent.')
+      }
       return result.accessToken
     } catch (error) {
       if (error instanceof InteractionRequiredAuthError) return null

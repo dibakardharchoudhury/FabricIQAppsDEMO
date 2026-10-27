@@ -912,6 +912,7 @@ class ContainerPackagingTests(unittest.TestCase):
     runtime_files = (
         "HydroOperationsApp/scripts/local-fabric-sources.mjs",
         "HydroOperationsApp/src/services/kustoResult.ts",
+        "HydroOperationsApp/src/services/hostedSourceAccess.ts",
         "HydroOperationsApp/src/services/lakehouseConnector.ts",
         "HydroOperationsApp/src/services/operationalConnector.ts",
         *(f"HydroOperationsApp/src/services/copilot/{name}.ts" for name in (

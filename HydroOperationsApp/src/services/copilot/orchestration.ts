@@ -1,3 +1,5 @@
+import { HostedSourceAccessError } from '../hostedSourceAccess.ts'
+
 export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq' | 'weather'
 export const AGENT_DISPLAY_NAMES: Record<AgentRole, string> = {
   supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky', weather: 'Weather',
@@ -52,6 +54,7 @@ export function failedExecutionEvents(
 }
 
 export function uncertifiedFailureMessage(error: unknown): string {
+  if (error instanceof HostedSourceAccessError) return error.message
   const technical = error instanceof Error && error.message.trim()
     ? error.message.trim()
     : 'The agent transport failed.'

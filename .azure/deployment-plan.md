@@ -1,6 +1,50 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Agent authorization and source-routing repair validation
+
+Reuse the approved FEATURE tenant/workspace, SPA, Foundry project/model,
+connectors and canonical Python deployment recipe. No infrastructure, RBAC,
+network, delegated scope or production-write policy changes are requested.
+The repair adds explicit per-audience source authorization in shared chat/Battle,
+checks renewed leases, and prevents native-only quality/work contracts from
+capturing independent verification. Existing historical quality, complete
+evidence, provider-refusal and human-approval boundaries remain in place.
+
+Pre-existing overlapping edits are preserved in stash
+`16a45ffe12959ac4575e9e387b57d748a9b07e0f`, not included in this release.
+No weather, graph, ingestion, seed or schedule changes are part of this repair.
+
+All validation checks pass for this scoped change:
+- [x] Core CLI/auth/build validation: existing Azure CLI tenant/subscription
+  preflight, environment validation, TypeScript/Vite build and scoped lint.
+- [x] Behavioral validation: 149 focused application tests and the complete
+  185-test supervisor/live-source/source-auth suite pass under Node 24.
+- [x] Container packaging: four Docker COPY/ignore/runtime-closure/fingerprint
+  tests pass under Node 24. Local Docker is installed but its daemon is not
+  running; no local image-build pass is claimed. The canonical orchestrator owns the actual ACR image
+  build and hosted version readiness before publishing the Fabric app.
+- [x] Static roles: no new principal, delegated scope, role or role assignment.
+  Existing signed-principal source checks and human write approval are unchanged.
+- [x] Azure Policy/ARM what-if: not applicable; no ARM/IaC/resource/network/RBAC
+  changes. This is an existing application/hosted-code publication.
+
+### Section 7: Agent repair validation proof
+
+The 149-test focused Node suite covers authorization, token refresh, transport,
+canonical source planning and explicit native/direct verification. Commands:
+`node --import tsx --test scripts\operational-routing.test.ts scripts\local-fabric-sources.test.mjs scripts\copilot-tools.test.mjs scripts\hosted-source-access.test.ts scripts\entra-tokens.test.mjs scripts\hosted-transport.test.ts`,
+scoped ESLint, `npm run validate-env`, and `npm run build`.
+Production build completed in 29.36 seconds with existing chunk/mixed-import
+warnings only. Under Node 24.21.0,
+`python -m unittest test_foundry_supervisor test_live_sources test_source_auth`
+passes all 185 tests in 189.787 seconds; the four additional focused
+packaging/fingerprint checks pass. An earlier Node 26 packaging failure was
+resolved, not waived. Azure CLI verified the expected tenant and Enabled
+subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+Deployment SUCCESS and authenticated runtime acceptance must be recorded
+separately after publication.
 
 ## October 27 UKMet-first weather follow-up
 

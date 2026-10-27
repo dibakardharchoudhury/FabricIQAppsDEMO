@@ -16,7 +16,7 @@ function fixture() {
       if (state.silentError) throw state.silentError
       const token = state.tokens.get(request.scopes.join(' '))
       if (!token) throw new InteractionRequiredAuthError('consent_required')
-      return { accessToken: token, expiresOn: state.expiresOn }
+      return { accessToken: token, expiresOn: request.forceRefresh ? state.refreshedExpiresOn ?? state.expiresOn : state.expiresOn }
     },
     acquireTokenPopup: async request => {
       state.popups.push(request)
@@ -120,10 +120,11 @@ test('hosted Rayfin exchange never submits a lease that can expire during a boun
   assert.match(source,
     /const POWER_BI_ITEM_EXECUTE_SCOPE = 'https:\/\/analysis\.windows\.net\/powerbi\/api\/Item\.Execute\.All'/)
   assert.match(source, /const HOSTED_RUN_TOKEN_LIFETIME_MS = 12 \* 60_000/)
-  assert.match(source, /silentToken\(\[\.\.\.new Set\(\[\.\.\.FABRIC_JOB_SCOPES, \.\.\.DATA_AGENT_SCOPES\]\)\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
-  assert.match(source, /silentToken\(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
-  assert.match(source, /silentToken\(\[CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
-  assert.match(source, /silentToken\(\[kustoScope\(cluster\)\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
+  assert.match(source, /label: 'Fabric', scopes: \[\.\.\.new Set\(\[\.\.\.FABRIC_JOB_SCOPES, \.\.\.DATA_AGENT_SCOPES\]\)\]/)
+  assert.match(source, /label: 'Foundry', scopes: FOUNDRY_AGENT_SCOPES/)
+  assert.match(source, /label: 'Lakehouse\/SQL', scopes: \[CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\]/)
+  assert.match(source, /label: 'Eventhouse telemetry', scopes: \[kustoScope\(cluster\)\]/)
+  assert.match(source, /silent: scopes => silentToken\(scopes, false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
 })
 
 test('a cached lease is reused only while it outlives the bounded operation, otherwise it is refreshed once', async () => {
@@ -136,6 +137,7 @@ test('a cached lease is reused only while it outlives the bounded operation, oth
   assert.equal(state.silent[0].forceRefresh, false)
   state.silent.length = 0
   state.expiresOn = minutes(6)
+  state.refreshedExpiresOn = minutes(45)
   assert.equal(await tokens.silent(['foundry'], false, 12 * 60_000), 'cached')
   assert.deepEqual(state.silent.map(request => request.forceRefresh), [false, true])
   state.silent.length = 0
@@ -147,6 +149,14 @@ test('a cached lease is reused only while it outlives the bounded operation, oth
   assert.deepEqual(state.silent.map(request => request.forceRefresh), [false])
 })
 
+test('a refreshed or unknown short lease cannot pass the hosted-run lifetime guard', async () => {
+  const { state, tokens } = fixture()
+  state.tokens.set('foundry', 'cached')
+  state.expiresOn = new Date(Date.now() + 6 * 60_000)
+  await assert.rejects(tokens.silent(['foundry'], false, 12 * 60_000), /shorter than the required operation lifetime/)
+  state.expiresOn = undefined
+  await assert.rejects(tokens.silent(['foundry'], true, 12 * 60_000), /shorter than the required operation lifetime/)
+})
 test('Lakehouse connection uses Rayfin while Eventhouse retains explicit delegated consent', () => {
   const source = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
   const connect = source.slice(

@@ -1,5 +1,20 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Agent access and current source policy
+
+Before a hosted invocation, the browser checks delegated access for Fabric,
+Foundry, Lakehouse/SQL connectors and Eventhouse. **Connect agent access** in
+Foundry chat or Battle authorizes one missing audience per click and rechecks
+the complete set. It never replays a question or a work-order decision. A
+resource-specific preflight failure means no invocation was sent; a later
+transport failure still requires checking the exact existing run before retry.
+Refreshed tokens must meet the operation's minimum remaining lifetime.
+
+Ordinary operational questions use governed source reads. Only an explicitly
+requested Data Agent uses the native quality/work specialization; independent
+verification still requires direct evidence. Historical matching ("had BAD")
+retains matching samples separately from the latest state.
+
 ## October 26 current audit
 
 Latest publication: coordinator **v23**, signed app **1.0.1121 / `1673261`**.

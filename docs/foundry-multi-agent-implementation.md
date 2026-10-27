@@ -1,5 +1,37 @@
 # Foundry and multi-agent implementation record
 
+## Agent authorization and source-routing repair
+
+The immediate zero-second authorization error occurs in the browser's delegated
+source preflight, before an invocation is sent. Signing into the Fabric hosting
+session does not establish all four source audiences: Fabric, Foundry,
+Lakehouse/SQL connectors and Eventhouse. The shared Foundry chat and Battle view
+now provide **Connect agent access**. Each click authorizes one missing audience,
+then checks all four again. Cancellation and network failures remain visible;
+connecting never resubmits a question or an approval decision. Missing access
+identifies its resource and explicitly reports that no agent request was sent.
+Forced token renewal must still meet the bounded operation's minimum lease.
+
+Ordinary operational questions use governed direct sources. Explicit Data Agent
+requests stay native, with no silent fallback. The specialized native quality/work
+contract must not capture ordinary wording or replace a requested independent
+direct-source verification. "Had BAD" means any matching sample in the UTC
+window; it is not interchangeable with latest/current quality. Matching samples,
+latest state and missing readings remain distinct, and truncated evidence is not
+certified complete solely because its tool name is trusted.
+
+The existing deterministic `WorkflowBuilder` supervisor is an appropriate
+[Agent Framework workflow](https://learn.microsoft.com/en-us/agent-framework/workflows/agents-in-workflows).
+The documented [orchestration patterns](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/)
+do not require replacing it with a free-form manager/group chat. QA evidence must
+precede dependent RCA and draft review; independent source reads can be concurrent.
+The [human-in-the-loop boundary](https://learn.microsoft.com/en-us/agent-framework/workflows/human-in-the-loop)
+remains separate from agent reasoning: connection recovery is never write approval.
+
+Local regression results and deployment/browser acceptance are separate gates.
+Earlier live runs below are not evidence that this repair has been published or
+that a current authenticated multi-agent request has passed.
+
 This record covers the original **October 7-11, 2026** implementation and later
 dated follow-ups, corrections, measured results and unfinished acceptance, grounded
 in repository commits and linked records. It is not a release certificate.
