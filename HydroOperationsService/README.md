@@ -28,6 +28,12 @@ inventory/read and 262,144-byte callback limits; a model text budget must not
 silently shrink immutable evidence. Truncated or unqualified fleet snapshots
 fail closed. Grounded answer context uses the same 500-row bound as certified
 answer tables, rather than clipping a verified fleet to its first 80 signals.
+Before RCA, the executor fulfills required governed evidence instead of leaving
+population reads until final answer verification. RCA scope honors deterministic
+selection and resolved named equipment before a fleet population, so a named
+investigation cannot freeze an empty scope or widen to unrelated turbines.
+Native validation failures log only the Foundry response ID for authorized
+provider-receipt diagnostics, not raw source output or credentials.
 No-RCA work-order handoffs preserve verified direct evidence and source
 population/provenance metadata. Keep the pinned deterministic workflow and existing project.
 Historical version/test counts below are not this release's runtime certificate.

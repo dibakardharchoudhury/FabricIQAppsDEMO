@@ -1593,6 +1593,66 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
         )
 
+    def test_rca_scope_honors_named_equipment_before_population_and_with_missing_snapshot(self):
+        request = self.request.model_copy(update={
+            "required_evidence_kinds": ("signal_quality",),
+            "resolved_scope": ResolvedScope(
+                source=SOURCE, read_completed_at=utc_now(),
+                matches=(ResolvedIdentity(
+                    mention="T005", kind="equipment", canonical_id="TEST_T005",
+                    label="T005", matched_by="tag",
+                ),),
+            ),
+        })
+        for index, rows in enumerate(([], [
+            {"equipment_id": "TEST_T005"}, {"equipment_id": "TEST_T999"},
+        ])):
+            self.owner.evidence = {"quality": ToolEvidence(
+                id="quality", source=SOURCE, tool="query_signal_quality_snapshot",
+                arguments={}, completed_at=utc_now(), result={"rows": rows},
+            )} if rows else {}
+            with self.subTest(rows=rows):
+                scope = self.owner.root_cause_scope(request, RunJournal(self.root / f"named-rca-{index}"))
+                self.assertEqual(scope["equipment_ids"], ["TEST_T005"])
+                self.assertEqual(scope["omitted"], 0)
+
+    def test_rca_scope_honors_deterministic_evidence_selection_before_fleet_population(self):
+        request = ChatRequest.model_validate({
+            **self.request.model_dump(),
+            "required_evidence_kinds": ["signal_quality"],
+            "equipment_selection": {
+                "metric": "signal_quality_count", "quality": "BAD", "tie_break": "equipment_id_asc",
+            },
+        })
+        self.owner.evidence = {"quality": ToolEvidence(
+            id="quality", source=SOURCE, tool="query_signal_quality_snapshot",
+            arguments={}, completed_at=utc_now(), result={"rows": [
+                {"equipment_id": "TEST_T005", "opcua_node_id": "node-a", "quality": "BAD"},
+                {"equipment_id": "TEST_T005", "opcua_node_id": "node-b", "quality": "BAD"},
+                {"equipment_id": "TEST_T999", "opcua_node_id": "node-c", "quality": "BAD"},
+            ]},
+        )}
+        scope = self.owner.root_cause_scope(request, RunJournal(self.root / "selected-rca"))
+        self.assertEqual(scope["equipment_ids"], ["TEST_T005"])
+
+    async def test_population_requirements_are_fulfilled_before_rca_history_scope_is_frozen(self):
+        order: list[str] = []
+        fulfill = self.owner.fulfill_catalog_requirements
+
+        async def record_fulfillment(request: ChatRequest, journal: RunJournal) -> None:
+            order.append("fulfill")
+            await fulfill(request, journal)
+
+        async def record_history(request: ChatRequest, journal: RunJournal) -> dict[str, object] | None:
+            order.append("history")
+            return None
+
+        with patch.object(self.owner, "fulfill_catalog_requirements", side_effect=record_fulfillment), patch.object(
+            self.owner, "root_cause_evidence", side_effect=record_history,
+        ):
+            await self.owner.run(self.request)
+        self.assertLess(order.index("fulfill"), order.index("history"))
+
     def test_explicit_resolved_equipment_seeds_conditional_handoffs_when_reads_are_empty(self):
         request = self.request.model_copy(update={
             "question": "Read notifications and open work for turbine T005, then investigate.",

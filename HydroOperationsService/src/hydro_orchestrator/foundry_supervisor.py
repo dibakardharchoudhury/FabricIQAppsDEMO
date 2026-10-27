@@ -2736,6 +2736,7 @@ class FoundrySupervisor:
                                 "equipment instance requested by the operator."
                             )
                     except SourceFailure as error:
+                        logger.warning("Foundry native response %s failed source validation.", response.response_id)
                         source_mismatch = str(error).startswith("Native source mismatch:")
                         source_refusal = str(error).startswith("Native source refusal:")
                         identity_missing = str(error).startswith("Native identity coverage missing:")
@@ -3219,8 +3220,8 @@ class FoundrySupervisor:
         return {equipment: list(orders.values()) for equipment, orders in sorted(found.items())}
 
     def root_cause_scope(self, request: ChatRequest, journal: RunJournal) -> dict[str, object]:
-        """The equipment an RCA covers, fixed once per run: the equipment behind the requested signal-quality or
-        temperature evidence, else the selected or named equipment. Journaled so every later stage agrees."""
+        """Fix the RCA scope once: deterministic selection, resolved named equipment, then the requested
+        signal-quality/temperature population or prior selection. Every later stage uses the same scope."""
         saved = journal.read("root_cause_scope")
         if saved is not None:
             return saved
@@ -3229,7 +3230,12 @@ class FoundrySupervisor:
             if kind in ("signal_quality", "temperature")
         }
         found: set[str] = set()
-        if tools:
+        named = initial_equipment_selection(request)
+        if request.equipment_selection is not None:
+            found = selected_equipment_from_evidence(request.equipment_selection, self.evidence.values())
+        elif named:
+            found = named
+        elif tools:
             for receipt in self.evidence.values():
                 rows = receipt.result.get("rows")
                 if receipt.tool in tools and isinstance(rows, list):
@@ -3238,7 +3244,7 @@ class FoundrySupervisor:
                         if isinstance(row, dict) and isinstance(row.get("equipment_id"), str) and row["equipment_id"]
                     )
         else:
-            found = set(self.selected_equipment_ids) | initial_equipment_selection(request)
+            found = set(self.selected_equipment_ids)
         ordered = sorted(found)
         scope: dict[str, object] = {"equipment_ids": ordered[:RCA_MAX_EQUIPMENT], "omitted": max(0, len(ordered) - RCA_MAX_EQUIPMENT)}
         journal.save("root_cause_scope", scope)
@@ -3970,6 +3976,8 @@ class FoundrySupervisor:
                         await ctx.send_message(turn.model_dump_json())
                         return
                     delegation = plan.steps[self.index]
+                    if delegation.specialist == "rca":
+                        await owner.fulfill_catalog_requirements(request, journal)
                     selected = (
                         selected_equipment_from_evidence(request.equipment_selection, owner.evidence.values())
                         if request.equipment_selection is not None

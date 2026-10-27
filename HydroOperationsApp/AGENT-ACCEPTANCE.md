@@ -65,7 +65,7 @@ publication returned final success at **23:30:34 UTC** with coordinator **v20**
 and signed app **1.0.1117 / `6b7ec1c`**; all specialists and 42 redirects were
 preserved.
 
-### Latest v20 signed-browser result: execution succeeds, coverage acceptance fails
+### Earlier v20 signed-browser result: execution succeeds, coverage acceptance fails
 
 Session `413e72bd-56be-414c-aebb-9c3f573c424d` completed the original compound
 question through Gauge and Fixer in **91 seconds**, with pending draft cards
@@ -79,7 +79,26 @@ or unqualified snapshots and aligns operator context with the certified
 500-row table limit instead of clipping it at 80. The
 [full-coverage follow-up](../docs/foundry-multi-agent-implementation.md#complete-source-evidence-follow-up-acceptance-not-yet-passed)
 records the root cause and regressions. New publication and authenticated
-full-coverage, RCA and native-result acceptance are still required.
+RCA and native-result acceptance are still required.
+
+### v21 signed-browser result: full fleet passed; RCA/native remain open
+
+Canonical publication succeeded on **October 27 at 00:05:23 UTC**, coordinator
+**v21**, signed app **1.0.1118 / `f660a39`**. Capacity was resumed from Paused to
+Active under the user's authorization; all five specialists and 42 redirects
+were preserved. Signed session `6f760307-9b7f-464a-84b9-804bbc180af8` verified
+the full-fleet request over the last 24 hours in **82 seconds**: the actual
+rendered source table has **89 rows / 15 turbine IDs**, 12 work records and
+15 unapproved drafts. No production writes occurred. The original "today"
+question correctly returned no new-day readings and no drafts in **33.6 seconds**.
+
+A named T005 RCA exposed missing pre-RCA evidence fulfillment and scope
+precedence defects; three failing repros now pass within **200 Python tests**,
+with zero Pyright diagnostics. Native-only facility count failed explicitly
+in **42.9 seconds** on a real provider error envelope, with no count or direct
+fallback certified. The [RCA follow-up](../docs/foundry-multi-agent-implementation.md#rca-prerequisite-and-scope-follow-up)
+remains unpublished/unaccepted at this checkpoint; neither crew animation nor
+the fleet pass is a substitute for those remaining gates.
 
 ## October 12 v77 canonical-prompt release
 

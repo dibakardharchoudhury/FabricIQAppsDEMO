@@ -207,8 +207,37 @@ complete operator-context rows with unchanged receipts, and rejection of both
 truncated and missing-completeness snapshots. All **197 Python tests** and
 **107 Node contracts** passed, with zero Pyright diagnostics, TypeScript/Vite
 production build, environment validation and changed-file ESLint.
-Publication and authenticated full-coverage/RCA/native acceptance of this new
-repair remain pending.
+Canonical publication returned final success on **October 27 at 00:05:23 UTC**:
+coordinator **v21**, image `src-2959fa46a1da34ec` (ACR `dtj`), signed app
+**1.0.1118 / `f660a39`**, all five specialists reused and 42 redirects preserved.
+The authorized `fabcapswc` capacity had paused; it was resumed and verified Active.
+
+Signed session `6f760307-9b7f-464a-84b9-804bbc180af8` proved:
+
+| Request | Actual result | Gate |
+| --- | --- | --- |
+| Original question after UTC midnight | 33.6 seconds; 0 today's samples, all 90 mapped signals missing in that new window, no drafts; explicitly not a healthy-telemetry claim | Boundary behavior passed |
+| Same compound intent over last 24 hours | Gauge -> Fixer, 82 seconds; rendered source table contains 89 rows across all 15 turbine IDs, 12 work records, 15 unapproved diagnostic drafts; stale readings distinguished from historical BAD samples | Full-fleet coverage passed; no writes |
+| Named T005 investigation/RCA | 83 seconds; Gauge/Sleuth finished, but the history bundle was absent and no diagnostic draft staged | RCA not accepted |
+| Native-only facility count | 42.9 seconds; actual native error envelope rejected, Sparky/Supervisor marked Needs attention, no certified count, fallback or write; run `b6ccf45e-e5ea-49dd-86fc-054416b27a63` | Native source availability not passed |
+
+### RCA prerequisite and scope follow-up
+
+The named RCA exposed two concrete coordinator defects. Governed contract
+fulfillment ran only after specialists, so freezing the RCA scope could precede
+the required quality snapshot. When that population was absent, named equipment
+was ignored; when present, it could also override a narrower named/deterministic
+selection with unrelated fleet units. Three repro tests failed before repair
+(including empty and over-broad named scope, deterministic selection and actual
+workflow ordering).
+
+The executor now fulfills governed requirements before RCA selection/history.
+Scope prioritizes deterministic selection, then resolved named equipment, then
+the requested analytical population/prior selection. Existing per-run frozen
+scope, eight-equipment detail bound, source/permission checks and conditional
+work gates remain. **200 Python tests** and Pyright passed. Native rejection now
+logs a response ID, without raw provider output or credentials, for authorized
+receipt diagnostics. Publication and new RCA/native acceptance remain pending.
 
 ## October 26 publication and main-merge readiness
 
