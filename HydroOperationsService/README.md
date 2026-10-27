@@ -351,8 +351,13 @@ primary native Data Agent transport, not a fallback or a direct-table reader.
 The observed MCP runtime declined ordinary cross-source questions; the official
 [Fabric Responses client](https://github.com/microsoft/fabric-samples/blob/main/docs-samples/data-science/data-agent-sdk/responses-api/responses-api-notebook.ipynb)
 executed the same published ontology's sandboxed cross-source combine successfully.
-Workspace capacity and workload origin are rediscovered for every invocation;
-generated capacity hosts are never copied between targets or cached globally.
+The deployed AppBackend origin is validated by live source discovery against its
+workspace, AppBackend and capacity; native execution rechecks the workspace's current
+capacity before using that origin. Capacity drift is a hard failure requiring the
+canonical deployer, never a guessed host. This avoids the private workload-routing
+token operation that rejected the SPA lease in hosted acceptance. Standalone SDK-style
+diagnostics without a verified origin retain the SDK's discovery route.
+Generated capacity hosts are never copied between targets or cached globally.
 The signed-in user's existing verified Fabric, Foundry and Power BI token leases
 authorize discovery, connection attestation and native execution respectively.
 No managed identity fallback or new consent screen is introduced. Managed toolbox

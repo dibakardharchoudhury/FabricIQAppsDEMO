@@ -1594,7 +1594,7 @@ class FoundrySupervisor:
         tools: BackendTools, source: SourceIdentity, root: Path, *, max_delegations: int = 10,
         native_binding: NativeBinding | None = None, analysis_model: str | None = None,
         semantic_planning: bool = False, native_credential: AsyncTokenCredential | None = None,
-        foundry_call_id: str | None = None,
+        foundry_call_id: str | None = None, native_workload_origin: str | None = None,
     ):
         if not 1 <= max_delegations <= 20:
             raise ValueError("Delegation budget must be between 1 and 20.")
@@ -1610,6 +1610,7 @@ class FoundrySupervisor:
         if native_binding is not None and native_binding.source != source:
             raise ValueError("Native connection binding differs from the verified source identity.")
         self.native_binding = native_binding
+        self.native_workload_origin = native_workload_origin
         self.evidence: dict[str, ToolEvidence] = {}
         self.specialists: list[SpecialistResult] = []
         self.failures: list[Exception] = []
@@ -2536,6 +2537,7 @@ class FoundrySupervisor:
             self.endpoint, binding.connections["data-agent"], binding.source.workspace_id, question,
             self.credential,
             timeout=min(FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS, (request.deadline - utc_now()).total_seconds()),
+            verified_workload_origin=self.native_workload_origin,
         )
         self.healthy(request)
         journal.save(f"native_response:{call.request_id}", {

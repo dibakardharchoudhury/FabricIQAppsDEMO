@@ -233,9 +233,12 @@ needed, preserves existing toolbox policies/skills/metadata, promotes its defaul
 version and verifies readback. Prepared app deployment verifies it without
 repairing it. Each run verifies the immutable version and connection target, then
 uses the published Data Agent's native Responses interface with the original
-question and the signed-in user's verified Power BI token lease. The current
-workspace capacity and workload endpoint are freshly discovered; never copy a
-generated capacity URL. No MCP query or intermediate Fabric IQ model runs in this
+question and the signed-in user's verified Power BI token lease. Live source discovery
+verifies the deployed AppBackend origin against its workspace, item and current capacity.
+Native execution rechecks the capacity before using that verified origin; capacity drift
+fails and requires the canonical deployer. This avoids the private workload-routing token
+operation that rejected the SPA lease. Never copy a generated capacity URL between targets.
+No MCP query or intermediate Fabric IQ model runs in this
 answer path; the prompt specialist and MCP utility remain for compatibility.
 Native acceptance found that Fabric MCP declined ordinary cross-source questions,
 while the [official Responses interface](https://learn.microsoft.com/fabric/data-science/fabric-data-agent-sdk)

@@ -51,6 +51,7 @@ class Discovery(Contract):
     source: SourceIdentity
     cluster: str
     database: str
+    workload_origin: str | None = None
 
 
 class CatalogRead(Contract):

@@ -974,7 +974,7 @@ export async function discover(config, token, fetcher = fetch) {
   return {
     source: { tenant_id: config.tenant_id, workspace_id: config.workspace_id,
       ontology_id: config.ontology_id, generation: 2, configuration_digest: config.configuration_digest },
-    cluster: cluster.origin, database: database.displayName,
+    cluster: cluster.origin, database: database.displayName, workload_origin: api.origin,
   }
 }
 

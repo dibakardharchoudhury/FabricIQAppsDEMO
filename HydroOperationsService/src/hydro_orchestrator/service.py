@@ -827,10 +827,13 @@ def create_fabric_delegated_app(
         try:
             if sources.discovery.source != source:
                 raise SourceFailure("Live source discovery differs from the configured invocation identity.")
+            if native_binding is not None and sources.discovery.workload_origin is None:
+                raise SourceFailure("Native execution requires a live-verified workload origin.")
             async with DefaultAzureCredential() as native_credential:
                 yield FoundrySupervisor(endpoint, credential, bridge, FabricBackendTools(sources), source, state,
                                         native_binding=native_binding, native_credential=native_credential,
                                         foundry_call_id=credential.foundry_call_id,
+                                        native_workload_origin=sources.discovery.workload_origin,
                                         analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
                                         semantic_planning=True)
         finally:

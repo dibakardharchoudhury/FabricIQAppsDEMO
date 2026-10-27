@@ -109,6 +109,18 @@ class NativeDataAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(old_capacity.hex in r.url.host for r in self.requests))
         self.assertTrue(any(self.capacity.hex in r.url.host for r in self.requests))
 
+    async def test_live_verified_origin_avoids_private_routing_and_rejects_capacity_drift(self):
+        origin = f"https://{self.capacity.hex}.pbidedicated.windows.net"
+        result = await self.invoke(verified_workload_origin=origin)
+        self.assertEqual(result.source_payload()["response"], self.text)
+        self.assertFalse(any("clusterDetails" in r.url.path or "generatemwctoken" in r.url.path
+                             for r in self.requests))
+        self.capacity = uuid4()
+        self.requests.clear()
+        with self.assertRaisesRegex(SourceFailure, "live workspace capacity"):
+            await self.invoke(verified_workload_origin=origin)
+        self.assertFalse(any(r.url.host.endswith(".pbidedicated.windows.net") for r in self.requests))
+
     async def test_other_workspace_or_untrusted_connection_fails_before_source_requests(self):
         for target in (
             self.target.replace(str(self.workspace), str(uuid4())),

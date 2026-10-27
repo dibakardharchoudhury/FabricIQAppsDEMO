@@ -227,6 +227,7 @@ def quality_work_evidence(call: NativeDataAgentCall, requested_at: datetime) -> 
 async def call_native_data_agent(
     endpoint: str, connection: str, workspace_id: UUID, question: str,
     credential: AsyncTokenCredential, *, timeout: float = 300,
+    verified_workload_origin: str | None = None,
 ) -> NativeDataAgentCall:
     phase = "connection verification"
     correlation = str(uuid4())
@@ -255,20 +256,26 @@ async def call_native_data_agent(
             if workspace.get("id", "").lower() != str(workspace_id):
                 raise SourceFailure("Fabric discovery changed the bound workspace identity.")
             capacity = UUID(workspace["capacityId"])
-            phase = "cluster discovery"
-            cluster = (await request(
-                "GET", FABRIC_ORIGIN + "/powerbi/globalservice/v201606/clusterDetails", PBI_SCOPE,
-            )).json()
-            cluster_origin = trusted_origin(cluster.get("clusterUrl"), ".analysis.windows.net")
-            phase = "workload routing"
-            routing = (await request(
-                "POST", cluster_origin + "/metadata/v201606/generatemwctokenv2", PBI_SCOPE,
-                json={"capacityObjectId": str(capacity), "workspaceObjectId": str(workspace_id),
-                      "workloadType": "ML"},
-            )).json()
-            host = routing.get("TargetUriHost")
-            origin = trusted_origin("https://" + host if isinstance(host, str) else None,
-                                    ".pbidedicated.windows.net")
+            if verified_workload_origin is not None:
+                phase = "bound workload validation"
+                origin = trusted_origin(verified_workload_origin, ".pbidedicated.windows.net")
+                if urlparse(origin).hostname != f"{capacity.hex}.pbidedicated.windows.net":
+                    raise SourceFailure("Native workload origin differs from the live workspace capacity; redeploy.")
+            else:
+                phase = "cluster discovery"
+                cluster = (await request(
+                    "GET", FABRIC_ORIGIN + "/powerbi/globalservice/v201606/clusterDetails", PBI_SCOPE,
+                )).json()
+                cluster_origin = trusted_origin(cluster.get("clusterUrl"), ".analysis.windows.net")
+                phase = "workload routing"
+                routing = (await request(
+                    "POST", cluster_origin + "/metadata/v201606/generatemwctokenv2", PBI_SCOPE,
+                    json={"capacityObjectId": str(capacity), "workspaceObjectId": str(workspace_id),
+                          "workloadType": "ML"},
+                )).json()
+                host = routing.get("TargetUriHost")
+                origin = trusted_origin("https://" + host if isinstance(host, str) else None,
+                                        ".pbidedicated.windows.net")
             base = (f"{origin}/webapi/capacities/{capacity}/workloads/ML/AISkill/Automatic/v1"
                     f"/workspaces/{workspace_id}/artifacts/{agent}")
             headers.update({

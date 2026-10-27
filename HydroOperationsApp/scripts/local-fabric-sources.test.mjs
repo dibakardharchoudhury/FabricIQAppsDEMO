@@ -1316,7 +1316,9 @@ test('operational catalog executes read-only SDK pages with canonical fields and
 })
 
 test('live discovery verifies generation, ownership and current capacity', async () => {
-  assert.equal((await discover(config, 'test', discoveryFetch())).source.generation, 2)
+  const found = await discover(config, 'test', discoveryFetch())
+  assert.equal(found.source.generation, 2)
+  assert.equal(found.workload_origin, new URL(config.api_url).origin)
   for (const generation of [1, '2', true, null]) {
     await assert.rejects(discover(config, 'test', discoveryFetch(generation)), /generation 2/)
   }

@@ -286,13 +286,16 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                                 toolbox="hydro-fabric-iq-tools")
         native_credential = AsyncMock()
         owner = self.make_owner(native_binding=binding, analysis_model="test-model",
-                                native_credential=native_credential, foundry_call_id="current-hosted-call")
+                                native_credential=native_credential, foundry_call_id="current-hosted-call",
+                                native_workload_origin="https://verified.pbidedicated.windows.net")
         with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
                    new_callable=AsyncMock, return_value=call) as invoke:
             answer = await owner.run(request)
             self.assertEqual(invoke.call_count, 1)
             self.assertEqual(invoke.call_args.args[1:4], ("native-data", SOURCE.workspace_id, request.question))
             self.assertIs(invoke.call_args.args[4], owner.credential)
+            self.assertEqual(invoke.call_args.kwargs["verified_workload_origin"],
+                             "https://verified.pbidedicated.windows.net")
             self.assertEqual(client_presentation(answer).text.encode(), text.encode())
             self.assertEqual(answer.native_answers[0].content_sha256, sha256(text.encode()).hexdigest())
             self.assertEqual(owner.specialists[0].response_id, "actual-tool-execution")
