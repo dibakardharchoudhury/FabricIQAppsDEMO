@@ -367,6 +367,12 @@ from SDK task groups and reported with their execution phase and correlation ID.
 Execution diagnostics retain safe status/error codes, not native answer data or
 tokens. Discovery-only diagnostics retain the bounded service reason with
 credentials and URLs redacted, before any user question is sent to the source.
+Hosted toolbox requests authenticate with the agent's runtime credential and
+forward the current invocation's `x-agent-foundry-call-id` unchanged. The platform
+uses that context to resolve the signed-in user for the Data Agent connection.
+It is not a generated trace ID, is never saved in run state, and is cleared with
+the request's delegated lease. Missing hosted caller context fails before MCP
+discovery; it never falls back to another identity.
 
 Foundry, the Hosted Data Agent route and both Battle panes require the hosted
 Invocations transport configured by `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL`.

@@ -51,6 +51,7 @@ class DelegatedCredential:
     ):
         self.principal_id, self.policy = principal_id, policy
         self._tokens = tokens
+        self.foundry_call_id: str | None = None
 
     async def get_token(self, *scopes: str, **kwargs: object) -> AccessToken:
         if len(scopes) != 1:
@@ -74,6 +75,7 @@ class DelegatedCredential:
 
     async def close(self) -> None:
         self._tokens.clear()
+        self.foundry_call_id = None
 
     async def __aenter__(self) -> Self:
         return self

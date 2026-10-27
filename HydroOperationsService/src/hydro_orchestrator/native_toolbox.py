@@ -57,7 +57,7 @@ class NativeToolboxCall:
 
 async def call_native_toolbox(
     endpoint: str, name: str, version: str, connection: str, question: str,
-    credential: AsyncTokenCredential, *, timeout: float = 300,
+    credential: AsyncTokenCredential, *, timeout: float = 300, call_id: str | None = None,
 ) -> NativeToolboxCall:
     request_id = str(uuid4())
     phase = "initialization"
@@ -107,9 +107,12 @@ async def call_native_toolbox(
             request_id = response.headers.get("apim-request-id") or response.headers.get("x-ms-request-id") or request_id
 
     url = f"{endpoint}/toolboxes/{name}/versions/{version}/mcp?api-version=v1"
+    headers = {"x-ms-client-request-id": request_id}
+    if call_id is not None:
+        headers["x-agent-foundry-call-id"] = call_id
     async with source_errors(), httpx.AsyncClient(
         auth=FoundryUserAuth(credential), follow_redirects=False, timeout=timeout,
-        headers={"x-ms-tool-call-id": request_id}, event_hooks={"response": [capture]},
+        headers=headers, event_hooks={"response": [capture]},
     ) as client:
         async with streamable_http_client(url, http_client=client, terminate_on_close=False) as (read, write, _):
             async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=timeout)) as session:

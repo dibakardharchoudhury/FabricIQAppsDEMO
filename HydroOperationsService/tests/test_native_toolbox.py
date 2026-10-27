@@ -26,7 +26,7 @@ TOOL = {
 
 class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
     async def execute(self, *, tools=None, result=None, next_cursor=None, rpc_error=None, auth_error=None,
-                      discovery_error=None):
+                      discovery_error=None, call_id=None):
         requests = []
         credential = AsyncMock()
         credential.get_token.return_value = AccessToken("delegated-test-token", 9999999999)
@@ -35,6 +35,9 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
         question = "Which turbines?\nKeep punctuation & Norwegian names: \u00c5."
 
         def respond(request):
+            self.assertEqual(request.headers.get("x-agent-foundry-call-id"), call_id)
+            self.assertIn("x-ms-client-request-id", request.headers)
+            self.assertNotIn("x-ms-tool-call-id", request.headers)
             self.assertEqual(request.headers["Authorization"], "Bearer delegated-test-token")
             self.assertEqual(str(request.url), "https://foundry.example/api/projects/hydro/toolboxes/"
                              "hydro-fabric-iq-tools/versions/2/mcp?api-version=v1")
@@ -78,7 +81,7 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
         with patch("hydro_orchestrator.native_toolbox.httpx.AsyncClient", side_effect=client):
             call = await call_native_toolbox(
                 "https://foundry.example/api/projects/hydro", "hydro-fabric-iq-tools", "2",
-                "hydro-fabric-iq", question, credential,
+                "hydro-fabric-iq", question, credential, call_id=call_id,
             )
         return call, requests, credential
 
@@ -96,6 +99,10 @@ class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SourceFailure, "source execution error"):
             await self.execute(result={"content": [{"type": "text", "text": "SQL execution failed"}],
                                        "isError": True})
+
+    async def test_hosted_caller_context_is_forwarded_verbatim_on_every_mcp_request(self):
+        for call_id in ("first-request-context", "second-request-context"):
+            await self.execute(call_id=call_id)
 
     async def test_gateway_rpc_failure_surfaces_phase_code_and_real_request_without_private_text(self):
         with self.assertLogs("hydro_orchestrator.native_toolbox", level="ERROR") as logs:

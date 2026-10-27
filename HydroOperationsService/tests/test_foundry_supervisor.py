@@ -41,6 +41,7 @@ from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.native_toolbox import NativeToolboxCall
 from mcp import types as mcp_types
 from hydro_orchestrator.presentation import client_presentation
+from hydro_orchestrator.source_auth import SourceAuthorizationError
 from hydro_orchestrator.service import ChatInput, create_app, follow_up_intent
 from test_durable_service import SOURCE, HEADERS, TOKEN
 
@@ -282,13 +283,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                                 mcp_types.CallToolResult(content=[mcp_types.TextContent(type="text", text=text)]))
         binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
                                 toolbox="hydro-fabric-iq-tools")
-        owner = self.make_owner(native_binding=binding, analysis_model="test-model")
+        native_credential = AsyncMock()
+        owner = self.make_owner(native_binding=binding, analysis_model="test-model",
+                                native_credential=native_credential, foundry_call_id="current-hosted-call")
         with patch("hydro_orchestrator.foundry_supervisor.call_native_toolbox",
                    new_callable=AsyncMock, return_value=call) as invoke:
             answer = await owner.run(request)
             self.assertEqual(invoke.call_count, 1)
             self.assertEqual(invoke.call_args.args[1:5],
                              ("hydro-fabric-iq-tools", "2", "native-data", request.question))
+            self.assertIs(invoke.call_args.args[5], native_credential)
+            self.assertEqual(invoke.call_args.kwargs["call_id"], "current-hosted-call")
             self.assertEqual(client_presentation(answer).text.encode(), text.encode())
             self.assertEqual(answer.native_answers[0].content_sha256, sha256(text.encode()).hexdigest())
             self.assertEqual(owner.specialists[0].response_id, "actual-tool-execution")
@@ -304,6 +309,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             recovered.save("prepared_answer", journal.read("prepared_answer"))
             self.assertEqual(await restarted.run(request), answer)
             self.assertEqual(invoke.call_count, 1)
+
+    async def test_hosted_native_execution_rejects_missing_caller_context_before_tool_discovery(self):
+        binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                toolbox="hydro-fabric-iq-tools")
+        owner = self.make_owner(native_binding=binding, native_credential=AsyncMock())
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_toolbox", new_callable=AsyncMock) as invoke:
+            with self.assertRaisesRegex(SourceAuthorizationError, "caller context"):
+                await owner.invoke_toolbox(
+                    self.request.question, self.request, RunJournal(self.root / "missing-context"),
+                    AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-toolbox", tools=()),
+                )
+            invoke.assert_not_called()
 
     async def test_native_toolbox_keeps_provider_moderation_errors_out_of_evidence(self):
         binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},

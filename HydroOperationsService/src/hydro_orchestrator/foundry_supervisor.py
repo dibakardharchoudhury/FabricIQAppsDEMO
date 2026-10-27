@@ -31,6 +31,7 @@ from .live_sources import Bridge, NativeSourceRefusal, NativeSourceServiceError,
 from .foundry_rca import verified_project_endpoint
 from .native_toolbox import call_native_toolbox
 from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation
+from .source_auth import SourceAuthorizationError
 from .workflow import RequiredCheckpointStorage
 
 logger = logging.getLogger(__name__)
@@ -1592,11 +1593,13 @@ class FoundrySupervisor:
         self, endpoint: str, credential: AsyncTokenCredential, bridge: Bridge,
         tools: BackendTools, source: SourceIdentity, root: Path, *, max_delegations: int = 10,
         native_binding: NativeBinding | None = None, analysis_model: str | None = None,
-        semantic_planning: bool = False,
+        semantic_planning: bool = False, native_credential: AsyncTokenCredential | None = None,
+        foundry_call_id: str | None = None,
     ):
         if not 1 <= max_delegations <= 20:
             raise ValueError("Delegation budget must be between 1 and 20.")
         self.endpoint, self.credential, self.bridge = verified_project_endpoint(endpoint), credential, bridge
+        self.native_credential, self.foundry_call_id = native_credential, foundry_call_id
         self.analysis_model = (analysis_model or "").strip() or None
         if semantic_planning and not self.analysis_model:
             raise ValueError("Semantic orchestration requires the verified deployed planning model.")
@@ -2527,10 +2530,13 @@ class FoundrySupervisor:
         binding = self.native_binding
         if binding is None or binding.toolbox is None or binding.toolbox != version.name or version.model != "native-toolbox":
             raise SourceFailure("Native execution requires a pinned, target-verified Foundry toolbox.")
+        if self.native_credential is not None and not self.foundry_call_id:
+            raise SourceAuthorizationError("The hosted invocation is missing its current Foundry caller context.")
         started = perf_counter()
         call = await call_native_toolbox(
             self.endpoint, binding.toolbox, version.version, binding.connections["data-agent"], question,
-            self.credential,
+            self.native_credential if self.native_credential is not None else self.credential,
+            call_id=self.foundry_call_id,
             timeout=min(FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS, (request.deadline - utc_now()).total_seconds()),
         )
         self.healthy(request)

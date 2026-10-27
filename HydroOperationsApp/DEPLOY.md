@@ -233,6 +233,10 @@ version and verifies readback. Prepared app deployment verifies it without
 repairing it. Each run pins the immutable version and discovers its single
 read-only Data Agent query tool. This removes the intermediate Fabric IQ model
 from the app's answer path; the prompt specialist is retained for compatibility.
+The hosted runtime must forward the invocation's `x-agent-foundry-call-id` on
+every toolbox request, using the agent credential for the toolbox boundary and
+the connection's delegated user identity downstream. A successful direct toolbox
+test does not certify this hosted caller-context boundary.
 Delegated tokens and policy enforcement stay in Foundry's managed MCP gateway.
 Original source text and resource receipts are retained; downstream analysis and
 approval drafts are separate, never replacements for the source answer.

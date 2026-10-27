@@ -564,6 +564,37 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SourceAuthorizationError):
                 await leases[0].get_token(self.policy.scopes["fabric"])
 
+    async def test_hosted_call_context_is_request_scoped_in_streaming_and_never_persisted(self):
+        observed = []
+
+        async def execute(request):
+            observed.append(leases[-1].foundry_call_id)
+            return ChatAnswer(
+                run_id=request.run_id, source=request.source, requested_at=request.requested_at,
+                source_read_times=(), summary="Context propagation fixture.",
+                tables=(), charts=(), limitations=(), cell_sources=(), specialists=(),
+                audit_url=f"/chat/runs/{request.run_id}/evidence",
+            )
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, leases, _, _ = self.ingress(root, run=execute)
+            identifiers = ("first-platform-call", "second-platform-call")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test") as client:
+                for identifier in identifiers:
+                    response = await client.post(
+                        "/invocations", json={**self.invocation(), "stream": True},
+                        headers={"x-agent-foundry-call-id": identifier},
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(json.loads(response.text.splitlines()[-1])["type"], "answer")
+            self.assertEqual(observed, list(identifiers))
+            self.assertTrue(all(lease.foundry_call_id is None for lease in leases))
+            persisted = "".join(path.read_text() for path in root.rglob("*.json"))
+            for identifier in identifiers:
+                self.assertNotIn(identifier, persisted)
+
     async def test_interrupted_stream_continues_and_same_principal_recovers_exact_result(self):
         with TemporaryDirectory() as directory:
             app, _, _, contexts = self.ingress(Path(directory), delay=.05)
@@ -850,6 +881,9 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(owner.credential.principal_id, USER)
             self.assertEqual(owner.native_binding, native_binding)
             self.assertTrue(owner.semantic_planning)
+            self.assertIsNotNone(owner.native_credential)
+            self.assertIsNot(owner.native_credential, owner.credential)
+            self.assertEqual(owner.foundry_call_id, "current-platform-call")
             return ChatAnswer(
                 run_id=request.run_id, source=request.source, requested_at=request.requested_at,
                 source_read_times=(), summary="Composition fixture, not a live source answer.",
@@ -877,7 +911,10 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                     with patch.object(FoundrySupervisor, "run", autospec=True, side_effect=execute) as run:
                         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                                      base_url="http://test") as client:
-                            response = await client.post("/invocations", json=self.invocation())
+                            response = await client.post(
+                                "/invocations", json=self.invocation(),
+                                headers={"x-agent-foundry-call-id": "current-platform-call"},
+                            )
                         self.assertEqual(response.status_code, 500 if changed else 200, response.text)
                         self.assertEqual(run.call_count, 0 if changed else 1)
                         self.assertNotIn(

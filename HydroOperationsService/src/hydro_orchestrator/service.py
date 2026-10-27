@@ -17,6 +17,7 @@ from uuid import UUID, uuid4, uuid5
 
 from agent_framework import WorkflowException
 import httpx
+from azure.identity.aio import DefaultAzureCredential
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from filelock import FileLock, Timeout as LockTimeout
 
@@ -531,6 +532,7 @@ def create_delegated_app(
 
         try:
             credential = await verifier.verify(body, deadline)
+            credential.foundry_call_id = request.headers.get("x-agent-foundry-call-id")
             principal_key = hashlib.sha256(
                 f"{source.model_dump_json()}:{credential.principal_id}".encode(),
             ).hexdigest()
@@ -825,10 +827,12 @@ def create_fabric_delegated_app(
         try:
             if sources.discovery.source != source:
                 raise SourceFailure("Live source discovery differs from the configured invocation identity.")
-            yield FoundrySupervisor(endpoint, credential, bridge, FabricBackendTools(sources), source, state,
-                                    native_binding=native_binding,
-                                    analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
-                                    semantic_planning=True)
+            async with DefaultAzureCredential() as native_credential:
+                yield FoundrySupervisor(endpoint, credential, bridge, FabricBackendTools(sources), source, state,
+                                        native_binding=native_binding, native_credential=native_credential,
+                                        foundry_call_id=credential.foundry_call_id,
+                                        analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+                                        semantic_planning=True)
         finally:
             await sources.close()
 
