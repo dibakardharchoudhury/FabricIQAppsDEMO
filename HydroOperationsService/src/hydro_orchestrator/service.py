@@ -34,7 +34,10 @@ from .source_auth import DelegatedCredential, DelegatedTokens, SourceAuthPolicy,
 from .store import Conflict, Store, StoredRun
 from .workflow import ReviewAdapters, build_workflow, checkpoint_store
 from .presentation import OperatorAnswer, client_presentation, operator_answer
-from .live_sources import Bridge, FabricBackendTools, LiveSources, NativeSourceRefusal, NodeSourceBridge, SourceFailure
+from .live_sources import (
+    Bridge, FabricBackendTools, LiveSources, NativeSourceRefusal, NativeSourceServiceError,
+    NodeSourceBridge, SourceFailure,
+)
 from .foundry_rca import verified_project_endpoint
 
 logger = logging.getLogger(__name__)
@@ -672,7 +675,7 @@ def create_delegated_app(
                         except TimeoutError:
                             failed(504, "source_timeout",
                                    "An upstream source operation timed out; inspect the execution audit.")
-                        except NativeSourceRefusal as failure:
+                        except (NativeSourceRefusal, NativeSourceServiceError) as failure:
                             failed(502, failure.category, str(failure))
                         except Exception as failure:
                             logger.error("Detached orchestration failed (%s).", type(failure).__name__)
@@ -728,7 +731,7 @@ def create_delegated_app(
                         error = failed(504, "source_timeout",
                                        "An upstream source operation timed out; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
-                    except NativeSourceRefusal as failure:
+                    except (NativeSourceRefusal, NativeSourceServiceError) as failure:
                         yield line(terminal_event(str(failure)))
                         error = failed(502, failure.category, str(failure))
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
@@ -789,7 +792,7 @@ def create_delegated_app(
             logger.warning("Delegated invocation upstream operation timed out.")
             raise failed(504, "source_timeout",
                          "An upstream source operation timed out; inspect the execution audit.") from None
-        except NativeSourceRefusal as error:
+        except (NativeSourceRefusal, NativeSourceServiceError) as error:
             raise failed(502, error.category, str(error)) from None
         except HTTPException:
             raise
@@ -823,7 +826,8 @@ def create_fabric_delegated_app(
                 raise SourceFailure("Live source discovery differs from the configured invocation identity.")
             yield FoundrySupervisor(endpoint, credential, bridge, FabricBackendTools(sources), source, state,
                                     native_binding=native_binding,
-                                    analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"))
+                                    analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+                                    semantic_planning=True)
         finally:
             await sources.close()
 
@@ -844,7 +848,12 @@ def create_fabric_delegated_app(
     async def normalize_chat(
         chat: ChatInput, credential: DelegatedCredential, state: Path,
     ) -> tuple[ChatInput, tuple[str, ...]]:
-        normalized, carried_ids = await follow_up_intent(bridge, state, source, chat)
+        normalized = chat.model_copy(update={
+            "required_specialists": (), "required_specialist_steps": {},
+            "required_evidence_kinds": (), "permitted_evidence_kinds": (),
+        })
+        candidates = carriable_receipts(state, source, chat.previous_run_id)
+        carried_ids = tuple(item.id for item in candidates if reusable_kinds(item))[:MAX_CARRIED_RECEIPTS]
         if not re.search(
             r"\b(?:EQUIP_RTI_T0*\d+|FACILITY_RTI_0*\d+|T0*\d+|"
             r"(?:turbine|equipment|asset|facility|station|power\s+plant)\s*"

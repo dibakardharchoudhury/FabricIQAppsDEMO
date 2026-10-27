@@ -4,12 +4,6 @@ import asyncio
 import sys
 from pathlib import Path
 
-import uvicorn
-from pydantic import ValidationError
-
-from .live_sources import SourceFailure
-from .service import RuntimeConfiguration, create_app, create_runtime_app
-
 
 def prepare_runtime_user(state: Path) -> None:
     user = os.environ.get("HYDRO_RUNTIME_USER", "")
@@ -76,6 +70,11 @@ def main() -> None:
         root_value = os.environ.get("HYDRO_RUNTIME_STATE_DIR", "")
         if not root_value or not Path(root_value).is_absolute():
             parser.error("Set HYDRO_RUNTIME_STATE_DIR to an explicit absolute state directory.")
+        import uvicorn
+        from pydantic import ValidationError
+        from .live_sources import SourceFailure
+        from .service import RuntimeConfiguration, create_runtime_app
+
         try:
             configuration = RuntimeConfiguration.model_validate_json(configured)
             prepare_runtime_user(Path(root_value))
@@ -89,6 +88,9 @@ def main() -> None:
         uvicorn.run(app, host=os.environ.get("HYDRO_RUNTIME_HOST", "127.0.0.1"),
                     port=int(os.environ.get("HYDRO_RUNTIME_PORT", "8088")), access_log=False)
         return
+    import uvicorn
+    from .service import create_app
+
     token = os.environ.get("HYDRO_LOCAL_API_TOKEN", "")
     root = Path(os.environ.get("HYDRO_LOCAL_STATE_DIR", ".runtime"))
     app = create_app(root, token)

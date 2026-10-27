@@ -10,6 +10,38 @@ The later [UKMet-first Weather acceptance](weather-fabric-port-plan.md#october-2
 supersedes the earlier all-weather ingestion blocker: UKMet works independently,
 while Aurora remains disabled rather than credential-repaired.
 
+### October 27: durable Data Agent ontology-context metadata repair
+
+The read-only V12 snapshots show 18 described ontology entities and six rules,
+but the Data Agent's draft and published ontology context list only the original
+five entities, with generated column lists incorrectly marked as user-authored
+descriptions. NB009 now reads the selected live generation-2 definition and
+refreshes generated descriptions and missing entities on **both** first setup
+and existing-context reruns. It preserves saved IDs, explicit deselections,
+custom descriptions, instructions, SQL guidance and all mounted source profiles.
+Updated context metadata is included in draft/published readback verification.
+`sync_ontology_notebooks.py` also checks and mirrors NB009 while preserving cell metadata.
+
+The Eventhouse binding is **not absent** in the inspected ontology: the
+`signal_master` entity has `OPCUAEvents` as an additional backing table, a physical
+key relationship, and aligned `event_time`, `value` and `quality` time-series
+bindings. Its M partition points at the configured Kusto database/table.
+The same KQL database is mounted directly in the Data Agent. These facts do not
+prove why Fabric omits it from the UI's **Ontology data sources** group. Do not
+invent unsupported partition annotations, duplicate a working binding, or remove
+the working direct Eventhouse/Lakehouse/SQL profiles to change that grouping.
+
+[Microsoft's ontology-context documentation](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-ontology-sources)
+confirms that actual execution uses source-native SQL/KQL/DAX, mounted sources
+are needed for supplemental source instructions, and ontology context refreshes
+every ten minutes or through **Refresh**. The initial context UI does not support
+entity selection. After the parent's canonical deployment publishes NB009 and
+reruns it after ontology setup, verify the published context, refresh/download
+the product's ontology context, inspect underlying KQL run steps, and test actual
+telemetry before attributing any remaining grouping issue to a product limitation.
+The local snapshot replay changes only the draft ontology-context part (5 → 18
+entities); no tenant changes or publication were performed for this repair.
+
 ## Decision
 
 **The expanded domain model is useful, but do not adopt `Ontology_Test` as-is.**

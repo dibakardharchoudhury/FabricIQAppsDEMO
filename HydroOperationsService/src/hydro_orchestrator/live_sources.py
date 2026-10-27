@@ -36,6 +36,17 @@ class NativeSourceRefusal(SourceFailure):
         )
 
 
+class NativeSourceServiceError(SourceFailure):
+    category = "native_provider_error"
+
+    def __init__(self):
+        super().__init__(
+            "The Foundry/Fabric native provider failed during output moderation. "
+            "This is a provider processing error, not a confirmed Data Agent refusal. "
+            "No direct-source fallback was used; no answer or write outcome is certified."
+        )
+
+
 class Discovery(Contract):
     source: SourceIdentity
     cluster: str

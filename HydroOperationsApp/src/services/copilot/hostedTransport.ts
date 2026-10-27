@@ -41,7 +41,10 @@ export class HostedInvocationError extends Error {
       ? 'The selected Fabric Data Agent refused the request. Its owner must review the provider response before retrying. ' +
         'No direct-source fallback was used. No answer or write outcome is certified.' +
         (detail.audit_available === false ? ' The execution audit could not be saved; contact the service owner.' : '')
-      : `Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
+      : detail?.category === 'native_provider_error'
+        ? 'The Foundry/Fabric native provider failed during output moderation. This is not a confirmed Data Agent refusal. ' +
+          'No direct-source fallback was used. No answer or write outcome is certified.'
+        : `Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
     this.status = status
     this.detail = detail
   }

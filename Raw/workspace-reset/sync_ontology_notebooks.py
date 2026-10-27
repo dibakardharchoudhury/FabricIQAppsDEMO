@@ -1,4 +1,4 @@
-"""Distribute ontology support to 004/005/006 and shared-store support to 001/011.
+"""Distribute ontology support to 004/005/006, mirror 009, and shared-store support to 001/011.
 
 Preserves canonical headers and notebook/cell metadata. Never discovers or writes
 other notebooks. All generated sources are compiled before any file is written.
@@ -149,11 +149,45 @@ def synchronize_operational_support(root=ROOT, check=False):
             path.write_text(content, encoding="utf-8", newline="\n")
     return tuple(pending)
 
+
+def synchronize_data_agent(root=ROOT, check=False):
+    """Mirror NB009's canonical cells without replacing cell or notebook metadata."""
+    name = "RTI_009_build_data_agent"
+    canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
+    raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
+    content = canonical.read_text(encoding="utf-8")
+    compile(content, str(canonical), "exec")
+    notebook = json.loads(raw.read_text(encoding="utf-8"))
+    chunks = re.findall(
+        r"# (MARKDOWN|CELL|PARAMETERS CELL) \*+\n(.*?)(?=\n# (?:MARKDOWN|CELL|PARAMETERS CELL) \*+|\Z)",
+        content, re.S,
+    )
+    if len(chunks) != len(notebook["cells"]):
+        raise RuntimeError("NB009 cell count changed; explicitly reconcile metadata before mirroring.")
+    for cell, (kind, body) in zip(notebook["cells"], chunks):
+        body = body.split(METADATA, 1)[0].strip("\n")
+        expected_type = "markdown" if kind == "MARKDOWN" else "code"
+        if cell["cell_type"] != expected_type:
+            raise RuntimeError("NB009 cell type changed; refusing to move metadata.")
+        if kind == "MARKDOWN":
+            body = "\n".join(line[2:] if line.startswith("# ") else "" if line == "#" else line
+                             for line in body.splitlines())
+        else:
+            compile(body, str(raw), "exec")
+        cell["source"] = (body + "\n").splitlines(keepends=True)
+    desired = json.dumps(notebook, ensure_ascii=False, indent=2) + "\n"
+    if raw.read_text(encoding="utf-8") != desired:
+        if check:
+            raise RuntimeError("NB009 distribution drift; run --sync.")
+        raw.write_text(desired, encoding="utf-8", newline="\n")
+    return (raw,)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--check", action="store_true", help="Check embedded support and Raw mirrors without writing")
     modes.add_argument("--sync", action="store_true", help="Refresh owned ontology and operational notebooks (the default)")
     arguments = parser.parse_args()
-    for destination in (*synchronize(check=arguments.check), *synchronize_operational_support(check=arguments.check)):
+    for destination in (*synchronize(check=arguments.check), *synchronize_data_agent(check=arguments.check),
+                        *synchronize_operational_support(check=arguments.check)):
         print(destination)

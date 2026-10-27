@@ -972,7 +972,8 @@ def update_operational_source_guidance(parts: list) -> list:
         result = upsert_part(result, path, ds)
     return result
 
-# Ontology entities to expose to the agent (name -> column summary used as description).
+# Legacy generated descriptions, used only to recognize and migrate old notebook metadata.
+# Live entity definitions below are authoritative; operator-authored descriptions are retained.
 ONTOLOGY_ELEMENTS = [
     ("signal_master",
      "opcua_node_id,tag,instrument_id,equipment_id,system_id,facility_id,unit,"
@@ -988,6 +989,103 @@ ONTOLOGY_ELEMENTS = [
      "opcua_node_id,tag,instrument_id,equipment_id,system_id,facility_id,unit,"
      "instrument_type,is_active"),
 ]
+
+
+def ontology_elements_from_definition(envelope: dict) -> list:
+    """Read entity names and descriptions from the selected live ontology, never a schema sample."""
+    elements = []
+    seen = set()
+    for part in definition_parts(envelope):
+        if not part["path"].startswith("entities/") or not part["path"].endswith(".tmdl"):
+            continue
+        text = base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+        matches = list(re.finditer(r"(?m)^entity (?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z_0-9]*))[ \t]*$", text))
+        if len(matches) != 1:
+            raise RuntimeError(f"Expected one live entity in {part['path']!r}.")
+        match = matches[0]
+        name = (match[1] or match[2]).replace("''", "'")
+        if name in seen:
+            raise RuntimeError(f"Duplicate live ontology entity {name!r}.")
+        seen.add(name)
+        lines = text[:match.start()].splitlines()
+        description = []
+        while lines and lines[-1].startswith("///"):
+            description.append(lines.pop()[3:].strip())
+        elements.append({
+            "id": name, "is_selected": True, "display_name": name,
+            "type": "ontology.entity", "description": " ".join(reversed(description)) or None,
+            "children": [],
+        })
+    if not elements:
+        raise RuntimeError("The live ontology definition contains no entity metadata; refusing stale context.")
+    return elements
+
+
+def get_live_ontology_elements(ontology_id: str) -> list:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/ontologies/{ontology_id}/getDefinition"
+    response = api_request("POST", url, timeout=120)
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("Ontology getDefinition returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        response = api_request("GET", f"{operation_url.rstrip('/')}/result", timeout=120)
+    response.raise_for_status()
+    if response.status_code != 200:
+        raise RuntimeError(f"Ontology getDefinition returned HTTP {response.status_code}.")
+    return ontology_elements_from_definition(response.json())
+
+
+def refresh_ontology_context(parts: list, ontology_id: str) -> list:
+    """Refresh generated entity metadata without replacing selections, bindings or source profiles."""
+    live_elements = get_live_ontology_elements(ontology_id)
+    legacy = dict(ONTOLOGY_ELEMENTS)
+    result = list(parts)
+    for part in parts:
+        path = part["path"]
+        if not path.startswith("Files/Config/draft/") or not (
+            is_ontology_context_path(path) or path.endswith("/datasource.json")
+        ):
+            continue
+        context = decode_payload(part["payload"])
+        if not is_ontology_context_path(path) and context.get("type") != "ontology":
+            continue
+        if context.get("artifactId") != ontology_id:
+            raise RuntimeError("Cannot refresh a context for a different ontology.")
+        existing = context.get("elements", [])
+        if not isinstance(existing, list) or any(not isinstance(node, dict) for node in existing):
+            raise RuntimeError("Existing ontology elements are malformed; refusing to replace custom selections.")
+        authored = context.get("entitiesWithUserAuthoredDescriptions")
+        if authored is not None and (
+            not isinstance(authored, list) or any(not isinstance(name, str) for name in authored)
+        ):
+            raise RuntimeError("User-authored ontology description metadata is malformed.")
+        elements = list(existing)
+        refreshed_names = set()
+        for desired in live_elements:
+            name = desired["display_name"]
+            indices = [index for index, old in enumerate(elements)
+                       if old.get("type") == "ontology.entity"
+                       and (old.get("id") == name or old.get("display_name") == name)]
+            if len(indices) > 1:
+                raise RuntimeError(f"Duplicate saved ontology entity {name!r}; inspect its selections.")
+            if not indices:
+                elements.append(dict(desired))
+                continue
+            index = indices[0]
+            old = elements[index]
+            description = old.get("description")
+            if (description is None or description == "" or description == legacy.get(name)
+                    or isinstance(authored, list) and name not in authored):
+                elements[index] = {**old, "description": desired["description"]}
+                refreshed_names.add(name)
+        context["elements"] = elements
+        if authored is not None:
+            context["entitiesWithUserAuthoredDescriptions"] = [
+                name for name in authored if name not in refreshed_names
+            ]
+        result = upsert_part(result, path, context)
+    return result
 
 LAKEHOUSE_TABLES = [
     (first_setting("silver_facilities_table", required=True),
@@ -1309,16 +1407,24 @@ try:
                 submitted_direct_sources[part["path"]] = ds
             if context_paths or ds.get("type") == "sql_database":
                 submitted_direct_sources[part["path"]] = ds
+    parts = refresh_ontology_context(parts, ontology_id)
+    for part in parts:
+        if part["path"].startswith("Files/Config/draft/") and (
+            is_ontology_context_path(part["path"]) or part["path"].endswith("/datasource.json")
+        ):
+            ds = decode_payload(part["payload"])
+            if is_ontology_context_path(part["path"]) or ds.get("type") == "ontology":
+                submitted_direct_sources[part["path"]] = ds
     validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • aiInstructions        ->", DRAFT_STAGE_CONFIG_PATH)
     if context_paths:
         print("   • verified ontology context ->", ", ".join(context_paths))
-        print("       Preserving context-owned automatic sources, selections and SQL guidance.")
+        print("       Refreshed live entity metadata; preserved custom selections, source profiles and SQL guidance.")
     else:
         print("   • ontology data source  ->", DATASOURCE_PATH)
-        print(f"       {len(ONTOLOGY_ELEMENTS)} entity element(s) selected.")
+        print("       Entity metadata refreshed from the live ontology; custom selections preserved.")
         print("   • Lakehouse data source ->", LAKEHOUSE_DATASOURCE_PATH)
         print(f"       {len(LAKEHOUSE_TABLES)} table(s) selected with discovered columns.")
         print("   • Eventhouse data source ->", KUSTO_DATASOURCE_PATH)

@@ -1,5 +1,15 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
+## Semantic orchestration acceptance gate
+
+The [current implementation record](../docs/foundry-multi-agent-implementation.md#october-27-semantic-orchestration-implementation)
+replaces keyword-owned production routing with typed semantic planning and
+governed execution. Six live-model planning probes passed, including negation,
+Sparky/ontology relationships, Weather, RCA and clarification. This is not yet a
+claim that the source-backed native answers pass. Required: publish, compare the
+three prompts below against direct Data Agent answers, inspect real source/tool
+receipts, and record run IDs, timings and any provider failures. No write approvals.
+
 For current FEATURE deployment receipts and limitations, use the
 [current verification record](../docs/ontology-test-review.md).
 Dated release/version claims below are historical, not the current target's inventory.

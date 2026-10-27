@@ -30,9 +30,10 @@ def source(number):
 
 
 def functions(number, *names, **overrides):
-    namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib,
+    namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib, "re": re,
                  "provision_shared_store": False, "OPERATIONAL_STORE_NAME": "HydroOperationalStore",
-                 "sql_db_item_name": "sql"}
+                 "sql_db_item_name": "sql",
+                 "refresh_ontology_context": Mock(side_effect=lambda parts, _ontology: parts)}
     namespace.update(overrides)
     tree = ast.parse(source(number))
     included = set(names) | {
@@ -97,6 +98,103 @@ def data_agent_instruction_namespace():
 
 
 class DataAgentInstructionTests(unittest.TestCase):
+    def test_live_entity_metadata_replaces_only_generated_context(self):
+        context_path = "Files/Config/draft/ontologies/model/ontology.json"
+        context = {
+            "artifactId": "ontology", "workspaceId": "ws",
+            "dataSourceInstructions": "Keep operator instructions.",
+            "entitiesWithUserAuthoredDescriptions": ["facilities", "equipment"],
+            "elements": [
+                {"id": "facility-ui-id", "type": "ontology.entity", "display_name": "facilities",
+                 "is_selected": False, "description": "facility_id,facility_name",
+                 "children": [], "custom": "keep"},
+                {"id": "equipment", "type": "ontology.entity", "display_name": "equipment",
+                 "is_selected": True, "description": "Operator's custom description.", "children": []},
+            ],
+        }
+        live = {"definition": {"parts": [
+            {"path": f"entities/{name}.tmdl", "payloadType": "InlineBase64",
+             "payload": base64.b64encode(text.encode()).decode()}
+            for name, text in (
+                ("facilities", "/// Hydro sites with canonical facility identity.\nentity facilities\n"),
+                ("equipment", "/// Physical turbine assets.\nentity equipment\n"),
+                ("WorkOrder", "/// Maintenance tasks joined by equipmentId.\nentity WorkOrder\n"),
+                ("signal_master", "/// Canonical signals stitched to Eventhouse telemetry.\n"
+                 "/// Values and quality share the same sample time.\nentity signal_master\n"),
+            )
+        ]}}
+        ns = functions(
+            "009", "refresh_ontology_context", "ontology_elements_from_definition",
+            "decode_payload", "encode_payload", "upsert_part",
+            get_live_ontology_elements=Mock(),
+            ONTOLOGY_ELEMENTS=[("facilities", "facility_id,facility_name")],
+        )
+        ns["get_live_ontology_elements"].return_value = ns["ontology_elements_from_definition"](live)
+        parts = [
+            json_part(context_path, context),
+            json_part("Files/Config/draft/kusto-source/datasource.json", {"type": "kusto", "custom": True}),
+            json_part(context_path.replace("/draft/", "/published/"), context),
+        ]
+        before = copy.deepcopy(parts)
+        result = ns["refresh_ontology_context"](parts, "ontology")
+        refreshed = ns["decode_payload"](result[0]["payload"])
+        self.assertEqual(parts, before)
+        self.assertEqual(result[1:], parts[1:])
+        self.assertEqual(refreshed["dataSourceInstructions"], context["dataSourceInstructions"])
+        self.assertEqual(refreshed["elements"][0], {
+            **context["elements"][0], "description": "Hydro sites with canonical facility identity.",
+        })
+        self.assertEqual(refreshed["elements"][1], context["elements"][1])
+        self.assertEqual([e["display_name"] for e in refreshed["elements"]],
+                         ["facilities", "equipment", "WorkOrder", "signal_master"])
+        self.assertTrue(refreshed["elements"][2]["is_selected"])
+        self.assertIn("Eventhouse", refreshed["elements"][3]["description"])
+        self.assertEqual(refreshed["entitiesWithUserAuthoredDescriptions"], ["equipment"])
+        self.assertEqual(ns["refresh_ontology_context"](result, "ontology"), result)
+        ns["get_live_ontology_elements"].return_value[0]["description"] = "Updated governed definition."
+        updated = ns["refresh_ontology_context"](result, "ontology")
+        self.assertEqual(ns["decode_payload"](updated[0]["payload"])["elements"][0]["description"],
+                         "Updated governed definition.")
+
+    def test_live_entity_metadata_rejects_empty_or_duplicate_entity_definition(self):
+        ns = functions("009", "ontology_elements_from_definition")
+        with self.assertRaisesRegex(RuntimeError, "entity"):
+            ns["ontology_elements_from_definition"]({"definition": {"parts": [
+                json_part("model.tmdl", {}),
+            ]}})
+        duplicate = [
+            {"path": f"entities/{name}.tmdl", "payloadType": "InlineBase64",
+             "payload": base64.b64encode(b"entity facilities\n").decode()}
+            for name in ("facilities", "duplicate")
+        ]
+        with self.assertRaisesRegex(RuntimeError, "Duplicate"):
+            ns["ontology_elements_from_definition"]({"definition": {"parts": duplicate}})
+
+    def test_live_entity_read_uses_ontology_api_and_waits_for_definition_result(self):
+        accepted = Mock(status_code=202, headers={"Location": "https://api.fabric.microsoft.com/v1/operations/op"})
+        completed = Mock(status_code=200)
+        completed.json.return_value = {"definition": {"parts": []}}
+        api = Mock(side_effect=[accepted, completed])
+        parsed = Mock(return_value=[{"display_name": "facilities"}])
+        ns = functions(
+            "009", "get_live_ontology_elements", api_request=api,
+            FABRIC_API_BASE="https://api.fabric.microsoft.com", workspace_id="ws",
+            wait_for_lro=Mock(), ontology_elements_from_definition=parsed,
+        )
+        self.assertEqual(ns["get_live_ontology_elements"]("ontology"), parsed.return_value)
+        self.assertEqual(api.call_args_list[0].args, (
+            "POST", "https://api.fabric.microsoft.com/v1/workspaces/ws/ontologies/ontology/getDefinition",
+        ))
+        self.assertEqual(api.call_args_list[1].args, (
+            "GET", "https://api.fabric.microsoft.com/v1/operations/op/result",
+        ))
+        ns["wait_for_lro"].assert_called_once_with(accepted.headers["Location"])
+        parsed.assert_called_once_with(completed.json.return_value)
+        accepted.headers = {}
+        api.side_effect = [accepted]
+        with self.assertRaisesRegex(RuntimeError, "Location"):
+            ns["get_live_ontology_elements"]("ontology")
+
     def test_context_sources_require_matching_live_v2_identity_in_both_stages(self):
         ns = functions(
             "009", "validate_agent_ontology_sources", "require_v2_ontology", "published_agent_sources",

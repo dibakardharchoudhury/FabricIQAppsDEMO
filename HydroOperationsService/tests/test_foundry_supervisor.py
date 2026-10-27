@@ -1079,6 +1079,66 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         journal = RunJournal((root or self.root) / str(request.run_id) / "receipts")
         journal.save("agent_versions", {role: item.model_dump(mode="json") for role, item in self.versions.items()})
 
+    async def test_semantic_reader_runs_without_any_specialist_model_handoff(self):
+        from test_semantic_planning import decision
+        self.tools.quality_snapshot = True
+        request = self.request.model_copy(update={"question": "Show currently unreliable signals."})
+        raw = decision(kind="signal_quality")
+        raw["plan"]["steps"][0]["reads"] = [{
+            "tool": "query_signal_quality_snapshot",
+            "arguments_json": json.dumps({"quality": "BAD", "lookback": "6h", "equipment_type": "turbine"}),
+            "evidence_kind": "signal_quality",
+        }]
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("semantic_decision", {
+            "decision": raw, "response_id": "resp_semantic_test", "duration_ms": 12,
+        })
+        owner = self.make_owner(semantic_planning=True, analysis_model="test-model")
+        owner.analysis_for = AsyncMock(return_value=None)
+        answer = await owner.run(request)
+        self.assertTrue(answer.tables)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(self.calls, {})
+        self.assertEqual(answer.specialists, ())
+        evidence = journal.read("evidence")
+        self.assertEqual(evidence["supervisor"]["response_id"], "resp_semantic_test")
+        self.assertEqual(evidence["supervisor"]["model_round_count"], 1)
+        self.assertTrue(evidence["supervisor"]["output"]["model_invoked"])
+        self.assertIn("specialist_handoff_1", journal.read("workflow_graph")["definition"])
+        self.assertNotIn("specialist_handoff_2", journal.read("workflow_graph")["definition"])
+
+    async def test_parallel_semantic_reads_cancel_siblings_before_failed_run_returns(self):
+        from test_semantic_planning import decision
+        self.tools.quality_snapshot = True
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def execute(name, arguments, request):
+            if arguments["quality"] == "BAD":
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.set()
+            await started.wait()
+            raise SourceFailure("Injected independent reader failure")
+
+        self.tools.execute = execute
+        raw = decision(kind="signal_quality")
+        raw["plan"]["steps"][0]["reads"] = [{
+            "tool": "query_signal_quality_snapshot",
+            "arguments_json": json.dumps({"quality": quality, "lookback": "6h", "equipment_type": "turbine"}),
+            "evidence_kind": "signal_quality",
+        } for quality in ("BAD", "UNCERTAIN")]
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        journal.save("semantic_decision", {
+            "decision": raw, "response_id": "resp_parallel_test", "duration_ms": 12,
+        })
+        owner = self.make_owner(semantic_planning=True, analysis_model="test-model")
+        with self.assertRaisesRegex(SourceFailure, "Injected independent reader failure"):
+            await owner.run(self.request)
+        self.assertTrue(cancelled.is_set())
+        self.assertIsNone(journal.read("answer"))
+
     def function(self, name, arguments):
         return {"type": "function_call", "id": f"fc_{uuid4().hex}", "call_id": f"call_{uuid4().hex}",
                 "name": name, "arguments": json.dumps(arguments), "status": "completed"}
@@ -1178,7 +1238,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("tools", payload)
         self.assertNotIn("instructions", payload)
         self.assertNotIn("text", payload)
-        self.assertIn("trusted_operation_skills", json.dumps(payload["input"]))
+        if reference["name"] == "hydro-fabric-iq-agent":
+            native_input = payload["input"][0]["content"][0]["text"]
+            self.assertNotIn("trusted_operation_skills", native_input)
+            self.assertNotIn("permitted_source_catalog", native_input)
+            self.assertNotIn('"operator_question"', native_input)
+            self.assertIn("As-of UTC:", native_input)
+        else:
+            self.assertIn("trusted_operation_skills", json.dumps(payload["input"]))
         self.assertFalse(payload["store"])
         name = reference["name"]
         self.assertEqual(payload["max_output_tokens"], 4096)
@@ -2348,6 +2415,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(payload=payload):
                 with self.assertRaisesRegex(SourceFailure, "Native source (refusal|failure)"):
                     _validated_native_result(json.dumps(payload))
+
+    def test_provider_moderation_processing_error_is_not_a_source_refusal(self):
+        payload = {
+            "rows": [{"facility_id": "FACILITY_RTI_001"}],
+            "raiPostToolAnnotations": [{
+                    "error": {"errorDetails": "Error during output moderation for tool: DataAgent for general harms."},
+            }],
+        }
+        with self.assertRaises(SourceFailure) as caught:
+            _validated_native_result(json.dumps(payload))
+        self.assertEqual(caught.exception.category, "native_provider_error")
+        self.assertIn("not a confirmed Data Agent refusal", str(caught.exception))
         self.assertEqual(_validated_native_result(json.dumps({"row_count": 0, "rows": []}))["row_count"], 0)
         self.assertEqual(_validated_native_result(json.dumps({
             "rows": [{"equipment_id": "TEST_T005", "status": "Unavailable"}],

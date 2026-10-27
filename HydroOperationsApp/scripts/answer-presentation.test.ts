@@ -553,9 +553,14 @@ test('persistent agents share source semantics, complete equipment work and real
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /older than 60 seconds as stale/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /read_completed_at_utc/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /received after request start does not establish source clock skew/)
-  for (const role of ['qa', 'rca', 'work-order', 'fabric-iq'] as const) {
+  for (const role of ['qa', 'rca', 'work-order'] as const) {
     assert.ok(agentDefinition(role, 'test', 'data').instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
   }
+  const native = agentDefinition('fabric-iq', 'test', 'data')
+  assert.ok(!native.instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
+  assert.match(native.instructions, /complete natural-language question/)
+  assert.match(native.instructions, /not a JSON-encoded application context/)
+  assert.match(native.instructions, /moderation failures explicitly/)
 })
 
 test('native specialists do not depend on Fabric; only IQ has the IQ tool', () => {

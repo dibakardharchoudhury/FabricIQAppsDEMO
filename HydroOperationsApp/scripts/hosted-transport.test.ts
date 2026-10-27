@@ -18,6 +18,14 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
 
+test('native provider moderation processing error is not mislabeled as a Data Agent refusal', () => {
+  const error = new HostedInvocationError(502, { category: 'native_provider_error' })
+  assert.match(error.message, /provider failed during output moderation/)
+  assert.match(error.message, /not a confirmed Data Agent refusal/)
+  assert.match(error.message, /No direct-source fallback/)
+  assert.match(error.message, /No answer or write outcome is certified/)
+})
+
 test('normal Send acquires missing access before submitting exactly once, with no background popup', async () => {
   const cached = new Map<string, string>()
   let popups = 0

@@ -1,6 +1,98 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Semantic orchestration and Fabric IQ acceptance
+
+Current work: replace phrase-dependent hosted routing with a bounded typed
+semantic plan, validated against the existing source catalog, evidence,
+specialist and human-approval contracts. Inspect the published Data Agent and
+Ontology metadata and compare three read-only questions through the native
+Fabric IQ path and the underlying Data Agent. Preserve failures and source
+provenance; do not silently substitute direct-source answers for native failures.
+
+Target remains the approved FEATURE tenant
+`ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, subscription
+`dac16501-5c35-4c91-aff0-11af8de17f2e`, Sweden Central.
+Use existing Foundry resources/model and canonical Python orchestrator only.
+No new Azure infrastructure, identity grants, redirect changes by hand, or
+automatic production writes. Earlier acceptance below is historical and does
+not validate this new architecture change.
+
+Implementation decisions: retain the existing five specialist capabilities, not
+five mandatory calls. A tool-less typed planner inside the existing coordinator
+interprets arbitrary language; deterministic code owns source permissions,
+bounded execution, evidence verification, checkpointing and human-approved
+writes. Native Fabric IQ assignments stay business-language questions and do
+not receive irrelevant application tool schemas or presentation instructions.
+Independent read-only steps may run concurrently; investigation and maintenance
+dependencies remain explicit. No topology or availability infrastructure change.
+Recipe: existing AZCLI/Python orchestrator; do not generate alternative IaC.
+
+The user explicitly requested implementation and optimization. The focused
+approval/context form returned user-unavailable with an instruction to choose
+the pragmatic option; proceed on the unchanged target and requested design.
+
+Live metadata audit: all 18 Ontology entities have descriptions and synonyms,
+and six business rules exist. The published Data Agent selects only five
+entities and uses column-list descriptions. Correct the Data Agent producer
+and publication rather than rewriting the enriched Ontology or its bindings.
+
+Preparation gates:
+- [x] Confirm the role/semantic-routing design and unchanged Azure context.
+- [x] Reproduce Fabric IQ failures and inspect live Ontology enrichment.
+- [x] Implement typed routing and source-specific corrections with regressions.
+- [x] Validate pinned Agent Framework execution, persistence and source gates.
+- [x] Complete Azure validation before canonical publication.
+- [ ] Record authenticated three-prompt parity, routing and timing acceptance.
+
+### Section 7: Validation Proof - semantic implementation
+
+All validation checks pass:
+- [x] 1. Core Validation (CLI, auth, build, validate, what-if): existing-resource
+  application update, no generated Bicep or infrastructure delta; Bicep
+  validate/what-if are not applicable. Runtime/unit/build evidence is below.
+- [x] 2. Docker Build (if containerized): existing orchestrator owns the ACR
+  image build, context closure and image readback. Its 43 packaging/deployment
+  tests pass; no standalone alternate Docker/azd deployment is used.
+- [x] 3. Azure Policy Validation: no new resource type, region, networking,
+  SKU or role assignment. Existing approved policy boundary is unchanged.
+
+Role Assignment Verification: no generated or modified role assignments.
+Existing delegated source credentials and native connection remain unchanged;
+all source-auth checks apart from the repaired cold-start fixture passed the
+full run, and the repaired production-factory/readiness fixtures pass separately.
+
+- Six real-model typed plans compiled against the actual source catalog: count,
+  Weather, ontology aliases/relationships, RCA, clarification and negated drafting.
+- Full backend discovery ran 282 tests. Its only failing factory fixture still
+  expected keyword admission; that fixture now verifies semantic composition.
+  The affected factory and real cold-start test pass in a focused rerun.
+  Other source-auth/semantic tests passed; the cold-start test now allows bounded
+  SDK import time on Windows, without relaxing source/authorization assertions.
+- 92 Node prompt/presentation/weather/native-error/transport tests pass.
+- 111 Ontology tests and 43 hosted packaging/deployment tests pass.
+- Node 24 validate-env, scoped ESLint and production TypeScript/Vite build pass;
+  Python compilation and editor diagnostics pass.
+- NB009 publication preserved all live dependencies and executable source
+  readback. Job `e8e697e2-d370-4b85-83c5-892b6c253686` completed successfully.
+  Separate REST readback confirms all 18 entities selected in both draft and
+  published Data Agent context; Lakehouse, Kusto and SQL mounts remain.
+- App/source runtime acceptance is still required after canonical deployment.
+  The browser hosting session has expired; reauthentication may be necessary.
+
+Commands: root `.venv\Scripts\python.exe -m unittest discover -s
+HydroOperationsService\tests`; affected source-auth factory/readiness and semantic
+test selectors rerun separately after fixture/cold-start repair; `node --test`
+with answer-presentation, weather-agent, rca-evidence and hosted-transport test
+files; `python -m unittest test_ontology_agent_capabilities
+test_ontology_gen2.EventhouseTests test_ontology_semantics` (UTF-8 output);
+`python -m unittest test_deploy_hosted_agent`; `npm run validate-env`,
+scoped `npx eslint`, `npm run build`, Python `compileall`, editor diagnostics
+and `git diff --check`. Azure CLI readback confirms the approved enabled
+subscription and tenant. These are local/predeployment proofs, not native
+three-prompt runtime acceptance.
 
 ## Facility-count acceptance follow-up
 

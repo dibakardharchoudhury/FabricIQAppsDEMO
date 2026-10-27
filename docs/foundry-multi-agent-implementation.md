@@ -1,5 +1,89 @@
 # Foundry and multi-agent implementation record
 
+## October 27 semantic orchestration implementation
+
+This supersedes the phrase-routing design below. **Local implementation is not
+yet live acceptance.** Publication and the three native comparisons must be
+recorded separately.
+
+### Actual runtime responsibilities
+
+| Capability | Responsibility | Not its responsibility |
+|---|---|---|
+| Coordinator | One typed semantic planning call; validate catalog/roles, execute bounded Agent Framework workflow, verify receipts, present evidence, gate approval | Plant facts, unchecked model-authored writes |
+| Gauge / QA | Exact operational reads, analytics and independent factual verification | Default routing for every question, physical diagnosis, maintenance authoring |
+| Sparky / Fabric IQ | Business aliases, ontology relationships and cross-source business facts through the published Fabric Data Agent | Local source fallback, RCA, work-order authoring |
+| Weather | Forecast/observation interpretation with vendor, issue time, target, valid time and units kept separate | Turbine diagnosis or maintenance |
+| Sleuth / RCA | Source-referenced observations and competing hypotheses | Claiming an unverified physical cause |
+| Fixer / Work Order | Existing-work coverage review and explicitly requested editable proposals | Automatic production writes or inventing a verified issue |
+
+These are capabilities, not a compulsory five-agent chain. Production admission
+no longer uses `chat_intent` to decide the route. The bounded planner sees the
+actual governed catalog, prior conversation, backend-resolved identities and
+explicit native selection. Typed validation owns allowed tools, exact evidence
+identifiers, source authority, supported views and conditional maintenance.
+Unknown schema entries, missing bindings or omitted operator-selected native
+sources fail closed. The planner is tool-less and cannot write.
+
+Simple exact facts use journaled source readers without a specialist or a
+second narrative model. Independent reads within a reader step run concurrently;
+dependent specialist steps remain sequential. The Agent Framework graph has
+only the selected steps, not eight phantom handoffs. Actual planner response ID,
+duration, input digest and model-round count are recorded. Resume reuses the
+committed planning decision. Existing source/deadline/read-budget/checkpoint and
+separate human-approval boundaries remain.
+
+Six real-model, catalog-validated planning probes passed: facility count -> one
+reader; named-location rain -> Weather; Sparky station/unit relationship ->
+native Fabric IQ; unreliable T007 readings -> RCA; underspecified maintenance
+request -> clarification; open work with no new draft -> read-only QA.
+These probes establish routing/contract compatibility, **not source execution**.
+Cold CLI credential acquisition affected timing; this is not a latency benchmark.
+
+### Reproduced Foundry defect and targeted repair
+
+The failed native run `7e99c596-488d-4b53-9403-aad713142393` passed the entire
+serialized application context as the Data Agent's `userQuestion`. The provider
+receipt contained the correct three facilities, but also an explicit
+`Error during output moderation` annotation. It must not be certified as success,
+nor described as proof that the Data Agent refused or lacked data.
+
+The native specialist now receives the complete plain-language assignment plus
+the as-of clock, not the application policy/evidence/presentation JSON. Its
+persistent instructions no longer append local operational contracts. Native
+receipts, citations, errors and binding checks remain mandatory. The exact
+moderation-processing error is separately classified as `native_provider_error`;
+actual refusals remain `native_refusal`. Neither permits silent direct fallback.
+
+### Ontology and source topology
+
+The live Ontology already has 18 enriched entities and six business rules.
+The stale producer selected only five entities in the Data Agent. NB009 now
+refreshes its selected entity context from live TMDL while preserving operator
+choices, custom descriptions/instructions and working source mounts.
+
+Per Microsoft's [Ontology-context integration documentation](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-ontology-sources),
+Ontology supplies definitions, synonyms, relationships and physical bindings;
+underlying sources execute SQL/KQL/DAX. Mounted sources may supply additional
+source-specific guidance. Seeing them under **Other data sources** does not
+prove duplication or justify deleting them. Eventhouse physical bindings exist;
+its missing UI grouping is not proof of a missing KQL dependency. Do not invent
+private annotations to change that grouping. Publish/refresh context and inspect
+actual KQL execution before claiming the UI issue resolved.
+
+### Enterprise limitations
+
+This is stronger orchestration, not a production-readiness certificate.
+[Fabric IQ integration remains preview](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/fabric-iq):
+Microsoft does not recommend it for production workloads and it has no SLA.
+Session-local filesystem checkpoints are not a distributed HA store. Independent
+specialist fan-out/fan-in, distributed execution, workload SLOs and representative
+quality evaluation remain future work; none is implied by unit tests or a green
+deployment. The current bounded sequential workflow is appropriate for dependent
+investigation/maintenance, not a claim of unlimited autonomous collaboration.
+Agent Framework supports richer [workflow edges](https://learn.microsoft.com/en-us/agent-framework/concepts/workflows/edges);
+use them only with explicit data dependencies and isolated state.
+
 ## October 27 architecture validation: redesign recommended, not implemented
 
 ### Verdict and scope

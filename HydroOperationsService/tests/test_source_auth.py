@@ -849,6 +849,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(owner.tools.sources.credential, owner.credential)
             self.assertEqual(owner.credential.principal_id, USER)
             self.assertEqual(owner.native_binding, native_binding)
+            self.assertTrue(owner.semantic_planning)
             return ChatAnswer(
                 run_id=request.run_id, source=request.source, requested_at=request.requested_at,
                 source_read_times=(), summary="Composition fixture, not a live source answer.",
@@ -861,11 +862,6 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 actual = source.model_copy(update={"workspace_id": SPA}) if changed else source
                 bridge = AsyncMock()
                 bridge.call.side_effect = [
-                    {"charts_requested": False, "native_sources": [], "proposal_priority": "Medium",
-                     "equipment_selection": None,
-                     "required_evidence_kinds": [],
-                     "permitted_evidence_kinds": [],
-                     "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}},
                     {"tenant_id": str(TENANT), "configuration_digest": source.configuration_digest},
                     {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test"},
                 ]
@@ -874,14 +870,19 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                     "https://project.services.ai.azure.com/api/projects/hydro", bridge=bridge,
                     native_binding=native_binding,
                 )
-                with patch("hydro_orchestrator.live_sources.AzureCliCredential",
-                           side_effect=AssertionError("Hosted source factory cannot instantiate CLI authentication.")):
+                with patch.dict(os.environ, {"AZURE_AI_MODEL_DEPLOYMENT_NAME": "test-model"}), patch(
+                    "hydro_orchestrator.live_sources.AzureCliCredential",
+                    side_effect=AssertionError("Hosted source factory cannot instantiate CLI authentication."),
+                ):
                     with patch.object(FoundrySupervisor, "run", autospec=True, side_effect=execute) as run:
                         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                                      base_url="http://test") as client:
                             response = await client.post("/invocations", json=self.invocation())
                         self.assertEqual(response.status_code, 500 if changed else 200, response.text)
                         self.assertEqual(run.call_count, 0 if changed else 1)
+                        self.assertNotIn(
+                            "chat_intent", [call.args[0]["action"] for call in bridge.call.call_args_list],
+                        )
         self.assertEqual(len(owners), 1)
         with self.assertRaises(SourceAuthorizationError):
             await owners[0].credential.get_token(self.policy.scopes["fabric"])
@@ -981,7 +982,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             try:
                 async with httpx.AsyncClient(timeout=0.25) as client:
                     health = None
-                    for _ in range(100):
+                    for _ in range(600):
                         if process.poll() is not None:
                             _, error = await asyncio.to_thread(process.communicate, timeout=5)
                             self.fail(f"Runtime exited before readiness: {error.decode()}")
