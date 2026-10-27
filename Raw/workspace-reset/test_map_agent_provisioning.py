@@ -8,6 +8,7 @@ import ast
 import base64
 import copy
 import json
+import math
 import sys
 import types
 import unittest
@@ -481,9 +482,53 @@ class InstructionsAndModelsTests(HelpersTest):
         self.assertNotIn("properties_json", fields)
         source = NOTEBOOK.read_text()
         projection = source.split("def entity_projection(", 1)[1].split("def validate_entity_metrics", 1)[0]
-        self.assertIn('F.when(layer == "hydro-plants", prop(name, "double"))', projection)
+        self.assertIn('(layer == "hydro-plants") & (value >= 0)', projection)
         self.assertNotIn('prop("voltage_kv", "double") *', projection)
         self.assertEqual(set(self.ns["MODEL_SCHEMAS"]), {"geo_map_agent_entities", "geo_map_agent_links", "geo_map_agent_state"})
+
+    def test_physical_measure_projection_excludes_negative_and_nonfinite_source_values(self):
+        projection = next(node for node in ast.parse(NOTEBOOK.read_text()).body
+                          if isinstance(node, ast.FunctionDef) and node.name == "entity_projection")
+        loop = next(node for node in projection.body if isinstance(node, ast.For)
+                    and isinstance(node.iter, ast.Tuple)
+                    and [value.value for value in node.iter.elts] == [
+                        "installed_capacity_mw", "gross_head_m", "mean_annual_production_gwh_1991_2020"])
+        code = compile(ast.Module(body=[loop], type_ignores=[]), str(NOTEBOOK), "exec")
+
+        class Column:
+            def __init__(self, value):
+                self.value = value
+
+            def __eq__(self, other):
+                return Column(self.value == other)
+
+            def __ge__(self, other):
+                return Column(self.value is not None and self.value >= other)
+
+            def __lt__(self, other):
+                return Column(self.value is not None and self.value < other)
+
+            def __and__(self, other):
+                return Column(self.value and other.value)
+
+            def __invert__(self):
+                return Column(not self.value)
+
+        functions = types.SimpleNamespace(
+            isnan=lambda value: Column(value.value is not None and math.isnan(value.value)),
+            when=lambda condition, value: value.value if condition.value else None,
+        )
+        for layer in ("hydro-plants", "transformers"):
+            for value in (50.125, 0.0, -0.01, -100.0, float("nan"), float("inf"), -float("inf"), None):
+                with self.subTest(layer=layer, value=value):
+                    context = {"F": functions, "layer": Column(layer), "expressions": {},
+                               "prop": lambda name, kind: Column(value)}
+                    exec(code, context)
+                    expected = value if layer == "hydro-plants" and value is not None and math.isfinite(value) and value >= 0 else None
+                    self.assertEqual(set(context["expressions"].values()), {expected})
+        instructions = self.ns["AI_INSTRUCTIONS"]
+        self.assertIn("projected as NULL, never zero", instructions)
+        self.assertIn("Do not replace it with a SQL bounding-box aggregate", instructions)
 
     def test_projection_metrics_fail_on_empty_partial_or_duplicate_models(self):
         good = {"rows": 20, "identities": 20, "invalid": 0, "area_rows": 9, "asset_rows": 10}

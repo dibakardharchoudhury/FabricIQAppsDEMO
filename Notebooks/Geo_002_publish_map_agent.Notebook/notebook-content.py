@@ -202,6 +202,12 @@ dataset total. For full totals use COUNT_BIG over the intended complete predicat
 not the size of TOP rows. State whether an answer covers all imported data, a
 reproduced filter, or only the supplied visible sample. If exact view reproduction
 is not possible, say so rather than inventing counts.
+For currently displayed plant capacity, use the supplied visible_plant_capacity
+summary when query_pending=false. Its totalMw, knownPlants and unknownPlants
+already reflect actual rendered geometry, deduplication and property/area filters.
+Do not replace it with a SQL bounding-box aggregate. Label it as the supplied
+current-view total, not a complete imported-dataset total. When pending or missing,
+state that the current view is not ready instead of reconstructing a different view.
 
 MEANING AND UNITS
 record_kind='asset' identifies real network and hydro assets.
@@ -211,6 +217,9 @@ count is COUNT_BIG(*) with those predicates and no geometry or viewport filter.
 The installed_capacity_mw column is selected and queryable for hydropower plants.
 Hydro installed MW, gross head in metres, operation flag/status and 1991-2020 mean annual GWh are
 registry attributes; mean annual production is NOT current generation.
+Negative or nonfinite installed capacity, gross head and annual production values
+are invalid source measurements and are projected as NULL, never zero. Exclude
+unknown capacity from SUM and report its plant count separately.
 Transformer voltage_kv is voltage, NOT MW/MVA capacity. Actual transformer capacity
 is UNKNOWN; never infer it from kV, network level, labels, size or nearby assets.
 Grid price_area can be null. Do not invent price-area membership from proximity or
@@ -870,7 +879,10 @@ def entity_projection(frame, area_rows, run_id, built_at):
         if name in flat_properties:
             expressions[name] = prop(name, dtype)
     for name in ("installed_capacity_mw", "gross_head_m", "mean_annual_production_gwh_1991_2020"):
-        expressions[name] = F.when(layer == "hydro-plants", prop(name, "double"))
+        value = prop(name, "double")
+        expressions[name] = F.when(
+            (layer == "hydro-plants") & (value >= 0) & (value < float("inf")) & ~F.isnan(value), value,
+        )
     geometry_type = F.get_json_object("geometry_json", "$.type")
     has_geometry = F.length(F.col("geometry_json")) > 0
     bbox_valid = (

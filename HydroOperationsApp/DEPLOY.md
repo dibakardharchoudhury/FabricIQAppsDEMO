@@ -15,6 +15,10 @@ payloads fail explicitly; there is no fallback to truncated SQL JSON.
 Full-size reservoir polygons use indexed ring containment and bounded candidate
 checks so validation preserves holes and boundary semantics without repeatedly
 scanning every edge for every sample.
+The map-agent projection normalizes negative/nonfinite physical measurements to
+NULL, matching the map's exclusion of invalid installed capacities. Current-view
+questions use the supplied browser summary; SQL queries remain authoritative for
+complete imported-dataset totals, not a substitute for rendered-map membership.
 
 ## Quick start: one path for each job
 
