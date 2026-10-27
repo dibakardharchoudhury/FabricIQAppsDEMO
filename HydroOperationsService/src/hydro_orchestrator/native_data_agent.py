@@ -248,17 +248,19 @@ async def call_native_data_agent(
                 "https://ai.azure.com/.default",
             )
             agent = data_agent_id(foundry_connection.json(), workspace_id)
-            phase = "current workload discovery"
+            phase = "workspace capacity discovery"
             workspace = (await request(
                 "GET", f"{FABRIC_ORIGIN}/v1/workspaces/{workspace_id}", FABRIC_ORIGIN + "/.default",
             )).json()
             if workspace.get("id", "").lower() != str(workspace_id):
                 raise SourceFailure("Fabric discovery changed the bound workspace identity.")
             capacity = UUID(workspace["capacityId"])
+            phase = "cluster discovery"
             cluster = (await request(
                 "GET", FABRIC_ORIGIN + "/powerbi/globalservice/v201606/clusterDetails", PBI_SCOPE,
             )).json()
             cluster_origin = trusted_origin(cluster.get("clusterUrl"), ".analysis.windows.net")
+            phase = "workload routing"
             routing = (await request(
                 "POST", cluster_origin + "/metadata/v201606/generatemwctokenv2", PBI_SCOPE,
                 json={"capacityObjectId": str(capacity), "workspaceObjectId": str(workspace_id),

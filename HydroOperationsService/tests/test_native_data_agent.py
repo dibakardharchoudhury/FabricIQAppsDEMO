@@ -142,6 +142,18 @@ class NativeDataAgentTests(unittest.IsolatedAsyncioTestCase):
             await self.invoke()
         self.assertFalse(self.requests)
 
+    async def test_discovery_authorization_failures_identify_the_exact_boundary(self):
+        for path, phase in (
+            (f"/v1/workspaces/{self.workspace}", "workspace capacity discovery"),
+            ("/powerbi/globalservice/v201606/clusterDetails", "cluster discovery"),
+            ("/metadata/v201606/generatemwctokenv2", "workload routing"),
+        ):
+            with self.subTest(phase=phase):
+                self.overrides.clear()
+                self.overrides[path] = lambda _: httpx.Response(401)
+                with self.assertRaisesRegex(SourceFailure, phase + r".*HTTP 401"):
+                    await self.invoke()
+
     async def test_failed_or_incomplete_response_never_becomes_an_answer(self):
         for status in ("failed", "incomplete", "cancelled"):
             with self.subTest(status=status):
