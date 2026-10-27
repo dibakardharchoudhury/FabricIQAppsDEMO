@@ -54,11 +54,15 @@ export function knowledgeTelemetryState(eventTime: string | undefined, nowMs = D
   return age < 60_000 ? 'live' : age < 300_000 ? 'delayed' : 'stale'
 }
 
-export function knowledgeFaultPulse(status: 'crit' | 'warn', timeMs: number): { opacity: number; padding: number } {
+export function knowledgeHaloPadding(padding: number, zoom: number): number {
+  return padding / Math.sqrt(Math.min(1, zoom))
+}
+
+export function knowledgeFaultPulse(status: 'crit' | 'warn', timeMs: number, zoom = 1): { opacity: number; padding: number } {
   const phase = (1 - Math.cos(timeMs * Math.PI * 2 / (status === 'crit' ? 1600 : 2200))) / 2
   return status === 'crit'
-    ? { opacity: 0.14 + phase * 0.3, padding: 9 + phase * 13 }
-    : { opacity: 0.12 + phase * 0.22, padding: 9 + phase * 10 }
+    ? { opacity: 0.14 + phase * 0.3, padding: knowledgeHaloPadding(9 + phase * 13, zoom) }
+    : { opacity: 0.12 + phase * 0.22, padding: knowledgeHaloPadding(9 + phase * 10, zoom) }
 }
 
 export function knowledgeEdgeRoutes(edges: KnowledgeEdge[]): Map<string, { distance: number; labelOffset: number }> {

@@ -8,6 +8,7 @@ import {
   KNOWLEDGE_TYPE_COLOR,
   knowledgeEdgeRoutes,
   knowledgeFaultPulse,
+  knowledgeHaloPadding,
   telemetryFlowEdgeIds,
 } from '../../knowledgeGraphVisuals'
 import type { AppTheme } from '../../hooks/useTheme'
@@ -49,7 +50,7 @@ function layoutOptions(layout: GraphLayout, graph: Core): LayoutOptions {
     const roots = ['facility', 'system', 'equipment', 'instrument', 'signal']
       .map(type => graph.nodes().filter(node => node.data('type') === type).map(node => node.id()))
       .find(ids => ids.length)
-    return { name: 'breadthfirst', directed: false, roots, nodeDimensionsIncludeLabels: true, spacingFactor: 1.55, padding: 64, animate, animationDuration: 420 }
+    return { name: 'breadthfirst', directed: false, roots, boundingBox: { x1: 0, y1: 0, w: graph.width(), h: graph.height() }, nodeDimensionsIncludeLabels: true, spacingFactor: 1.55, padding: 64, animate, animationDuration: 420 }
   }
   if (layout === 'concentric') return { name: 'concentric', minNodeSpacing: 66, spacingFactor: 1.35, padding: 64, animate, animationDuration: 420 }
   return { name: 'cose', idealEdgeLength: 145, nodeRepulsion: () => 7800, padding: 64, animate, animationDuration: 620 }
@@ -78,7 +79,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
     const graph = cytoscape({
       container: containerRef.current,
       elements: [],
-      minZoom: 0.25,
+      minZoom: 0.001,
       maxZoom: 2.5,
       style: [
         {
@@ -90,6 +91,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             'border-color': 'data(ring)', 'border-width': 3, label: 'data(label)', color: color('--cp-text'),
             'font-family': 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': 10.5, 'font-weight': 600, 'min-zoomed-font-size': 7,
             'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': '118px',
+            'text-overflow-wrap': 'anywhere',
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '4px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
             'underlay-color': 'data(ring)', 'underlay-opacity': 0.14, 'underlay-padding': 9, 'underlay-shape': 'ellipse',
@@ -101,7 +103,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         { selector: 'node:active', style: { 'overlay-color': 'data(ring)', 'overlay-opacity': 0.12, 'overlay-padding': 8 } },
         { selector: 'node.focus-neighbor', style: { 'underlay-opacity': 0.18, 'underlay-padding': 10 } },
         { selector: '.focus-dimmed', style: { opacity: 0.16, 'text-opacity': 0.12 } },
-        { selector: 'node[status = "crit"], node[status = "warn"]', style: { 'underlay-opacity': 0.26, 'underlay-padding': 13 } },
+        { selector: 'node[status = "crit"], node[status = "warn"]', style: { 'underlay-opacity': 0.26, 'underlay-padding': 'data(haloPadding)' } },
         { selector: 'node[status = "crit"].focus-dimmed, node[status = "warn"].focus-dimmed', style: { opacity: 0.72, 'text-opacity': 0.45 } },
         {
           selector: 'edge',
@@ -150,6 +152,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
           size: KNOWLEDGE_NODE_SIZE[node.type],
           ring: KNOWLEDGE_STATUS_COLOR[node.status],
           icon: nodeIcons[node.type],
+          haloPadding: knowledgeHaloPadding(13, graph.zoom()),
         },
       })),
       ...edges.map(item => ({
@@ -247,7 +250,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         graph.batch(() => {
           animated.style('line-dash-offset', -offset)
           for (const [collection, status] of [[critical, 'crit'], [warning, 'warn']] as const) {
-            const pulse = knowledgeFaultPulse(status, time)
+            const pulse = knowledgeFaultPulse(status, time, graph.zoom())
             collection.style({ 'underlay-opacity': pulse.opacity, 'underlay-padding': pulse.padding })
           }
         })
@@ -268,6 +271,9 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
       updateVisibility()
     })
     observer?.observe(containerRef.current)
+    const updateZoom = () => critical.union(warning).data('haloPadding', knowledgeHaloPadding(13, graph.zoom()))
+    graph.on('zoom', updateZoom)
+    updateZoom()
     document.addEventListener('visibilitychange', updateVisibility)
     motion.addEventListener('change', updateVisibility)
     const clock = window.setInterval(() => {
@@ -278,6 +284,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
     updateVisibility()
     return () => {
       observer?.disconnect()
+      graph.off('zoom', updateZoom)
       document.removeEventListener('visibilitychange', updateVisibility)
       motion.removeEventListener('change', updateVisibility)
       window.clearInterval(clock)

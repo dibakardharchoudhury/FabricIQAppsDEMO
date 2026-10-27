@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import test from 'node:test'
 import type { KnowledgeEdge, KnowledgeNode } from '../src/ui-shared/knowledgeGraphModel.ts'
-import { knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeTelemetryState, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
+import { knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeHaloPadding, knowledgeTelemetryState, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
 
 const NOW = Date.parse('2026-10-27T01:00:00Z')
 const node = (id: string, type: KnowledgeNode['type'], reading = false): KnowledgeNode => ({
@@ -99,6 +99,20 @@ test('both critical and warning halos visibly breathe without flashing or changi
   }
 })
 
+test('overview zoom amplifies fault halos without enlarging normal-detail halos', () => {
+  assert.equal(knowledgeHaloPadding(13, 1), 13)
+  assert.equal(knowledgeHaloPadding(13, 2), 13)
+  assert.equal(knowledgeHaloPadding(13, 0.25), 26)
+  for (const [status, peakTime] of [['crit', 800], ['warn', 1100]] as const) {
+    const zoom = 0.025
+    const rest = knowledgeFaultPulse(status, 0, zoom)
+    const peak = knowledgeFaultPulse(status, peakTime, zoom)
+    assert.ok(peak.padding * zoom >= 3, 'overview halo remains visible in rendered pixels')
+    assert.ok(peak.padding > rest.padding)
+    assert.equal(peak.opacity, knowledgeFaultPulse(status, peakTime).opacity)
+  }
+})
+
 test('parallel and opposite relationships retain their endpoints with deterministic separate curve lanes', () => {
   const edges: KnowledgeEdge[] = [
     { id: 'a', source: 'instrument', target: 'work', type: 'affects', label: 'for instrument' },
@@ -131,6 +145,9 @@ test('compact graph presentation retains earlier fluid strokes and keeps diagnos
   assert.match(canvas, /% 22/)
   assert.match(canvas, /graph\.edges\(\)\.length > 150/)
   assert.match(canvas, /prefers-reduced-motion/)
+  assert.match(canvas, /minZoom: 0\.001/)
+  assert.match(canvas, /'text-overflow-wrap': 'anywhere'/)
+  assert.match(canvas, /boundingBox: \{ x1: 0, y1: 0, w: graph\.width\(\), h: graph\.height\(\) \}/)
   assert.match(styles, /\.kg-source-state button \{[^}]*grid-row: 1 \/ span 2/)
 })
 

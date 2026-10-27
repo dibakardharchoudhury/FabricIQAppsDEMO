@@ -39,6 +39,10 @@ separate curved lanes. The inspector explicitly identifies incoming and outgoing
 Changing only readings or selection does not relayout or recenter the map; **Focus selected
 entity** and **Fit graph** remain explicit camera actions. Topology changes relayout the visible
 scope, including when returning to previously cached nodes.
+Hierarchy bounds are based on the canvas size, not the current zoomed extent.
+Long unbroken identities wrap within the existing label width, and overview zoom
+can fit the full bounded graph rather than clipping it at 25%. Fault halos are
+amplified at overview scale; normal-detail sizes and status colors are unchanged.
 
 ### October 27 visual regression validation
 
@@ -65,7 +69,7 @@ stream. A separate read-only check on the real source-backed All scope confirmed
 238 links**, all 225 positions finite and distinct under the revised hierarchy options, including
 disconnected ontology components. Live source counts may change with ingestion.
 
-**Publication is blocked, not complete.** The fixes are pushed in `162a6cd`, with
+**Initial publication blocker (subsequently resolved).** The fixes were pushed in `162a6cd`, with
 validation proof in `209c8f8`. The canonical deployer verified the FEATURE workspace
 and Active capacity, then required renewed Microsoft/Azure CLI sign-in while
 discovering the existing tenant SPA (step 2/8). The user was unavailable to complete
@@ -83,6 +87,24 @@ InteractionRequired / TokenCreatedWithOutdatedPolicies**. The canonical retry
 also stopped at step 2. Token expiry alone is not proof of usable Graph access;
 fresh interactive tenant sign-in is required. No alternate identity or policy
 bypass was used.
+
+The standard Azure CLI browser/device sign-in subsequently succeeded using the
+same already-signed-in administrator, without password entry, policy changes or
+new consent. The actual Graph SPA lookup then passed. The canonical deployment
+completed at `2026-10-27T02:20:43Z` with `SUCCESS` / `DEPLOYED_APP_URL`, in
+620.609 seconds. All five specialists and coordinator image
+`src-5afb91f86a3d8ee5` were reused; 42 redirects were preserved.
+Signed-browser acceptance confirmed **1.0.1127 / 6efd792**, 18/18 entity bindings,
+17/17 relationships, and zero flowing edges against actual stale readings.
+A cold application-memory reload took 6.213 seconds.
+
+All scope retained **225 nodes / 238 edges** and the exact pre-publication
+directed relationship identity hash
+`1942e870f420f3803d46844c30286c7df429952466393828e0375ec2419bef9f`.
+This hosted check also exposed the old minimum-zoom clipping and long-label
+layout expansion; the follow-up adds wrapped labels, canvas-sized hierarchy
+bounds, overview zoom and zoom-aware fault halos. Its focused suite passes
+**109 tests**; final publication acceptance is recorded separately below.
 
 ## Ontology context versus native graph execution
 

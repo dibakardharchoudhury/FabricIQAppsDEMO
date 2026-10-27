@@ -40,6 +40,19 @@ Autonomous retry confirmed Graph CAE `InteractionRequired /
 TokenCreatedWithOutdatedPolicies` on the actual read-only SPA lookup, despite
 a future cached-token expiry. Fresh interactive sign-in remains required.
 
+That blocker was resolved by standard browser/device authentication using the
+same signed-in administrator, with no policy/permission change. Actual Graph
+access passed; canonical publication succeeded at `2026-10-27T02:20:43Z` in
+620.609 seconds, and signed-browser source-backed graph reads passed on
+`1.0.1127 / 6efd792`.
+
+The hosted All-scope check found a coupled fit/clipping defect. The follow-up
+wraps long labels, uses canvas-sized hierarchy bounds, permits full-graph overview
+zoom and scales fault halos at overview zoom. It changes no source identity,
+relationship endpoint, connector, agent, permission or infrastructure. Validation
+now includes 109 graph tests, production build and scoped lint; the 2,000-node /
+4,000-edge visual preparation fixture completed in 33.21 ms (250 ms budget).
+
 ## Knowledge Graph live-source publication
 
 ### Coverage completion and visual restoration follow-up
