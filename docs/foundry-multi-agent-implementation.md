@@ -20,6 +20,7 @@ proposal, approval or SQL write was performed.
 |---|---|---|---|
 | Complete facility IDs/names | Three canonical facilities, 13s | Same three IDs/names in provider receipt, 55.2s | Failed: provider moderation-processing error |
 | Generating units by power station; canonical IDs and ontology relationship | All 15 turbines across three stations; equipment -> system -> facility; 41s | Same 15 equipment IDs and station memberships in provider receipt, about 67s | Failed: same provider error |
+| BAD-quality equipment over six hours and existing open work | Generic Fabric editor error; no comparable answer | Telemetry, identity and work results in diagnostic receipt, about 98s | Failed: same provider error; direct parity also unverified |
 
 Both new native receipts confirm `userQuestion` is now plain-language business
 input, not serialized application context. Both still include
@@ -36,11 +37,34 @@ Support correlation:
   response `resp_0204c37e74cf2cef016ae09c4cb1f88197a48f213d9ff12e7c`.
 - Relationships run `562632fe-4102-44c3-86a2-de8f819c484b`,
   response `resp_00dc44517ff6211b016ae09da2def48195a60aefc7d88b8e33`.
+- Quality/work run `650d3a43-1bdd-47d6-a683-1bf1ed7a3543`,
+  response `resp_0315dc46b77a5724016ae0a16f4aa881938b2434d112cefd9b`.
 
-The third native comparison was not executed after these two reproduced
-provider failures. Escalate the error-bearing tool outputs and response IDs to
-Microsoft Foundry/Fabric support; a different prompt or suppression of the
-annotation is not an established repair.
+All three native comparisons have now been attempted; none passed acceptance.
+The third direct comparison also returned a generic editor error, so the first
+two simple direct successes do not establish unrestricted cross-source success.
+Escalate the error-bearing tool outputs and response IDs to Microsoft
+Foundry/Fabric support; a different prompt or suppression of the annotation is
+not an established repair.
+
+Further read-only checks confirmed:
+- Both native connections use `UserEntraToken` with the documented Power BI
+  audience, `https://analysis.windows.net/powerbi/api`.
+- The existing model deployment is healthy and uses enabled, blocking
+  `Microsoft.DefaultV2` safety filters. Foundry account network access is public
+  with no IP/VNet restriction.
+- Existing Application Insights traces for the first two native responses show
+  safe prompt and completion categories, `blocked=false`. The native tool
+  payload separately contains the moderation-processing error. A successful
+  Foundry span is therefore not sufficient evidence of a valid tool result.
+  Correlation operations: `7809d387132c88ad653d9dcb074a50e0` and
+  `c7c76f9a502048c0e1c6e8eeb04229cd`.
+- No documented repair for the exact processing-error text was found in the
+  official documentation search. Safety policies, runtime selection and
+  authentication configuration were not weakened or changed speculatively.
+- The live support catalog includes Microsoft Foundry / Agents / Microsoft
+  Fabric. No support ticket was created: authorization/contact details were
+  unavailable. No support plan was purchased or changed.
 
 A separate, explicitly non-native inventory smoke test succeeded in **7.8s**:
 three facility records, one planned `query_assets(entity="facilities")` reader,
@@ -48,6 +72,19 @@ no specialist model chain or narrative model. Its durable semantic decision
 records a 2.675s planning call. Run:
 `8967fd86-7f5e-4d2f-90fb-6dcaa32c0cdf`. This validates that reader path only;
 it is not a fallback or acceptance of Fabric IQ.
+
+Additional signed-browser routing smoke tests:
+- Weather paraphrase, "Will it rain at Sloy tomorrow?": selected Weather, not
+  Gauge; completed in **37.9s**. Returned four UKMet forecast intervals, preserved
+  issue/valid times, and explicitly reported missing second-vendor coverage and
+  unspecified precipitation units instead of inventing either.
+- T007 unreliable-readings investigation: selected Sleuth, not Gauge; completed
+  in **about 81s**, returned source evidence, competing hypotheses and missing
+  tests, with no confirmed physical diagnosis or work-order draft. This is a
+  routing/execution smoke test, not independent validation of a causal ranking.
+- Final full backend discovery against the deployed implementation:
+  **283 tests passed in 258.226s**, including the repaired factory/cold-start
+  fixtures. Earlier partial-run failure records below remain historical.
 
 ### Actual runtime responsibilities
 

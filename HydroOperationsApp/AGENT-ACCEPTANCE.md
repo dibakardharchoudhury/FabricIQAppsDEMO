@@ -12,8 +12,10 @@ Published app **1.0.1147 / `a2ccda0`**, coordinator **v28**, Fabric IQ **v3**.
 Signed-browser facility and station/unit comparisons both reached the native
 Data Agent with plain-language input and returned matching facts in diagnostic
 receipts, but both carried provider output-moderation processing errors.
-**Native acceptance failed; do not certify those answers.** The third comparison
-remains unexecuted. No native fallback, safety bypass or write approval occurred.
+The third native quality/work comparison reproduced the same error; its direct
+Fabric-editor counterpart also failed generically, leaving that parity unverified.
+**All three native comparisons failed acceptance; do not certify those answers.**
+No native fallback, safety bypass or write approval occurred.
 The [live publication and acceptance record](../docs/foundry-multi-agent-implementation.md#live-publication-and-acceptance)
 contains response/run IDs and timings for provider escalation.
 
@@ -22,6 +24,13 @@ three facilities, one planned read and no specialist/narrative model chain.
 All 18 Ontology entities are now published in the Data Agent context.
 Eventhouse's absence from the Ontology data sources UI group remains unresolved;
 its working Kusto mount was not removed.
+Further live smoke tests selected Weather for a rainfall paraphrase (37.9s) and
+Sleuth for unreliable T007 readings (about 81s), leaving Gauge idle. Neither
+prepared a work-order draft. The final full backend suite passed all 283 tests.
+Existing Foundry telemetry shows safe prompt/completion categories for the first
+two native responses, separately from the error-bearing native tool output.
+Connection audiences, enabled default safety policy and network settings were
+verified; no speculative safety/runtime change or support-ticket creation occurred.
 
 For current FEATURE deployment receipts and limitations, use the
 [current verification record](../docs/ontology-test-review.md).

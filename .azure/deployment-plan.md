@@ -53,9 +53,12 @@ Fabric IQ v3; final `SUCCESS` and `DEPLOYED_APP_URL` were returned after endpoin
 CORS and POST readiness checks. Authenticated browser access was restored.
 Two native comparisons reached the Data Agent with corrected plain-language
 input and matching facility/relationship facts, but both failed with provider
-output-moderation processing errors. The third comparison is unexecuted; native
-acceptance remains blocked. No error annotation was ignored and no fallback or
-write occurred. A separate inventory-reader smoke test passed in 7.8s.
+output-moderation processing errors. The third native quality/work comparison
+reproduced that error; its direct Fabric-editor counterpart failed generically.
+Native acceptance remains blocked. No error annotation was ignored and no
+fallback or write occurred. A separate inventory-reader smoke test passed in
+7.8s; Weather and RCA paraphrases selected their intended specialists and
+completed in 37.9s and about 81s respectively, without drafts.
 See the [live acceptance record](../docs/foundry-multi-agent-implementation.md#live-publication-and-acceptance)
 for exact run/response IDs. Eventhouse UI grouping remains unresolved.
 
@@ -92,8 +95,14 @@ full run, and the repaired production-factory/readiness fixtures pass separately
   Separate REST readback confirms all 18 entities selected in both draft and
   published Data Agent context; Lakehouse, Kusto and SQL mounts remain.
 - App/source runtime acceptance was attempted after canonical deployment with
-  restored signed-browser access. Ordinary reader execution passed; two native
+  restored signed-browser access. Ordinary reader execution passed; three native
   comparisons reproduced the provider error and cannot pass acceptance.
+- Final full backend rerun: all 283 tests passed in 258.226s.
+- Further native diagnostics verified documented connection audiences, enabled
+  default safety filters and unrestricted account network configuration.
+  Existing Foundry telemetry reports safe prompt/completion categories while
+  native tool outputs retain moderation-processing errors. Provider escalation
+  remains required; no ticket was created without contact/authorization details.
 
 Commands: root `.venv\Scripts\python.exe -m unittest discover -s
 HydroOperationsService\tests`; affected source-auth factory/readiness and semantic
