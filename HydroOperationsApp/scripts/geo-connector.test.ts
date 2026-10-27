@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   abortableGeoRead, collectGeoRows, compactGeoRow, createGeoEnergyService, geoConnectorConfig, geoPages,
-  geoPlaceCandidates, GEO_FACET_ROW_LIMIT, GEO_SEARCH_ROW_LIMIT, type GeoApi,
+  geoPlaceCandidates, readGeoPayloads, GEO_FACET_ROW_LIMIT, GEO_SEARCH_ROW_LIMIT, type GeoApi,
 } from '../src/services/geoConnector.ts'
 import { createEnergyPropertyFilters } from '../src/ui-shared/energyMapFilters.ts'
 import { FEATURE_LIMIT, INITIAL_VIEW } from '../src/ui-shared/energyMapModel.ts'
@@ -30,6 +30,8 @@ function matches(row: Row, filter: Row = {}): boolean {
 function connector(tables: Record<string, Row[]>, pageSize = 250) {
   const calls: Call[] = []
   const cache = new Map<string, Row[]>()
+  const payloads = new Map(Object.entries(tables).map(([name, rows]) =>
+    [name, new Map(rows.map(row => [JSON.stringify([row.layer_id, row.feature_id]), row]))]))
   const source = new Proxy({}, {
     get: (_, entity: string) => ({
       select(columns: string[]) {
@@ -60,7 +62,11 @@ function connector(tables: Record<string, Row[]>, pageSize = 250) {
       },
     }),
   }) as GeoApi
-  return { service: createGeoEnergyService(source), calls }
+  return { service: createGeoEnergyService(source, async (metadata, area) => metadata.map(row => {
+    const full = payloads.get(area ? 'GeoReservoirAreas' : 'GeoMapFeatures')?.get(JSON.stringify([row.layer_id, row.feature_id]))
+    if (!full) throw new Error('Missing fixture payload')
+    return { ...row, geometry_json: full.geometry_json as string, properties_json: full.properties_json as string }
+  })), calls }
 }
 function feature(id: string, layer = 'hydro-plants', properties: Row = {}, longitude = 10): Row {
   return { feature_id: id, layer_id: layer, label: id,
@@ -83,9 +89,70 @@ test('Geo connector is read-only and its browser helper imports without browser 
   assert.ok(!schema.includes('max: 8000'))
   for (const table of ['geo_map_features', 'geo_reservoir_areas', 'geo_source_status', 'geo_market_asset_links']) assert.ok(schema.includes(`table: '${table}'`))
   const browser = readFileSync(new URL('../src/services/energyMap.ts', import.meta.url), 'utf8')
-  assert.equal((browser.match(/runKustoQuery\(/g) ?? []).length, 1)
+  assert.equal((browser.match(/runKustoQuery\(/g) ?? []).length, 2)
   assert.match(browser, /runKustoQuery\(buildLiveFrequencyQuery/)
   assert.ok(!browser.includes('HydroGeo'))
+  assert.match(browser, /readGeoPayloads\(metadata, area, signal/)
+})
+
+test('canonical payload queries stay bounded across multiple pages and preserve requested order', async () => {
+  const input = Array.from({ length: 503 }, (_, i) => feature(String(i)))
+  let calls = 0
+  const output = await readGeoPayloads(input, false, signal(), async (_, limit) => {
+    const batch = input.slice(calls * 250, ++calls * 250)
+    assert.equal(limit, batch.length + 1)
+    return batch.reverse()
+  })
+  assert.equal(calls, 3)
+  assert.deepEqual(output, input)
+})
+
+test('full-fidelity map payloads preserve JSON beyond the Lakehouse SQL 8000-byte limit', async () => {
+  const geometry = JSON.stringify({ type: 'LineString', coordinates: Array.from({ length: 2000 }, (_, i) => [10 + i / 10000, 60]) })
+  const properties = JSON.stringify({ owner: 'Verified owner', source_properties: { remarks: 'x'.repeat(16000) } })
+  const full = { ...feature('long-"\\\n-id', 'transmission'), geometry_json: geometry, properties_json: properties }
+  assert.ok(geometry.length > 8000)
+  const metadata = [{ ...full, geometry_json: geometry.slice(0, 8000), properties_json: properties.slice(0, 8000) }]
+  const restored = await readGeoPayloads(metadata, false, signal(), async (query, limit) => {
+    assert.ok(query.startsWith("external_table('HydroGeoFeatures')"))
+    assert.ok(query.includes(JSON.stringify([full.feature_id])))
+    assert.equal(limit, 2)
+    return [full]
+  })
+  assert.deepEqual(restored, [full])
+  assert.deepEqual(JSON.parse(restored[0].geometry_json!), JSON.parse(geometry))
+  assert.deepEqual(JSON.parse(restored[0].properties_json!), JSON.parse(properties))
+  await readGeoPayloads([feature('NO', 'reservoirs')], true, signal(), async query => {
+    assert.ok(query.startsWith("external_table('HydroGeoReservoirAreas')"))
+    return [feature('NO', 'reservoirs')]
+  })
+})
+
+test('canonical payload reads reject missing, duplicate, unexpected, malformed and partial data', async () => {
+  const row = feature('wanted')
+  for (const payloads of [[], [row, row], [feature('other')], [{ ...row, geometry_json: null }]]) {
+    await assert.rejects(readGeoPayloads([row], false, signal(), async () => payloads), /Geo payload data/)
+  }
+  await assert.rejects(readGeoPayloads([row, row], false, signal(), async () => [row]), /Duplicate/)
+  await assert.rejects(readGeoPayloads([row], false, signal(), async () => { throw new Error('Eventhouse unavailable') }), /Eventhouse unavailable/)
+  const controller = new AbortController()
+  await assert.rejects(readGeoPayloads([row], false, controller.signal, async () => {
+    controller.abort(new Error('cancelled payload'))
+    return [row]
+  }), /cancelled payload/)
+})
+
+test('map rendering and details never read JSON through the truncating SQL endpoint', async () => {
+  const coordinates = Array.from({ length: 2000 }, (_, i) => [10 + i / 10000, 60])
+  const line = { ...feature('long-line', 'transmission'),
+    geometry_json: JSON.stringify({ type: 'LineString', coordinates }),
+    properties_json: JSON.stringify({ owner: 'Verified owner', source_properties: { remarks: 'x'.repeat(16000) } }) }
+  const { service, calls } = connector({ GeoMapFeatures: [line], GeoReservoirAreas: areas() })
+  const loaded = await service.queryEnergyMap(INITIAL_VIEW, ['transmission'], signal())
+  assert.deepEqual(loaded.features[0].geometry, { type: 'LineString', coordinates })
+  assert.equal((await service.queryEnergyFeatureDetails(loaded.features[0], signal())).properties.owner, 'Verified owner')
+  assert.equal((await service.queryReservoirAreas(signal())).length, 9)
+  assert.ok(calls.every(call => !call.columns.includes('geometry_json') && !call.columns.includes('properties_json')))
 })
 
 test('pagination accepts short pages and fails repeated, missing and empty continuation cursors', async () => {

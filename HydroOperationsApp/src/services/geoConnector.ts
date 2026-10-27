@@ -19,11 +19,14 @@ export type GeoRow = {
   min_lon?: number; min_lat?: number; max_lon?: number; max_lat?: number
 }
 export type GeoFilter = FilterInput<GeoRow>
+export type GeoPayloadReader = (metadata: GeoRow[], area: boolean, signal: AbortSignal) => Promise<GeoRow[]>
 
 export const GEO_FEATURE_COLUMNS = ['feature_id', 'layer_id', 'label', 'geometry_json', 'properties_json',
   'observed_at', 'ingested_at', 'source_url', 'min_lon', 'min_lat', 'max_lon', 'max_lat'] as const
 export const GEO_PLACE_COLUMNS = ['feature_id', 'layer_id', 'label', 'properties_json',
   'min_lon', 'min_lat', 'max_lon', 'max_lat'] as const
+const SQL_FEATURE_COLUMNS = GEO_FEATURE_COLUMNS.filter(column => column !== 'geometry_json' && column !== 'properties_json')
+const SQL_PLACE_COLUMNS = GEO_PLACE_COLUMNS.filter(column => column !== 'properties_json')
 export const geoConnectorConfig = {
   connector: 'fabric-sqlanalytics', operations: ['read'],
   entities: {
@@ -100,17 +103,52 @@ export function compactGeoRow(row: GeoRow): GeoRow {
 const ordinal = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
 const isPointAsset = (layer: string) => layer === 'hydro-plants' || layer === 'transformers'
 
-export function createGeoEnergyService(source: GeoApi) {
+export async function readGeoPayloads(metadata: GeoRow[], area: boolean, signal: AbortSignal,
+  query: (csl: string, maximumRows: number, signal: AbortSignal) => Promise<Record<string, unknown>[]>,
+): Promise<GeoRow[]> {
+  const result: GeoRow[] = []
+  for (let offset = 0; offset < metadata.length; offset += GEO_PAGE_SIZE) {
+    signal.throwIfAborted()
+    const batch = metadata.slice(offset, offset + GEO_PAGE_SIZE)
+    const identity = (row: GeoRow) => JSON.stringify([row.layer_id, row.feature_id])
+    if (batch.some(row => typeof row.feature_id !== 'string' || !row.feature_id || row.feature_id.length > 2048
+      || !isEnergyLayer(row.layer_id))) throw new Error('Invalid Geo payload identity.')
+    const expected = new Set(batch.map(identity))
+    if (expected.size !== batch.length) throw new Error('Duplicate Geo payload identities.')
+    const csl = `external_table('${area ? 'HydroGeoReservoirAreas' : 'HydroGeoFeatures'}')`
+      + ` | where feature_id in (dynamic(${JSON.stringify(batch.map(row => row.feature_id))}))`
+      + ` and layer_id in (dynamic(${JSON.stringify([...new Set(batch.map(row => row.layer_id))])}))`
+      + ` | project ${GEO_FEATURE_COLUMNS.join(', ')} | take ${batch.length + 1}`
+    const payloads = await query(csl, batch.length + 1, signal)
+    signal.throwIfAborted()
+    const byId = new Map<string, GeoRow>()
+    for (const payload of payloads) {
+      const key = identity(payload)
+      if (!expected.has(key) || byId.has(key) || typeof payload.geometry_json !== 'string'
+        || typeof payload.properties_json !== 'string') throw new Error('Geo payload data is missing, duplicated or inconsistent.')
+      byId.set(key, payload)
+    }
+    for (const row of batch) {
+      const payload = byId.get(identity(row))
+      if (!payload) throw new Error('Geo payload data is missing; partial map data is not accepted.')
+      result.push(payload)
+    }
+  }
+  return result
+}
+
+export function createGeoEnergyService(source: GeoApi, readPayloads: GeoPayloadReader) {
   async function featureRows(filter: GeoFilter, signal: AbortSignal, area = false) {
     const entity = area ? source.GeoReservoirAreas : source.GeoMapFeatures
-    return collectGeoRows(cursor => entity.select([...GEO_FEATURE_COLUMNS]).where(filter)
+    const metadata = await collectGeoRows(cursor => entity.select(SQL_FEATURE_COLUMNS).where(filter)
       .orderBy({ feature_id: 'asc' }).first(2).after(cursor).executePaginated(), signal, 2)
+    return readPayloads(metadata, area, signal)
   }
 
   async function queryReservoirAreas(signal: AbortSignal) {
-    const rows = await collectGeoRows(cursor => source.GeoReservoirAreas.select([...GEO_FEATURE_COLUMNS])
+    const rows = await collectGeoRows(cursor => source.GeoReservoirAreas.select(SQL_FEATURE_COLUMNS)
       .orderBy({ feature_id: 'asc' }).first(21).after(cursor).executePaginated(), signal, 20)
-    const features = rows.map(parseEnergyFeature)
+    const features = (await readPayloads(rows, true, signal)).map(parseEnergyFeature)
     const codes = new Set(features.map(feature => feature.properties.area_code))
     if (features.length !== 9 || codes.size !== 9
       || !['NO', 'SE', 'FI', 'DK', 'NO1', 'NO2', 'NO3', 'NO4', 'NO5'].every(code => codes.has(code))
@@ -137,9 +175,9 @@ export function createGeoEnergyService(source: GeoApi) {
       const seen = new Set<string>()
       const filter: GeoFilter = { layer_id: { eq: layer }, max_lon: { gte: viewport.west },
         min_lon: { lte: viewport.east }, max_lat: { gte: viewport.south }, min_lat: { lte: viewport.north } }
-      for await (const page of geoPages(cursor => source.GeoMapFeatures.select([...GEO_FEATURE_COLUMNS]).where(filter)
+      for await (const page of geoPages(cursor => source.GeoMapFeatures.select(SQL_FEATURE_COLUMNS).where(filter)
         .orderBy({ feature_id: 'asc' }).first(GEO_PAGE_SIZE).after(cursor).executePaginated(), signal)) {
-        for (const row of page) {
+        for (const row of await readPayloads(page, false, signal)) {
           if (seen.has(row.feature_id ?? '')) throw new Error('Geo viewport contains duplicate features; partial data is not accepted.')
           seen.add(row.feature_id ?? '')
           const feature = parseEnergyFeature(row)
@@ -162,11 +200,11 @@ export function createGeoEnergyService(source: GeoApi) {
         source_layers: new Set<string>(), network_levels: new Set<string>() }
       const maximums: Record<string, number | null> = { capacity_max: null, gross_head_max: null, voltage_max: null }
       let count = 0
-      for await (const page of geoPages(cursor => source.GeoMapFeatures.select(['feature_id', 'layer_id', 'properties_json'])
+      for await (const page of geoPages(cursor => source.GeoMapFeatures.select(['feature_id', 'layer_id'])
         .where({ layer_id: { eq: layer } }).orderBy({ feature_id: 'asc' }).first(GEO_PAGE_SIZE).after(cursor).executePaginated(), signal)) {
         count += page.length
         if (count > GEO_FACET_ROW_LIMIT) throw new Error(`Property metadata exceeds the ${GEO_FACET_ROW_LIMIT}-row bound; incomplete facets are not accepted.`)
-        for (const row of page) {
+        for (const row of await readPayloads(page, false, signal)) {
           if (row.layer_id !== layer) throw new Error('Unexpected Geo property layer.')
           const p = geoProperties(row)
           for (const [facet, field] of Object.entries({ owners: 'owner', price_areas: 'price_area', plant_statuses: 'plant_status',
@@ -237,10 +275,10 @@ export function createGeoEnergyService(source: GeoApi) {
     const messages: EnergyFeature[] = []
     for (let i = 0; i < ids.length; i += 100) {
       const batch = ids.slice(i, i + 100)
-      const rows = await collectGeoRows(cursor => source.GeoMapFeatures.select([...GEO_FEATURE_COLUMNS])
+      const rows = await collectGeoRows(cursor => source.GeoMapFeatures.select(SQL_FEATURE_COLUMNS)
         .where({ layer_id: { eq: 'umm' }, feature_id: { in: batch } })
         .orderBy({ feature_id: 'asc' }).first(GEO_PAGE_SIZE).after(cursor).executePaginated(), signal, GEO_LINK_ROW_LIMIT)
-      for (const row of rows) {
+      for (const row of await readPayloads(rows, false, signal)) {
         const feature = parseEnergyFeature(row)
         if (feature.layerId !== 'umm') throw new Error('Unexpected market-message layer.')
         const rawVersion = feature.properties.version
@@ -262,16 +300,20 @@ export function createGeoEnergyService(source: GeoApi) {
     const candidates: GeoRow[] = []
     if (layer !== 'reservoirs') {
       const layers = layer ? [layer] : MAP_LAYERS.filter(item => isAssetLayer(item.id)).map(item => item.id)
-      candidates.push(...await collectGeoRows(cursor => source.GeoMapFeatures.select([...GEO_PLACE_COLUMNS])
+      candidates.push(...await collectGeoRows(cursor => source.GeoMapFeatures.select(SQL_PLACE_COLUMNS)
         .where({ and: [{ layer_id: { in: layers } }, geoPlaceCandidates(term)] })
         .orderBy({ label: 'asc', feature_id: 'asc', layer_id: 'asc' }).first(GEO_PAGE_SIZE).after(cursor).executePaginated(), signal, GEO_SEARCH_ROW_LIMIT))
     }
     if (!layer || layer === 'reservoirs') {
-      candidates.push(...await collectGeoRows(cursor => source.GeoReservoirAreas.select([...GEO_PLACE_COLUMNS])
+      candidates.push(...await collectGeoRows(cursor => source.GeoReservoirAreas.select(SQL_PLACE_COLUMNS)
         .orderBy({ feature_id: 'asc' }).first(21).after(cursor).executePaginated(), signal, 20))
     }
     const seen = new Set<string>()
-    const places = candidates.flatMap(row => {
+    const complete = [
+      ...await readPayloads(candidates.filter(row => row.layer_id !== 'reservoirs'), false, signal),
+      ...await readPayloads(candidates.filter(row => row.layer_id === 'reservoirs'), true, signal),
+    ]
+    const places = complete.flatMap(row => {
       const p = geoProperties(row)
       const label = row.label ?? '', area = String(p.area_code ?? '')
       if (!label.toLowerCase().includes(folded) && row.feature_id !== term && area.toLowerCase() !== folded) return []
