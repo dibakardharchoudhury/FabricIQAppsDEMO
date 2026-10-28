@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks'
 import test from 'node:test'
 import cytoscape from 'cytoscape'
 import type { KnowledgeEdge, KnowledgeNode } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { summarizeKnowledgeGraph } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { KNOWLEDGE_EDGE_INTERACTION_STYLE, knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeFocusElementIds, knowledgeHaloPadding, knowledgeTelemetryState, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
 
 const NOW = Date.parse('2026-10-27T01:00:00Z')
@@ -17,6 +18,20 @@ const node = (id: string, type: KnowledgeNode['type'], reading = false): Knowled
   properties: {},
   provenance: 'test',
   reading: reading ? { opcuaNodeId: id, eventTime: new Date(NOW - 5_000).toISOString(), value: 42, quality: 'Good' } : undefined,
+})
+
+test('topology diagnostics distinguish disconnected components from isolates without adding links', () => {
+  const nodes = [node('facility', 'facility'), node('equipment', 'equipment'), node('weather', 'ontology'), node('isolated', 'ontology')]
+  const edges: KnowledgeEdge[] = [
+    { id: 'ef', source: 'equipment', target: 'facility', type: 'contains', label: 'facility' },
+    { id: 'self', source: 'weather', target: 'weather', type: 'contains', label: 'self' },
+  ]
+  const graph = { nodes, edges }
+  const before = structuredClone(graph)
+  assert.deepEqual(summarizeKnowledgeGraph(graph), { components: 3, isolates: 1 })
+  assert.deepEqual(graph, before)
+  assert.deepEqual(summarizeKnowledgeGraph({ nodes: [], edges: [] }), { components: 0, isolates: 0 })
+  assert.throws(() => summarizeKnowledgeGraph({ nodes: [], edges }), /missing endpoint/)
 })
 
 test('telemetry flow follows only governed topology toward the facility', () => {
@@ -194,7 +209,8 @@ test('compact graph presentation retains earlier fluid strokes and keeps diagnos
   const styles = read('../src/ui-shared/styles/app.css')
   assert.ok(page.indexOf('<details className="kg-source-coverage">') > page.indexOf('<div className={`kg-workspace'))
   assert.doesNotMatch(page, /JSON · topology, ontology/)
-  assert.match(page, /'Live ontology sources'/)
+  assert.match(page, /'Native graph unavailable'/)
+  assert.doesNotMatch(page, /'Live ontology sources'/)
   assert.doesNotMatch(page, /not materialized/)
   assert.match(page, /Moving dashes require valid telemetry less than 60 seconds old/)
   assert.doesNotMatch(page, /The reading may be fresh or stale|Static dashed signal/)
@@ -220,8 +236,9 @@ test('loading and errors stay inside the graph workspace without a blocking plac
   assert.match(page, /Refreshing · showing last verified graph/)
   assert.match(page, /hasVerifiedGraph && graphQueriedAt/)
   assert.match(page, /disabled=\{!hasVerifiedGraph\} onClick=\{exportNativeGraph\}/)
-  assert.match(page, /<summary>Advanced graph details[^]*?<\/summary>\{executionControl\}/)
-  assert.equal(page.match(/\{executionControl\}/g)?.length, 1)
+  assert.match(page, /<summary>Advanced graph details/)
+  assert.doesNotMatch(page, /executionControl|queryOntologySourceGraph|setExecution/)
+  assert.match(page, /\(\) => queryOntologyGraph\(force\), queryOntologyContract/)
 })
 
 test('loading and unavailable headers do not display the live-ready treatment', () => {

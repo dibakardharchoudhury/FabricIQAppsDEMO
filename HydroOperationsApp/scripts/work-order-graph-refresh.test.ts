@@ -10,6 +10,27 @@ const page = readFileSync(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx
 const parse = (source: string) => ts.createSourceFile('test.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 const js = (source: string) => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
 
+test('choosing an asset in the tree exits fit-all scope and anchors its native neighborhood', () => {
+  let action: ts.ArrowFunction | undefined
+  const find = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText() === 'selectAsset'
+      && node.initializer && ts.isArrowFunction(node.initializer)) action = node.initializer
+    ts.forEachChild(node, find)
+  }
+  find(parse(page))
+  assert.ok(action)
+  const calls: unknown[] = []
+  const select = new Function('graph', 'data', 'setScope', 'setSelection',
+    js(`return (${action.getText()});`))(
+    { nodes: [{ id: 'equipment:E1', type: 'equipment', entityId: 'E1' }] },
+    { actions: { selectAsset: (...args: string[]) => calls.push(args) } },
+    (scope: string) => calls.push(scope),
+    (selection: unknown) => calls.push(selection),
+  ) as (facility: string, asset: string) => void
+  select('F1', 'E1')
+  assert.deepEqual(calls, [['F1', 'E1'], 'asset', { nodeId: 'equipment:E1', assetId: 'E1' }])
+})
+
 function harness() {
   const window = Object.assign(new EventTarget(), {
     setInterval: (_callback: () => void, _delay: number) => 1,

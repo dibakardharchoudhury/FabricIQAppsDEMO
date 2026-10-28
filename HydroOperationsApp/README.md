@@ -104,16 +104,14 @@ The **Knowledge Graph** visualizes this composition as a scoped property graph. 
 Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a
 WebGL dependency. It defaults to the selected turbine and synchronizes that selection with Overview,
 Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
-**generation-2 Ontology**. Default live-source mode reads its verified primary scalar
-bindings through the Lakehouse and independent SQL connectors and joins only declared
-relationships. All 18 current entity types and 17 relationship types have connector
-projections, including signals, classification and weather identities. A readable empty
-table contributes zero instances; it is not an unsupported binding. Rules and bound
-time-series properties are not evaluated; Eventhouse readings remain external context.
-The separate native mode requires an explicitly bound, materialized ontology-owned
-GraphModel and never silently falls back. Native exports use OWL/RDF Turtle; live
-exports use JSON with topology, coverage and source evidence. Missing access, invalid
-identities, incomplete reads and overflow fail closed.
+**generation-2 Ontology** and an explicitly bound, materialized ontology-owned
+GraphModel. Source-reconstructed topology is not a canvas fallback. SQL and Eventhouse
+only enrich actual native entities. Header counts describe returned instances and links;
+advanced details disclose visible connected components and isolates. Selecting an asset
+in the tree switches to its selected scope. Native exports use OWL/RDF Turtle.
+Missing materialization, source eligibility, access, valid identities or complete reads
+fail closed. FEATURE currently has an unresolved portal **Unsupported Datasource**
+eligibility blocker; successful hosting does not certify native graph availability.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
 scenarios, historical screenshots, freshness behavior, and native graph prerequisites.

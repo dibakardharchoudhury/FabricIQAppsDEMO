@@ -68,7 +68,7 @@ test('maps physical aliases and only joins declared directed ontology relationsh
   assert.equal((await readOntologySourceGraph(ontology, readers())).edges.length, 0)
 })
 
-test('live presentation does not append inferred SQL nodes or native provenance', async () => {
+test('presentation rejects reconstructed source topology even when all source reads succeed', async () => {
   const ontology = contract()
   ontology.entityTypes[1].localName = 'equipment'
   const topology = await readOntologySourceGraph(ontology, readers())
@@ -77,14 +77,12 @@ test('live presentation does not append inferred SQL nodes or native provenance'
     workOrders: [], inspections: [], notifications: [],
     models: [{ id: 'fabricated-overlay', equipmentId: 'S1', modelName: 'Not declared', modelUrl: 'ignored', format: 'glb', updatedAt: new Date(), updatedByOid: 'user' }],
   })
-  assert.equal(graph.error, undefined)
-  assert.equal(graph.nodes.length, 2)
-  assert.equal(graph.edges.length, 1)
-  assert.ok(graph.nodes.every(node => !node.nativeOid && !node.provenance.includes('materialized')))
-  assert.ok(graph.edges.every(edge => !edge.nativeOid && edge.ontologyRelationshipId))
+  assert.match(graph.error!, /Source-reconstructed topology cannot replace/)
+  assert.deepEqual(graph.nodes, [])
+  assert.deepEqual(graph.edges, [])
 })
 
-  test('declared maintenance joins retain distinct equipment, instrument and signal endpoints in both presentations', async () => {
+  test('diagnostic joins and synthetic native presentation retain distinct maintenance endpoints', async () => {
     const rows: Record<string, Array<Record<string, string>>> = {
       facilities: [{ facility_id: 'F1' }],
       systems: [{ system_id: 'S1', facility_id: 'F1' }],
@@ -146,7 +144,7 @@ test('live presentation does not append inferred SQL nodes or native provenance'
       execution: 'native' as const, ontologyId: ontology.id, graphModelId: 'fixture-native', graphModelName: 'Fixture',
       nodes: topology.nodes, edges: topology.edges,
     }
-    for (const ontologyGraph of [topology, native]) {
+    for (const ontologyGraph of [native]) {
       const graph = buildKnowledgeGraph({
         ontology, ontologyGraph, facilities: [], systems: [], equipment: [], instruments: [], telemetry: [],
         workOrders: [], inspections: [], notifications: [], models: [],
@@ -174,7 +172,7 @@ test('live presentation does not append inferred SQL nodes or native provenance'
       assert.ok(graph.edges.every(edge => ids.has(edge.source) && ids.has(edge.target)))
     }
     const renderFresh = async () => buildKnowledgeGraph({
-      ontology, ontologyGraph: await readOntologySourceGraph(ontology, sources),
+      ontology, ontologyGraph: { ...native, ...await readOntologySourceGraph(ontology, sources), execution: 'native' },
       facilities: [], systems: [], equipment: [], instruments: [], telemetry: [],
       workOrders: [], inspections: [], notifications: [], models: [],
     })
@@ -269,15 +267,15 @@ test('enforces explicitly declared cardinality rather than inventing ambiguous l
   await assert.rejects(readOntologySourceGraph(ontology, sources), /source cardinality/)
 })
 
-test('rejects a newer contract snapshot instead of relabelling a previously read source graph', async () => {
+test('native snapshot rejects source reconstruction before reading or relabelling its contract', async () => {
   const ontology = contract()
   const graph = await readOntologySourceGraph(ontology, readers())
-  assert.equal((await loadNativeGraphSnapshot(async () => graph, async () => ontology)).ontologyGraph, graph)
-  ontology.entityTypes[0].name = 'Changed live definition'
-  await assert.rejects(loadNativeGraphSnapshot(async () => graph, async () => ontology), /contract changed/)
+  await assert.rejects(loadNativeGraphSnapshot(async () => graph, async () => {
+    assert.fail('A source projection must not be certified as a native snapshot.')
+  }), /Source-reconstructed topology cannot replace/)
 })
 
-test('bounded 2000-node governed projection builds and presents within one second', async () => {
+test('bounded 2000-node diagnostic source projection assembles within one second', async () => {
   const sources = readers()
   sources[1].read = async () => ({
     items: Array.from({ length: 1999 }, (_, index) => ({ system_id: `S${index}`, facility_code: 'F1' })), hasNextPage: false,
@@ -285,11 +283,7 @@ test('bounded 2000-node governed projection builds and presents within one secon
   const started = performance.now()
   const ontology = contract()
   const topology = await readOntologySourceGraph(ontology, sources)
-  const graph = buildKnowledgeGraph({
-    ontology, ontologyGraph: topology, facilities: [], systems: [], equipment: [], instruments: [], telemetry: [],
-    workOrders: [], inspections: [], notifications: [], models: [],
-  })
-  assert.equal(graph.nodes.length, 2000)
-  assert.equal(graph.edges.length, 1999)
-  assert.ok(performance.now() - started < 1000, '2000-node source assembly and presentation must stay below 1000 ms')
+  assert.equal(topology.nodes.length, 2000)
+  assert.equal(topology.edges.length, 1999)
+  assert.ok(performance.now() - started < 1000, '2000-node diagnostic source assembly must stay below 1000 ms')
 })

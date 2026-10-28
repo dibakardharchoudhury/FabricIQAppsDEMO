@@ -1,5 +1,45 @@
 # Hydro Operations Knowledge Graph
 
+## Current execution contract and unresolved FEATURE blocker
+
+The production canvas uses **only the explicitly bound, materialized native
+Ontology graph**. The former source-backed default and execution selector are
+retired. Lakehouse/SQL connector joins must not substitute for native topology.
+SQL and Eventhouse may enrich actual native entities. The header counts returned
+instances and native links, not declared relationship types as a readiness claim.
+Advanced details report visible connected components and isolates without
+inventing connecting edges. Selecting an asset in the tree switches to its
+selected-asset scope.
+
+On October 28, the live V14 Ontology passed the numeric generation-2 check, but
+its explicitly bound GraphModel returned **204 No Content** for queryable schema.
+The selected Ontology's **Manage graph** page showed **Graph not materialized**,
+all 18 entities **Ineligible**, and **Continue** disabled. Validation details
+reported **Unsupported Datasource** for the Lakehouse-backed facilities entity.
+This is not a layout failure and app hosting cannot resolve or certify it.
+
+A bounded test of the partition `ONT_` metadata workaround reported in
+[microsoft/skills-for-fabric#107](https://github.com/microsoft/skills-for-fabric/issues/107)
+failed live readback: Fabric removed the submitted source metadata, and eligibility
+remained unchanged. The original definition was restored and verified in both
+directions. No unverified workaround is included in the notebooks.
+
+**Native graph availability remains blocked.** Resolve source eligibility through
+the selected Ontology's supported portal binding/Manage graph workflow or Fabric
+support, then select eligible entities/relationships, Continue and Materialize.
+Verify native readiness and query results against the explicit binding before
+claiming a functional graph. No materialization REST endpoint, guessed ownership,
+source-topology fallback or artificial connecting edge is introduced.
+
+The dated source-backed acceptance records below are historical evidence only;
+they do not describe the current production execution contract or prove native
+materialization.
+
+Validation for this correction: 120 focused graph tests pass, including rejection
+of successful source projections at both snapshot and renderer boundaries,
+preserved native maintenance endpoints, connected-component/isolate diagnostics,
+and selected-asset scope transitions. This is not live native-query acceptance.
+
 ## Purpose
 
 The Knowledge Graph turns asset topology, live telemetry, and maintenance records into one

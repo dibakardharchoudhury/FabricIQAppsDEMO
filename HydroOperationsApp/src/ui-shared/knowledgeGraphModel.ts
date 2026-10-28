@@ -1,5 +1,5 @@
 import type { Equipment, Facility, Instrument, OntologyContract, OntologyGraph, System, TelemetryReading } from '../services/fabric'
-import { ontologyContractSignature, type OntologyInstanceGraph } from '../services/ontologySourceGraph'
+import type { OntologyInstanceGraph } from '../services/ontologySourceGraph'
 import type { Asset3DModelRecord, InspectionRecord, MaintenanceNotificationRecord, WorkOrderRecord } from '../services/rayfin'
 import { twinSignalStatus, twinStatus, type TwinStatus } from '../twin'
 
@@ -33,6 +33,28 @@ export type KnowledgeEdge = {
 }
 export type KnowledgeGraph = { nodes: KnowledgeNode[]; edges: KnowledgeEdge[]; error?: string }
 
+export function summarizeKnowledgeGraph(graph: KnowledgeGraph): { components: number; isolates: number } {
+  const neighbours = new Map(graph.nodes.map(node => [node.id, new Set<string>()]))
+  for (const edge of graph.edges) {
+    const source = neighbours.get(edge.source)
+    const target = neighbours.get(edge.target)
+    if (!source || !target) throw new Error('Graph summary received a relationship with a missing endpoint.')
+    source.add(edge.target)
+    target.add(edge.source)
+  }
+  const remaining = new Set(neighbours.keys())
+  let components = 0
+  for (const id of neighbours.keys()) {
+    if (!remaining.delete(id)) continue
+    components++
+    const queue = [id]
+    for (let index = 0; index < queue.length; index++) {
+      for (const next of neighbours.get(queue[index])!) if (remaining.delete(next)) queue.push(next)
+    }
+  }
+  return { components, isolates: [...neighbours.values()].filter(adjacent => !adjacent.size).length }
+}
+
 /** Read the contract used by the native query only after that query succeeds. */
 // Allow the native API's 120-second query budget plus graph/ontology discovery.
 export const NATIVE_GRAPH_LOAD_TIMEOUT_MS = 150_000
@@ -46,12 +68,10 @@ export async function loadNativeGraphSnapshot<T extends OntologyInstanceGraph = 
   const load = async () => {
     const ontologyGraph = await queryGraph()
     if (!ontologyGraph) return { ontologyGraph: null, ontology: null }
+    if (ontologyGraph.execution === 'source-backed') throw new Error('Source-reconstructed topology cannot replace the materialized native Ontology graph.')
     const ontology = await readRefreshedContract()
     if (!ontology || ontology.generation !== 2) throw new Error('The native graph has no verified generation-2 Ontology contract. Refresh discovery and retry.')
     if (ontologyGraph.ontologyId && ontologyGraph.ontologyId !== ontology.id) throw new Error('Ontology selection changed during graph loading. Refresh discovery and retry.')
-    if (ontologyGraph.execution === 'source-backed' && ontologyGraph.evidence.contractSignature !== await ontologyContractSignature(ontology)) {
-      throw new Error('The ontology contract changed while loading its source projection. Refresh to query one verified contract snapshot.')
-    }
     return { ontologyGraph, ontology }
   }
   try {
@@ -166,11 +186,11 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   const unavailable = (error: string): KnowledgeGraph => ({ nodes: [], edges: [], error })
   const contract = input.ontology
   const native = input.ontologyGraph
-  const sourceBacked = native?.execution === 'source-backed'
   if (!contract || contract.generation !== 2) return unavailable('A verified generation-2 Ontology contract is required. Refresh ontology discovery.')
   if (!native) return unavailable('No verified native Ontology graph is loaded. Complete Manage graph materialization in the selected Ontology, verify its graph binding, and retry. Lakehouse rows cannot substitute for native topology.')
+  if (native.execution === 'source-backed') return unavailable('Source-reconstructed topology cannot replace the materialized native Ontology graph.')
   if (native?.ontologyId && native.ontologyId !== contract.id) return unavailable('The native backing graph belongs to a different Ontology than the current contract. Refresh ontology discovery and retry.')
-  if (native && native.execution !== 'source-backed' && !native.graphModelId) return unavailable('The native graph result has no verified backing graph identity. Refresh ontology discovery and retry.')
+  if (!native.graphModelId) return unavailable('The native graph result has no verified backing graph identity. Refresh ontology discovery and retry.')
   if (native && !native.nodes.length) return unavailable('The selected Ontology backing graph contains no entities. Check Manage graph materialization and the verified workspace, Ontology, and graph mapping, then retry.')
   const topology = native
   const nodes: KnowledgeNode[] = []
@@ -180,7 +200,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   const byOid = new Map<string, KnowledgeNode>()
   const nodeIds = new Set<string>()
   const edgeIds = new Set<string>()
-  const provenanceName = native.execution === 'source-backed' ? 'live ontology-bound connector sources' : native.graphModelName
+  const provenanceName = native.graphModelName
   for (const raw of topology.nodes) {
     if (byOid.has(raw.oid)) return unavailable(`Native graph has duplicate entity OID ${raw.oid}.`)
     const exact = contract.entityTypes.filter(entity => raw.entityTypeId
@@ -213,8 +233,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       ?? Object.entries(properties).find(([key]) => key.endsWith('_name') || key === 'name')?.[1]) ?? entityId ?? raw.oid
     let subtitle = (entity?.localName ?? raw.labels[0] ?? 'Ontology entity').replaceAll('_', ' ')
     let presentation = properties
-    let provenance = sourceBacked ? 'Fabric Ontology · verified live source row; identity and properties follow the declared binding'
-      : `Fabric Ontology · ${provenanceName} · ${type === 'ontology' ? `${entity?.localName ?? raw.labels[0] ?? 'Ontology entity'} ` : ''}materialized graph node`
+    let provenance = `Fabric Ontology · ${provenanceName} · ${type === 'ontology' ? `${entity?.localName ?? raw.labels[0] ?? 'Ontology entity'} ` : ''}materialized graph node`
     if (type === 'facility') {
       label = text(properties.facility_name) ?? entityId ?? raw.oid
       subtitle = text(properties.type) ?? 'Facility'
@@ -239,7 +258,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     const node: KnowledgeNode = {
       id, entityId: entityId ?? raw.oid, type, label, subtitle,
       status: type === 'equipment' ? 'nodata' : type === 'instrument' || type === 'signal' ? twinSignalStatus({ id, label, nodeId: opcuaNodeId ?? '', value: reading?.value, quality: reading?.quality }) : 'ok',
-      nativeOid: sourceBacked ? undefined : raw.oid, ontologyEntityTypeId: entity?.id,
+      nativeOid: raw.oid, ontologyEntityTypeId: entity?.id,
       facilityId: type === 'facility' ? entityId : undefined,
       equipmentId: type === 'equipment' ? entityId : undefined,
       properties: presentGraphProperties(presentation), reading, provenance,
@@ -279,12 +298,11 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
             : endpoints.includes('signal') ? 'has-signal'
               : endpoints.includes('instrument') ? 'has-instrument' : 'contains'
     edges.push({
-      id: `${sourceBacked ? 'source' : 'native'}-edge:${raw.oid}`, nativeOid: sourceBacked ? undefined : raw.oid,
+      id: `native-edge:${raw.oid}`, nativeOid: raw.oid,
       source: source.id, target: target.id, type,
       label: (relationship?.label ?? (name || 'RELATED TO')).replaceAll('_', ' ').toUpperCase(),
       ontologyRelationshipId: relationship?.id, ontologyRelationshipName: relationship?.name,
-      provenance: sourceBacked ? `Declared Ontology relationship ${relationship?.name} (${relationship?.id}) · exact physical-column join`
-        : `Native relationship ${raw.oid} · labels: ${raw.labels.join(', ')}${relationship ? ` · Ontology ${relationship.name} (${relationship.id})` : ' · relationship type not identified in contract'}`,
+      provenance: `Native relationship ${raw.oid} · labels: ${raw.labels.join(', ')}${relationship ? ` · Ontology ${relationship.name} (${relationship.id})` : ' · relationship type not identified in contract'}`,
     })
   }
 
@@ -328,11 +346,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     }
   }
   const equipment = new Map(nodes.filter(node => node.type === 'equipment' && node.equipmentId).map(node => [node.entityId, node]))
-  const orders = input.workOrders.filter(order => equipment.has(order.equipmentId))
-  const healthOrders = sourceBacked ? nodes.filter(node => node.type === 'work-order').map(node => ({
-    equipmentId: node.equipmentId, opcuaNodeId: text(node.properties.opcuaNodeId),
-    status: text(node.properties.status) ?? '', priority: text(node.properties.priority) ?? '',
-  })) : orders
+  const healthOrders = input.workOrders.filter(order => equipment.has(order.equipmentId))
   const openNodeIds = new Set(healthOrders.filter(order => !['completed', 'cancelled'].includes(order.status.toLowerCase())).map(order => `${order.equipmentId}|${order.opcuaNodeId}`))
   const criticalOpenNodeIds = new Set(healthOrders.filter(order =>
     !['completed', 'cancelled'].includes(order.status.toLowerCase())
