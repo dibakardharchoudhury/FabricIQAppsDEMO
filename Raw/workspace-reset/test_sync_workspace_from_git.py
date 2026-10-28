@@ -94,6 +94,12 @@ class FakeFabric:
                 "type": "DataPipeline",
                 "displayName": "03_Pipe_Weather",
             },
+            {
+                "id": "weather-orchestrator",
+                "type": "Notebook",
+                "displayName": "Weather_Orchestrator",
+                "folderId": "notebooks-folder",
+            },
             *self.lakehouses,
         ]
 
@@ -505,7 +511,7 @@ class WeatherProvisioningTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             configure_weather_assets(fabric, "workspace-id", git_updated=False)
 
-        self.assertEqual(len(fabric.updates), 4)
+        self.assertEqual(len(fabric.updates), 5)
         for _, body in fabric.updates:
             self.assertEqual(body["definition"]["format"], "ipynb")
             part = body["definition"]["parts"][0]
@@ -540,7 +546,7 @@ class WeatherProvisioningTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             configure_weather_assets(fabric, "workspace-id", git_updated=False)
 
-        self.assertEqual(len(fabric.updates), 4)
+        self.assertEqual(len(fabric.updates), 5)
         for _, body in fabric.updates:
             self.assertEqual(body["definition"]["format"], "ipynb")
             parts = body["definition"]["parts"]

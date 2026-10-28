@@ -249,6 +249,7 @@ area_metrics = (
     .option("replaceWhere", "data_kind = 'forecast'")
     .saveAsTable(TABLES["area_metrics"])
 )
+area_metrics = spark.table(TABLES["area_metrics"]).filter(F.col("data_kind") == "forecast")
 
 # Rainfall only tiles a window when interval_hours matches the spacing between valid times.
 coverage = (
@@ -395,6 +396,7 @@ serving = (
     }), 256))
 )
 serving.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABLES["latest_forecasts"])
+serving = spark.table(TABLES["latest_forecasts"])
 
 observed_serving = (
     spark.table(TABLES["observations"])
@@ -408,6 +410,7 @@ observed_serving = (
     }), 256))
 )
 observed_serving.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABLES["latest_observations"])
+observed_serving = spark.table(TABLES["latest_observations"])
 
 print(
     f"Serving projections rebuilt: {serving.count()} forecast rows, "

@@ -115,13 +115,30 @@ The same notebook enforces retention (`retention_days`, default 7) on forecasts,
 
 Fabric aborts a notebook's remaining cells when one raises, so a `finally` block cannot record a failure. Each adapter instead appends its audit row with `status='started'` before the first network call and promotes it to `succeeded` by merge on completion. A run left in `started` is a failed run.
 
-`03_Pipe_Weather` prepares shared areas, ingests UKMet and publishes UKMet serving
+`03_Pipe_Weather` runs `Weather_Orchestrator` in one Spark session. Its serial
+`runMultiple` DAG prepares shared areas, ingests UKMet and publishes UKMet serving
 projections first, chaining on `Succeeded`. Its `enable_aurora` parameter defaults
 to **false**. Only explicit opt-in runs Aurora afterwards and refreshes the metrics
 again on Aurora success. An enabled Aurora failure is reported as a pipeline error;
 it cannot prevent the preceding UKMet ingestion/serving refresh. Disabled Aurora
 does not read its key or produce a fictitious successful ingestion audit.
 Pipeline concurrency is one to prevent overlapping serving-table writers.
+Children inherit the root Lakehouse and Weather Environment. Required stages retain
+two retries; optional Aurora has none. A failed stage blocks its dependents and fails
+the pipeline. The wrapper itself is not retried, avoiding replay of completed stages.
+No workspace-wide high-concurrency setting is required. UKMet replaces each incoming
+source/issue/location scope with one atomic Delta merge, including deletion of
+previously stored rows omitted from that refresh. Aggregation diagnostics read the
+written Delta tables rather than recomputing the aggregation and pivot plans.
+
+Live comparison on FEATURE (Runtime 2.0, UKMet-only, three facilities): the full
+pipeline fell from 965 seconds to 442 seconds (54% less elapsed time). Separate
+Spark sessions previously spent 279 seconds queued and 575 seconds running; the
+shared session spent 102 seconds queued and 297 seconds running. SQL readback
+verified a fresh successful ingestion audit, all three locations and areas, eight
+canonical UKMet variables, latest-issue serving and unique forecast identities.
+These are measured runs, not a guaranteed duration for every capacity or provider.
+
 `Weather_020` reports, per vendor, the last successful completion and incomplete
 runs, and warns when a vendor has not succeeded within `staleness_hours`
 (default 13, just over one missed run on the six-hour schedule). Historical Aurora

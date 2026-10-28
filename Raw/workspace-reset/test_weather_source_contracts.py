@@ -14,25 +14,86 @@ class WeatherSourceContractTests(unittest.TestCase):
         pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
         properties = pipeline["properties"]
         self.assertIs(properties["parameters"]["enable_aurora"]["defaultValue"], False)
-        activities = {activity["name"]: activity for activity in properties["activities"]}
-        prepare = activities["Weather_002_fetch_area_weather"]
-        self.assertIs(prepare["typeProperties"]["parameters"]["prepare_only"]["value"], True)
-        self.assertEqual(activities["Weather_003_fetch_ukmet"]["dependsOn"], [
-            {"activity": prepare["name"], "dependencyConditions": ["Succeeded"]},
-        ])
-        self.assertEqual(activities["Weather_020_area_calculations"]["dependsOn"], [
-            {"activity": "Weather_003_fetch_ukmet", "dependencyConditions": ["Succeeded"]},
-        ])
-        optional = activities["Optional_Aurora"]
-        self.assertEqual(optional["dependsOn"], [
-            {"activity": "Weather_020_area_calculations", "dependencyConditions": ["Succeeded"]},
-        ])
-        self.assertEqual(optional["typeProperties"]["expression"]["value"], "@pipeline().parameters.enable_aurora")
-        aurora, refresh = optional["typeProperties"]["ifTrueActivities"]
-        self.assertIs(aurora["typeProperties"]["parameters"]["prepare_only"]["value"], False)
-        self.assertEqual(refresh["dependsOn"], [
-            {"activity": aurora["name"], "dependencyConditions": ["Succeeded"]},
-        ])
+        self.assertEqual(len(properties["activities"]), 1)
+        activity = properties["activities"][0]
+        self.assertEqual(activity["name"], "Weather_Orchestrator")
+        self.assertEqual(activity["typeProperties"]["parameters"]["enable_aurora"]["value"]["value"],
+                         "@pipeline().parameters.enable_aurora")
+        ns = self.orchestrator_functions()
+        for aurora in (False, True):
+            dag = ns["weather_dag"](aurora, 3600)
+            self.assertEqual(dag["concurrency"], 1)
+            stages = dag["activities"]
+            self.assertEqual(len(stages), 5 if aurora else 3)
+            self.assertEqual([stage["path"] for stage in stages[:3]], [
+                "Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations",
+            ])
+            self.assertIs(stages[0]["args"]["prepare_only"], True)
+            for index, stage in enumerate(stages):
+                self.assertEqual(stage["dependencies"], [stages[index - 1]["name"]] if index else [])
+                self.assertIs(stage["args"]["useRootDefaultLakehouse"], True)
+                self.assertEqual(stage["retry"], 0 if stage["name"] == "Ingest_Aurora" else 2)
+            if aurora:
+                self.assertIs(stages[3]["args"]["prepare_only"], False)
+                self.assertEqual(stages[4]["path"], "Weather_020_area_calculations")
+
+    def orchestrator_functions(self):
+        source = (ROOT / "Notebooks/Weather_Orchestrator.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)]
+        ns = {}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "weather-orchestrator", "exec"), ns)
+        return ns
+
+    def test_shared_session_orchestrator_rejects_missing_failed_and_skipped_stages(self):
+        ns = self.orchestrator_functions()
+        dag = ns["weather_dag"](False, 3600)
+        results = {stage["name"]: {"exitVal": "", "exception": None} for stage in dag["activities"]}
+        ns["require_weather_success"](results, dag)
+        for bad in (None, {}, {**results, "extra": {}},
+                    {**results, "Ingest_UKMet": {"exception": RuntimeError("HTTP 403")}},
+                    {**results, "Publish_UKMet": {"status": "Skipped"}},
+                    {**results, "Publish_UKMet": None},
+                    {**results, "Publish_UKMet": {}}):
+            with self.subTest(bad=bad), self.assertRaises(RuntimeError):
+                ns["require_weather_success"](bad, dag)
+        for aurora, timeout in (("false", 3600), (False, 0), (False, True)):
+            with self.assertRaises(ValueError):
+                ns["weather_dag"](aurora, timeout)
+
+    def test_forecast_refresh_uses_one_atomic_merge_with_exact_replacement_scopes(self):
+        import pandas as pd
+
+        source = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        function = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef) and node.name == "forecast_refresh_scope")
+        ns = {"pd": pd}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "forecast-refresh", "exec"), ns)
+        issue = datetime(2026, 10, 28, 12, tzinfo=timezone.utc)
+        rows = [{"source_id": "ukmet", "reference_time_utc": issue, "location_id": "F'1"},
+                {"source_id": "ukmet", "reference_time_utc": issue - timedelta(hours=6), "location_id": "F2"}]
+        predicate = ns["forecast_refresh_scope"](rows + rows)
+        self.assertEqual(predicate.count("target.source_id"), 2)
+        self.assertIn("target.location_id = 'F''1'", predicate)
+        self.assertIn("target.reference_time_utc = TIMESTAMP '2026-10-28T12:00:00Z'", predicate)
+        self.assertIn(") OR (", predicate)
+        with self.assertRaises(ValueError):
+            ns["forecast_refresh_scope"]([])
+        self.assertNotIn("DELETE FROM {TABLES['forecasts']}", source)
+        self.assertIn("WHEN NOT MATCHED BY SOURCE AND ({refresh_scope}) THEN DELETE", source)
+
+    def test_weather_optimizations_keep_raw_mirrors_and_written_table_diagnostics(self):
+        for name in ("Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"):
+            source = (ROOT / "Notebooks" / f"{name}.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+            raw = json.loads((ROOT / "Raw/RTI_Notebooks" / f"{name}.ipynb").read_text(encoding="utf-8"))
+            mirrored = "\n".join("".join(cell["source"]) for cell in raw["cells"] if cell["cell_type"] == "code")
+            self.assertEqual(ast.dump(ast.parse(source)), ast.dump(ast.parse(mirrored)), name)
+        source = (ROOT / "Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        for variable, table in (("area_metrics", "area_metrics"), ("serving", "latest_forecasts"),
+                                ("observed_serving", "latest_observations")):
+            written = source.index(f'saveAsTable(TABLES["{table}"])')
+            rebound = source.index(f'{variable} = spark.table(TABLES["{table}"])', written)
+            self.assertLess(written, rebound)
+            self.assertGreater(source.index(f"{variable}.count()", rebound), rebound)
 
     def test_metadata_preparation_never_reads_aurora_credentials(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
@@ -233,7 +294,7 @@ class WeatherSourceContractTests(unittest.TestCase):
     def test_raw_setup_binds_weather_020_environment_twice(self):
         notebook = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
         source = "\n".join("\n".join(cell.get("source", [])) for cell in notebook["cells"])
-        expected = '{"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}'
+        expected = '{"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"}'
         self.assertEqual(source.count(expected), 2)
 
     def test_weather_query_contract_pages_the_verified_connector_without_legacy_api(self):
@@ -307,9 +368,9 @@ class WeatherSourceContractTests(unittest.TestCase):
 
     def test_pipeline_and_redirect_contracts_remain_intact(self):
         pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
-        dependencies = [dependency["dependencyConditions"] for activity in pipeline["properties"]["activities"] for dependency in activity.get("dependsOn", [])]
-        self.assertTrue(dependencies)
-        self.assertTrue(all(conditions == ["Succeeded"] for conditions in dependencies))
+        self.assertEqual(pipeline["properties"]["concurrency"], 1)
+        self.assertEqual(len(pipeline["properties"]["activities"]), 1)
+        self.assertEqual(pipeline["properties"]["activities"][0]["policy"]["retry"], 0)
         rayfin = (ROOT / "HydroOperationsApp/rayfin/rayfin.yml").read_text(encoding="utf-8")
         self.assertNotIn("right-forge-2c0b55c94f", rayfin)
 

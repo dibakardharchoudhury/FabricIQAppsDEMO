@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "Weather_Orchestrator",
+    "description": "Runs the weather refresh stages in one Spark session with ordered failure propagation."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "9dfe65a1-4f98-4a40-a4a6-e3a7d56ab690"
+  }
+}

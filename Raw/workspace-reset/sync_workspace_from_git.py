@@ -122,6 +122,7 @@ WEATHER_NOTEBOOK_NAMES = {
     "Weather_002_fetch_area_weather",
     "Weather_003_fetch_ukmet",
     "Weather_020_area_calculations",
+    "Weather_Orchestrator",
 }
 # The demo lakehouse is named <prefix><env suffix> by RTI_001; the Ontology item makes its own.
 WEATHER_LAKEHOUSE_PREFIX = "Energy_IQ_LakehouseRTI"

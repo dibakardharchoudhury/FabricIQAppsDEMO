@@ -3218,6 +3218,7 @@ chain_notebooks = [
     "Weather_002_fetch_area_weather",
     "Weather_003_fetch_ukmet",
     "Weather_020_area_calculations",
+    "Weather_Orchestrator",
 ]
 weather_environment_name = "Weather"
 
@@ -3294,7 +3295,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
                 "default_lakehouse_workspace_id": workspace_id,
                 "known_lakehouses": [{"id": geo_lakehouse_id}],
             }
-        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}:
+        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"}:
             deps["environment"] = {
                 "environmentId": weather_environment_id,
                 "workspaceId": workspace_id,
@@ -3304,7 +3305,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             content=json.dumps(nb_json),
         )
         detail = "bound to current lakehouse"
-        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}:
+        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"}:
             detail += f" and Environment '{weather_environment_name}'"
         return (nb_name, bool(ok), detail + " successfully!")
     except Exception as exc:
