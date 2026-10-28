@@ -1,13 +1,13 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - bounded semantic plan correction; publication pending
+> **Status:** Deployed and authenticated - minimal capability orchestration; distributed rollout gates remain
 
 ## Current scoped architecture hardening
 
 The existing approved tenant, FEATURE workspace, Foundry project/model and F8
 capacity are unchanged. No infrastructure, permissions, source topology or
-operational-data writes are requested. Publish through the canonical Python
-orchestrator only, after the normal clean-branch and validation gates.
+operational-data writes are requested. Publication through the canonical Python
+orchestrator completed after the normal clean-branch and validation gates.
 
 The runtime now pins only selected agent-mode capabilities; reader-only work
 has no remote specialist dependency. Consecutive independent readers run in one
@@ -66,12 +66,18 @@ The broader diagnostic draft failed at the misplaced legacy native guard before
 Work Order ran. Its audit and container logs were inspected; no write occurred.
 The exact prompt reproduces the failure in a new regression, which passes after
 the scoped fix alongside the legacy completeness/fidelity checks.
-Publication and repeat signed-browser diagnostic acceptance of that correction
-remain pending; earlier successful runs do not certify it.
 The v43 repeat (`340c2431-8f75-4fce-90c3-a3b70c6c97ad`) stopped before source
 execution because the model put reads on an agent-mode Work Order step.
 An exact cross-field regression reproduces this rejection; bounded plan repair
 and interrupted-attempt recovery now pass regression and live-planner checks.
+Final publication and authenticated acceptance passed on app 1.0.1175 /
+`87565ee`, hosted coordinator v44, image `src-f8b6af0b5714a490`. The exact
+formerly failing request produced five editable diagnostic drafts without
+production writes. A separate native-only count preserved provider, native
+answer and presentation text exactly, with a matching recomputed SHA-256.
+A fresh facility question used only a QA reader. Detailed run identities and
+interpretation flags are recorded below; session-local persistence is not an
+independent-replica durability certification.
 
 ## Semantic orchestration and Fabric IQ acceptance
 
@@ -1642,7 +1648,49 @@ regressions verify cross-field correction, repeat catalog rejection, recovery
 without reissuing a committed invalid attempt and absent-model failure.
 The latest eleven-case live evaluation includes that exact diagnostic prompt;
 all cases passed in one planning call each, approximately 5.7-15.5 seconds.
-This tests model planning, not the pending authenticated end-to-end rerun.
+This tests model planning; the final authenticated end-to-end rerun is below.
+
+Final authenticated publication (October 28, 2026): app 1.0.1175 / `87565ee`,
+hosted coordinator v44, image `src-f8b6af0b5714a490`, at
+https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net.
+The canonical deployment finished at 04:05:30 UTC with `SUCCESS` and
+`DEPLOYED_APP_URL`, after endpoint, browser-equivalent CORS/preflight and POST
+readiness checks. All 42 required SPA redirects were preserved. Capacity
+readback remained Active F8; no infrastructure, role or source-topology changes
+were made.
+
+- Exact freshness/diagnostic request
+  `518c8a8f-d6a4-4223-9aef-db45f93ec2ae`: 130 verified records and exactly five
+  editable review-only drafts for T004, T005, T007, T009 and T014; 2m 13s in
+  the app. Each fresh existing-open-work count was zero. Five enabled title
+  inputs, description textareas and priority selectors were verified without
+  clicking save or approve. The manifest contains only native Fabric IQ
+  (`hydro-fabric-iq-tools:2`) and Work Order
+  (`hydro-work-order-agent:3`), not QA or RCA. Planning used one model round.
+  This request asked to review the telemetry: the actual plan selected
+  `analysis_requested=true` and an interpretation was present; this is not
+  evidence of an interpretation-free draft workflow. The original native
+  answer remained separate and exactly matched provider output. Its recomputed
+  SHA-256 was
+  `00b189e09a65842eca0128081c8daa07a000c2c31b99398b482e11d1d4aec359`.
+- Fresh facility question `2cbf133d-e8ee-4efc-809d-ca42aa2a164d`: three verified
+  facilities, QA reader only, one planning round, no specialist model,
+  interpretation or additional proposals; 8.5 seconds in the app.
+- Native-only open-work count `82b32adc-380e-42dd-b27d-de6f7473ae32`: Sloy 3,
+  Foyers 3 and Pitlochry 4; 51.1 seconds in the app. The manifest contains only
+  the native Fabric Responses provider, with one planning round,
+  `analysis_requested=false`, no interpretation and no proposals. Provider
+  output, retained native answer and displayed presentation matched exactly;
+  recomputed SHA-256 was
+  `c10484a5e5902fb0ba50b12e79dab9d69bd0fe0b4bdc543df81486cb2913e0f0`.
+
+All three final runs reported `production_write_executed=false`. Normal app
+authentication renewed expired credentials implicitly; no extra permission
+grant or manual token manipulation was needed. Temporary browser fetch
+instrumentation was removed and the original fetch restored. The existing
+draft cards were left intact. These are scoped functional checks, not sustained
+load, distributed failover, centralized telemetry-ingestion or production SLO
+certification. The four documented pre-existing Python type diagnostics remain.
 
 ### Current deployment-tool optimization (October 24, 2026)
 
