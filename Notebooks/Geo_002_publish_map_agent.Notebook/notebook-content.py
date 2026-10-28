@@ -37,6 +37,8 @@
 # properties blobs, but are snapshots, not automatically refreshed SQL views.
 # The state table is marked `building` before replacement and `ready` only after
 # all read models pass validation. Queries must check this state and source freshness.
+# Entity properties are extracted in one top-level JSON pass per row, retaining
+# the existing typed-field and malformed-JSON validation. Publication phases log timings.
 # There is no new schedule or baseline setup/seed/simulator invocation.
 #
 # **Publication:** uses the repository's create -> getDefinition -> patch draft ->
@@ -936,7 +938,11 @@ def entity_projection(frame, area_rows, run_id, built_at):
         return converted
 
     def prop(path, kind="string"):
-        return typed(F.get_json_object(F.col("properties_json"), "$." + path), kind)
+        root, separator, nested = path.partition(".")
+        value = F.col("_geo_property_" + root)
+        if separator:
+            value = F.get_json_object(value, "$." + nested)
+        return typed(value, kind)
 
     layer = F.col("layer_id")
     kind = (
@@ -961,6 +967,17 @@ def entity_projection(frame, area_rows, run_id, built_at):
         "frequency_hz", "message_id", "event_status", "event_phase", "is_cancelled", "is_outdated",
         "importance_score", "importance_bucket", "importance_method", "importance_reason",
     }
+    property_names = sorted(flat_properties | {
+        "installed_capacity_mw", "gross_head_m", "mean_annual_production_gwh_1991_2020",
+        "filling_fraction", "source_properties", "source_message", "has_reservoir_data",
+        "each_observed_at", "version", "event_start", "event_stop", "publication_date",
+        "affected_areas", "coverage",
+    })
+    frame = frame.select(
+        "*", F.json_tuple("properties_json", *property_names).alias(
+            *["_geo_property_" + name for name in property_names],
+        ),
+    )
     for name, dtype in ENTITY_FIELDS:
         if name in flat_properties:
             expressions[name] = prop(name, dtype)
@@ -1354,19 +1371,31 @@ class MapAgentMCP:
 
 
 def publish_map_agent(api, models, mcp_factory):
+    started = time.monotonic()
+    print(compact_json({"phase": "discovery_and_source_preflight"}), flush=True)
     api.discover()
     models.preflight()  # source/target table ownership refusal before agent/table writes
     item = api.ensure_agent()
     inspect_definition(api.get_definition(), api.binding)
+    timings = {"discovery_and_source_preflight": round(time.monotonic() - started, 3)}
+    print(compact_json({"phase": "read_models", "timings_seconds": timings}), flush=True)
+    started = time.monotonic()
     projection = models.build()
+    timings["read_models"] = round(time.monotonic() - started, 3)
+    print(compact_json({"phase": "configure_and_publish", "timings_seconds": timings}), flush=True)
+    started = time.monotonic()
     api.configure_and_publish()
+    timings["configure_and_publish"] = round(time.monotonic() - started, 3)
+    print(compact_json({"phase": "grounding_canary", "timings_seconds": timings}), flush=True)
+    started = time.monotonic()
     readiness = mcp_factory(item["id"]).verify_grounding(projection["read_model_run_id"])
+    timings["grounding_canary"] = round(time.monotonic() - started, 3)
     return {
         "owner": OWNER_MARKER, "state": "ready",
         "agent_name": api.binding["agent_name"], "agent_id": item["id"],
         "workspace_id": api.binding["workspace_id"], "lakehouse_id": api.binding["lakehouse_id"],
         "source_kind": "lakehouse", "selected_tables": list(SELECTED_SCHEMAS),
-        **projection, **readiness,
+        **projection, **readiness, "timings_seconds": timings,
     }
 
 # METADATA ********************

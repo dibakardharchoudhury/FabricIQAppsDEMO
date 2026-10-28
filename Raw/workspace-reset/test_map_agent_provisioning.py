@@ -746,6 +746,27 @@ class InstructionsAndModelsTests(HelpersTest):
             with self.subTest(changes=changes), self.assertRaises(self.error):
                 self.call("validate_entity_metrics", {**good, **changes})
 
+    def test_property_projection_uses_one_json_tuple_with_every_required_root(self):
+        projection = next(node for node in ast.parse(NOTEBOOK.read_text(encoding="utf-8")).body
+                          if isinstance(node, ast.FunctionDef) and node.name == "entity_projection")
+        assignments = [node for node in projection.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id in (
+                           "flat_properties", "property_names",
+                       ) for target in node.targets)]
+        namespace = {}
+        exec(compile(ast.Module(body=assignments, type_ignores=[]), "property-keys", "exec"), namespace)
+        requested = {
+            node.args[0].value.split(".")[0] for node in ast.walk(projection)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "prop" and isinstance(node.args[0], ast.Constant)
+        }
+        self.assertTrue(requested <= set(namespace["property_names"]))
+        self.assertTrue(namespace["flat_properties"] <= set(namespace["property_names"]))
+        parsers = [node for node in ast.walk(projection) if isinstance(node, ast.Call)
+                   and isinstance(node.func, ast.Attribute) and node.func.attr == "json_tuple"]
+        self.assertEqual(len(parsers), 1)
+        self.assertEqual(ast.literal_eval(parsers[0].args[0]), "properties_json")
+
 
 class MCPAndOrchestrationTests(HelpersTest):
     def test_mcp_question_argument_discovered_not_guessed(self):
@@ -828,6 +849,9 @@ class MCPAndOrchestrationTests(HelpersTest):
         result = self.call("publish_map_agent", api, models, lambda item_id: mcp)
         self.assertEqual(result["agent_name"], "Hydro_Map_Agent_V6")
         self.assertEqual(result["state"], "ready")
+        self.assertEqual(set(result["timings_seconds"]), {
+            "discovery_and_source_preflight", "read_models", "configure_and_publish", "grounding_canary",
+        })
         mcp.verify_grounding.assert_called_once_with(RUN_ID)
         api.configure_and_publish.assert_called_once()
         mcp.verify_grounding.side_effect = self.error("AI tenant prerequisite missing")

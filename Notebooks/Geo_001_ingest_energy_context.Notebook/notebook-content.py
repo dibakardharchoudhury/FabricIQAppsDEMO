@@ -41,6 +41,8 @@
 # IDs and one page, not 800,000 feature dictionaries. Normalized gzip JSONL shards
 # are read by Spark once per layer; Delta `replaceWhere` atomically replaces only a
 # complete layer. Source/validation failures retain the previous partition.
+# Imports use provider-bounded pages of up to 2,000 records, fast lossless gzip,
+# and one initial status transaction. Per-layer phase timings are logged and archived.
 # Bronze responses, rejected geometry and attempt logs are retained under
 # `Files/bronze/geo_context/<source>/<run_id>/<layer>/`; nothing is vacuumed here.
 #
@@ -249,7 +251,7 @@ AREA_POINTS = {
     "LT": (24.0, 55.2), "PL": (19.1, 52.1),
 }
 NVE_EXTENT = (-15.0, 48.0, 45.0, 82.0)  # also rejects swapped Norwegian lon/lat
-ARCGIS_CHUNK_SIZE = 1000  # <= advertised maxRecordCount=2000
+ARCGIS_CHUNK_SIZE = 2000  # also bounded by the layer's advertised maxRecordCount
 NORMALIZED_SHARD_ROWS = 10000  # gzip shards allow parallel Spark input
 UMM_HORIZON_DAYS = 30
 UMM_PAGE_SIZE = 500
@@ -535,7 +537,7 @@ class LayerSpool:
         artifact = config.get("artifact_id", config["layer_id"])
         self.local = Path(root) / config["source_id"] / artifact
         self.local.mkdir(parents=True, exist_ok=False)
-        self.raw = gzip.open(self.local / "responses.jsonl.gz", "wt", encoding="utf-8")
+        self.raw = gzip.open(self.local / "responses.jsonl.gz", "wt", encoding="utf-8", compresslevel=1)
         self.normalized = None
         self.row_count = self.unmapped_count = self.rejected_count = 0
         self.details = {}
@@ -559,7 +561,7 @@ class LayerSpool:
             directory = self.local / "normalized"
             directory.mkdir(exist_ok=True)
             filename = directory / f"part-{self.row_count // NORMALIZED_SHARD_ROWS:06d}.jsonl.gz"
-            self.normalized = gzip.open(filename, "wt", encoding="utf-8")
+            self.normalized = gzip.open(filename, "wt", encoding="utf-8", compresslevel=1)
         self.normalized.write(json_text(row) + "\n")
         self.row_count += 1
         if not row["geometry_json"]:
@@ -1774,12 +1776,13 @@ class SparkStore:
         self.link_schema = spark_schema(ASSET_LINK_FIELDS)
         self.table_locations = {}
         for name, fields, partitions in TABLE_CONTRACTS:
-            schema = spark_schema(fields)
             if not spark.catalog.tableExists(name):
-                writer = spark.createDataFrame([], schema).write.format("delta").mode("errorifexists")
-                if partitions:
-                    writer = writer.partitionBy(*partitions)
-                writer.saveAsTable(name)
+                columns = ",".join(f"`{field}` {dtype}" for field, dtype in fields)
+                partition_clause = (
+                    " PARTITIONED BY (" + ",".join(f"`{field}`" for field in partitions) + ")"
+                    if partitions else ""
+                )
+                spark.sql(f"CREATE TABLE `{name}` ({columns}) USING DELTA{partition_clause}")
             schema_matches(
                 [(field.name, field.dataType.simpleString().replace("bigint", "long")) for field in spark.table(name).schema],
                 fields,
@@ -1820,11 +1823,16 @@ class SparkStore:
         return self.statuses.get(layer)
 
     def set_status(self, value):
-        frame = self.spark.createDataFrame([value], self.status_schema)
+        self.set_statuses([value])
+
+    def set_statuses(self, values):
+        if not values:
+            return
+        frame = self.spark.createDataFrame(values, self.status_schema).coalesce(1)
         self.delta.forName(self.spark, STATUS_TABLE).alias("target").merge(
             frame.alias("incoming"), "target.layer_id = incoming.layer_id",
         ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
-        self.statuses[value["layer_id"]] = value
+        self.statuses.update({value["layer_id"]: value for value in values})
 
     def publish(self, spool, table_name=FEATURE_TABLE):
         from pyspark import StorageLevel
@@ -2049,10 +2057,22 @@ def run_one_layer(config, store, fs, root, run_id, session, clock,
     spool, archived = None, False
     try:
         spool = LayerSpool(root, config, run_id, attempted)
+        phase_started = time.monotonic()
+        print(json_text({"layer_id": config["layer_id"], "phase": "acquiring"}), flush=True)
         producer(spool, PublicHTTP(session, spool), clock)
+        timings = {"acquisition": round(time.monotonic() - phase_started, 3)}
+        spool.details["timings_seconds"] = timings
+        print(json_text({"layer_id": config["layer_id"], "phase": "archiving",
+                         "rows": spool.row_count, "timings_seconds": timings}), flush=True)
+        phase_started = time.monotonic()
         spool.archive(fs, "prepared", "Source acquisition complete; not yet committed to Delta")
         archived = True
+        timings["archive"] = round(time.monotonic() - phase_started, 3)
+        print(json_text({"layer_id": config["layer_id"], "phase": "validating_and_publishing",
+                         "timings_seconds": timings}), flush=True)
+        phase_started = time.monotonic()
         store.publish(spool)
+        timings["validation_and_publication"] = round(time.monotonic() - phase_started, 3)
     except failure_types as exc:
         message = f"{type(exc).__name__}: {exc}; last-good counts/success preserved"
         if spool is not None:
@@ -2092,9 +2112,10 @@ def run_layers(configs, store, fs, root, run_id, session, mode, force, clock,
                producer=produce_layer, failure_types=(SourceError, OSError)):
     results = []
     # All twelve layer statuses are visible even while the first large import runs.
-    for config in configs:
-        if store.get_status(config["layer_id"]) is None:
-            store.set_status(source_status(config, None, None, "error", "No successful snapshot yet; not imported"))
+    store.set_statuses([
+        source_status(config, None, None, "error", "No successful snapshot yet; not imported")
+        for config in configs if store.get_status(config["layer_id"]) is None
+    ])
     for config in configs:
         previous = store.get_status(config["layer_id"])
         refresh, reason = refresh_decision(config, previous, mode, force, clock())

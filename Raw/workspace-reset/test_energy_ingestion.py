@@ -59,7 +59,7 @@ def load_helpers():
         Timeout=RequestTimeout, ConnectionError=RequestConnectionError, RequestException=RequestFailure,
     )}
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(NOTEBOOK), "exec"), namespace)
-    namespace["time"] = types.SimpleNamespace(sleep=Mock())
+    namespace["time"] = types.SimpleNamespace(sleep=Mock(), monotonic=Mock(return_value=0))
     return namespace
 
 
@@ -191,6 +191,10 @@ class MemoryStore:
     def set_status(self, row):
         self.history.append(copy.deepcopy(row))
         self.statuses[row["layer_id"]] = copy.deepcopy(row)
+
+    def set_statuses(self, rows):
+        for row in rows:
+            self.set_status(row)
 
     def publish(self, spool):
         rows = []
@@ -620,6 +624,16 @@ class HTTPAndArcGISTests(HelpersTest):
             list(self.call("iter_arcgis", SequenceHTTP(self.arcgis_bodies([1, 2, 4])), self.ns["GRID_SERVICE"] + "/4", details))
         self.assertFalse(details["reconciled"])
 
+    def test_arcgis_page_size_still_honors_smaller_provider_limit(self):
+        bodies = self.arcgis_bodies()
+        bodies[1]["maxRecordCount"] = 2
+        http, details = SequenceHTTP(bodies), {}
+        self.assertEqual(self.ns["ARCGIS_CHUNK_SIZE"], 2000)
+        rows = list(self.call("iter_arcgis", http, self.ns["GRID_SERVICE"] + "/4", details))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(details["page_size"], 2)
+        self.assertTrue(details["reconciled"])
+
     def test_arcgis_missing_duplicate_unexpected_and_truncated_ids_fail(self):
         for features, extra in [
             ([feature(1)], {}), ([feature(1), feature(1)], {}),
@@ -633,6 +647,47 @@ class HTTPAndArcGISTests(HelpersTest):
 
 
 class PublicationTests(HelpersTest):
+    def test_missing_statuses_are_initialized_in_one_transaction_before_import(self):
+        configs = [self.config("masts"), self.config("reservoirs")]
+        store = Mock()
+        store.get_status.return_value = None
+        self.ns["run_one_layer"] = Mock(return_value={"state": "ready"})
+        self.call("run_layers", configs, store, MemoryFS(), "unused", RUN_ID, Mock(),
+                  "all", False, lambda: NOW)
+        store.set_statuses.assert_called_once()
+        rows = store.set_statuses.call_args.args[0]
+        self.assertEqual([row["layer_id"] for row in rows], ["masts", "reservoirs"])
+        self.assertTrue(all(row["state"] == "error" and row["last_success_at"] is None for row in rows))
+        store.set_status.assert_not_called()
+
+    def test_batch_status_cache_changes_only_after_successful_delta_commit(self):
+        store = self.ns["SparkStore"].__new__(self.ns["SparkStore"])
+        store.spark, store.delta = Mock(), Mock()
+        store.status_schema, store.statuses = Mock(), {}
+        rows = [{"layer_id": "masts"}, {"layer_id": "reservoirs"}]
+        store.set_statuses(rows)
+        store.spark.createDataFrame.assert_called_once_with(rows, store.status_schema)
+        store.delta.forName.assert_called_once()
+        self.assertEqual(store.statuses, {row["layer_id"]: row for row in rows})
+        store.statuses = {}
+        commit = store.delta.forName.return_value.alias.return_value.merge.return_value
+        commit.whenMatchedUpdateAll.return_value.whenNotMatchedInsertAll.return_value.execute.side_effect = OSError("commit failed")
+        with self.assertRaisesRegex(OSError, "commit failed"):
+            store.set_statuses(rows)
+        self.assertEqual(store.statuses, {})
+
+    def test_new_delta_tables_are_created_without_empty_dataframe_write_jobs(self):
+        source = NOTEBOOK.read_text(encoding="utf-8")
+        store = next(node for node in ast.parse(source).body
+                     if isinstance(node, ast.ClassDef) and node.name == "SparkStore")
+        initializer = next(node for node in store.body
+                           if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+        text = ast.get_source_segment(source, initializer)
+        self.assertIn("CREATE TABLE", text)
+        self.assertIn("PARTITIONED BY", text)
+        self.assertNotIn("createDataFrame", text)
+        self.assertIn('info["partitionColumns"] != partitions', text)
+
     def old_status(self, config):
         return self.call("source_status", config, None, "2026-09-20T00:00:00Z", "ready", "old good",
                          "2026-09-20T00:00:00Z", {"row_count": 7, "unmapped_count": 2, "rejected_count": 1})
