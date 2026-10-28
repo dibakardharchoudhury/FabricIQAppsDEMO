@@ -16,7 +16,7 @@ from uuid import UUID
 import httpx
 from agent_framework import (
     Agent, AgentFrameworkException, AgentResponse, ChatOptions, Executor, FunctionInvocationContext, FunctionTool,
-    MiddlewareTermination, WorkflowBuilder, WorkflowContext, WorkflowViz, function_middleware, handler,
+    Message, MiddlewareTermination, WorkflowBuilder, WorkflowContext, WorkflowViz, function_middleware, handler,
 )
 from agent_framework.foundry import FoundryAgent, FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -30,6 +30,7 @@ from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentit
 from .live_sources import Bridge, NativeSourceRefusal, NativeSourceServiceError, SourceFailure
 from .foundry_rca import verified_project_endpoint
 from .native_data_agent import call_native_data_agent, quality_work_evidence
+from .native_fidelity import source_answer
 from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation
 from .source_auth import SourceAuthorizationError
 from .workflow import RequiredCheckpointStorage
@@ -1064,6 +1065,7 @@ class ChatAnswer(Contract):
     presentation: ClientPresentation | None = None
     analysis: AnalysisReport | None = None
     native_answers: tuple[NativeAnswer, ...] = ()
+    native_response: str | None = None
 
 
 class ProjectionReceipt(Contract):
@@ -2140,7 +2142,7 @@ class FoundrySupervisor:
             raise SourceFailure("Shared deployed-agent identities contain an invalid role or name.") from None
         if "supervisor" in configured_names or any(not name.strip() for name in configured_names.values()):
             raise SourceFailure("Specialist identities cannot replace the hosted control plane or use empty names.")
-        if self.native_binding is not None and self.native_binding.toolbox is not None:
+        if not self.semantic_planning and self.native_binding is not None and self.native_binding.toolbox is not None:
             configured_names["fabric-iq"] = self.native_binding.toolbox
         if roles is not None:
             if roles.difference(configured_names):
@@ -2172,7 +2174,8 @@ class FoundrySupervisor:
         token = await self.credential.get_token("https://ai.azure.com/.default")
 
         async def read(role: Role, name: str, client: httpx.AsyncClient) -> tuple[Role, AgentVersion]:
-            if role == "fabric-iq" and self.native_binding is not None and self.native_binding.toolbox is not None:
+            if (not self.semantic_planning and role == "fabric-iq"
+                    and self.native_binding is not None and self.native_binding.toolbox is not None):
                 headers = {"Authorization": f"Bearer {token.token}"}
                 response = await client.get(f"{self.endpoint}/toolboxes/{name}?api-version=v1", headers=headers)
                 response.raise_for_status()
@@ -2369,7 +2372,9 @@ class FoundrySupervisor:
             for read in step.reads:
                 specification = next((tool for tool in catalog.tools if tool.name == read.tool), None)
                 arguments = read.arguments()
-                if specification is None or list(Draft202012Validator(specification.parameters).iter_errors(arguments)):
+                if specification is None or list(Draft202012Validator(specification.parameters).iter_errors(
+                    json.loads(read.arguments_json),
+                )):
                     raise SourceFailure(f"Planned reader {read.tool} violates the governed tool catalog.")
                 if step.specialist == "weather" and read.tool not in ("query_weather", "query_assets"):
                     raise SourceFailure("Weather retrieval cannot execute operational or telemetry tools.")
@@ -2588,7 +2593,8 @@ class FoundrySupervisor:
                     if result.report is not None:
                         await self.validate_specialist_report(selected, result.report)
                 else:
-                    if selected == "fabric-iq" and self.native_binding is not None and self.native_binding.toolbox is not None:
+                    if (not self.semantic_planning and selected == "fabric-iq"
+                            and self.native_binding is not None and self.native_binding.toolbox is not None):
                         result = await self.invoke_data_agent(delegation.question, request, journal, versions[selected])
                     else:
                         response, assessment, elapsed = await self.invoke(
@@ -2746,6 +2752,85 @@ class FoundrySupervisor:
             ),
         )
 
+    async def invoke_native(
+        self, question: str, request: ChatRequest, journal: RunJournal, version: AgentVersion,
+    ) -> tuple[AgentResponse, None, float]:
+        started = perf_counter()
+        async with BoundedAIProjectClient(
+            endpoint=self.endpoint, credential=self.credential,
+            request_timeout=FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS, transport_retries=0,
+        ) as project:
+            async with project.get_openai_client(agent_name=version.name) as client:
+                raw = await client.responses.create(
+                    input=question, store=False,
+                    extra_body={"agent_reference": {
+                        "type": "agent_reference", "name": version.name, "version": version.version,
+                    }},
+                )
+        self.healthy(request)
+        body = raw.model_dump(mode="json")
+        if body.get("agent_reference") != {
+            "type": "agent_reference", "name": version.name, "version": version.version,
+        }:
+            raise SourceFailure("Foundry native execution did not attest the pinned agent version.")
+        expected_connection = self.native_binding.connections["data-agent"] if self.native_binding else None
+        live_tools = body.get("tools")
+        if (not isinstance(live_tools, list) or len(live_tools) != 1
+                or live_tools[0].get("type") != "fabric_iq_preview"
+                or live_tools[0].get("project_connection_id") != expected_connection):
+            raise SourceFailure("Foundry native execution changed the verified Data Agent connection.")
+        payload, text = source_answer(body, question, "fabriciq-data-agent")
+        payload = _validated_native_result(json.dumps(payload))
+        receipt = next(item for item in body["output"] if item["type"] == "mcp_call")
+        await self.bridge.call({
+            "action": "validate_native_receipt", "receipt": receipt, "source": "data-agent",
+        })
+        journal.save(f"native_response:{raw.id}", {
+            "source": "data-agent", "response": body, "source_answer_sha256": payload["source_answer_sha256"],
+        })
+        self.invocation_inputs[raw.id] = sha256(question.encode()).hexdigest()
+        self.evidence[receipt["id"]] = ToolEvidence(
+            id=receipt["id"], source=request.source, tool="fabriciq-data-agent",
+            arguments={"assignment": question}, completed_at=utc_now(), result=payload,
+            resolved_equipment_ids=tuple(sorted(_native_equipment_ids(payload))),
+            datasets=tuple(
+                EvidenceDataset(
+                    kind="native_claims", field=field, authority="native", scope=requirement.scope,
+                    complete=True, identity_fields=("source_identity",),
+                    role="primary" if index == 0 else "support",
+                )
+                for requirement in (self.answer_contract.requirements if self.answer_contract else ())
+                if requirement.kind == "native_claims" and requirement.authority == "native"
+                for index, field in enumerate(
+                    key for key, value in payload.items()
+                    if isinstance(value, list) and all(isinstance(row, dict) for row in value)
+                )
+            ),
+        )
+        response = AgentResponse(
+            messages=[Message(role="assistant", contents=[text])], response_id=raw.id,
+            finish_reason="stop", raw_representation=raw,
+        )
+        return response, None, (perf_counter() - started) * 1000
+
+    def native_answer(self, request: ChatRequest) -> ChatAnswer | None:
+        if (not self.semantic_planning or len(self.specialists) != 1 or self.specialists[0].role != "fabric-iq"
+                or len(self.evidence) != 1):
+            return None
+        receipt = next(iter(self.evidence.values()))
+        if receipt.tool != "fabriciq-data-agent":
+            return None
+        text = receipt.result.get("response")
+        digest = receipt.result.get("source_answer_sha256")
+        if not isinstance(text, str) or sha256(text.encode()).hexdigest() != digest:
+            raise SourceFailure("The immutable native source answer failed its fidelity check.")
+        return ChatAnswer(
+            run_id=request.run_id, source=request.source, requested_at=request.requested_at,
+            source_read_times=(receipt.completed_at,), summary=text, native_response=text,
+            tables=(), charts=(), limitations=(), cell_sources=(), specialists=tuple(self.specialists),
+            audit_url=f"/chat/runs/{request.run_id}/evidence",
+        )
+
     async def invoke(
         self, role: Role, question: str, request: ChatRequest, journal: RunJournal,
         versions: dict[Role, AgentVersion], native_source: NativeSource | None = None,
@@ -2767,6 +2852,15 @@ class FoundrySupervisor:
                         if tool.get("server_label") == f"fabriciq-{native_source}"]
             if len(selected) != 1 or selected[0].get("project_connection_id") != self.native_binding.connections[native_source]:
                 raise SourceFailure("Native agent connection does not match the verified selected source binding.")
+            if self.semantic_planning:
+                try:
+                    return await self.invoke_native(request.question, request, journal, version)
+                except APITimeoutError as error:
+                    raise SourceFailure("The pinned Foundry native request timed out; no answer was certified.") from error
+                except APIStatusError as error:
+                    raise SourceFailure(
+                        f"The pinned Foundry native request failed (HTTP {error.status_code}); no answer was certified."
+                    ) from error
         completed_report: dict[str, object] | None = None
 
         input_repairs: dict[str, int] = {}
@@ -4499,7 +4593,7 @@ class FoundrySupervisor:
                         if any(item.source != request.source for item in owner.evidence.values()):
                             raise SourceFailure("Prepared answer contains a different source identity.")
                         owner.specialists = list(prepared.answer.specialists)
-                        if (owner.native_passthrough_answer(request) or owner.answer(
+                        if (owner.native_answer(request) or owner.native_passthrough_answer(request) or owner.answer(
                             request, prepared.supervisor_output,
                             use_projected_summary=prepared.answer_projection is not None,
                             analysis=prepared.answer.analysis,
@@ -4532,6 +4626,7 @@ class FoundrySupervisor:
                             "provider": (
                                 "governed-reader" if step.execution == "reader"
                                 else "native-fabric-responses" if step.specialist == "fabric-iq"
+                                and not owner.semantic_planning
                                 and owner.native_binding is not None and owner.native_binding.toolbox is not None
                                 else "foundry-prompt-agent"
                             ),
@@ -4547,17 +4642,21 @@ class FoundrySupervisor:
                     elapsed = (perf_counter() - started) * 1000
                     response_text = plan.model_dump_json(by_alias=True)
                     semantic = journal.read("semantic_decision") if owner.semantic_planning else None
-                    response_id = semantic["response_id"] if semantic else (
-                        "deterministic-orchestrator:" + sha256(response_text.encode()).hexdigest()
-                    )
+                    response_id = "deterministic-orchestrator:" + sha256(response_text.encode()).hexdigest()
                     model_round_count = 1 if semantic else None
                     if semantic:
+                        semantic_id, semantic_duration = semantic.get("response_id"), semantic.get("duration_ms")
+                        if (not isinstance(semantic_id, str) or not semantic_id
+                                or not isinstance(semantic_duration, (int, float))
+                                or isinstance(semantic_duration, bool)):
+                            raise SourceFailure("Persisted semantic planning receipt is malformed.")
+                        response_id = semantic_id
                         rounds = semantic.get("model_round_count", 1)
                         if (not isinstance(rounds, int) or isinstance(rounds, bool)
                                 or not 1 <= rounds <= SEMANTIC_PLANNING_ATTEMPTS):
                             raise SourceFailure("Recovered semantic plan exceeded its model-attempt budget.")
                         model_round_count = rounds
-                        elapsed += semantic["duration_ms"]
+                        elapsed += semantic_duration
                     journal.save(f"supervisor_output:{response_id}", {
                         "text": response_text,
                         "control_plane": "semantic-plan-governed-execution" if semantic else "deterministic",
@@ -4764,7 +4863,8 @@ class FoundrySupervisor:
                     if turn.verified:
                         await ctx.send_message(turn.model_dump_json())
                         return
-                    await owner.fulfill_catalog_requirements(request, journal)
+                    if owner.native_answer(request) is None:
+                        await owner.fulfill_catalog_requirements(request, journal)
                     if any(item.role in ("rca", "work-order") for item in owner.specialists):
                         verified_at = int(utc_now().timestamp() * 1000)
                         owner.chief_trace.append({
@@ -4796,7 +4896,7 @@ class FoundrySupervisor:
                     turn = restore_turn(encoded_turn)
                     if not turn.verified:
                         raise SourceFailure("Presentation requires completed independent-evidence verification.")
-                    native = owner.native_passthrough_answer(request)
+                    native = owner.native_answer(request) or owner.native_passthrough_answer(request)
                     if turn.prepared is not None:
                         if (native or owner.answer(
                             request, turn.prepared.supervisor_output,

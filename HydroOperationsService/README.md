@@ -1,5 +1,21 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Native answer fidelity
+
+The hosted semantic workflow sends the original user question unchanged to the
+pinned Fabric IQ agent. It accepts exactly one selected-source tool call and
+displays the original Data Agent `response` without table reconstruction or an
+additional briefing model for native-only answers. The audit retains the raw
+Foundry response and a SHA-256 digest of the original answer.
+
+A tool-processing diagnostic is not itself a content-filter refusal. A diagnostic
+can be accepted only when Foundry completed successfully, the final reply matches
+the source answer, and explicit final content-filter decisions report no block.
+Missing safety decisions, actual filtering, source failures, changed questions,
+multiple tool calls, and rewritten answers fail explicitly. No filter is disabled
+and no failure falls back to direct tables. Legacy structured evidence workflows
+retain their existing schema contracts.
+
 ## Agent access and current source policy
 
 The existing sign-in session acquires delegated source access implicitly.

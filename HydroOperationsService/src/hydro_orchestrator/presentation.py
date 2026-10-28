@@ -64,6 +64,8 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
         detail=f"Version {item.version}; response {item.response_id}; measured duration {item.duration_ms:.0f} ms.",
         timestamp=received_at, agentName=item.agent_name, responseId=item.response_id,
     ) for index, item in enumerate(answer.specialists))
+    if answer.native_response is not None:
+        return ClientPresentation(text=answer.native_response, execution_events=events)
     native = getattr(answer, "native_answers", ())
     if native and not answer.tables and answer.analysis is None and not answer.proposals:
         return ClientPresentation(text="\n\n".join(item.text for item in native), execution_events=events)
