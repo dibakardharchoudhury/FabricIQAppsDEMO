@@ -123,12 +123,13 @@ Invalid local configuration produces a visible error. The Teams ID fields link
 directly to Microsoft's channel-link documentation; see also
 [how to get the IDs](../../HydroOperationsApp/DEPLOY.md#find-your-teams-team-and-channel-ids).
 
-Foundry setup starts with the subscription. **Project and model choices** accepts
-an existing project name (or full ARM ID for duplicate names/scoped access) and
-an optional model deployment. A verified matching subscription is selected
+Foundry setup uses one **Foundry project name** and **Model deployment name** for
+both reuse and approved creation. Enter them once; setup configures the agents,
+connections and hosted orchestrator automatically. A full project ARM ID can still
+disambiguate duplicate names or scoped access. A matching subscription is selected
 automatically when unambiguous. Endpoints, connected registries and ontology graph
-ownership are resolved internally; the launcher has no catch-all advanced settings
-or graph-binding JSON inputs.
+ownership are resolved internally; only a subscription override appears in the
+collapsed **Advanced settings (optional)**. No graph-binding JSON is required.
 **Fabric App authentication** offers **Use a pre-created app registration** when
 an administrator has prepared a specific target-tenant SPA. Otherwise registration
 discovery/reuse or creation is automatic. Selecting this option requires a valid
@@ -137,9 +138,10 @@ This choice is shared across Foundry, full workflow and app publication, scoped 
 the tenant/workspace. Registration verification and automated auth setup remain required.
 The launcher preserves the target's existing work-order write policy; it does not
 offer or submit a write-permission override. Enabled writes still require human approval.
-**Create a new project** asks only for **Project name** and **Model deployment name**,
-plus explicit resource-creation approval, which is never remembered. The exact
-project name is used in Azure. A deployment alias is resolved to its underlying
+**Allow creating a missing Foundry project** is explicit, billable approval, never
+remembered. It does not discard or disable either shared name; existing projects
+are reused even with approval enabled. A missing project uses the exact
+project name entered above. A deployment alias is resolved to its underlying
 model/version in the selected subscription; a catalog chat model name also works.
 Region, model version, pay-as-you-go SKU and minimum/default capacity are automatic.
 Regional Standard is preferred, followed by DataZoneStandard and GlobalStandard;

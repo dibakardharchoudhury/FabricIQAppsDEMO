@@ -566,35 +566,25 @@ function updateSpaChoice(clientId) {
 }
 
 function renderFoundryFields(prefix, clientId) {
-  return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Use existing resources (recommended).</strong></p>
+  return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Automatic multi-agent setup.</strong></p>
     <div class="grid">
-      <label>Azure subscription
-        <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
+      <label>Foundry project name
+        <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or automatic discovery" /></label>
+      <label>Model deployment name
+        <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
     </div>
-    <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
-    <p id="${prefix}FoundryStatus" class="phelp" role="status">Project and model are verified during setup.</p>
+    <p class="hint">Enter these once. Setup configures the agents, connections and hosted orchestrator automatically.</p>
+    <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
+      <span>Allow creating a missing Foundry project (billable; global inference may apply).</span></label>
+    <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
     <details id="${prefix}FoundryOverrides" class="foundry-block">
-      <summary>Project and model choices</summary>
-      <p class="hint">Enter the existing project name to reuse it. Without a name, setup uses a saved, target-named or sole available project. Select a model only when you want a specific deployment.</p>
+      <summary>Advanced settings (optional)</summary>
       <div class="grid">
-        <label>Existing project name
-          <input id="${prefix}FoundryProjectName" type="text" placeholder="Name of the project to reuse" /></label>
-        <label>Existing model deployment
-          <input id="${prefix}FoundryModel" type="text" placeholder="Automatic: saved model or the only ready chat deployment" /></label>
+        <label>Azure subscription
+          <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
       </div>
-    </details>
-    <details id="${prefix}FoundryNewProjectOptions" class="foundry-block">
-      <summary id="${prefix}FoundryNewProjectSummary">Create a new project</summary>
-      <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
-        <span>I approve creating the project and its Azure resources.</span></label>
-      <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
-        <p class="hint">Enter two names. Setup creates and connects everything automatically, using the Fabric capacity region and available pay-as-you-go model settings. Models that require global inference use it; Azure checks quota.</p>
-        <div class="grid">
-          <label>Project name <input id="${prefix}FoundryNewProjectName" type="text" maxlength="64" placeholder="Name for the new Foundry project" disabled /></label>
-          <label>Model deployment name <input id="${prefix}FoundryNewModel" type="text" maxlength="64" placeholder="Existing deployment name or catalog chat model" disabled /></label>
-        </div>
-        <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
-      </section>
+      <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
+      <p id="${prefix}FoundryStatus" class="phelp" role="status">Project, model and subscription are verified automatically during setup.</p>
     </details>
     ${renderSpaFields(clientId)}`;
 }
@@ -1010,43 +1000,36 @@ $("deleteBtn").addEventListener("click", async () => {
 function foundryPayload(prefix) {
   const value = (suffix) => $(prefix + suffix).value.trim();
   const creating = $(prefix + "FoundryCreate").checked;
-  const project = creating ? "" : value("FoundryProjectName");
+  const project = value("FoundryProjectName");
   const resourceId = /^\/subscriptions\//i.test(project);
   return {
     azureSubscriptionId: value("AzureSubscriptionId"),
     foundryProjectResourceId: resourceId ? project : "",
     foundryProjectName: resourceId ? "" : project,
-    foundryNewProjectName: creating ? value("FoundryNewProjectName") : "",
-    foundryModel: creating ? value("FoundryNewModel") : value("FoundryModel"),
+    foundryModel: value("FoundryModel"),
     createFoundry: creating,
   };
 }
 function foundryValid(prefix) {
-  if (!$(prefix + "FoundryCreate").checked) return true;
-  const project = $(prefix + "FoundryNewProjectName").value.trim();
-  const model = $(prefix + "FoundryNewModel").value.trim();
-  const valid = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project) &&
+  if (!$(prefix + "FoundryCreate").checked) {
+    $(prefix + "FoundryCreationStatus").textContent = "";
+    return true;
+  }
+  const project = $(prefix + "FoundryProjectName").value.trim();
+  const model = $(prefix + "FoundryModel").value.trim();
+  const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Ready. Setup resolves model settings and deploys the project, model and agents end to end."
-    : "Enter a project name and model deployment name (up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit).";
+    ? "Existing resources are reused. A missing project uses these names and automatic model defaults; Azure checks quota."
+    : "Enter a valid model deployment name above. Names use up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit.";
   return valid;
 }
 function updateFoundryMode(prefix) {
   const creating = $(prefix + "FoundryCreate").checked;
-  $(prefix + "FoundryCreation").hidden = !creating;
-  $(prefix + "FoundryNewProjectOptions").open = creating;
-  $(prefix + "FoundryNewProjectSummary").textContent = creating
-    ? "New project selected" : "Create a new project";
+  if (!creating) $(prefix + "FoundryCreationStatus").textContent = "";
   $(prefix + "FoundryModeSummary").textContent = creating
-    ? "Create new resources. Enter only the project and model deployment names."
-    : "Use existing resources (recommended).";
-  for (const suffix of ["FoundryNewProjectName", "FoundryNewModel"]) {
-    $(prefix + suffix).disabled = !creating;
-  }
-  for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
-    $(prefix + suffix).disabled = creating;
-  }
+    ? "Automatic multi-agent setup. Create only if missing, using the names above."
+    : "Automatic multi-agent setup. Reuse existing resources.";
 }
 for (const prefix of ["deploy", "workflow"]) {
   const create = $(prefix + "FoundryCreate");
@@ -1054,7 +1037,7 @@ for (const prefix of ["deploy", "workflow"]) {
     updateFoundryMode(prefix);
     refresh();
   });
-  for (const suffix of ["FoundryNewProjectName", "FoundryNewModel"]) {
+  for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
     $(prefix + suffix).addEventListener("input", refresh);
   }
 }
@@ -1177,7 +1160,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryNewProjectName", "FoundryNewModel",
+  "AzureSubscriptionId", "FoundryProjectName", "FoundryModel",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
 function restoreTargetSettings() {
@@ -1228,6 +1211,12 @@ function restoreFoundrySettings() {
   }
   if (typeof values.FoundryProjectResourceId === "string" && values.FoundryProjectResourceId.trim()) {
     values.FoundryProjectName = values.FoundryProjectResourceId;
+  }
+  if ((typeof values.FoundryProjectName !== "string" || !values.FoundryProjectName.trim()) && typeof values.FoundryNewProjectName === "string") {
+    values.FoundryProjectName = values.FoundryNewProjectName;
+  }
+  if ((typeof values.FoundryModel !== "string" || !values.FoundryModel.trim()) && typeof values.FoundryNewModel === "string") {
+    values.FoundryModel = values.FoundryNewModel;
   }
   for (const clientId of spaClientIds) {
     $(clientId).value = typeof values.clientId === "string" ? values.clientId : "";

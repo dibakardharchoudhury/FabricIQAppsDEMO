@@ -763,6 +763,21 @@ class ProjectCreationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 project.environment_name("t", "w", "sub")
 
+    def test_shared_project_name_reuses_the_existing_named_creation_pipeline(self):
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "",
+            "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "Shared.Project",
+        }):
+            endpoint = "https://new-res.services.ai.azure.com/api/projects/Shared.Project"
+            fake = self.fake(endpoint=endpoint)
+            self.assertEqual(self.create(fake), endpoint)
+            self.assertEqual(fake.environment_settings()["AZURE_AI_PROJECT_NAME"], "Shared.Project")
+            name = project.environment_name("tenant.example", "ws", "sub-1")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "shared.project"}):
+                self.assertEqual(project.environment_name("tenant.example", "ws", "sub-1"), name)
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "another-project"}):
+                self.assertNotEqual(project.environment_name("tenant.example", "ws", "sub-1"), name)
+
     def test_an_already_initialized_folder_is_reused_not_reinitialized(self):
         fake = self.fake()
         folder = hosted.state_root() / "foundry-project" / project.environment_name("tenant.example", "ws", "sub-1")

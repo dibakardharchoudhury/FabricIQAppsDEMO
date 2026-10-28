@@ -504,16 +504,14 @@ def resolve_project(
     """Resolve the target before backend mutation; create only in the provisioning pass."""
     values, _ = deploy.current_rayfin_target()
     print("Foundry: project - resolving the Foundry project.", flush=True)
-    new_project_name = ""
-    if os.environ.get("HYDRO_FOUNDRY_NEW_PROJECT_NAME", "").strip():
-        from deploy_foundry_project import enabled, requested_project_name
+    from deploy_foundry_project import enabled, requested_project_name
 
-        try:
-            new_project_name = requested_project_name()
-        except ValueError as error:
-            raise deploy.DeployError(str(error)) from error
-        if not enabled():
-            raise deploy.DeployError("A new Foundry project name requires explicit resource-creation approval.")
+    try:
+        new_project_name = requested_project_name()
+    except ValueError as error:
+        raise deploy.DeployError(str(error)) from error
+    if new_project_name and not enabled():
+        raise deploy.DeployError("A new Foundry project name requires explicit resource-creation approval.")
     same_target = (
         deploy._public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
         and deploy._public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace.casefold()
@@ -621,7 +619,7 @@ def resolve_project(
     if project_name and not candidates and not new_project_name:
         raise deploy.DeployError(
             f"Existing Foundry project '{project_name}' was not found in the selected subscription. "
-            "Check the project name under 'Project and model choices'; no replacement was created."
+            "Check the project name or approve creating a missing project; no replacement was created."
         )
     if not candidates and project_module.enabled() and not allow_create:
         location = creation_location(deploy, tenant, workspace, project_module)
@@ -659,8 +657,8 @@ def resolve_project(
     if len(candidates) != 1:
         choices = "\n".join(f"  - {identity.rsplit('/', 1)[-1]} ({identity})" for identity, _ in candidates)
         raise deploy.DeployError(
-            "Select exactly one existing Foundry project. In the local app, open 'Project and model choices' "
-            "and enter an existing project name (HYDRO_FOUNDRY_EXISTING_PROJECT_NAME). "
+            "Select exactly one existing Foundry project. In the local app, enter the Foundry project name "
+            "(HYDRO_FOUNDRY_EXISTING_PROJECT_NAME). "
             "Use a full project resource ID only when the name is duplicated."
             + (f"\nAvailable projects:\n{choices}" if candidates else
                " No matching project was found. To create one, explicitly approve new project creation.")

@@ -34,6 +34,8 @@ def normalize_location(value: str) -> str:
 
 def requested_project_name() -> str:
     name = os.environ.get("HYDRO_FOUNDRY_NEW_PROJECT_NAME", "").strip()
+    if not name and enabled():
+        name = os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
     if name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name):
         raise ValueError("New Foundry project name must be 1-64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.")
     return name

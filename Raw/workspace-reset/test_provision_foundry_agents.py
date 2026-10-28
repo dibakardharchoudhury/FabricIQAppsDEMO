@@ -392,6 +392,33 @@ class PreparedFoundryTests(unittest.TestCase):
                     module.resolve_project(deploy, "tenant", "workspace")
         deploy.run_stream.assert_not_called()
 
+    def test_named_missing_project_can_be_prepared_only_with_creation_approval(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({}, None)
+        deploy.az.side_effect = lambda *args: list(args)
+        deploy.run_capture.return_value = "[]"
+        creation = Mock()
+        creation.enabled.return_value = True
+        creation.model_defaults.return_value = {"HYDRO_FOUNDRY_MODEL_VERSION": "current"}
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": "", "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "",
+            "HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "",
+            "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "requested-project",
+            "HYDRO_FOUNDRY_MODEL": "requested-deployment",
+        }), patch.object(module, "resolve_subscription", return_value="selected-sub"), \
+                patch.object(module, "_load_sibling", return_value=creation), \
+                patch.object(module, "creation_location", return_value="targetregion"):
+            selected = module.resolve_project(deploy, "tenant", "workspace")
+        self.assertEqual(selected.model, "requested-deployment")
+        self.assertEqual(selected.creation_settings["location"], "targetregion")
+        creation.model_defaults.assert_called_once_with(
+            deploy, subscription="selected-sub", location="targetregion", model="requested-deployment",
+        )
+        creation.ensure_foundry_project.assert_not_called()
+        deploy.run_stream.assert_not_called()
+
     def test_model_preflight_is_read_only_and_rejects_untrusted_pagination(self):
         deploy = Mock()
         deploy.DeployError = RuntimeError

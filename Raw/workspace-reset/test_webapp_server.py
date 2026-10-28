@@ -1033,16 +1033,19 @@ for (const clientId of spaClientIds) {
 const legacyProject = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p";
 stored.set(foundryTarget, JSON.stringify({
   FoundryProjectResourceId:legacyProject, FoundryProjectName:"duplicate-name",
+  FoundryNewModel:"legacy-chat-deployment",
   clientId:"12345678-1234-1234-1234-123456789abc", FoundryEndpoint:"retired-override",
   ProductionWrites:"true",
 }));
 foundryTarget="";
 restoreFoundrySettings();
 for (const prefix of ["deploy", "workflow"]) assert.equal($(prefix+"FoundryProjectName").value, legacyProject);
+for (const prefix of ["deploy", "workflow"]) assert.equal($(prefix+"FoundryModel").value, "legacy-chat-deployment");
 for (const clientId of spaClientIds) assert.equal($(clientId+"UseExisting").checked, true);
 saveFoundrySettings("deploy");
 assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryEndpoint, undefined);
 assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryProjectResourceId, undefined);
+assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryNewModel, undefined);
 assert.equal(foundrySettingSuffixes.includes("ProductionWrites"), false);
 assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
 (async () => {
@@ -1475,27 +1478,25 @@ console.log(JSON.stringify([
         self.assertEqual(result.returncode, 0, result.stderr)
         forms = json.loads(result.stdout)
         for prefix, form in zip(("deploy", "workflow"), forms):
-            for suffix in ("AzureSubscriptionId", "FoundryModel",
-                           "FoundryCreate", "FoundryNewProjectName", "FoundryNewModel"):
+            for suffix in ("AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryCreate"):
                 self.assertIn(f'id="{prefix}{suffix}"', form)
             self.assertIn(f'foundryPayload("{prefix}")', page)
-            self.assertIn(f'id="{prefix}FoundryCreation" class="foundry-block" hidden', form)
             normal_fields = form[:form.index('<details')]
-            self.assertEqual(normal_fields.count('type="text"'), 1)
-            self.assertNotIn("FoundryCreate", normal_fields)
-            self.assertIn("Use existing resources (recommended)", normal_fields)
-            self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", normal_fields).split()), 40)
+            self.assertEqual(normal_fields.count('type="text"'), 2)
+            self.assertIn("FoundryCreate", normal_fields)
+            self.assertIn("Automatic multi-agent setup", normal_fields)
+            self.assertIn("billable", normal_fields)
             self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
-            self.assertIn(f'<details id="{prefix}FoundryNewProjectOptions" class="foundry-block">', form)
-            self.assertNotIn("<summary>Advanced settings</summary>", form)
+            self.assertIn("<summary>Advanced settings (optional)</summary>", form)
+            self.assertNotIn("FoundryNewProjectOptions", form)
+            self.assertNotIn("FoundryNewModel", form)
+            self.assertNotIn("FoundryNewProjectName", form)
             for suffix in ("OntologyGraphBinding", "FoundryEndpoint", "AcrName", "FoundryProjectResourceId",
                            "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
                            "FoundryModelSku", "FoundryModelCapacity"):
                 self.assertNotIn(f'id="{prefix}{suffix}"', form)
-            creation = form[form.index(f'<section id="{prefix}FoundryCreation"'):form.index("</section>")]
-            self.assertEqual(creation.count('type="text"'), 2)
             self.assertNotIn("Model deployment settings", form)
-            self.assertIn("Models that require global inference use it", creation)
+            self.assertIn("global inference may apply", normal_fields)
             self.assertNotIn("Work-order permissions", form)
             self.assertNotIn("ProductionWrites", form)
             self.assertIn("<summary>Fabric App authentication</summary>", form)
@@ -1504,15 +1505,14 @@ console.log(JSON.stringify([
             self.assertIn(f'<div id="{client_id}Fields" hidden>', form)
             self.assertIn("Use a pre-created app registration", form)
             self.assertNotIn("Keep this target's current setting", form)
-            self.assertIn("Enter the existing project name to reuse it.", form)
-            self.assertIn("Without a name, setup uses a saved, target-named or sole available project.", form)
+            self.assertIn("Enter these once.", form)
+            self.assertIn("Saved project or automatic discovery", form)
             self.assertNotIn("usage charges", form)
-            self.assertIn(">Create a new project</summary>", form)
+            self.assertIn("Allow creating a missing Foundry project", form)
             self.assertNotIn("Leave blank unless", form)
-            self.assertNotIn("billable", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
             self.assertEqual(len(identifiers), len(set(identifiers)))
-        self.assertIn("I approve creating the project and its Azure resources", page)
+        self.assertIn("Allow creating a missing Foundry project", page)
         self.assertNotIn('placeholder="gpt-5.6-sol"', page)
         self.assertNotIn("Advanced / first-time", page)
         self.assertNotIn("Advanced: secret names", page)
@@ -1525,7 +1525,7 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", paragraph).split()), 45, paragraph)
         for spec in SERVER.PIPELINE_PARAM_SPEC:
             self.assertLessEqual(len(spec["help"].split()), 12, spec["name"])
-        self.assertIn("I approve creating the project and its Azure resources", page)
+        self.assertIn("Allow creating a missing Foundry project", page)
         self.assertIn("Deletes every workspace item.", page)
         self.assertIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
@@ -1582,19 +1582,19 @@ for (const clientId of spaClientIds) {
 const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
-for (const suffix of ["FoundryCreate", "FoundryNewProjectName", "FoundryNewModel",
+for (const suffix of ["FoundryCreate", "FoundryProjectName", "FoundryModel",
                      "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
 """ + function + """
 assert.equal(foundryValid("deploy"), true);
 fields.deployFoundryCreate.checked = true;
 assert.equal(foundryValid("deploy"), false);
-assert.match(fields.deployFoundryCreationStatus.textContent, /Enter a project name and model deployment name/);
-fields.deployFoundryNewModel.value="approved";
-assert.equal(foundryValid("deploy"), false);
-fields.deployFoundryNewProjectName.value="my-project";
+assert.match(fields.deployFoundryCreationStatus.textContent, /Enter a valid model deployment name/);
+fields.deployFoundryModel.value="approved";
 assert.equal(foundryValid("deploy"), true);
-for (const suffix of ["FoundryNewProjectName", "FoundryNewModel"]) {
-  for (const invalid of ["", "-invalid", "has spaces", "x".repeat(65)]) {
+fields.deployFoundryProjectName.value="my-project";
+assert.equal(foundryValid("deploy"), true);
+for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
+  for (const invalid of ["-invalid", "has spaces", "x".repeat(65)]) {
     const previous = fields["deploy"+suffix].value;
     fields["deploy"+suffix].value=invalid;
     assert.equal(foundryValid("deploy"), false);
@@ -1616,8 +1616,7 @@ const fields = {};
 const $ = id => fields[id];
 const suffixes = [
   "AzureSubscriptionId", "FoundryProjectName",
-  "FoundryModel", "FoundryNewProjectName", "FoundryNewModel",
-  "FoundryCreate", "FoundryCreation", "FoundryNewProjectOptions", "FoundryNewProjectSummary",
+  "FoundryModel", "FoundryCreate", "FoundryOverrides",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
 """ + functions + """
@@ -1626,10 +1625,7 @@ for (const prefix of ["deploy", "workflow"]) {
     fields[prefix + suffix] = {value:"", checked:false, disabled:false, hidden:false, open:false, textContent:""};
   }
   updateFoundryMode(prefix);
-  assert.equal($(prefix+"FoundryCreation").hidden, true);
-  assert.equal($(prefix+"FoundryNewProjectOptions").open, false);
-  assert.equal($(prefix+"FoundryNewModel").disabled, true);
-  assert.equal($(prefix+"FoundryNewProjectName").disabled, true);
+  assert.equal($(prefix+"FoundryOverrides").open, false);
   assert.equal(foundryPayload(prefix).createFoundry, false);
   assert.equal(foundryPayload(prefix).foundryModel, "");
   assert.equal(foundryValid(prefix), true);
@@ -1647,36 +1643,31 @@ for (const prefix of ["deploy", "workflow"]) {
   }
   $(prefix+"FoundryCreate").checked = true;
   updateFoundryMode(prefix);
-  assert.equal(foundryValid(prefix), false);
-  assert.equal($(prefix+"FoundryCreation").hidden, false);
-  assert.equal($(prefix+"FoundryNewProjectOptions").open, true);
-  assert.equal($(prefix+"FoundryNewModel").disabled, false);
-  assert.equal($(prefix+"FoundryNewProjectName").disabled, false);
-  assert.equal($(prefix+"FoundryProjectName").disabled, true);
-  assert.match($(prefix+"FoundryModeSummary").textContent, /Create new resources/);
-  assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "New project selected");
-  assert.ok(!$(prefix+"FoundryModeSummary").textContent.includes("billable"));
-  $(prefix+"FoundryNewModel").value = "approved-new-model";
-  $(prefix+"FoundryNewProjectName").value = "new-project";
+  assert.equal(foundryValid(prefix), true);
+  assert.equal($(prefix+"FoundryOverrides").open, false);
+  assert.equal($(prefix+"FoundryProjectName").disabled, false);
+  assert.equal($(prefix+"FoundryModel").disabled, false);
+  assert.equal($(prefix+"FoundryProjectName").value, "existing-project-name");
+  assert.equal($(prefix+"FoundryModel").value, "existing-model");
+  assert.match($(prefix+"FoundryModeSummary").textContent, /Create only if missing/);
   assert.equal(foundryValid(prefix), true);
   const creating = foundryPayload(prefix);
   assert.equal(creating.createFoundry, true);
-  assert.equal(creating.foundryModel, "approved-new-model");
+  assert.equal(creating.foundryModel, "existing-model");
   assert.equal(creating.foundryProjectResourceId, "");
-  assert.equal(creating.foundryProjectName, "");
-  assert.equal(creating.foundryNewProjectName, "new-project");
+  assert.equal(creating.foundryProjectName, "existing-project-name");
+  assert.equal(Object.hasOwn(creating, "foundryNewProjectName"), false);
   for (const key of ["foundryModelVersion", "foundryModelSku", "foundryModelCapacity",
                      "foundryLocation", "foundryModelName"]) assert.equal(Object.hasOwn(creating, key), false);
   assert.equal(Object.hasOwn(creating, "productionWrites"), false);
   $(prefix+"FoundryCreate").checked = false;
   updateFoundryMode(prefix);
-  assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "Create a new project");
   const reused = foundryPayload(prefix);
   assert.equal(reused.createFoundry, false);
   assert.equal(reused.foundryModel, "existing-model");
   assert.equal(reused.foundryProjectResourceId, "");
   assert.equal(reused.foundryProjectName, "existing-project-name");
-  assert.equal(reused.foundryNewProjectName, "");
+  assert.equal(Object.hasOwn(reused, "foundryNewProjectName"), false);
 }
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
