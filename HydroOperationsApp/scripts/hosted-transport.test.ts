@@ -18,6 +18,16 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
 
+test('native timeouts and transport failures retain their real boundary without provider secrets', () => {
+  for (const [status, category] of [[504, 'native_timeout'], [502, 'native_transport']] as const) {
+    const error = new HostedInvocationError(status, { category, message: 'private provider diagnostic' })
+    assert.match(error.message, new RegExp(`HTTP ${status}`))
+    assert.match(error.message, /Fabric Data Agent/)
+    assert.match(error.message, /No replacement answer or direct-source fallback/)
+    assert.doesNotMatch(error.message, /private provider diagnostic|HTTP 500/)
+  }
+})
+
 test('native provider moderation processing error is not mislabeled as a Data Agent refusal', () => {
   const error = new HostedInvocationError(502, { category: 'native_provider_error' })
   assert.match(error.message, /provider failed during output moderation/)

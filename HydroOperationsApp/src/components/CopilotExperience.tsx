@@ -47,8 +47,8 @@ type CopilotExperienceProps = {
 }
 
 const ENGINE_LABELS: Record<CopilotEngine, { name: string; source: string }> = {
-  'data-agent': { name: 'Data Agent', source: 'Fabric Data Agent' },
-  foundry: { name: 'Foundry', source: 'Azure AI Foundry · Lakehouse + Eventhouse' },
+  'data-agent': { name: 'Direct Data Agent', source: 'Fabric Data Agent · Original question and answer · Read-only' },
+  foundry: { name: 'Foundry orchestration', source: 'Azure AI Foundry · Specialist analysis and approval flow' },
 }
 
 const PROMPTS: Record<CopilotEngine, string[]> = {

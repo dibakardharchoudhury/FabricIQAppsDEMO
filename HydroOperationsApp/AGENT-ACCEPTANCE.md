@@ -1,5 +1,34 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
+## October 28 direct-query latency correction
+
+Direct Data Agent is now an explicit read-only default; Foundry orchestration
+remains selectable for specialist reasoning and approval-only drafts. The direct
+path makes zero planning, specialist-wrapper or answer-writer model calls.
+Questions and native answer text remain unchanged. Artifact downloads and local
+identity-resolution queries are not prerequisites for this read-only answer.
+Foundry binding/source checks and immutable answer receipts remain in place.
+
+The native Responses reader now stops at a terminal server-sent event instead
+of buffering until the HTTP connection closes. A regression test leaves the
+connection open indefinitely after completion and verifies immediate return and
+cleanup. Native timeouts retain 504; other native transport failures return 502.
+
+A bounded operator-identity test of the exact screenshot question, **“Which
+turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?”**, returned
+the native answer in **104.123 seconds**, including CLI authentication and live
+discovery. It listed all 15 turbines, disclosed source timestamps and distinguished
+quality flags from mechanical faults. This is a real native source result, not a
+latency guarantee or signed-browser/hosted end-to-end acceptance. The matching
+capacity, `fabcapswc`, was verified Active; no capacity resume was necessary.
+
+Focused backend regressions passed (209 tests before the additional open-stream
+test; all 27 native transport tests then passed), plus 28 focused frontend
+tests, app typecheck, scoped lint and production build. Broader discovery tests
+have an existing missing `hostedSourceAccess` fixture dependency; backend Pyright
+also reports two unchanged findings outside these edits. Those are not recorded
+as clean full-suite acceptance.
+
 ## Semantic orchestration acceptance gate
 
 The [current implementation record](../docs/foundry-multi-agent-implementation.md#october-27-semantic-orchestration-implementation)

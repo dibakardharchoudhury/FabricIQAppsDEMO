@@ -18,6 +18,23 @@ Item creation and agent/configuration readback are not end-to-end execution test
 
 ## Native answer fidelity
 
+The default **Direct Data Agent** chat mode explicitly selects the native
+read-only path. It bypasses the semantic planning model, local tool catalog,
+Fabric IQ wrapper model and answer writer. The exact question is forwarded once,
+and the original answer is returned unchanged. Result files are not downloaded
+as a prerequisite for this text-only response; their citation annotations remain
+in the native audit. **Foundry orchestration** remains a separate operator choice
+for specialist analysis and approval-only maintenance drafts. It retains its
+semantic planner, evidence checks and result artifacts.
+
+Native transport timeouts retain HTTP 504 (`native_timeout`), rather than being
+masked as generic HTTP 500 failures. Other native HTTP transport errors retain
+the native boundary as HTTP 502 (`native_transport`). Neither path silently
+switches sources, rewrites an answer or retries a failed business request.
+The Responses transport consumes server-sent events incrementally and returns
+on the terminal Fabric response, closing its HTTP stream immediately. It never
+waits for the provider to close a keep-alive connection after completing an answer.
+
 The hosted semantic workflow sends the original user question unchanged through
 the native Fabric Data Agent Responses transport. The selected Foundry toolbox
 version and connection remain verified and pinned, but production does not invoke

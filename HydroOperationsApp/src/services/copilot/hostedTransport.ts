@@ -42,6 +42,12 @@ export class HostedInvocationError extends Error {
         'The service owner must review the model deployment token/request limits and the prior run audit before retrying. ' +
         'No answer or write outcome is certified.' +
         (detail.audit_available === false ? ' The execution audit could not be saved; contact the service owner.' : '')
+      : detail?.category === 'native_timeout'
+      ? 'The Fabric Data Agent request timed out (HTTP 504). No replacement answer or direct-source fallback was used. ' +
+        'Review the prior request before retrying.'
+      : detail?.category === 'native_transport'
+      ? 'The native Fabric Data Agent request failed (HTTP 502). No replacement answer or direct-source fallback was used. ' +
+        'Review the source request diagnostics before retrying.'
       : detail?.category === 'native_refusal'
       ? 'The selected Fabric Data Agent refused the request. Its owner must review the provider response before retrying. ' +
         'No direct-source fallback was used. No answer or write outcome is certified.' +

@@ -15,9 +15,9 @@ export function CopilotPage() {
 
   useEffect(() => {
     if (!foundryAvailable) return
-    warmHostedCopilot('foundry')
-    if (battleActive) warmHostedCopilot('data-agent')
-  }, [foundryAvailable, battleActive])
+    warmHostedCopilot(data.copilotEngine)
+    if (battleActive) warmHostedCopilot(data.copilotEngine === 'foundry' ? 'data-agent' : 'foundry')
+  }, [foundryAvailable, battleActive, data.copilotEngine])
 
   if (battleActive) {
     return <Suspense fallback={<div className="v2-page-loading"><span />Loading agent comparison…</div>}>
@@ -33,6 +33,7 @@ export function CopilotPage() {
     battleEnabled={battleEnabled}
     onSend={question => void data.actions.sendCopilotQuestion(question)}
     onReset={data.actions.resetCopilot}
+    onEngineChange={data.actions.changeCopilotEngine}
     onBattle={() => setView('battle')}
   />
 }

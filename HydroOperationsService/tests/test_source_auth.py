@@ -714,6 +714,36 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(recovery.json()["failure"]["http_status"], 429)
                     self.assertEqual(contexts, ["closed"])
 
+    async def test_native_transport_errors_keep_status_across_streaming_and_recovery(self):
+        from hydro_orchestrator.native_data_agent import NativeDataAgentTimeout, NativeDataAgentTransportError
+        for kind, status, category in (
+            (NativeDataAgentTimeout, 504, "native_timeout"),
+            (NativeDataAgentTransportError, 502, "native_transport"),
+        ):
+            for streaming in (False, True):
+                with self.subTest(kind=kind, streaming=streaming), TemporaryDirectory() as directory:
+                    async def fail(_request):
+                        raise SourceFailure("wrapped private diagnostic") from kind("private native diagnostic")
+
+                    app, _, _, _ = self.ingress(Path(directory), run=fail)
+                    initial = self.invocation()
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                                 base_url="http://test") as client:
+                        response = await client.post("/invocations", json={**initial, "stream": streaming})
+                        if streaming:
+                            message = json.loads(response.text.splitlines()[-1])
+                            self.assertEqual(message["status"], status)
+                            detail = message["detail"]
+                        else:
+                            self.assertEqual(response.status_code, status)
+                            detail = response.json()["detail"]
+                        self.assertEqual(detail["category"], category)
+                        self.assertNotIn("private", response.text)
+                        recovered = await client.post("/invocations", json={
+                            "operation": "result", "run_id": detail["run_id"], "tokens": initial["tokens"],
+                        })
+                        self.assertEqual(recovered.json()["failure"]["http_status"], status)
+
     async def test_native_refusal_survives_streaming_and_persisted_result_without_private_text(self):
         async def fail(_request):
             _validated_native_result(json.dumps({

@@ -60,7 +60,7 @@ export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boole
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
-  'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
+  'data-agent': { role: 'agent', text: 'Your question goes directly to the published Fabric Data Agent, unchanged. Its original answer is returned without a planning, Sparky wrapper, or summarization model. This mode is read-only. Select Foundry orchestration for specialist analysis or review-only work-order drafts.' },
   foundry: { role: 'agent', text: 'Ask me about facilities, equipment, telemetry, weather, or maintenance work. The Supervisor selects only the capabilities your question needs. Fabric IQ uses the ontology-backed Fabric Data Agent for cross-source business questions and preserves its original answer; Q&A handles precise direct reads and independent checks. Weather interprets forecasts, RCA investigates potential faults, and Work Order prepares review-only drafts. Telemetry-quality investigation drafts do not require a mechanical RCA. No work order is saved without your review and approval.' },
 }
 
@@ -130,8 +130,8 @@ function useHydroOperationsDataController() {
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [telemetrySelections, setTelemetrySelections] = useState<Record<string, TelemetryExplorerSelection>>({})
-  const copilotEngine: CopilotEngine = 'foundry'
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES.foundry])
+  const [copilotEngine, setCopilotEngine] = useState<CopilotEngine>('data-agent')
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES['data-agent']])
   const [copilotBusy, setCopilotBusy] = useState(false)
   const [mutationKey, setMutationKey] = useState<string>()
 
@@ -812,8 +812,8 @@ function useHydroOperationsDataController() {
   }, [orders])
 
   const sendCopilotQuestion = useCallback(async (question: string) => {
-    const text = question.trim()
-    if (!text || copilotBusy) return
+    const text = question
+    if (!text.trim() || copilotBusy) return
     const startedAt = Date.now()
     setCopilotBusy(true)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
@@ -859,6 +859,14 @@ function useHydroOperationsDataController() {
     resetDataAgentConversation()
     resetFoundryConversation()
     setMessages([INITIAL_MESSAGES[copilotEngine]])
+  }, [copilotBusy, copilotEngine])
+
+  const changeCopilotEngine = useCallback((engine: CopilotEngine) => {
+    if (copilotBusy || engine === copilotEngine) return
+    resetDataAgentConversation()
+    resetFoundryConversation()
+    setCopilotEngine(engine)
+    setMessages([INITIAL_MESSAGES[engine]])
   }, [copilotBusy, copilotEngine])
 
   return {
@@ -935,6 +943,7 @@ function useHydroOperationsDataController() {
       removeWorkOrder,
       sendCopilotQuestion,
       resetCopilot,
+      changeCopilotEngine,
       refreshDiscovery: clearWorkspaceConfigCache,
     },
   }

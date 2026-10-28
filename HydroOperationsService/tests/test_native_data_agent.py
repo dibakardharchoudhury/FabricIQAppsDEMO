@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from azure.core.credentials import AccessToken
 from hydro_orchestrator.live_sources import SourceFailure
 from hydro_orchestrator.native_data_agent import (
     NativeDataAgentCall, call_native_data_agent, native_response, quality_work_evidence, table_rows,
+    NativeDataAgentTimeout,
 )
 from hydro_orchestrator.source_auth import SourceAuthorizationError
 
@@ -101,6 +103,51 @@ class NativeDataAgentTests(unittest.IsolatedAsyncioTestCase):
         ]
         result = await self.invoke()
         self.assertEqual(result.source_payload()["response"], "Original\r\n\r\n| T005 | BAD |\n")
+
+    async def test_passthrough_does_not_download_or_require_result_artifacts(self):
+        result = await self.invoke(include_artifacts=False)
+        self.assertEqual(result.source_payload()["response"], self.text)
+        self.assertEqual(result.documents, [])
+        self.assertEqual(result.tables, [])
+        self.assertFalse(any("/files/" in request.url.path for request in self.requests))
+        scopes = [call.args[0] for call in self.credential.get_token.call_args_list]
+        self.assertEqual(len(scopes), len(set(scopes)))
+
+    async def test_native_timeout_is_distinct_from_an_application_failure(self):
+        self.overrides[f"/v1/workspaces/{self.workspace}"] = lambda request: (
+            self.raise_read_timeout(request)
+        )
+        with self.assertRaisesRegex(NativeDataAgentTimeout, "workspace capacity discovery"):
+            await self.invoke()
+
+    @staticmethod
+    def raise_read_timeout(request):
+        raise httpx.ReadTimeout("private provider diagnostic", request=request)
+
+    async def test_stream_returns_at_completed_event_without_waiting_for_connection_close(self):
+        response = self.response
+        closed = []
+
+        class OpenStream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b": heartbeat\n\n"
+                yield b'data: {"type":"response.output_text.delta","delta":"Original"}\n\n'
+                yield ("data: " + json.dumps({
+                    "type": "response.completed", "response": response,
+                }) + "\n\n").encode()
+                await asyncio.Event().wait()
+
+            async def aclose(self):
+                closed.append(True)
+
+        path = (f"/webapi/capacities/{self.capacity}/workloads/ML/AISkill/Automatic/v1"
+                f"/workspaces/{self.workspace}/artifacts/{self.agent}/responses")
+        self.overrides[path] = lambda _: httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=OpenStream(),
+        )
+        result = await asyncio.wait_for(self.invoke(include_artifacts=False), timeout=1)
+        self.assertEqual(result.source_payload()["response"], self.text)
+        self.assertTrue(closed)
 
     async def test_workspace_scoped_connection_is_validated_without_reusing_its_host(self):
         self.target = self.target.replace("api.fabric.microsoft.com",

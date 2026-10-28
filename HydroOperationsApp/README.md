@@ -1,5 +1,13 @@
 # Hydro Operations Fabric App
 
+Hydro Intelligence now opens in **Direct Data Agent** mode: the question is
+forwarded unchanged to the published Fabric Data Agent and its original answer
+is displayed unchanged, without planning, Sparky-wrapper or answer-writing LLM
+calls. This is read-only. Select **Foundry orchestration** for specialist analysis
+and review-only maintenance drafts. The hosted Responses transport reads completion
+events incrementally rather than waiting for the streaming connection to close.
+The legacy MCP implementation described below is not this hosted default path. Fabric App
+
 A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
 **independent Fabric data stores** — plus an in‑browser 3D digital‑twin viewer.

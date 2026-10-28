@@ -8,6 +8,11 @@ import { applyDataAgentProgress } from '../src/services/dataAgentProgress.ts'
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
 const hydroDataHookSource = await readFile(new URL('../src/ui-shared/hooks/useHydroOperationsData.ts', import.meta.url), 'utf8')
 const copilotPageSource = await readFile(new URL('../src/ui-shared/pages/CopilotPage.tsx', import.meta.url), 'utf8')
+test('direct Data Agent is the default with an explicit orchestration switch and unmodified prompt', () => {
+  assert.match(hydroDataHookSource, /useState<CopilotEngine>\('data-agent'\)/)
+  assert.match(copilotPageSource, /onEngineChange=\{data\.actions\.changeCopilotEngine\}/)
+  assert.match(hydroDataHookSource, /const text = question\s+if \(!text\.trim\(\)/)
+})
 const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
   'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',

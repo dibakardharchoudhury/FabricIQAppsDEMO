@@ -262,6 +262,43 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_native_mode_skips_planner_catalog_and_all_wrapper_models(self):
+        request = self.request.model_copy(update={
+            "question": "Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?",
+            "native_sources": ("data-agent",),
+        })
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2",
+                               model="native-fabric-responses", tools=())
+        text = "## Original Fabric answer\r\n\r\n| Turbine | Quality |\n|---|---|\n| T005 | BAD |\n"
+        call = NativeDataAgentCall("native-fast", {"input": request.question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
+        owner = self.make_owner(semantic_planning=True, analysis_model="test-model",
+                                native_binding=NativeBinding(
+                                    source=SOURCE, connections={"data-agent": "native-data"}, toolbox=version.name,
+                                ))
+        owner.versions = AsyncMock(return_value={"fabric-iq": version})
+        owner.plan_semantically = AsyncMock(side_effect=AssertionError("Planner must not run."))
+        owner.tools.catalog = AsyncMock(side_effect=AssertionError("Source catalog must not run."))
+        owner.invoke = AsyncMock(side_effect=AssertionError("Wrapper must not run."))
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call) as native:
+            answer = await owner.run(request)
+            self.assertEqual(client_presentation(answer).text.encode(), text.encode())
+            self.assertEqual(answer.specialists[0].model_round_count, 0)
+            self.assertFalse(answer.proposals)
+            self.assertFalse(answer.production_write_executed)
+            self.assertEqual(native.call_args.args[3], request.question)
+            self.assertFalse(native.call_args.kwargs["include_artifacts"])
+            owner.plan_semantically.assert_not_awaited()
+            owner.tools.catalog.assert_not_awaited()
+            owner.invoke.assert_not_awaited()
+            recovered = self.make_owner(semantic_planning=True, analysis_model="test-model")
+            self.assertEqual(await recovered.run(request), answer)
+            native.assert_awaited_once()
+
     def test_grouped_sdk_errors_keep_bounded_safe_leaf_diagnostics(self):
         grouped = ExceptionGroup("private provider message", [
             ExceptionGroup("private nested group", [httpx.RequestNotRead()]),

@@ -2677,6 +2677,7 @@ class FoundrySupervisor:
 
     async def invoke_data_agent(
         self, question: str, request: ChatRequest, journal: RunJournal, version: AgentVersion,
+        *, passthrough: bool = False,
     ) -> SpecialistResult:
         self.healthy(request)
         binding = self.native_binding
@@ -2689,6 +2690,7 @@ class FoundrySupervisor:
             self.credential,
             timeout=FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS,
             verified_workload_origin=self.native_workload_origin,
+            include_artifacts=not passthrough,
         )
         self.healthy(request)
         journal.save(f"native_response:{call.request_id}", {
@@ -2705,7 +2707,7 @@ class FoundrySupervisor:
             while field in result:
                 field += "_rows"
             result[field] = table["rows"]
-        if self.semantic_decision is None:
+        if self.semantic_decision is None and not passthrough:
             bundle = quality_work_evidence(call, request.requested_at)
             checked = await self.bridge.call({
                 "action": "validate_quality_work_evidence", "question": request.question,
@@ -2718,7 +2720,7 @@ class FoundrySupervisor:
                     raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
                 result = {**checked_result, "native_source_output": result, "response": result["response"]}
         required = initial_equipment_selection(request)
-        if required and not required.issubset(_native_equipment_ids(result)):
+        if not passthrough and required and not required.issubset(_native_equipment_ids(result)):
             raise SourceFailure("Native identity coverage missing: the selected source omitted requested equipment.")
         self.record_native_result(request, call.request_id, result, question, "data-agent")
         return SpecialistResult(
@@ -4510,6 +4512,42 @@ class FoundrySupervisor:
             committed = journal.read("answer")
             if committed is not None:
                 return ChatAnswer.model_validate(committed)
+            if (self.semantic_planning and request.native_sources == ("data-agent",)
+                    and not request.required_specialists and not request.required_evidence_kinds):
+                versions = await self.versions(journal, roles=frozenset({"fabric-iq"}))
+                event_id = f"{request.run_id}:native"
+                version = versions["fabric-iq"]
+                self.emit_event(
+                    event_id, "fabric-iq", "running", "Fabric Data Agent",
+                    "Forwarding your exact question directly; no planning or wrapper model is invoked.",
+                    agent_name=version.name,
+                )
+                try:
+                    result = await self.invoke_data_agent(
+                        request.question, request, journal, version, passthrough=True,
+                    )
+                except Exception:
+                    self.emit_event(
+                        event_id, "fabric-iq", "error", "Fabric Data Agent",
+                        "The native request failed; no replacement answer or fallback was used.",
+                        agent_name=version.name,
+                    )
+                    raise
+                self.specialists.append(result)
+                answer = self.native_answer(request)
+                if answer is None:
+                    raise SourceFailure("The direct native request produced no immutable source answer.")
+                journal.save("evidence", {
+                    "receipts": [item.model_dump(mode="json") for item in self.evidence.values()],
+                    "execution_manifest": {"mode": "native-passthrough", "model_round_count": 0},
+                })
+                journal.save("answer", answer.model_dump(mode="json"))
+                self.emit_event(
+                    event_id, "fabric-iq", "completed", "Fabric Data Agent",
+                    f"Original answer returned unchanged; measured duration {result.duration_ms:.0f} ms.",
+                    agent_name=version.name, response_id=result.response_id,
+                )
+                return answer
             if self.semantic_planning:
                 if journal.read("tool_catalog") is None:
                     catalog = SourceCatalog.model_validate(await self.tools.catalog(request))

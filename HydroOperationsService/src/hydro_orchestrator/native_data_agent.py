@@ -7,10 +7,12 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import time
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
 import httpx
+from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 
 from .live_sources import SourceFailure
@@ -19,6 +21,14 @@ from .source_auth import SourceAuthorizationError
 logger = logging.getLogger(__name__)
 FABRIC_ORIGIN = "https://api.fabric.microsoft.com"
 PBI_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
+
+
+class NativeDataAgentTimeout(SourceFailure):
+    pass
+
+
+class NativeDataAgentTransportError(SourceFailure):
+    pass
 
 
 def trusted_origin(value: object, suffix: str) -> str:
@@ -70,6 +80,32 @@ def native_response(response: httpx.Response) -> dict:
                 if isinstance(result, dict):
                     return result
     raise SourceFailure("Fabric Responses returned no inspectable response envelope.")
+
+
+async def streamed_native_response(response: httpx.Response) -> dict:
+    response.raise_for_status()
+    if "text/event-stream" not in response.headers.get("content-type", ""):
+        await response.aread()
+        return native_response(response)
+    data: list[str] = []
+    async for line in response.aiter_lines():
+        if line.startswith("data:"):
+            data.append(line[5:].lstrip(" "))
+        elif not line and data:
+            payload, data = "\n".join(data), []
+            if payload == "[DONE]":
+                break
+            event = json.loads(payload)
+            if not isinstance(event, dict):
+                raise NativeDataAgentTransportError("Fabric returned an invalid streaming event.")
+            if event.get("type") == "error":
+                raise NativeDataAgentTransportError("Fabric returned a streaming execution error.")
+            if event.get("type") in ("response.completed", "response.failed", "response.incomplete"):
+                result = event.get("response")
+                if not isinstance(result, dict):
+                    raise NativeDataAgentTransportError("Fabric returned an invalid terminal response.")
+                return result
+    raise NativeDataAgentTransportError("Fabric stream ended without a terminal response.")
 
 
 def table_rows(artifact: dict) -> list[dict[str, object]]:
@@ -229,6 +265,7 @@ async def call_native_data_agent(
     endpoint: str, connection: str, workspace_id: UUID, question: str,
     credential: AsyncTokenCredential, *, timeout: float = 300,
     verified_workload_origin: str | None = None,
+    include_artifacts: bool = True,
 ) -> NativeDataAgentCall:
     phase = "connection verification"
     correlation = str(uuid4())
@@ -236,13 +273,28 @@ async def call_native_data_agent(
         async with asyncio.timeout(timeout), httpx.AsyncClient(
             timeout=timeout, follow_redirects=False,
         ) as client:
+            tokens: dict[str, AccessToken] = {}
+
             async def request(method: str, url: str, scope: str, *, json: object = None) -> httpx.Response:
-                token = await credential.get_token(scope)
+                token = tokens.get(scope)
+                if token is None or token.expires_on <= time() + 30:
+                    token = await credential.get_token(scope)
+                    tokens[scope] = token
                 response = await client.request(
                     method, url, headers={"Authorization": "Bearer " + token.token, **headers}, json=json,
                 )
                 response.raise_for_status()
                 return response
+
+            async def responses_request(method: str, url: str, *, json: object = None) -> dict:
+                token = tokens.get(PBI_SCOPE)
+                if token is None or token.expires_on <= time() + 30:
+                    token = await credential.get_token(PBI_SCOPE)
+                    tokens[PBI_SCOPE] = token
+                async with client.stream(
+                    method, url, headers={"Authorization": "Bearer " + token.token, **headers}, json=json,
+                ) as response:
+                    return await streamed_native_response(response)
 
             headers: dict[str, str] = {"ActivityId": correlation}
             foundry_connection = await request(
@@ -288,21 +340,20 @@ async def call_native_data_agent(
             arguments = {"input": question}
             # The official Fabric Responses client injects this compatibility model;
             # Fabric selects and reports its actual runtime model in the response.
-            response = native_response(await request(
-                "POST", base + "/responses?api-version=2024-05-01-preview", PBI_SCOPE,
+            response = await responses_request(
+                "POST", base + "/responses?api-version=2024-05-01-preview",
                 json={"model": "gpt-5.1", **arguments},
-            ))
+            )
             while response.get("status") in ("queued", "in_progress"):
                 identity = response.get("id")
                 if not isinstance(identity, str) or not identity:
                     raise SourceFailure("The native response has no polling identity.")
                 await asyncio.sleep(1)
-                response = native_response(await request(
+                response = await responses_request(
                     "GET", f"{base}/responses/{quote(identity, safe='')}?api-version=2024-05-01-preview",
-                    PBI_SCOPE,
-                ))
+                )
             if response.get("status") != "completed" or response.get("error"):
-                raise SourceFailure("The published native Data Agent did not complete successfully.")
+                raise NativeDataAgentTransportError("The published native Data Agent did not complete successfully.")
             identity, output = response.get("id"), response.get("output")
             if not isinstance(identity, str) or not identity or not isinstance(output, list):
                 raise SourceFailure("The native Data Agent returned an invalid response identity or output.")
@@ -312,7 +363,7 @@ async def call_native_data_agent(
             retained["output"] = [item for item in output if item.get("type") != "reasoning"]
             documents, tables, seen = [], [], set()
             phase = "native result artifact retrieval"
-            for item in output:
+            for item in output if include_artifacts else ():
                 if item.get("type") != "message" or item.get("role") != "assistant":
                     continue
                 for block in item.get("content", []):
@@ -361,6 +412,7 @@ async def call_native_data_agent(
         status = f" HTTP {error.response.status_code}" if isinstance(error, httpx.HTTPStatusError) else ""
         logger.error("Native Data Agent %s failed: %s%s; correlation %s",
                      phase, type(error).__name__, status, correlation)
-        raise SourceFailure(
+        failure = NativeDataAgentTimeout if isinstance(error, (TimeoutError, httpx.TimeoutException)) else NativeDataAgentTransportError
+        raise failure(
             f"Native Data Agent {phase} failed ({type(error).__name__}{status}; correlation {correlation})."
         ) from error

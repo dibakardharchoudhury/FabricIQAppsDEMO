@@ -43,6 +43,7 @@ from .live_sources import (
     NodeSourceBridge, SourceFailure,
 )
 from .foundry_rca import verified_project_endpoint
+from .native_data_agent import NativeDataAgentTimeout, NativeDataAgentTransportError
 
 logger = logging.getLogger(__name__)
 STREAM_HEARTBEAT_SECONDS = 15.0
@@ -534,6 +535,14 @@ def create_delegated_app(
             return HTTPException(status, detail)
 
         def execution_failed(error: Exception) -> HTTPException:
+            if exception_chain_contains(error, NativeDataAgentTimeout):
+                return failed(504, "native_timeout",
+                              "The published Fabric Data Agent exceeded its native execution deadline. "
+                              "No replacement answer or direct-source fallback was used.")
+            if exception_chain_contains(error, NativeDataAgentTransportError):
+                return failed(502, "native_transport",
+                              "The native Fabric Data Agent request failed. "
+                              "Inspect the source request diagnostics before retrying.")
             if exception_chain_contains(error, RateLimitError):
                 return failed(429, "model_rate_limit",
                               "The Foundry model throughput quota was exceeded. "
@@ -873,6 +882,8 @@ def create_fabric_delegated_app(
             "required_specialists": (), "required_specialist_steps": {},
             "required_evidence_kinds": (), "permitted_evidence_kinds": (),
         })
+        if chat.native_sources == ("data-agent",):
+            return normalized, ()
         candidates = carriable_receipts(state, source, chat.previous_run_id)
         carried_ids = tuple(item.id for item in candidates if reusable_kinds(item))[:MAX_CARRIED_RECEIPTS]
         if not re.search(
