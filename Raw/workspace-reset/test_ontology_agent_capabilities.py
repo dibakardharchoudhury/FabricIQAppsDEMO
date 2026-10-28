@@ -298,6 +298,9 @@ class DataAgentInstructionTests(unittest.TestCase):
             "3. SQL: independently query", "4. Match returned keys",
             "bad_sample_count=count(),first_bad_utc=min(event_time),last_bad_utc=max(event_time)", "not previews",
             "any BAD event in today's UTC window, not latest-only",
+            "LEFT OUTER JOIN", "COUNT DISTINCT child keys", "zero-fill",
+            "AntiJoin only selects unmatched entities", "positive all-parent aggregation",
+            "place status filters in sub_questions",
         ):
             self.assertIn(phrase, text)
         for phrase in (

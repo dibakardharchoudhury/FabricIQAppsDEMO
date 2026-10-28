@@ -392,6 +392,12 @@ cite the row projections without turning file metadata into a business-data tabl
 Date-like column names alone do not establish a timestamp or a timezone. Native
 dates without an explicit timezone are displayed as unchanged text; only
 timezone-aware source strings receive timestamp presentation.
+The Data Agent's notebook-owned cross-source guidance distinguishes all-parent
+count rollups from unmatched-population queries. Zero-inclusive counts require
+left-outer aggregation and distinct child keys, not an anti-join. Federation
+questions express that positive aggregation intent; source-specific status
+filters remain in their sub-questions. The app still sends the original user
+question and preserves the native answer unchanged.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.
