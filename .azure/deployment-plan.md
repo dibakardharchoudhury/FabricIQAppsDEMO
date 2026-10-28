@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed - native runtime acceptance blocked
+> **Status:** Validated
 
 ## Semantic orchestration and Fabric IQ acceptance
 
@@ -63,6 +63,26 @@ See the [live acceptance record](../docs/foundry-multi-agent-implementation.md#l
 for exact run/response IDs. Eventhouse UI grouping remains unresolved.
 
 ### Section 7: Validation Proof - semantic implementation
+
+Current update, 2026-10-28, commit `8f908c1`: the authenticated v1.0.1167 /
+coordinator v39 path passed native count, ontology relationship and quality/work
+acceptance, preserving source text and SHA. Five editable review-only
+telemetry-availability drafts were verified with no production writes. This
+update removes provider document/schema metadata from business datasets while
+retaining immutable receipts and typed source-row projections.
+All 132 supervisor tests passed; the broader run exposed an obsolete factory
+fixture missing the newly required verified workload origin. After updating that
+fixture and adding missing-origin rejection, all 35 source-auth tests passed.
+Commands: `.venv\Scripts\python.exe -m unittest test_foundry_supervisor
+test_source_auth -q`, then `-m unittest test_source_auth -q`; targeted Python
+`compileall`, Pylance syntax checks, `npm run validate-env`, and `git diff --check`
+passed. Pyright retains its five existing diagnostics, with no new errors.
+Azure CLI confirmed the approved tenant/subscription and Active F8 capacity.
+No IaC, resource type, SKU, role assignment or policy boundary changes are
+requested; infrastructure what-if and a separate Docker deployment do not apply.
+The canonical orchestrator owns the source-fingerprinted image build, hosted
+publication, connector convergence and endpoint checks; acceptance of this latest
+dataset correction remains required after that publication.
 
 All validation checks pass:
 - [x] 1. Core Validation (CLI, auth, build, validate, what-if): existing-resource
