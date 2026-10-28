@@ -389,6 +389,9 @@ Native Responses datasets expose actual typed result rows, never result-document
 envelopes or schema markdown from provider tool traces. The original source answer,
 documents and provider trace remain unchanged in the audit. Dependent analysis can
 cite the row projections without turning file metadata into a business-data table.
+Date-like column names alone do not establish a timestamp or a timezone. Native
+dates without an explicit timezone are displayed as unchanged text; only
+timezone-aware source strings receive timestamp presentation.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.

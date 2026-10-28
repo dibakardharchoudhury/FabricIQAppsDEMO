@@ -83,6 +83,15 @@ requested; infrastructure what-if and a separate Docker deployment do not apply.
 The canonical orchestrator owns the source-fingerprinted image build, hosted
 publication, connector convergence and endpoint checks; acceptance of this latest
 dataset correction remains required after that publication.
+That publication succeeded as v1.0.1169 / coordinator v40. Its authenticated
+review-only run completed Fabric IQ and Work Order execution, then exposed a
+renderer error for timezone-less native source dates. The renderer now preserves
+those dates as text, while explicitly timezone-aware strings retain timestamp
+presentation. The source values and native answer are unchanged. All 137
+supervisor/presentation tests pass, including the exact final table-rendering
+regression; required environment validation passes and Pyright remains at the
+same five baseline diagnostics. No infrastructure or authorization delta was
+introduced. Publish and authenticated acceptance of this correction are pending.
 
 All validation checks pass:
 - [x] 1. Core Validation (CLI, auth, build, validate, what-if): existing-resource

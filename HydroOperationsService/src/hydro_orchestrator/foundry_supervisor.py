@@ -168,6 +168,15 @@ def _validated_native_result(output: object) -> dict[str, object]:
     return native_result
 
 
+def _is_timezone_aware_timestamp(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return datetime.fromisoformat(value).tzinfo is not None
+    except ValueError:
+        return False
+
+
 def _native_equipment_ids(value: object) -> set[str]:
     resolved: set[str] = set()
 
@@ -3483,7 +3492,12 @@ class FoundrySupervisor:
                 key=key,
                 label=key,
                 kind=(
-                    "timestamp" if key.endswith("_time") or key.endswith("At")
+                    "timestamp" if (key.endswith("_time") or key.endswith("At")) and any(
+                        row.get(key) is not None for _receipt, _dataset, _index, row in source_rows
+                    ) and all(
+                        row.get(key) is None or _is_timezone_aware_timestamp(row[key])
+                        for _receipt, _dataset, _index, row in source_rows
+                    )
                     else "number" if source_rows and all(
                         row.get(key) is None or type(row.get(key)) in (int, float)
                         for _receipt, _dataset, _index, row in source_rows

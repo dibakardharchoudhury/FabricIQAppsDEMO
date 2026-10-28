@@ -1053,6 +1053,42 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan.tables[0].rows[0].cells[0].key, "equipmentId")
         self.assertTrue(any("nested-only source record" in item for item in plan.limitations))
 
+    def test_native_answer_columns_preserve_dates_without_inventing_source_timezones(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "kind": "native_claims", "scope": "population", "authority": "native", "purpose": "facts",
+            }],
+            "views": [{
+                "id": "native-times", "title": "Source dates", "kind": "native_claims",
+                "scope": "population", "presentation": "native_records_table",
+            }],
+        })
+        record = {
+            "equipment_id": "EQUIP_RTI_T005", "observed_time": "2026-10-27T14:31:31.138117",
+            "updatedAt": "2026-10-27T14:31:31.138117+00:00", "label_time": "Not supplied",
+            "elapsed_time": 12,
+        }
+        receipt = ToolEvidence(
+            id="native-times", source=SOURCE, tool="fabriciq-data-agent", arguments={}, completed_at=utc_now(),
+            result={"claims": [record]},
+            datasets=(EvidenceDataset(
+                kind="native_claims", field="claims", authority="native", scope="population",
+                complete=True, identity_fields=("equipment_id",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+
+        plan = self.owner.contract_answer_plan(self.request)
+        answer = self.owner.answer(self.request, plan)
+
+        self.assertEqual({column.key: column.kind for column in answer.tables[0].columns}, {
+            "equipment_id": "text", "observed_time": "text", "updatedAt": "timestamp",
+            "label_time": "text", "elapsed_time": "number",
+        })
+        self.assertEqual(answer.tables[0].rows[0].values, record)
+        self.assertEqual(receipt.result["claims"], [record])
+
     def test_empty_verification_does_not_erase_a_prior_grounded_selection(self):
         selected = {"EQUIP_RTI_T002", "EQUIP_RTI_T008"}
         self.assertEqual(
