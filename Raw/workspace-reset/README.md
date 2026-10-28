@@ -1,6 +1,8 @@
-# Workspace reset — automated Git sync (alternative to the manual portal steps)
+# Local deployment app and workspace automation
 
 **Deploying the project? Start with the [short deployment guide](../../HydroOperationsApp/DEPLOY.md).**
+For the local app, see [where to find and launch it](../../HydroOperationsApp/DEPLOY.md#2-start-the-local-app)
+and [what to type in every field](../../HydroOperationsApp/DEPLOY.md#local-app-parameters-what-to-type).
 This file is the detailed CLI/reference material, not a second required checklist.
 
 Populate (or wipe-and-repopulate) a Microsoft Fabric workspace from this GitHub repo
@@ -63,10 +65,11 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 One-time setup on the machine: install **[Python](https://www.python.org/downloads/)**
 (3.11 or later; the local web UI uses `datetime.UTC`)
 (on Windows, tick *"Add python.exe to PATH"*), the
-**[Azure CLI](https://aka.ms/installazurecli)**, and **[Node.js](https://nodejs.org/)**
-(which includes npm and npx; needed only for **Deploy app**).
+**[Azure CLI](https://aka.ms/installazurecli)**, and Git.
+Foundry setup also requires `azd`. The deployment engine resolves Node 24 and the
+locked npm dependencies automatically.
 
-Then launch the web app:
+Then open `Raw\workspace-reset` in your local repository checkout and launch the web app:
 
 - **Windows** — double-click **`Start Fabric Demo.cmd`**.
 - **macOS** — double-click **`start-fabric-demo.sh`** (first time you may need to make
@@ -78,12 +81,13 @@ Then launch the web app:
   so you can equally run `python launch.py` (Windows) / `python3 launch.py` (macOS/Linux).
 
 The launcher installs missing **Python packages**. The **Deploy app** action separately restores
-the locked npm packages (including Rayfin) under Node 24. It signs you in to Azure if needed
-(`az login` opens your browser), starts the app, and **opens your browser at
-`http://127.0.0.1:5000`** automatically. Keep the window open while you use it; close
-it (or press Ctrl+C) to stop.
+the locked npm packages (including Rayfin) under Node 24. The launcher starts the app and
+**opens your browser at `http://127.0.0.1:5000`** automatically. Click **Sign in**
+inside the page to authenticate with Azure. Once the launcher reports the app is
+running, you can close its window; the server keeps running. Use the sidebar's
+**Stop server** or **Restart server** controls, which refuse while a job is running.
 
-For the simplest deployment, choose the target tenant/workspace, then use **Load signed-in
+For the simplest deployment, choose the target tenant/workspace, then use **Refresh
 subscriptions** instead of copying a subscription GUID. The list shows tenant IDs and does
 not switch Azure subscriptions. Use **Deploy app** for an existing prepared workspace; only
 use **Full Deploy** when Git sync and data setup are actually needed.

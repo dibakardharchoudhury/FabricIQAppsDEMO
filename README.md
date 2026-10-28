@@ -13,6 +13,26 @@ remain failures, not successful static capability skips. A companion React app
 > The project is v2-only. Agent availability depends on Fabric product support; a successful
 > core-only setup or item creation does not certify agent execution or alert delivery.
 
+## Deploy using the local deployment app
+
+The recommended interface is **Initialize Your Fabric Demo**, included in
+[`Raw/workspace-reset/`](Raw/workspace-reset/). It runs locally; it is not the hosted
+Hydro Operations website.
+
+1. Use an up-to-date local checkout of **`main`**.
+2. In Windows File Explorer, open `Raw\workspace-reset` in that checkout and
+   double-click [`Start Fabric Demo.cmd`](Raw/workspace-reset/Start%20Fabric%20Demo.cmd).
+   Alternatively, run `python Raw\workspace-reset\launch.py` from the repository root.
+3. Open <http://127.0.0.1:5000/>, sign in, and enter the target tenant/workspace.
+4. Choose **Full Deploy** for a new workspace, or **Deploy app** for a website
+   update to an already prepared workspace.
+
+**Read the [local app launch instructions](HydroOperationsApp/DEPLOY.md#2-start-the-local-app)
+and [field-by-field parameter guide](HydroOperationsApp/DEPLOY.md#local-app-parameters-what-to-type).**
+They explain prerequisites, example entries, defaults, Foundry project/model setup,
+saved settings, progress, and what remains manual. You do not need to assemble
+individual notebook, Rayfin, or agent-provisioning commands.
+
 ## Ontology generations and optional agents
 
 The canonical `RTI_004`, `RTI_005`, and `RTI_006` notebook names remain unchanged, including their
