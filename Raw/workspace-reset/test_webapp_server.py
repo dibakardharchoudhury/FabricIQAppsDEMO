@@ -64,6 +64,9 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertIn("After Foundry setup succeeds", foundry_pane)
         self.assertNotIn("Updates agents only", html)
         self.assertIn("five Foundry specialist agents", html)
+        self.assertIn("Foundry account is the parent Azure resource", html)
+        self.assertIn("renderSectionDuration", html)
+        self.assertIn("Foundry · Fabric backend gateway", SERVER.WORKFLOW_PHASES)
 
     def test_full_workflow_prepares_energy_and_foundry_before_final_app(self):
         target = {

@@ -575,7 +575,7 @@ function renderFoundryFields(prefix, clientId) {
       <label>Model deployment name
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
     </div>
-    <p class="hint">A Foundry account is the parent Azure resource; the project lives inside it. A blank account name keeps automatic naming/discovery. Setup prepares the Fabric backend gateway, five Foundry specialist agents, connections and hosted orchestrator. A missing backend creates a Fabric App item and SQL/GraphQL dependencies, but does not publish the website.</p>
+    <p class="hint">A Foundry account is the parent Azure resource; projects live inside it. Blank keeps automatic account naming/discovery. Setup prepares the Fabric backend gateway, five Foundry specialist agents, connections and hosted orchestrator. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
       <span>Check this box if you want to create a new Foundry project with the multi-agent setup.</span></label>
     <p id="${prefix}FoundryCreateHelp" class="hint">Creating resources is billable; global inference may apply. Existing projects are reused.</p>
