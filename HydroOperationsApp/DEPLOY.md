@@ -35,7 +35,7 @@ If a step fails, fix the reported prerequisite and retry that module.
 | Alert email | Signed-in user's email when the tenant matches; confirm the recipient |
 | Azure subscription | Active or sole subscription in the target tenant; otherwise choose |
 | Foundry project name / Model deployment name | Saved selection, target-named project, or unambiguous discovery |
-| Allow creating a missing Foundry project | Off; enable only to approve billable creation |
+| New-project creation checkbox | Off; enable only to approve billable creation |
 
 Core/Full Deploy values autosave on this machine in gitignored
 [`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json).
@@ -201,7 +201,7 @@ These are the same shared fields in **Full Deploy** and **Set up Foundry agents*
 | **Azure subscription** | Choose the target subscription; use **Refresh subscriptions** to load accessible choices | Where Foundry resources are found or created. Select this **before** the project/model. Fabric capacity can be in a different subscription in the same tenant. |
 | **Foundry project name** | For example `hydro-demo-project` | Existing project to reuse, or the exact project name to create with approval below. For duplicate names/scoped access, a full project ARM ID can identify an existing project. |
 | **Model deployment name** | For example `hydro-chat` if that deployment already exists, or a supported catalog chat model name for creation | Not an agent name or API endpoint. An existing alias must resolve to a model/version in the selected subscription; an arbitrary invented alias is not a catalog model. |
-| **Allow creating a missing Foundry project (billable; global inference may apply)** | Leave off for reuse; check only to approve creating missing resources | Existing projects are still reused. Approval is not remembered after reload or target change. New resources can incur Azure charges. |
+| **Check this box if you want to create a new Foundry project with the multi-agent setup.** | Leave off for reuse; check only to approve creating missing resources | Existing projects are still reused. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
 | **Use a pre-created app registration** | Leave off for automatic discovery/reuse or creation | Enable only to select a specific administrator-prepared SPA in the target tenant. |
 | **Application (client) ID**, shown when that option is enabled | The SPA's full Application/client GUID | Not its object ID, tenant ID, or the notebook SPN secret. The registration is verified; redirects, permissions and consent setup remain automated. |
 
@@ -471,7 +471,8 @@ successful tool discovery alone does not establish a successful native answer.
   JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
   overrides remain available through the documented command-line configuration.
 - **New project:** select **Azure subscription**, enter **Foundry project name** and
-  **Model deployment name**, then check **Allow creating a missing Foundry project**.
+  **Model deployment name**, then select **Check this box if you want to create a
+  new Foundry project with the multi-agent setup.**
   The exact project name is used. A ready deployment alias in the selected
   subscription is resolved to its catalog model/version; catalog chat model
   names also work. Both standalone Foundry setup and Full Deploy use this flow.

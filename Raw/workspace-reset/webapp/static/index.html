@@ -578,8 +578,9 @@ function renderFoundryFields(prefix, clientId) {
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
     </div>
     <p class="hint">Enter these once. Setup configures the agents, connections and hosted orchestrator automatically.</p>
-    <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
-      <span>Allow creating a missing Foundry project (billable; global inference may apply).</span></label>
+    <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
+      <span>Check this box if you want to create a new Foundry project with the multi-agent setup.</span></label>
+    <p id="${prefix}FoundryCreateHelp" class="hint">Creating resources is billable; global inference may apply. Existing projects are reused.</p>
     <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
     ${renderSpaFields(clientId)}`;
 }

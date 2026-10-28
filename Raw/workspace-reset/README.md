@@ -143,8 +143,9 @@ This choice is shared across Foundry, full workflow and app publication, scoped 
 the tenant/workspace. Registration verification and automated auth setup remain required.
 The launcher preserves the target's existing work-order write policy; it does not
 offer or submit a write-permission override. Enabled writes still require human approval.
-**Allow creating a missing Foundry project** is explicit, billable approval, never
-remembered. It does not discard or disable either shared name; existing projects
+**Check this box if you want to create a new Foundry project with the multi-agent
+setup.** is explicit, billable approval, never remembered. It does not discard or
+disable either shared name; existing projects
 are reused even with approval enabled. A missing project uses the exact
 project name entered above. A deployment alias is resolved to its underlying
 model/version in the selected subscription; a catalog chat model name also works.
