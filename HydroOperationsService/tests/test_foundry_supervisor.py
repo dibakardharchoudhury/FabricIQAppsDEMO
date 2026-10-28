@@ -21,6 +21,7 @@ from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOr
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, BoundedAIProjectClient, CachedHandoff, ChatRequest, Delegation,
     EquipmentSelection, EvidenceDataset,
+    FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeAnswer, NativeBinding, OperatorAnswerContract, RunJournal,
     SemanticDecision, SpecialistResult, ToolEvidence,
@@ -312,16 +313,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await restarted.run(request), answer)
             self.assertEqual(invoke.call_count, 1)
 
-    async def test_native_quality_tables_pass_existing_bridge_without_sending_or_rewriting_large_source(self):
+    async def test_legacy_native_quality_tables_pass_existing_bridge_without_sending_or_rewriting_large_source(self):
         question = "Which turbines had BAD telemetry quality today, and what work is already open for these?"
         request = self.request.model_copy(update={"question": question, "native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(
             source=SOURCE, connections={"data-agent": "native-data"}, toolbox="hydro-fabric-iq-tools",
         ))
-        owner.semantic_decision = SemanticDecision(
-            mode="conversation", reason="Existing semantic decision must not disable evidence validation.",
-            proposal_requested=False, charts_requested=False, proposal_priority="Medium", reuse_prior_evidence=False,
-        )
         timestamp = request.requested_at.isoformat()
         tables = [
             {"source_type": "LakehouseTables", "source_id": "registry", "query": "registry",
@@ -385,6 +382,73 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(await owner.validate_specialist_report("rca", rca_report), rca_report)
         self.assertEqual(owner.evidence["verified-native"].result, evidence)
+        self.assertFalse(self.calls)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_semantic_native_quality_preserves_tables_without_legacy_day_bundle_or_admission_timeout(self):
+        question = (
+            "Use the ontology-backed Fabric Data Agent to review the latest telemetry quality and freshness "
+            "for turbines T004, T005, T007, T009, and T014. Prepare one editable, review-only diagnostic "
+            "investigation work-order draft for each target with stale, missing, BAD or UNCERTAIN telemetry. "
+            "Check existing open work first. This concerns data-quality investigation, not mechanical "
+            "root-cause analysis or physical repair. Do not save or approve any work orders."
+        )
+        request = self.request.model_copy(update={
+            "question": question, "native_sources": ("data-agent",),
+            "deadline": self.request.requested_at + timedelta(seconds=5),
+        })
+        owner = self.make_owner(native_binding=NativeBinding(
+            source=SOURCE, connections={"data-agent": "native-data"}, toolbox="hydro-fabric-iq-tools",
+        ))
+        owner.semantic_decision = SemanticDecision.model_validate({
+            "mode": "execute", "reason": "Inspect current quality, then stage diagnostic drafts for review.",
+            "proposal_requested": True, "charts_requested": False, "proposal_priority": "Medium",
+            "reuse_prior_evidence": False,
+            "plan": {
+                "steps": [
+                    {"specialist": "fabric-iq", "question": question, "nativeSource": "data-agent"},
+                    {"specialist": "work-order", "question": "Prepare a review-only diagnostic draft."},
+                ],
+                "answer_contract": {
+                    "version": 3,
+                    "requirements": [{
+                        "kind": "native_claims", "scope": "population", "authority": "native",
+                        "purpose": "investigation",
+                    }],
+                    "views": [{
+                        "id": "native-quality", "title": "Latest quality", "kind": "native_claims",
+                        "scope": "population", "presentation": "native_records_table",
+                    }],
+                },
+            },
+        })
+        assert owner.semantic_decision.plan is not None
+        owner.answer_contract = owner.semantic_decision.plan.answer_contract
+        rows = [{"equipment_id": "TEST_T005", "quality": "UNCERTAIN",
+                 "latest_event_time": "2026-10-10T12:00:00Z"}]
+        text = "TEST_T005 has UNCERTAIN, stale telemetry; this does not establish a mechanical fault.\n"
+        call = NativeDataAgentCall("semantic-quality", {"input": question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [{
+            "columns": list(rows[0]), "rows": rows, "source_type": "Kusto",
+        }])
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call) as invoke:
+            answer = await owner.invoke_data_agent(
+                question, request, RunJournal(self.root / "semantic-quality"),
+                AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=()),
+            )
+        self.assertEqual(answer.text, text)
+        self.assertEqual(invoke.call_args.kwargs["timeout"], FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS)
+        evidence = owner.evidence["semantic-quality"]
+        self.assertEqual(evidence.result["native_table_0"], rows)
+        self.assertEqual(evidence.result["response"], text)
+        self.assertNotIn("affected_signals", evidence.result)
+        self.assertNotIn("coverage", evidence.result)
+        self.assertEqual(evidence.resolved_equipment_ids, ("TEST_T005",))
+        self.assertTrue(all(dataset.kind == "native_claims" for dataset in evidence.datasets))
         self.assertFalse(self.calls)
         self.assertEqual(self.tools.calls, 0)
 

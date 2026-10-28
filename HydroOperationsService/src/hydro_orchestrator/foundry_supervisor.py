@@ -2613,7 +2613,7 @@ class FoundrySupervisor:
         call = await call_native_data_agent(
             self.endpoint, binding.connections["data-agent"], binding.source.workspace_id, question,
             self.credential,
-            timeout=min(FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS, (request.deadline - utc_now()).total_seconds()),
+            timeout=FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS,
             verified_workload_origin=self.native_workload_origin,
         )
         self.healthy(request)
@@ -2630,17 +2630,18 @@ class FoundrySupervisor:
             while field in result:
                 field += "_rows"
             result[field] = table["rows"]
-        bundle = quality_work_evidence(call, request.requested_at)
-        checked = await self.bridge.call({
-            "action": "validate_quality_work_evidence", "question": request.question,
-            "result": {"native_outputs": [bundle if bundle is not None else {"response": result["response"]}]},
-            "requested_at_utc": request.requested_at.isoformat(),
-        })
-        if checked.get("required") is True:
-            checked_result = checked.get("result")
-            if not isinstance(checked_result, dict):
-                raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
-            result = {**checked_result, "native_source_output": result, "response": result["response"]}
+        if self.semantic_decision is None:
+            bundle = quality_work_evidence(call, request.requested_at)
+            checked = await self.bridge.call({
+                "action": "validate_quality_work_evidence", "question": request.question,
+                "result": {"native_outputs": [bundle if bundle is not None else {"response": result["response"]}]},
+                "requested_at_utc": request.requested_at.isoformat(),
+            })
+            if checked.get("required") is True:
+                checked_result = checked.get("result")
+                if not isinstance(checked_result, dict):
+                    raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
+                result = {**checked_result, "native_source_output": result, "response": result["response"]}
         required = initial_equipment_selection(request)
         if required and not required.issubset(_native_equipment_ids(result)):
             raise SourceFailure("Native identity coverage missing: the selected source omitted requested equipment.")

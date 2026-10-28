@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - minimal capability orchestration; publication pending
+> **Status:** Validated - semantic native contract correction; publication pending
 
 ## Current scoped architecture hardening
 
@@ -19,12 +19,18 @@ tool-less weather interpretation without a Weather agent loop. Planning and
 briefing HTTP clients close explicitly. An absolute ten-minute execution budget
 is separate from credential admission. Audit manifests identify actual
 providers and session-local persistence; the UI hides unused capabilities.
+Authenticated acceptance also exposed a Responses-only legacy midnight/BAD
+bundle requirement on a broader freshness/diagnostic request. Semantic native
+execution now uses its explicit evidence contract, consistently with the MCP
+compatibility branch; legacy completeness validation remains unchanged.
+Native call timeout is bounded by the overall execution budget, not the
+credential admission lease.
 
 All validation checks pass for the scoped application change:
 - [x] 1. Core Validation (CLI, auth, build, validate, what-if): approved tenant
   and subscription verified; environment validation, TypeScript, targeted
-  ESLint and `git diff --check` pass. The final backend run completed 210 cases:
-  209 passed and the opt-in live evaluator was skipped. A separate ten-case
+  ESLint and `git diff --check` pass. The final backend run completed 211 cases:
+  210 passed and the opt-in live evaluator was skipped. A separate ten-case
   real-model evaluation passed, including negation, clarification, native
   ontology routing, diagnostic-only drafts, fault-gated repairs and reader-only
   forecast comparison. Final planning times were approximately 5.3-14.1 seconds;
@@ -47,8 +53,14 @@ Twelve frontend agent/Weather contracts also pass. Production session receipts,
 locks and checkpoints are not independent-replica failover or distributed
 exactly-once execution. Verified centralized trace ingestion, distributed
 persistence/admission and sustained load testing remain explicit rollout gates.
-Canonical publication and signed-browser acceptance of this new runtime are
-pending; older successful native runs below do not certify these new changes.
+The first publication (app 1.0.1173 / `f1784e6`, coordinator v42) passed
+authenticated facility-reader, native count, Weather and RCA checks.
+The broader diagnostic draft failed at the misplaced legacy native guard before
+Work Order ran. Its audit and container logs were inspected; no write occurred.
+The exact prompt reproduces the failure in a new regression, which passes after
+the scoped fix alongside the legacy completeness/fidelity checks.
+Publication and repeat signed-browser diagnostic acceptance of that correction
+remain pending; earlier successful runs do not certify it.
 
 ## Semantic orchestration and Fabric IQ acceptance
 
@@ -1574,8 +1586,8 @@ records the unchanged target, decisions, applicability and remaining boundaries.
 Executed validation:
 
 - `python -m unittest test_foundry_supervisor test_semantic_planning
-  test_presentation test_source_auth test_durable_service -q`: 210 cases,
-  209 passed and one live opt-in skipped.
+  test_presentation test_source_auth test_durable_service -q`: 211 cases,
+  210 passed and one live opt-in skipped after the native-contract correction.
 - With the opt-in environment and existing deployed model,
   `python -m unittest test_semantic_planning.LiveSemanticArchitectureTests -v`:
   all ten semantic cases passed, with no business reads/writes or HTTP
@@ -1588,6 +1600,28 @@ Executed validation:
   targeted `eslint` for `AgentCrewTrace.tsx`, and `git diff --check` passed.
   Vite retains existing large-chunk warnings; Pylance retains exactly the
   five pre-existing backend diagnostics and introduces no new ones.
+
+Initial authenticated publication: app 1.0.1173 / `f1784e6`, hosted coordinator
+v42, toolbox `hydro-fabric-iq-tools:2`, image `src-6dc7a516a6ddd2f2`. Canonical
+deployment returned `SUCCESS`; endpoint/CORS checks and all 42 preserved SPA
+redirects passed. Capacity readback remained Active F8.
+
+- Facility facts `a0ec0221-8dc5-43ee-92bf-da1175c960a8`: three records, QA reader
+  only, no specialist model or interpretation; 8.3 seconds in the app.
+- Native open-work counts `62c64792-8c61-4560-a359-3ed4ca1d2476`: Sloy 3,
+  Foyers 3, Pitlochry 4; native-only manifest, exact original source/presentation
+  text and recomputed SHA-256 match; 53.5 seconds.
+- Weather `b1da5e94-f369-4732-a111-2618ebf66685`: three station and 12 forecast
+  records, Weather readers plus interpretation, no prompt-agent loop; 20 seconds.
+  The answer explicitly disclosed absent Aurora data and the issue-time window.
+- RCA `527545ca-88a1-4e46-9d70-7f3ed2526a40`: native context then scoped RCA,
+  four checked competing hypotheses, missing fresh/independent evidence and
+  `maintenance_follow_up=not_supported`; no proposals or production writes.
+- Diagnostic attempt `fee62150-2bc3-4f99-a191-2fd9084f6dfd` failed before Work
+  Order at the legacy bundle gate. A new exact-prompt regression reproduced it.
+  Four focused native regressions and the full 211-case suite pass after
+  isolating that legacy schema from semantic native execution. Provider-error,
+  source/equipment identity and separate draft/approval validators remain.
 
 ### Current deployment-tool optimization (October 24, 2026)
 

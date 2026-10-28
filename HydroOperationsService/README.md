@@ -47,6 +47,15 @@ returning; partial evidence cannot become a successful answer. The whole run,
 including planning, catalog/version discovery and presentation, has an absolute
 ten-minute execution budget measured from its immutable request clock.
 Credential-admission lease time is not a per-stage execution deadline.
+Native Responses calls use their bounded call timeout inside that absolute
+execution budget, not the remaining admission lease.
+
+Semantic native execution preserves the provider's original answer and typed
+artifacts under the selected native evidence contract. It does not impose the
+legacy BAD-since-midnight quality/work JSON schema on arbitrary freshness,
+UNCERTAIN, historical-window or diagnostic questions. Provider errors,
+immutable source identities, requested equipment coverage and separate
+maintenance/approval checks still fail closed.
 
 Models see only tool schemas permitted by their pinned role and current turn.
 Unrequested chart tools and unauthorized proposal tools are omitted; callbacks
@@ -442,9 +451,10 @@ execution policies are not claimed for this separate Responses transport: source
 authorization, native read-only execution and application approval gates remain explicit.
 Native result documents and provider execution traces stay in the immutable audit;
 dependent specialists receive the unchanged answer and typed evidence at their original
-paths, without duplicate transport envelopes. The quality/work completeness gate also
-runs for semantically selected native steps, not only explicitly pinned source runs.
-When the provider retries federation, typed evidence is selected by the exact executed
+paths, without duplicate transport envelopes. The legacy BAD-since-midnight
+quality/work workflow retains its strict completeness gate; semantic requests use
+their explicit native evidence contract instead of that phrase-dependent schema.
+For the legacy projection, typed evidence is selected by the exact executed
 queries in one successful, nondegraded combine receipt. Artifacts from failed attempts
 remain in the audit but cannot pollute the verified selection or be stitched together
 to imply complete coverage. Conflicting artifacts for the same read remain a failure.
