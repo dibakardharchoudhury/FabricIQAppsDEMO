@@ -129,8 +129,12 @@ import notebookutils  # Fabric notebook utility
 def selected_ontology_entities(parts, workspace_id, ontology_id, stage="draft"):
     contexts = []
     for part in parts:
-        if part["path"].startswith(f"Files/Config/{stage}/ontologies/") and part["path"].endswith("/ontology.json"):
+        native = part["path"].startswith(f"Files/Config/{stage}/ontologies/") and part["path"].endswith("/ontology.json")
+        source = part["path"].startswith(f"Files/Config/{stage}/") and part["path"].endswith("/datasource.json")
+        if native or source:
             context = json.loads(base64.b64decode(part["payload"], validate=True))
+            if source and context.get("type") != "ontology":
+                continue
             if context.get("artifactId") == ontology_id:
                 if context.get("workspaceId") != workspace_id:
                     raise RuntimeError("Ontology context belongs to another workspace.")
@@ -1585,7 +1589,7 @@ try:
                 submitted_direct_sources[part["path"]] = ds
     parts = refresh_ontology_context(parts, ontology_id)
     removed_sources = []
-    if context_paths and selected_ontology_entities(parts, workspace_id, ontology_id):
+    if selected_ontology_entities(parts, workspace_id, ontology_id):
         ontology_parts = definition_parts(get_item_definition(ontology_id))
         parts, removed_sources = prune_ontology_duplicate_sources(
             parts, ontology_parts, workspace_id, ontology_id,
@@ -1604,14 +1608,10 @@ try:
     if context_paths:
         print("   • verified ontology context ->", ", ".join(context_paths))
         print("       Refreshed live metadata; retained selections, custom sources and source guidance.")
-        print(f"       Removed {len(removed_sources)} redundant Ontology-covered source profile(s).")
     else:
         print("   • ontology data source  ->", DATASOURCE_PATH)
         print("       Entity metadata refreshed from the live ontology; custom selections preserved.")
-        print("   • Lakehouse data source ->", LAKEHOUSE_DATASOURCE_PATH)
-        print(f"       {len(LAKEHOUSE_TABLES)} table(s) selected with discovered columns.")
-        print("   • Eventhouse data source ->", KUSTO_DATASOURCE_PATH)
-        print(f"       {kql_table_name} selected with 4 columns.")
+    print(f"       Removed {len(removed_sources)} redundant Ontology-covered source profile(s).")
 
     update_item_definition(data_agent_item_id, {"parts": parts})
     draft_parts = verify_agent_source_readback(

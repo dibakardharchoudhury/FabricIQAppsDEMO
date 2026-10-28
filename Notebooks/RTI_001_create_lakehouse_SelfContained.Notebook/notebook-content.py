@@ -668,8 +668,12 @@ OPERATIONAL_DEMO_COUNTS = {
 def selected_ontology_entities(parts, workspace_id, ontology_id, stage="draft"):
     contexts = []
     for part in parts:
-        if part["path"].startswith(f"Files/Config/{stage}/ontologies/") and part["path"].endswith("/ontology.json"):
+        native = part["path"].startswith(f"Files/Config/{stage}/ontologies/") and part["path"].endswith("/ontology.json")
+        source = part["path"].startswith(f"Files/Config/{stage}/") and part["path"].endswith("/datasource.json")
+        if native or source:
             context = json.loads(base64.b64decode(part["payload"], validate=True))
+            if source and context.get("type") != "ontology":
+                continue
             if context.get("artifactId") == ontology_id:
                 if context.get("workspaceId") != workspace_id:
                     raise RuntimeError("Ontology context belongs to another workspace.")

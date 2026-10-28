@@ -84,6 +84,32 @@ class OntologySourceTopologyTests(unittest.TestCase):
                 agent[2] = part(agent[2]["path"], json.dumps(source))
                 self.assertEqual(support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont"), (agent, []))
 
+    def test_fresh_verified_v2_source_is_pruned_before_context_promotion(self):
+        agent, ontology = self.fixtures()
+        context = json.loads(base64.b64decode(agent[1]["payload"]))
+        context["type"] = "ontology"
+        agent[1] = part("Files/Config/draft/ontology-source/datasource.json", json.dumps(context))
+        result, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
+        self.assertEqual(removed, ["Files/Config/draft/lakehouse-source/datasource.json"])
+        self.assertIn(agent[1], result)
+        self.assertEqual(support.selected_ontology_entities(result, "ws", "ont"), {"facilities", "equipment"})
+        context["type"] = "lakehouse_tables"
+        agent[1] = part(agent[1]["path"], json.dumps(context))
+        self.assertEqual(support.selected_ontology_entities(agent, "ws", "ont"), set())
+
+    def test_source_promotion_does_not_allow_ambiguous_or_cross_workspace_selection(self):
+        agent, _ = self.fixtures()
+        context = json.loads(base64.b64decode(agent[1]["payload"]))
+        context["type"] = "ontology"
+        agent.append(part("Files/Config/draft/ontology-source/datasource.json", json.dumps(context)))
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            support.selected_ontology_entities(agent, "ws", "ont")
+        agent.pop(1)
+        context["workspaceId"] = "other"
+        agent[-1] = part(agent[-1]["path"], json.dumps(context))
+        with self.assertRaisesRegex(RuntimeError, "another workspace"):
+            support.selected_ontology_entities(agent, "ws", "ont")
+
     def test_rejects_mismatched_physical_source_and_instruction_overflow(self):
         agent, ontology = self.fixtures()
         stale = copy.deepcopy(ontology)

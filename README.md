@@ -107,6 +107,10 @@ by the selected live v2 workspace/item identity, not the old path alone. It requ
 entity selections, descriptions and custom content; only the known schema/type conversion,
 omitted empty defaults and generated authored-description markers are accepted. Missing,
 ambiguous or lossy source readback still fails setup before any runtime readiness claim.
+Fresh setup and reruns prune separately attached Lakehouse/Eventhouse sources only when the
+selected ontology entities' authoritative physical bindings cover every selected table.
+Source guidance is retained in the agent instructions; operational SQL execution sources,
+uncovered custom tables and custom source metadata remain intact.
 
 The Data Agent smoke check uses the selected ontology as semantic context and permits source-native
 SQL on its associated Lakehouse static binding. It compares the first five facility IDs/names with
