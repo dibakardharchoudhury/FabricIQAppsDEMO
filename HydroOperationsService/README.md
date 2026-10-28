@@ -170,6 +170,48 @@ paraphrased/negated intents, native fidelity routing, reader-only forecasts,
 diagnostic versus fault-gated drafting and clarification. The ordinary suite
 skips real-model calls.
 
+## Bounded remediation verification: October 28
+
+Implementation commit `3d9cfab` removes the production native prompt wrapper,
+duplicate downstream native prose and duplicate in-flight source reads without
+changing the original Fabric answer or approval boundary. Validation passed the
+357-test full service suite (one optional live-suite skip), two additional
+shared-reader failure/identity regression tests and 95 frontend transport,
+authorization, orchestration and presentation tests.
+
+The following operator-authenticated diagnostics exercised the patched local
+controller against `ai-account-hydroIQ` / `ai-project-hydroIQ`, with real project,
+model and source calls. They are **not authenticated hosted-browser acceptance**.
+No work orders were approved, saved or created.
+
+| Scenario | Observed elapsed time | Result |
+|---|---:|---|
+| Native business question: how facilities, equipment and work orders relate | 82.078 s, including 8.472 s planning | Native source returned 1,287 characters. Production presentation matched the source byte for byte; zero wrapper-model rounds. |
+| Gauge telemetry quality plus Gale UKMet forecast/observation comparison | 28.041 s | Failed at delegated connector authorization (`AUTH_FAILED`); no empty-data fallback. Browser source access is still unverified. |
+| Sparky quality/open-work retrieval, Sleuth investigation and Fixer review without drafts | 139.891 s | Native retrieval completed; direct RCA enrichment reported authorization failures, then RCA hit provider HTTP 429. Fixer did not complete. This is not a collective success. |
+
+An initial meta-question asking Sparky to reproduce an earlier answer returned
+a clarification. It was preserved unchanged, not counted as a substantive
+business-answer pass. The native business question above was evaluated separately.
+
+The business-question planner reported 10,039 input / 326 output tokens. The
+Fabric-managed source separately reported 22,738 input / 321 output tokens;
+these are distinct provider accounting boundaries, not one Foundry quota total.
+There is no comparable pre-change timing or sustained concurrent-load result,
+so no measured end-to-end speedup or multi-user throughput claim is established.
+The collective run's HTTP 429 shows that the current 40,000-TPM Foundry allocation
+is still not a sufficient acceptance result. More quota or explicitly authorized
+reallocation/deployment-type changes remain separate operator decisions.
+
+The canonical deployment activated coordinator version **3** and passed hosting,
+AppBackend preflight/POST and configured delegated-permission checks while
+preserving all 43 required redirects. Hosting verification reached the protected
+sign-in gate; authenticated connector data and browser agent execution were not
+certified. The test browser could not open the required sign-in popup, and the
+operator token is not a replacement for the SPA's delegated source scopes.
+The cross-replica persistence/admission and load/telemetry requirements described
+above also remain outstanding; this record is not an enterprise-readiness claim.
+
 ## October 26 current audit
 
 Latest publication: coordinator **v23**, signed app **1.0.1121 / `1673261`**.
