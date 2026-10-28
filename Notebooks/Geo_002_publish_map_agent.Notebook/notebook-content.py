@@ -368,6 +368,9 @@ def binding_from_context(workspace, suffix, context, target_lakehouse_id="", age
             raise ProvisioningError("geo_lakehouse_id does not match the bound Lakehouse")
     elif lakehouse_name != f"Hydro_GeoContext_{suffix}" and (suffix or not re.fullmatch(r"Hydro_GeoContext_[A-Za-z0-9_]+", lakehouse_name)):
         raise ProvisioningError("Attach the selected GeoContext; custom names require its verified geo_lakehouse_id")
+    if (not suffix and isinstance(agent_name, str) and agent_name.startswith("Hydro_Map_Agent_")
+            and not lakehouse_name.startswith("Hydro_GeoContext_")):
+        suffix = agent_name.removeprefix("Hydro_Map_Agent_")
     suffix = suffix or lakehouse_name.removeprefix("Hydro_GeoContext_")
     if not agent_name:
         if not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
@@ -628,6 +631,7 @@ class FabricMapAgentAPI:
         self.session, self.binding, self.token_provider = session, binding, token_provider
         self.workspace_path = f"/v1/workspaces/{binding['workspace_id']}"
         self.agent_id = None
+        self.folder_id = None
 
     def checked_url(self, path):
         url = path if path.startswith("https://") else FABRIC_BASE + path
@@ -657,13 +661,18 @@ class FabricMapAgentAPI:
             if self.agent_id:
                 prefix = f"{self.workspace_path}/dataAgents/{self.agent_id}"
                 allowed.update({prefix + "/updateDefinition", prefix + "/staging/publish"})
+                if self.folder_id:
+                    allowed.add(f"{self.workspace_path}/items/{self.agent_id}/move")
             if method != "POST" or relative not in allowed:
                 raise ProvisioningError("Unowned or unsupported management write refused")
             if relative.endswith("/dataAgents") and (
                 not isinstance(body, dict) or body.get("displayName") != self.binding["agent_name"]
                 or body.get("description") != owned_description(self.binding)
+                or not self.folder_id or body.get("folderId") != self.folder_id
             ):
-                raise ProvisioningError("Only the specifically owned dedicated agent may be created")
+                raise ProvisioningError("Only the specifically owned dedicated agent may be created in its demo folder")
+            if relative.endswith("/move") and body != {"targetFolderId": self.folder_id}:
+                raise ProvisioningError("The owned map agent may only move into its resolved demo folder")
         for attempt in range(4 if method == "GET" or read_only else 1):
             try:
                 response = self.session.request(
@@ -704,7 +713,7 @@ class FabricMapAgentAPI:
         return self.response_json(self.request("GET", path))
 
     def list_items(self, kind):
-        if kind not in ("lakehouses", "dataAgents"):
+        if kind not in ("lakehouses", "dataAgents", "folders"):
             raise ProvisioningError("Unsupported discovery scope")
         base = f"{self.workspace_path}/{kind}"
         url, seen, items = base, set(), []
@@ -767,13 +776,39 @@ class FabricMapAgentAPI:
             inspect_definition(self.get_definition(), self.binding)
         return lakehouse
 
+    def resolve_folder(self):
+        name = f"RTI_DEMO_{self.binding['env_suffix']}"
+        folders = [folder for folder in self.list_items("folders")
+                   if folder.get("displayName") == name and not folder.get("parentFolderId")]
+        if len(folders) != 1:
+            raise ProvisioningError(f"Expected one root demo folder {name}; run Core setup before publishing the map agent")
+        self.folder_id = guid(folders[0].get("id"), "demo folder")
+        return self.folder_id
+
+    def ensure_agent_folder(self):
+        if not self.agent_id or not self.folder_id:
+            raise ProvisioningError("An owned map agent and resolved demo folder are required")
+        path = f"{self.workspace_path}/items/{self.agent_id}"
+        item = self.get(path)
+        if assert_owned_agent(item, self.binding) != self.agent_id:
+            raise ProvisioningError("Map agent identity changed before folder placement")
+        if item.get("folderId") != self.folder_id:
+            response = self.request("POST", path + "/move", {"targetFolderId": self.folder_id})
+            response.close()
+            item = self.get(path)
+        if assert_owned_agent(item, self.binding) != self.agent_id or item.get("folderId") != self.folder_id:
+            raise ProvisioningError("Map agent folder readback did not match the resolved demo folder")
+        return item
+
     def ensure_agent(self):
+        self.resolve_folder()
         existing = select_owned_agent(self.list_items("dataAgents"), self.binding)
         if existing:
             self.agent_id = assert_owned_agent(existing, self.binding)
-            return existing
+            return self.ensure_agent_folder()
         response = self.request("POST", self.workspace_path + "/dataAgents", {
             "displayName": self.binding["agent_name"], "description": owned_description(self.binding),
+            "folderId": self.folder_id,
         }, accepted=(201, 202))
         if response.status_code == 202:
             self.wait_operation(response)
@@ -783,7 +818,7 @@ class FabricMapAgentAPI:
         else:
             existing = self.response_json(response)
         self.agent_id = assert_owned_agent(existing, self.binding)
-        return existing
+        return self.ensure_agent_folder()
 
     def verify_owned_target(self):
         if not self.agent_id:
@@ -1346,6 +1381,8 @@ def publish_map_agent(api, models, mcp_factory):
 # ## Execute in the existing authorized Fabric notebook context
 # Reruns reuse only verified owned artifacts. Source imports and operational data
 # are never written. The final exit value is emitted only after the grounding canary.
+# The dedicated map agent belongs in the matching root RTI_DEMO folder. Reruns
+# repair misplaced owned agents without recreating them and verify folder readback.
 
 # CELL ********************
 

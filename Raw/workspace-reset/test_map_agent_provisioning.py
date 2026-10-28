@@ -27,6 +27,7 @@ LAKEHOUSE = str(UUID(int=2))
 AGENT = str(UUID(int=3))
 OPERATION = str(UUID(int=4))
 RUN_ID = str(UUID(int=5))
+FOLDER = str(UUID(int=8))
 
 
 class RequestError(OSError):
@@ -97,6 +98,7 @@ class HelpersTest(unittest.TestCase):
         item = {
             "id": AGENT, "type": "DataAgent", "workspaceId": WORKSPACE,
             "displayName": "Hydro_Map_Agent_V6", "description": self.call("owned_description", self.binding),
+            "folderId": FOLDER,
         }
         return {**item, **overrides}
 
@@ -140,6 +142,7 @@ class OwnershipAndBindingTests(HelpersTest):
         renamed = {**context, "defaultLakehouseName": "Norwegian Energy Production"}
         binding = self.call("binding_from_context", WORKSPACE, "", renamed, LAKEHOUSE, "Hydro_Map_Agent_PROD_42")
         self.assertEqual(binding["lakehouse_name"], renamed["defaultLakehouseName"])
+        self.assertEqual(binding["env_suffix"], "PROD_42")
         for target in ("", str(UUID(int=9))):
             with self.subTest(target=target), self.assertRaises(self.error):
                 self.call("binding_from_context", "", "", renamed, target, "Hydro_Map_Agent_PROD_42")
@@ -370,6 +373,91 @@ class DefinitionTests(HelpersTest):
             self.call("inspect_definition", {"DataAgentV1.json": self.call("encode_part", "DataAgentV1.json", {})}, self.binding)
 
 
+class FolderPlacementTests(HelpersTest):
+    def api_in_folder(self, folders=None, existing=None):
+        api = self.api(Mock(request=Mock(return_value=Response())))
+        folder = {"id": FOLDER, "displayName": "RTI_DEMO_V6", "workspaceId": WORKSPACE}
+        api.list_items = Mock(side_effect=lambda kind: (
+            [folder] if folders is None else folders
+        ) if kind == "folders" else ([] if existing is None else [existing]))
+        return api
+
+    def test_existing_root_agent_moves_without_recreation(self):
+        api = self.api_in_folder(existing=self.agent(folderId=None))
+        api.get = Mock(side_effect=[self.agent(folderId=None), self.agent()])
+        result = api.ensure_agent()
+        self.assertEqual(result["id"], AGENT)
+        self.assertEqual(result["folderId"], FOLDER)
+        api.session.request.assert_called_once()
+        request = api.session.request.call_args
+        self.assertEqual(request.args, ("POST", f"{self.ns['FABRIC_BASE']}/v1/workspaces/{WORKSPACE}/items/{AGENT}/move"))
+        self.assertEqual(request.kwargs["json"], {"targetFolderId": FOLDER})
+
+    def test_correctly_placed_agent_reruns_are_read_only(self):
+        api = self.api_in_folder(existing=self.agent())
+        api.get = Mock(return_value=self.agent())
+        self.assertEqual(api.ensure_agent()["folderId"], FOLDER)
+        self.assertEqual(api.ensure_agent()["folderId"], FOLDER)
+        api.session.request.assert_not_called()
+
+    def test_new_agent_is_created_in_resolved_folder(self):
+        api = self.api_in_folder()
+        api.session.request.return_value = Response(self.agent(), status=201)
+        api.get = Mock(return_value=self.agent())
+        self.assertEqual(api.ensure_agent()["folderId"], FOLDER)
+        api.session.request.assert_called_once()
+        self.assertEqual(api.session.request.call_args.kwargs["json"]["folderId"], FOLDER)
+
+    def test_missing_ambiguous_or_nested_demo_folder_never_mutates(self):
+        folder = {"id": FOLDER, "displayName": "RTI_DEMO_V6"}
+        for folders in ([], [folder, {**folder, "id": str(UUID(int=9))}],
+                        [{**folder, "parentFolderId": str(UUID(int=9))}]):
+            with self.subTest(folders=folders):
+                api = self.api_in_folder(folders, self.agent())
+                with self.assertRaisesRegex(self.error, "folder"):
+                    api.ensure_agent()
+                api.session.request.assert_not_called()
+
+    def test_folder_readback_failure_is_not_reported_as_success(self):
+        api = self.api_in_folder(existing=self.agent(folderId=None))
+        api.get = Mock(return_value=self.agent(folderId=None))
+        with self.assertRaisesRegex(self.error, "folder readback"):
+            api.ensure_agent()
+
+    def test_folder_lookup_paginates_before_resolving_target(self):
+        session = Mock(request=Mock(side_effect=[
+            Response({"value": [], "continuationToken": "next/+"}),
+            Response({"value": [{"id": FOLDER, "displayName": "RTI_DEMO_V6"}]}),
+        ]))
+        api = self.api(session)
+        self.assertEqual(api.resolve_folder(), FOLDER)
+        self.assertIn("/folders?continuationToken=next%2F%2B", session.request.call_args.args[1])
+
+    def test_folder_name_uses_the_current_environment_suffix(self):
+        api = self.api_in_folder(folders=[
+            {"id": str(UUID(int=9)), "displayName": "RTI_DEMO_V6"},
+            {"id": FOLDER, "displayName": "RTI_DEMO_PROD_42"},
+        ])
+        api.binding = {**self.binding, "env_suffix": "PROD_42"}
+        self.assertEqual(api.resolve_folder(), FOLDER)
+        api.session.request.assert_not_called()
+
+    def test_folder_writes_cannot_target_another_agent_or_folder(self):
+        api = self.api()
+        api.agent_id, api.folder_id = AGENT, FOLDER
+        for item, body in ((str(UUID(int=9)), {"targetFolderId": FOLDER}),
+                           (AGENT, {"targetFolderId": str(UUID(int=9))}),
+                           (AGENT, {"targetFolderId": None})):
+            with self.subTest(item=item, body=body), self.assertRaises(self.error):
+                api.request("POST", f"/v1/workspaces/{WORKSPACE}/items/{item}/move", body)
+        with self.assertRaisesRegex(self.error, "created"):
+            api.request("POST", f"/v1/workspaces/{WORKSPACE}/dataAgents", {
+                "displayName": self.binding["agent_name"], "description": self.call("owned_description", self.binding),
+                "folderId": str(UUID(int=9)),
+            })
+        api.session.request.assert_not_called()
+
+
 class RestTests(HelpersTest):
     def test_matching_draft_and_published_contract_do_not_republish(self):
         parts = self.desired_parts()
@@ -437,10 +525,14 @@ class RestTests(HelpersTest):
         api.session.request.assert_not_called()
 
     def test_owned_reuse_never_posts_create_or_touches_hydro_intelligence(self):
-        session = Mock(request=Mock(return_value=Response({"value": [
-            self.agent(displayName="RTI_Demo_Agent_V6", id=str(UUID(int=88)), description="Hydro Intelligence"),
-            self.agent(),
-        ]})))
+        session = Mock(request=Mock(side_effect=[
+            Response({"value": [{"id": FOLDER, "displayName": "RTI_DEMO_V6"}]}),
+            Response({"value": [
+                self.agent(displayName="RTI_Demo_Agent_V6", id=str(UUID(int=88)), description="Hydro Intelligence"),
+                self.agent(),
+            ]}),
+            Response(self.agent()),
+        ]))
         api = self.api(session)
         self.assertEqual(api.ensure_agent()["id"], AGENT)
         self.assertEqual(api.agent_id, AGENT)
@@ -449,9 +541,11 @@ class RestTests(HelpersTest):
     def test_mutations_not_retried_and_403_never_success(self):
         session = Mock(request=Mock(return_value=Response({"errorCode": "Forbidden"}, 403)))
         api = self.api(session)
+        api.folder_id = FOLDER
         with self.assertRaisesRegex(self.error, "Forbidden"):
             api.request("POST", f"/v1/workspaces/{WORKSPACE}/dataAgents", {
                 "displayName": self.binding["agent_name"], "description": self.call("owned_description", self.binding),
+                "folderId": FOLDER,
             }, accepted=(201, 202))
         session.request.assert_called_once()
         self.ns["time"].sleep.assert_not_called()
