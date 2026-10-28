@@ -207,6 +207,62 @@ class Job:
         self.cancel_requested = False
         self.component: str | None = None
         self.failed_component: str | None = None
+        self.started = time.monotonic()
+        self.ended: float | None = None
+        self.phase_timings = [
+            {"name": name, "status": "pending", "started": None, "ended": None}
+            for name in phases
+        ]
+        self.phase_timings[0].update(status="running", started=self.started)
+        self.component_timings: dict[str, dict] = {}
+
+    def advance_phase(self, index: int) -> None:
+        """Called under job.lock; omitted log markers have no invented duration."""
+        if index <= self.phase_index:
+            return
+        now = time.monotonic()
+        previous = self.phase_timings[self.phase_index]
+        if previous["status"] == "running":
+            previous.update(status="succeeded", ended=now)
+        for timing in self.phase_timings[self.phase_index + 1:index]:
+            if timing["status"] == "pending":
+                timing["status"] = "unreported"
+        self.phase_index = index
+        self.phase_timings[index].update(status="running", started=now)
+
+    def finish_component(self, name: str, status: str, first: int, last: int) -> None:
+        now = time.monotonic()
+        self.component_timings[name].update(status=status, ended=now)
+        for timing in self.phase_timings[first:last]:
+            if timing["status"] == "running":
+                timing.update(status=status, ended=now)
+            elif status == "succeeded" and timing["status"] == "pending":
+                timing["status"] = "unreported"
+
+    def finish_timing(self, status: str) -> None:
+        if self.ended is None:
+            self.ended = time.monotonic()
+        for timing in self.phase_timings:
+            if timing["status"] == "running":
+                timing.update(status=status, ended=self.ended)
+
+    def timing_snapshot(self) -> dict:
+        now = self.ended if self.ended is not None else time.monotonic()
+
+        def snapshot(timing):
+            start = timing["started"]
+            return {
+                "name": timing["name"], "status": timing["status"],
+                "elapsedSeconds": None if start is None else max(
+                    0, (timing["ended"] if timing["ended"] is not None else now) - start,
+                ),
+            }
+
+        return {
+            "elapsedSeconds": max(0, now - self.started),
+            "phaseTimings": [snapshot(timing) for timing in self.phase_timings],
+            "componentTimings": [snapshot(timing) for timing in self.component_timings.values()],
+        }
 
 
 JOBS: dict[str, Job] = {}
@@ -281,6 +337,7 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             job.lines.append(f"[failed to start: {exc}]")
             job.status = "failed"
             job.returncode = -1
+            job.finish_timing(job.status)
         return
 
     with job.lock:
@@ -306,7 +363,7 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
                 job.lines.append(line)
                 for idx, subs in markers:
                     if idx > job.phase_index and any(s in line for s in subs):
-                        job.phase_index = idx
+                        job.advance_phase(idx)
         proc.wait()
     finally:
         timer.cancel()
@@ -320,6 +377,7 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             job.status = "cancelled"
         else:
             job.status = "succeeded" if proc.returncode == 0 else "failed"
+        job.finish_timing(job.status)
         if job.status == "succeeded":
             job.phase_index = len(job.phases) - 1
 
@@ -338,7 +396,7 @@ def _run_workflow_step(
         env.update(env_extra)
     cmd = [sys.executable, "-u", *argv]
     with job.lock:
-        job.phase_index = phase_offset
+        job.advance_phase(phase_offset)
         job.component = name
         job.lines.extend(("", f"===== {name} ====="))
     try:
@@ -385,7 +443,7 @@ def _run_workflow_step(
                 for idx, subs in markers:
                     target = phase_offset + idx - 1
                     if target > job.phase_index and any(marker in line for marker in subs):
-                        job.phase_index = target
+                        job.advance_phase(target)
         proc.wait()
     finally:
         timer.cancel()
@@ -399,10 +457,16 @@ def _run_workflow_step(
 
 
 def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
-    for step in steps:
+    for step_index, step in enumerate(steps):
         if job.cancel_requested:
             break
         name = str(step["name"])
+        first = int(step["phase_offset"])
+        last = int(steps[step_index + 1]["phase_offset"]) if step_index + 1 < len(steps) else len(job.phases) - 1
+        with job.lock:
+            job.component_timings[name] = {
+                "name": name, "status": "running", "started": time.monotonic(), "ended": None,
+            }
         try:
             returncode = _run_workflow_step(
                 job,
@@ -419,11 +483,16 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
                 job.returncode = -1
                 job.failed_component = name
                 job.process = None
+                job.finish_component(name, "failed", first, last)
+                job.finish_timing(job.status)
                 job.lines.append(
                     f"[workflow stopped] {name} monitor failed: "
                     f"{type(exc).__name__}: {exc}"
                 )
             return
+        with job.lock:
+            job.finish_component(name, "cancelled" if job.cancel_requested else
+                                 "succeeded" if returncode == 0 else "failed", first, last)
         if returncode != 0:
             with job.lock:
                 job.returncode = returncode
@@ -436,6 +505,7 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
                         f"[workflow stopped] {name} failed with exit code {returncode}; "
                         "later steps were not started."
                     )
+                job.finish_timing(job.status)
             return
         with job.lock:
             job.lines.append(f"[workflow] {name} completed successfully.")
@@ -450,6 +520,7 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
             job.component = None
             job.phase_index = len(job.phases) - 1
             job.lines.append("[workflow] Completed: " + ", ".join(str(step["name"]) for step in steps) + ".")
+        job.finish_timing(job.status)
 
 
 def _start_workflow(steps: list[dict[str, object]], *, phases: list[str] | None = None) -> str | None:
@@ -1110,6 +1181,7 @@ def api_job(job_id: str):
         returncode = job.returncode
         component = job.component
         failed_component = job.failed_component
+        timings = job.timing_snapshot()
     return jsonify(
         status=status,
         returncode=returncode,
@@ -1121,6 +1193,7 @@ def api_job(job_id: str):
         failedComponent=failed_component,
         lines=new_lines,
         nextSince=total,
+        **timings,
     )
 
 

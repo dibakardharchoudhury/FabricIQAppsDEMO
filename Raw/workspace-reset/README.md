@@ -659,6 +659,18 @@ records that later steps were not started. The progress display exposes detailed
 Sync, Pipeline, and Deploy subphases, and **Cancel running jobs** terminates the
 currently active child process.
 
+Full Deploy shows a running elapsed timer and final duration for every section
+and its expanded substeps. Core setup also separates the setup-pipeline and
+energy-publication component durations. Timers use the server's monotonic clock,
+refresh with the one-second progress poll, and freeze on success, failure or
+cancellation. Section totals sum their actual local component runtimes; substep
+intervals are bounded by observed progress log markers, not individual remote
+Fabric notebook executions. Omitted markers display **Not reported**, and steps
+that have not started display **Not started**. Lost monitoring shows the last
+observed duration rather than claiming the task has stopped. Timings belong to
+the in-memory local job and are discarded when the server restarts; they cannot
+be reconstructed for earlier runs.
+
 Before the pipeline starts, the app resolves the Key Vault URI against Azure resources
 visible to the current `az login` identity. If public network access is enabled with a
 default allow rule, no endpoint is created. Otherwise the app reuses or creates a Fabric

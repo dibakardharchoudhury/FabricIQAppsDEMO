@@ -116,12 +116,88 @@ class WorkspaceActionTests(unittest.TestCase):
         with patch.object(SERVER.subprocess, "run", side_effect=subprocess.TimeoutExpired("az", 40)):
             self.assertEqual(self.client.get("/api/subscriptions").status_code, 503)
 
-    def test_progress_keeps_overall_elapsed_without_partial_module_timing_table(self):
+    def test_progress_shows_overall_section_and_substep_durations(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("renderDeploymentTimings", page)
         self.assertNotIn("Module timings", page)
         self.assertNotIn('aria-label="Deployment timings"', page)
         self.assertIn('class="elapsed" title="Elapsed time"', page)
+        self.assertIn("renderSectionDuration", page)
+        self.assertIn("job.phaseTimings?.[item.index]", page)
+        self.assertIn("job.componentTimings", page)
+        self.assertIn("Not reported", page)
+        self.assertIn("Last observed", page)
+
+    def test_server_timing_handles_skipped_markers_and_freezes_at_failure(self):
+        clock = [100.0]
+        with patch.object(SERVER.time, "monotonic", side_effect=lambda: clock[0]):
+            job = SERVER.Job(["Queued", "Connecting", "Optional marker", "Importing", "Later", "Done"])
+            clock[0] = 103
+            job.advance_phase(1)
+            clock[0] = 108
+            job.advance_phase(3)
+            clock[0] = 110
+            snapshot = job.timing_snapshot()
+            self.assertEqual(snapshot["elapsedSeconds"], 10)
+            self.assertEqual(snapshot["phaseTimings"][1]["elapsedSeconds"], 5)
+            self.assertEqual(snapshot["phaseTimings"][2]["status"], "unreported")
+            self.assertIsNone(snapshot["phaseTimings"][2]["elapsedSeconds"])
+            self.assertEqual(snapshot["phaseTimings"][3]["elapsedSeconds"], 2)
+            job.finish_timing("failed")
+            clock[0] = 1000
+            self.assertEqual(job.timing_snapshot()["elapsedSeconds"], 10)
+            self.assertEqual(job.timing_snapshot()["phaseTimings"][3]["elapsedSeconds"], 2)
+            self.assertEqual(job.timing_snapshot()["phaseTimings"][3]["status"], "failed")
+            self.assertEqual(job.timing_snapshot()["phaseTimings"][4]["status"], "pending")
+
+    def test_workflow_api_reports_exact_component_and_phase_durations(self):
+        clock = [100.0]
+        phases = ["Queued", "Sync · Start", "Sync · Import", "Pipeline · Run", "Pipeline · Finish", "Foundry · Start", "Done"]
+        steps = [{"name": name, "phase_offset": offset, "argv": [], "markers": [], "timeout": 1}
+                 for name, offset in (("GitHub sync", 1), ("Setup pipeline", 3), ("Foundry multi-agent setup", 5))]
+        for outcome in ("succeeded", "failed", "cancelled", "exception"):
+            clock[0] = 100
+            with self.subTest(outcome=outcome), patch.object(SERVER.time, "monotonic", side_effect=lambda: clock[0]):
+                job = SERVER.Job(phases)
+
+                def step(current, name, *_args):
+                    if name == "GitHub sync":
+                        clock[0] = 101
+                        current.advance_phase(1)
+                        clock[0] = 111
+                        current.advance_phase(2)
+                        clock[0] = 118
+                        return 0
+                    if name == "Setup pipeline":
+                        clock[0] = 120
+                        current.advance_phase(3)
+                        clock[0] = 130
+                        if outcome == "exception":
+                            raise OSError("monitor failed")
+                        if outcome == "cancelled":
+                            current.cancel_requested = True
+                            return -15
+                        return 23 if outcome == "failed" else 0
+                    current.advance_phase(5)
+                    clock[0] = 140
+                    return 0
+
+                with patch.object(SERVER, "_run_workflow_step", side_effect=step):
+                    SERVER._workflow_worker(job, steps)
+                self.assertEqual(job.status, "failed" if outcome == "exception" else outcome)
+                clock[0] = 1000
+                with patch.dict(SERVER.JOBS, {job.id: job}):
+                    response = self.client.get(f"/api/jobs/{job.id}?since=1").get_json()
+                self.assertTrue(response["done"])
+                self.assertEqual(response["elapsedSeconds"], 40 if outcome == "succeeded" else 30)
+                self.assertEqual(response["componentTimings"][0]["elapsedSeconds"], 18)
+                self.assertEqual(response["componentTimings"][1]["elapsedSeconds"], 12)
+                self.assertEqual(response["phaseTimings"][1]["elapsedSeconds"], 10)
+                self.assertEqual(response["phaseTimings"][2]["elapsedSeconds"], 7)
+                self.assertEqual(response["phaseTimings"][3]["elapsedSeconds"], 10)
+                self.assertEqual(response["phaseTimings"][4]["status"],
+                                 "unreported" if outcome == "succeeded" else "pending")
+                self.assertEqual(len(response["componentTimings"]), 3 if outcome == "succeeded" else 2)
 
     def test_live_output_scroll_selection_and_keyboard_during_streaming(self):
         """Exercise the real renderer and layout in an isolated headless browser, never the app/server."""
@@ -247,6 +323,34 @@ async function evaluate(expression) {
       var workflow=document.getElementById("workflowPanel");
       renderPanel(workflow,{status:"running",phases:["Sync · Start","Pipeline · Setup"],phaseIndex:0,lines:["Workflow"]});
       check(workflow.querySelector(".workflow-phase-group"), "Workflow module groups lost");
+      var timed = {
+        status:"running", phaseIndex:2, elapsedSeconds:100, component:"Setup pipeline", lines:["timed fixture"],
+        phases:["Queued","Sync · Connecting","Pipeline · Running","Energy · Checking prerequisites","Foundry · Hosted Agent","Deploy · Provisioning app","Done"],
+        phaseTimings:[
+          {status:"succeeded",elapsedSeconds:1},{status:"succeeded",elapsedSeconds:20},
+          {status:"running",elapsedSeconds:60},{status:"unreported",elapsedSeconds:null},
+          {status:"pending",elapsedSeconds:null},{status:"pending",elapsedSeconds:null},{status:"pending",elapsedSeconds:null}],
+        componentTimings:[
+          {name:"GitHub sync",status:"succeeded",elapsedSeconds:23},
+          {name:"Setup pipeline",status:"running",elapsedSeconds:65}]
+      };
+      renderPanel(workflow,timed);
+      check(workflow.querySelectorAll(".workflow-phase-summary .section-duration").length===4, "Every section needs a timer");
+      check(workflow.querySelectorAll(".phases .section-duration").length===5, "Every substep needs a timer");
+      check(workflow.querySelector('[data-group="sync"] summary').textContent.includes("Completed · 00:23"), "Completed timer lost");
+      check(workflow.querySelector('[data-group="pipeline"] summary').textContent.includes("Running · 01:05"), "Running section timer lost");
+      check(workflow.querySelector(".component-durations").textContent.includes("Setup pipeline"), "Core submodule timing lost");
+      check(workflow.textContent.includes("Not reported") && workflow.textContent.includes("Not started"), "Unmeasured steps must be explicit");
+      timed.elapsedSeconds=106; timed.phaseTimings[2].elapsedSeconds=66; timed.componentTimings[1].elapsedSeconds=71;
+      renderPanel(workflow,timed);
+      check(workflow.querySelector('[data-group="pipeline"] summary').textContent.includes("Running · 01:11"), "Running timer did not advance");
+      check(workflow.querySelector('[data-group="sync"] summary').textContent.includes("Completed · 00:23"), "Completed timer changed");
+      timed.status="interrupted"; renderPanel(workflow,timed);
+      check(workflow.textContent.includes("Last observed · 01:11"), "Interrupted monitor must not claim live timing");
+      timed.status="failed"; timed.failedComponent="Setup pipeline";
+      timed.componentTimings[1].status="failed"; timed.phaseTimings[2].status="failed";
+      renderPanel(workflow,timed);
+      check(workflow.querySelector('[data-group="pipeline"] summary').textContent.includes("Failed · 01:11"), "Failure duration lost");
       out.scrollTop=200;
       out.focus();
       check(document.activeElement===out, "Output must accept keyboard focus");
