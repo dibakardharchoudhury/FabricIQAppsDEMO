@@ -586,22 +586,13 @@ function renderFoundryFields(prefix, clientId) {
     <details id="${prefix}FoundryNewProjectOptions" class="foundry-block">
       <summary id="${prefix}FoundryNewProjectSummary">Create a new project</summary>
       <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
-        <span>I approve creating Azure resources using regional model defaults.</span></label>
+        <span>I approve creating the project and its Azure resources.</span></label>
       <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
-        <p class="hint">Enter a chat model. Names, region and model settings are automatic; Azure checks quota.</p>
+        <p class="hint">Enter two names. Setup creates and connects everything automatically, using the Fabric capacity region and available pay-as-you-go model settings. Models that require global inference use it; Azure checks quota.</p>
         <div class="grid">
-          <label>Chat model name <input id="${prefix}FoundryNewModel" type="text" placeholder="Model approved for your subscription" disabled /></label>
+          <label>Project name <input id="${prefix}FoundryNewProjectName" type="text" maxlength="64" placeholder="Name for the new Foundry project" disabled /></label>
+          <label>Model deployment name <input id="${prefix}FoundryNewModel" type="text" maxlength="64" placeholder="Existing deployment name or catalog chat model" disabled /></label>
         </div>
-        <details class="foundry-block"><summary>Model deployment settings</summary>
-          <p class="hint">Defaults: catalog version, regional Standard and minimum/default capacity. Global or provisioned types require an explicit choice.</p>
-          <div class="grid">
-            <label>Model version <input id="${prefix}FoundryModelVersion" type="text" placeholder="Automatic: catalog default version" disabled /></label>
-            <label>Deployment type (SKU) <input id="${prefix}FoundryModelSku" type="text" placeholder="Automatic: regional Standard" disabled /></label>
-            <label>Model capacity <input id="${prefix}FoundryModelCapacity" type="number" min="1" step="1" placeholder="Automatic: catalog minimum or default" disabled /></label>
-            <label>Region <input id="${prefix}FoundryLocation" type="text" placeholder="Automatic: Fabric capacity region" disabled /></label>
-            <label>Model catalog name <input id="${prefix}FoundryModelName" type="text" placeholder="Automatic: new deployment name" disabled /></label>
-          </div>
-        </details>
         <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
       </section>
     </details>
@@ -1025,24 +1016,20 @@ function foundryPayload(prefix) {
     azureSubscriptionId: value("AzureSubscriptionId"),
     foundryProjectResourceId: resourceId ? project : "",
     foundryProjectName: resourceId ? "" : project,
+    foundryNewProjectName: creating ? value("FoundryNewProjectName") : "",
     foundryModel: creating ? value("FoundryNewModel") : value("FoundryModel"),
-    foundryLocation: creating ? value("FoundryLocation") : "",
-    foundryModelName: creating ? value("FoundryModelName") : "",
-    foundryModelVersion: creating ? value("FoundryModelVersion") : "",
-    foundryModelSku: creating ? value("FoundryModelSku") : "",
-    foundryModelCapacity: creating ? value("FoundryModelCapacity") : "",
     createFoundry: creating,
   };
 }
 function foundryValid(prefix) {
   if (!$(prefix + "FoundryCreate").checked) return true;
-  const required = ["FoundryNewModel"];
-  const missing = required.filter(suffix => !$(prefix + suffix).value.trim());
-  const capacity = $(prefix + "FoundryModelCapacity").value.trim();
-  const valid = !missing.length && (!capacity || /^[1-9][0-9]*$/.test(capacity));
+  const project = $(prefix + "FoundryNewProjectName").value.trim();
+  const model = $(prefix + "FoundryNewModel").value.trim();
+  const valid = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project) &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Model selected. Catalog defaults apply; quota checked during provisioning."
-    : "To create a project, enter the model name. Capacity must be a positive whole number.";
+    ? "Ready. Setup resolves model settings and deploys the project, model and agents end to end."
+    : "Enter a project name and model deployment name (up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit).";
   return valid;
 }
 function updateFoundryMode(prefix) {
@@ -1052,9 +1039,9 @@ function updateFoundryMode(prefix) {
   $(prefix + "FoundryNewProjectSummary").textContent = creating
     ? "New project selected" : "Create a new project";
   $(prefix + "FoundryModeSummary").textContent = creating
-    ? "Create new resources. Names and model defaults are automatic."
+    ? "Create new resources. Enter only the project and model deployment names."
     : "Use existing resources (recommended).";
-  for (const suffix of ["FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+  for (const suffix of ["FoundryNewProjectName", "FoundryNewModel"]) {
     $(prefix + suffix).disabled = !creating;
   }
   for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
@@ -1067,7 +1054,7 @@ for (const prefix of ["deploy", "workflow"]) {
     updateFoundryMode(prefix);
     refresh();
   });
-  for (const suffix of ["FoundryNewModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+  for (const suffix of ["FoundryNewProjectName", "FoundryNewModel"]) {
     $(prefix + suffix).addEventListener("input", refresh);
   }
 }
@@ -1190,9 +1177,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryNewModel",
-  "FoundryLocation", "FoundryModelName",
-  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
+  "AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryNewProjectName", "FoundryNewModel",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
 function restoreTargetSettings() {

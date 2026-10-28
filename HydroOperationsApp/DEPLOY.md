@@ -46,7 +46,7 @@ If a step fails, fix the reported prerequisite and retry that module.
 | Alert email | Signed-in user's email when the tenant matches; confirm the recipient |
 | Azure subscription | Active or sole subscription in the target tenant; otherwise choose |
 | Existing Foundry project / model | Saved selection, target-named project, or unambiguous discovery |
-| New Foundry project | Chat model name + explicit resource-creation approval |
+| New Foundry project | Project name + model deployment name + explicit resource-creation approval |
 
 Core/Full Deploy values autosave on this machine in gitignored
 [`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json).
@@ -294,12 +294,18 @@ successful tool discovery alone does not establish a successful native answer.
   graph ownership are resolved internally. The launcher does not accept graph-binding
   JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
   overrides remain available through the documented command-line configuration.
-- **New project:** expand **Create a new project**, enter a chat model and
-  explicitly approve resource creation.
+- **New project:** expand **Create a new project**, enter **Project name** and
+  **Model deployment name**, then explicitly approve resource creation.
+  The exact project name is used. A ready deployment alias in the selected
+  subscription is resolved to its catalog model/version; catalog chat model
+  names also work. Both standalone Foundry setup and Full Deploy use this flow.
   Approval resets on reload or target change.
-- **Defaults:** target-hashed resource names, capacity region, catalog default
-  version, regional Standard SKU and minimum/default capacity. No automatic
-  global/provisioned substitution; catalog availability does not guarantee quota.
+- **Defaults:** target/project-hashed supporting resource names, capacity region,
+  catalog default version (or the resolved deployment's version) and minimum/default
+  capacity. Setup prefers regional Standard, then DataZoneStandard, then
+  GlobalStandard; the form discloses global inference. Provisioned capacity is
+  never automatic. Catalog availability does not guarantee quota; unavailable or
+  ambiguous model identities and missing access stop setup explicitly.
 
 Project/model preflight precedes AppBackend creation. Same-target Foundry hints
 survive backend rotation. Missing/inaccessible selections fail; they are never

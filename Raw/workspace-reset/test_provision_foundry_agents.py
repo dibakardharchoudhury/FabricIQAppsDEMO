@@ -262,6 +262,65 @@ class IncrementalProvisionTests(unittest.TestCase):
 
 
 class PreparedFoundryTests(unittest.TestCase):
+    def test_named_creation_ignores_saved_target_then_reuses_only_the_named_project(self):
+        subscription = str(uuid.uuid4())
+        base = f"/subscriptions/{subscription}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/"
+        endpoint = "https://account.services.ai.azure.com/api/projects/new-project"
+        projects = [base + "old-project"]
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.az.side_effect = lambda *args: list(args)
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({
+            "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
+            "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": base + "old-project",
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint.replace("new-project", "old-project"),
+            "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "old-model",
+        }, None)
+        def capture(argv):
+            if argv[:2] == ["resource", "list"]:
+                return json.dumps([{"id": identity} for identity in projects])
+            if argv[:2] == ["resource", "show"]:
+                self.assertEqual(argv[argv.index("--ids") + 1], base + "new-project")
+                return json.dumps({"id": base + "new-project", "properties": {
+                    "endpoints": {"AI Foundry API": endpoint},
+                }})
+            raise AssertionError(argv)
+        deploy.run_capture.side_effect = capture
+        creation = Mock()
+        creation.enabled.return_value = True
+        creation.model_defaults.return_value = {
+            "HYDRO_FOUNDRY_MODEL_NAME": "catalog-chat", "HYDRO_FOUNDRY_MODEL_VERSION": "v1",
+            "HYDRO_FOUNDRY_MODEL_SKU": "Standard", "HYDRO_FOUNDRY_MODEL_CAPACITY": "1",
+        }
+        def create(*args, **kwargs):
+            self.assertEqual(kwargs["model"], "chosen-deployment")
+            projects.append(base + "new-project")
+            return endpoint
+        creation.ensure_foundry_project.side_effect = create
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "new-project", "HYDRO_FOUNDRY_CREATE": "true",
+            "HYDRO_FOUNDRY_MODEL": "chosen-deployment",
+            "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "old-project",
+            "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": base + "old-project",
+            "HYDRO_FOUNDRY_PROJECT_ENDPOINT": endpoint.replace("new-project", "old-project"),
+        }), patch.object(module, "resolve_subscription", return_value=subscription), \
+                patch.object(module, "_load_sibling", return_value=creation), \
+                patch.object(module, "creation_location", return_value="region"), \
+                patch.object(module, "read_model_selection", return_value="chosen-deployment"):
+            preflight = module.resolve_project(deploy, "tenant", "workspace")
+            self.assertEqual((preflight.project_id, preflight.model), ("", "chosen-deployment"))
+            creation.ensure_foundry_project.assert_not_called()
+            selected = module.resolve_project(
+                deploy, "tenant", "workspace", allow_create=True, creation_settings=preflight.creation_settings,
+            )
+            self.assertEqual((selected.project_id, selected.endpoint), (base + "new-project", endpoint))
+            rerun = module.resolve_project(deploy, "tenant", "workspace", allow_create=True)
+            self.assertEqual(rerun.project_id, selected.project_id)
+        creation.ensure_foundry_project.assert_called_once()
+        deploy.run_stream.assert_not_called()
+
     def test_convention_project_is_selected_among_unrelated_projects_without_creation(self):
         from deploy_foundry_project import environment_name
 

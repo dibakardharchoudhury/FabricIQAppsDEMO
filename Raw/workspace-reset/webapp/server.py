@@ -960,6 +960,15 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):
             raise ValueError("Existing Foundry project name may contain only letters, digits, '.', '_' and '-'.")
         env["HYDRO_FOUNDRY_EXISTING_PROJECT_NAME"] = project_name
+    if data.get("foundryNewProjectName") is not None and not isinstance(data["foundryNewProjectName"], str):
+        raise ValueError("New Foundry project name must be text.")
+    new_project_name = text("foundryNewProjectName")
+    if new_project_name:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", new_project_name):
+            raise ValueError("New Foundry project name must be 1-64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.")
+        if data.get("createFoundry") is not True:
+            raise ValueError("A new Foundry project name requires explicit resource-creation approval.")
+        env["HYDRO_FOUNDRY_NEW_PROJECT_NAME"] = new_project_name
     model = text("foundryModel")
     if model:
         if not FOUNDRY_MODEL_RE.fullmatch(model):

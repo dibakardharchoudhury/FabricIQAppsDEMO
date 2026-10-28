@@ -510,6 +510,7 @@ class ProjectCreationTests(unittest.TestCase):
         settings = patch.dict(os.environ, {
             "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "test-version",
             "HYDRO_FOUNDRY_MODEL_SKU": "TestSku", "HYDRO_FOUNDRY_MODEL_CAPACITY": "7",
+            "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "",
         })
         settings.start()
         self.addCleanup(settings.stop)
@@ -531,7 +532,7 @@ class ProjectCreationTests(unittest.TestCase):
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "true"}):
             self.assertTrue(project.enabled())
 
-    def test_new_model_defaults_are_catalog_driven_and_do_not_select_global_or_provisioned_skus(self):
+    def test_new_model_defaults_prefer_regional_then_pay_as_you_go_never_provisioned(self):
         fake = self.fake()
         model = {
             "name": "approved-chat", "format": "OpenAI", "version": "catalog-version",
@@ -556,16 +557,91 @@ class ProjectCreationTests(unittest.TestCase):
             self.assertEqual(argv[:3], ["az", "cognitiveservices", "model"])
             self.assertEqual(argv[argv.index("--subscription") + 1], "sub")
             self.assertEqual(argv[argv.index("--location") + 1], "targetregion")
+            model["skus"] = [
+                {"name": "GlobalStandard", "capacity": {"default": 12}},
+                {"name": "DataZoneStandard", "capacity": {"default": 8}},
+            ]
+            capture.return_value = json.dumps([{"model": model}])
+            self.assertEqual(project.model_defaults(
+                fake, subscription="sub", location="region", model="approved-chat",
+            )["HYDRO_FOUNDRY_MODEL_SKU"], "DataZoneStandard")
             model["skus"] = [{"name": "GlobalStandard", "capacity": {"default": 12}}]
             capture.return_value = json.dumps([{"model": model}])
-            with self.assertRaisesRegex(fake.DeployError, "deployment type choice"):
-                project.model_defaults(fake, subscription="sub", location="region", model="approved-chat")
+            self.assertEqual(project.model_defaults(
+                fake, subscription="sub", location="region", model="approved-chat",
+            )["HYDRO_FOUNDRY_MODEL_SKU"], "GlobalStandard")
             with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_SKU": "GlobalStandard"}):
                 self.assertEqual(project.model_defaults(
                     fake, subscription="sub", location="region", model="approved-chat",
                 )["HYDRO_FOUNDRY_MODEL_SKU"], "GlobalStandard")
-            with self.assertRaisesRegex(fake.DeployError, "no unique supported chat version"):
+            model["skus"] = [{"name": "ProvisionedManaged", "capacity": {"minimum": 25}}]
+            capture.return_value = json.dumps([{"model": model}])
+            with self.assertRaisesRegex(fake.DeployError, "pay-as-you-go"):
+                project.model_defaults(fake, subscription="sub", location="region", model="approved-chat")
+            with self.assertRaisesRegex(fake.DeployError, "does not identify one underlying model"):
                 project.model_defaults(fake, subscription="sub", location="region", model="missing")
+
+    def test_deployment_alias_resolves_live_model_and_version_without_additional_inputs(self):
+        fake = self.fake()
+        catalog = [{"model": {
+            "name": "catalog-chat", "format": "OpenAI", "version": "v2",
+            "isDefaultVersion": False, "capabilities": {"chatCompletion": True},
+            "skus": [{"name": "GlobalStandard", "capacity": {"minimum": 1}}],
+        }}]
+        accounts = [{"kind": "AIServices", "name": "account", "resourceGroup": "group"}]
+        deployments = [{"name": "my-chat-alias", "properties": {
+            "provisioningState": "Succeeded",
+            "model": {"format": "OpenAI", "name": "catalog-chat", "version": "v2"},
+        }}]
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", side_effect=[
+            json.dumps(catalog), json.dumps(accounts), json.dumps(deployments),
+        ]) as capture:
+            settings = project.model_defaults(fake, subscription="sub", location="region", model="my-chat-alias")
+        self.assertEqual(settings, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "catalog-chat", "HYDRO_FOUNDRY_MODEL_VERSION": "v2",
+            "HYDRO_FOUNDRY_MODEL_SKU": "GlobalStandard", "HYDRO_FOUNDRY_MODEL_CAPACITY": "1",
+        })
+        encoded = project.deployments_parameter("my-chat-alias", settings)
+        self.assertEqual(json.loads(json.loads('{"value":"' + encoded + '"}')["value"])[0]["name"], "my-chat-alias")
+        self.assertTrue(all(call.args[0][call.args[0].index("--subscription") + 1] == "sub"
+                            for call in capture.call_args_list))
+        self.assertEqual(fake.log, [])
+
+    def test_duplicate_account_sku_catalog_rows_are_not_ambiguous_model_versions(self):
+        fake = self.fake()
+        model = {
+            "name": "chat", "format": "OpenAI", "version": "v1", "isDefaultVersion": True,
+            "capabilities": {"chatCompletion": True},
+            "skus": [{"name": "GlobalStandard", "capacity": {"default": 10, "minimum": None}}],
+        }
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", return_value=json.dumps([
+            {"model": model, "skuName": "S0"}, {"model": model, "skuName": "S1"},
+        ])) as capture:
+            settings = project.model_defaults(fake, subscription="sub", location="region", model="chat")
+            self.assertEqual(settings["HYDRO_FOUNDRY_MODEL_VERSION"], "v1")
+            self.assertEqual(settings["HYDRO_FOUNDRY_MODEL_CAPACITY"], "10")
+            capture.return_value = json.dumps([{"model": model}, {"model": {**model, "version": "v2"}}])
+            with self.assertRaisesRegex(fake.DeployError, "no unique supported chat version"):
+                project.model_defaults(fake, subscription="sub", location="region", model="chat")
+
+    def test_ambiguous_deployment_alias_fails_before_resource_creation(self):
+        fake = self.fake()
+        accounts = [{"kind": "OpenAI", "name": name, "resourceGroup": "group"} for name in ("first", "second")]
+        def deployment(name):
+            return [{"name": "shared-alias", "properties": {
+                "provisioningState": "Succeeded", "model": {"name": name, "format": "OpenAI", "version": "v1"},
+            }}]
+        with patch.object(fake, "run_capture", side_effect=[
+            json.dumps(accounts), json.dumps(deployment("chat-one")), json.dumps(deployment("chat-two")),
+        ]):
+            with self.assertRaisesRegex(fake.DeployError, "No model was guessed"):
+                project.model_reference(fake, subscription="sub", deployment="shared-alias")
 
     def test_catalog_capacity_constraints_and_nondefault_version_require_valid_selection(self):
         fake = self.fake()
@@ -670,6 +746,22 @@ class ProjectCreationTests(unittest.TestCase):
         self.assertEqual(order[0][:2], ["azd", "init"])
         self.assertEqual(order[-1], ["azd", "env", "get-values"])
         self.assertLess(order.index(["azd", "provision", "--environment"]), order.index(["azd", "env", "get-values"]))
+
+    def test_named_project_is_exact_and_state_is_scoped_to_target_and_name(self):
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_NEW_PROJECT_NAME": "My.Project"}):
+            name = project.environment_name("t", "w", "sub")
+            self.assertEqual(name, project.environment_name("T", "W", "SUB"))
+            self.assertNotEqual(name, project.environment_name("t", "other", "sub"))
+            fake = self.fake("https://new-res.services.ai.azure.com/api/projects/My.Project")
+            self.create(fake)
+            self.assertEqual(fake.environment_settings()["AZURE_AI_PROJECT_NAME"], "My.Project")
+            with self.assertRaisesRegex(fake.DeployError, "different project"):
+                self.create(self.fake())
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_NEW_PROJECT_NAME": "Another.Project"}):
+            self.assertNotEqual(name, project.environment_name("t", "w", "sub"))
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_NEW_PROJECT_NAME": "../bad"}):
+            with self.assertRaises(ValueError):
+                project.environment_name("t", "w", "sub")
 
     def test_an_already_initialized_folder_is_reused_not_reinitialized(self):
         fake = self.fake()

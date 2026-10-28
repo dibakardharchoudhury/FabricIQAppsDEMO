@@ -493,7 +493,7 @@ def creation_location(deploy, tenant: str, workspace: str, project_module) -> st
         if str(item.get("id") or "").lower() == capacity_id
     ), "")
     if not region:
-        raise deploy.DeployError("Fabric capacity region is unavailable. Set the region under new-project defaults.")
+        raise deploy.DeployError("Fabric capacity region is unavailable. Verify the workspace capacity assignment and access to its metadata.")
     return project_module.normalize_location(region)
 
 
@@ -504,11 +504,21 @@ def resolve_project(
     """Resolve the target before backend mutation; create only in the provisioning pass."""
     values, _ = deploy.current_rayfin_target()
     print("Foundry: project - resolving the Foundry project.", flush=True)
+    new_project_name = ""
+    if os.environ.get("HYDRO_FOUNDRY_NEW_PROJECT_NAME", "").strip():
+        from deploy_foundry_project import enabled, requested_project_name
+
+        try:
+            new_project_name = requested_project_name()
+        except ValueError as error:
+            raise deploy.DeployError(str(error)) from error
+        if not enabled():
+            raise deploy.DeployError("A new Foundry project name requires explicit resource-creation approval.")
     same_target = (
         deploy._public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
         and deploy._public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace.casefold()
     )
-    explicit_project_id = os.environ.get("HYDRO_FOUNDRY_PROJECT_RESOURCE_ID", "").strip()
+    explicit_project_id = "" if new_project_name else os.environ.get("HYDRO_FOUNDRY_PROJECT_RESOURCE_ID", "").strip()
     project_match = PROJECT_RESOURCE_RE.fullmatch(explicit_project_id) if explicit_project_id else None
     if explicit_project_id and not project_match:
         raise deploy.DeployError("HYDRO_FOUNDRY_PROJECT_RESOURCE_ID must be the full Foundry project ARM resource ID.")
@@ -521,14 +531,14 @@ def resolve_project(
         same_target
         and deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID").casefold() in ("", subscription.casefold())
     )
-    saved_project_id = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID") if same_target else ""
+    saved_project_id = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID") if same_target and not new_project_name else ""
     saved_endpoint = (
         deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT")
         if same_target and (not explicit_project_id or explicit_project_id.casefold() == saved_project_id.casefold())
         else ""
     )
-    explicit_endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip()
-    project_name = os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
+    explicit_endpoint = "" if new_project_name else os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip()
+    project_name = new_project_name or os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
     if project_name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):
         raise deploy.DeployError("Existing Foundry project name must contain only letters, digits, '.', '_' or '-'.")
     if project_name and not explicit_project_id and not explicit_endpoint \
@@ -608,7 +618,7 @@ def resolve_project(
             print(f"Foundry: reusing this target's convention-named project {expected_name}.", flush=True)
         elif project_module.enabled():
             candidates = []
-    if project_name and not candidates:
+    if project_name and not candidates and not new_project_name:
         raise deploy.DeployError(
             f"Existing Foundry project '{project_name}' was not found in the selected subscription. "
             "Check the project name under 'Project and model choices'; no replacement was created."

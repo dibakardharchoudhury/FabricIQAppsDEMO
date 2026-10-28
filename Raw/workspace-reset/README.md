@@ -137,8 +137,14 @@ This choice is shared across Foundry, full workflow and app publication, scoped 
 the tenant/workspace. Registration verification and automated auth setup remain required.
 The launcher preserves the target's existing work-order write policy; it does not
 offer or submit a write-permission override. Enabled writes still require human approval.
-**Create a new project** contains the explicit resource-creation approval and chat
-model input, with optional model deployment settings. Approval is never remembered.
+**Create a new project** asks only for **Project name** and **Model deployment name**,
+plus explicit resource-creation approval, which is never remembered. The exact
+project name is used in Azure. A deployment alias is resolved to its underlying
+model/version in the selected subscription; a catalog chat model name also works.
+Region, model version, pay-as-you-go SKU and minimum/default capacity are automatic.
+Regional Standard is preferred, followed by DataZoneStandard and GlobalStandard;
+the form discloses global inference. Provisioned capacity is never automatic.
+Quota, access and unresolved/ambiguous model identities fail explicitly, not by guessing.
 Existing saved project ARM IDs migrate into the project-name field; retired browser
 endpoint/registry/graph overrides are no longer submitted. Other choices are shared
 between the standalone and full-workflow forms and saved per tenant/workspace. See the
@@ -730,8 +736,9 @@ tenant and workspace selected in the sidebar:
    Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,
    `HYDRO_PRODUCTION_WRITES_ENABLED` in the launch environment). Select the Azure subscription with the form or
    `HYDRO_AZURE_SUBSCRIPTION_ID`; the engine verifies that it is enabled in the Fabric tenant. New target-specific
-   project creation is an explicit, billable opt-in and requires model version/SKU/capacity settings, not defaults
-   copied from the demo tenant. Both forms expose those settings. Requires `azd`; missing
+   project creation is an explicit, billable opt-in requiring only project and model deployment names.
+   Both forms resolve settings from live model/catalog metadata, never the demo tenant.
+   Requires `azd`; missing
    `azure.ai.agents` and `microsoft.foundry` extensions are installed
    by the deployer. Native graph materialization remains a manual prerequisite; if Full Deploy stops
    there after setup, complete the ontology's Manage graph flow, resolve the explicit binding and resume

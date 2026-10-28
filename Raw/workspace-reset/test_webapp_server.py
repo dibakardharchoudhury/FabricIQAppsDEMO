@@ -1406,6 +1406,34 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             self.client.post("/api/setup-foundry", json={"tenant": "tenant.example", "workspace": "w"})
         self.assertIsNone(start.call_args.args[1])  # nothing set: the server's own environment still applies
 
+    def test_two_name_creation_is_forwarded_to_standalone_and_full_workflow(self):
+        settings = {"foundryNewProjectName": "my-new-project", "foundryModel": "approved-chat", "createFoundry": True}
+        expected = {
+            "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "my-new-project",
+            "HYDRO_FOUNDRY_MODEL": "approved-chat", "HYDRO_FOUNDRY_CREATE": "true",
+        }
+        with patch.object(SERVER, "_start", return_value="job") as start:
+            response = self.client.post("/api/setup-foundry", json={
+                "tenant": "tenant.example", "workspace": "Demo", **settings,
+            })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(start.call_args.args[1], expected)
+        with patch.object(SERVER, "_start_workflow", return_value="job") as start:
+            response = self.client.post("/api/full-workflow", json={
+                "tenant": "tenant.example", "workspace": "Demo", "repository": "o/r",
+                "connectionId": "connection", "parameters": PIPELINE_PARAMS, **settings,
+            })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(start.call_args.args[0][3]["env"], expected)
+        for invalid in ("bad name", "../project", "-invalid", "x" * 65):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "New Foundry project name"):
+                SERVER._deploy_environment({**settings, "foundryNewProjectName": invalid})
+        with self.assertRaisesRegex(ValueError, "resource-creation approval"):
+            SERVER._deploy_environment({**settings, "createFoundry": False})
+        for invalid in (123, False, [], {}):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "must be text"):
+                SERVER._deploy_environment({**settings, "foundryNewProjectName": invalid})
+
     def test_invalid_foundry_settings_stop_the_request_before_any_job_starts(self):
         with patch.object(SERVER, "_start") as start, patch.object(SERVER, "_start_workflow") as workflow:
             deploy = self.client.post("/api/deploy-app", json={
@@ -1448,8 +1476,7 @@ console.log(JSON.stringify([
         forms = json.loads(result.stdout)
         for prefix, form in zip(("deploy", "workflow"), forms):
             for suffix in ("AzureSubscriptionId", "FoundryModel",
-                           "FoundryCreate", "FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
-                           "FoundryModelSku", "FoundryModelCapacity"):
+                           "FoundryCreate", "FoundryNewProjectName", "FoundryNewModel"):
                 self.assertIn(f'id="{prefix}{suffix}"', form)
             self.assertIn(f'foundryPayload("{prefix}")', page)
             self.assertIn(f'id="{prefix}FoundryCreation" class="foundry-block" hidden', form)
@@ -1461,8 +1488,14 @@ console.log(JSON.stringify([
             self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
             self.assertIn(f'<details id="{prefix}FoundryNewProjectOptions" class="foundry-block">', form)
             self.assertNotIn("<summary>Advanced settings</summary>", form)
-            for suffix in ("OntologyGraphBinding", "FoundryEndpoint", "AcrName", "FoundryProjectResourceId"):
+            for suffix in ("OntologyGraphBinding", "FoundryEndpoint", "AcrName", "FoundryProjectResourceId",
+                           "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
+                           "FoundryModelSku", "FoundryModelCapacity"):
                 self.assertNotIn(f'id="{prefix}{suffix}"', form)
+            creation = form[form.index(f'<section id="{prefix}FoundryCreation"'):form.index("</section>")]
+            self.assertEqual(creation.count('type="text"'), 2)
+            self.assertNotIn("Model deployment settings", form)
+            self.assertIn("Models that require global inference use it", creation)
             self.assertNotIn("Work-order permissions", form)
             self.assertNotIn("ProductionWrites", form)
             self.assertIn("<summary>Fabric App authentication</summary>", form)
@@ -1479,7 +1512,7 @@ console.log(JSON.stringify([
             self.assertNotIn("billable", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
             self.assertEqual(len(identifiers), len(set(identifiers)))
-        self.assertIn("I approve creating Azure resources", page)
+        self.assertIn("I approve creating the project and its Azure resources", page)
         self.assertNotIn('placeholder="gpt-5.6-sol"', page)
         self.assertNotIn("Advanced / first-time", page)
         self.assertNotIn("Advanced: secret names", page)
@@ -1492,7 +1525,7 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", paragraph).split()), 45, paragraph)
         for spec in SERVER.PIPELINE_PARAM_SPEC:
             self.assertLessEqual(len(spec["help"].split()), 12, spec["name"])
-        self.assertIn("I approve creating Azure resources", page)
+        self.assertIn("I approve creating the project and its Azure resources", page)
         self.assertIn("Deletes every workspace item.", page)
         self.assertIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
@@ -1541,7 +1574,7 @@ for (const clientId of spaClientIds) {
             self.assertIn(f'spaClientValid("{client_id}")', page)
         self.assertNotIn("appOntologyGraphBinding", page)
 
-    def test_foundry_creation_requires_only_model_and_valid_optional_capacity(self):
+    def test_foundry_creation_requires_only_valid_project_and_model_names(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         start = page.index("function foundryValid(")
         function = page[start:page.index('for (const prefix of ["deploy", "workflow"])', start)]
@@ -1549,22 +1582,25 @@ for (const clientId of spaClientIds) {
 const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
-for (const suffix of ["FoundryCreate", "FoundryNewModel", "FoundryModelVersion", "FoundryModelSku",
-                     "FoundryModelCapacity", "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
+for (const suffix of ["FoundryCreate", "FoundryNewProjectName", "FoundryNewModel",
+                     "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
 """ + function + """
 assert.equal(foundryValid("deploy"), true);
 fields.deployFoundryCreate.checked = true;
 assert.equal(foundryValid("deploy"), false);
-assert.match(fields.deployFoundryCreationStatus.textContent, /enter the model/);
+assert.match(fields.deployFoundryCreationStatus.textContent, /Enter a project name and model deployment name/);
 fields.deployFoundryNewModel.value="approved";
+assert.equal(foundryValid("deploy"), false);
+fields.deployFoundryNewProjectName.value="my-project";
 assert.equal(foundryValid("deploy"), true);
-assert.equal(fields.deployFoundryModelVersion.value, "");
-assert.equal(fields.deployFoundryModelSku.value, "");
-for (const invalid of ["0", "-1", "1.5"]) {
-  fields.deployFoundryModelCapacity.value=invalid;
-  assert.equal(foundryValid("deploy"), false);
+for (const suffix of ["FoundryNewProjectName", "FoundryNewModel"]) {
+  for (const invalid of ["", "-invalid", "has spaces", "x".repeat(65)]) {
+    const previous = fields["deploy"+suffix].value;
+    fields["deploy"+suffix].value=invalid;
+    assert.equal(foundryValid("deploy"), false);
+    fields["deploy"+suffix].value=previous;
+  }
 }
-fields.deployFoundryModelCapacity.value="12";
 assert.equal(foundryValid("deploy"), true);
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
@@ -1580,8 +1616,7 @@ const fields = {};
 const $ = id => fields[id];
 const suffixes = [
   "AzureSubscriptionId", "FoundryProjectName",
-  "FoundryModel", "FoundryNewModel", "FoundryLocation", "FoundryModelName",
-  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
+  "FoundryModel", "FoundryNewProjectName", "FoundryNewModel",
   "FoundryCreate", "FoundryCreation", "FoundryNewProjectOptions", "FoundryNewProjectSummary",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
@@ -1594,6 +1629,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal($(prefix+"FoundryCreation").hidden, true);
   assert.equal($(prefix+"FoundryNewProjectOptions").open, false);
   assert.equal($(prefix+"FoundryNewModel").disabled, true);
+  assert.equal($(prefix+"FoundryNewProjectName").disabled, true);
   assert.equal(foundryPayload(prefix).createFoundry, false);
   assert.equal(foundryPayload(prefix).foundryModel, "");
   assert.equal(foundryValid(prefix), true);
@@ -1615,20 +1651,22 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal($(prefix+"FoundryCreation").hidden, false);
   assert.equal($(prefix+"FoundryNewProjectOptions").open, true);
   assert.equal($(prefix+"FoundryNewModel").disabled, false);
+  assert.equal($(prefix+"FoundryNewProjectName").disabled, false);
   assert.equal($(prefix+"FoundryProjectName").disabled, true);
   assert.match($(prefix+"FoundryModeSummary").textContent, /Create new resources/);
   assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "New project selected");
   assert.ok(!$(prefix+"FoundryModeSummary").textContent.includes("billable"));
   $(prefix+"FoundryNewModel").value = "approved-new-model";
-  $(prefix+"FoundryModelVersion").value = "approved-version";
-  $(prefix+"FoundryModelSku").value = "approved-sku";
-  $(prefix+"FoundryModelCapacity").value = "4";
+  $(prefix+"FoundryNewProjectName").value = "new-project";
   assert.equal(foundryValid(prefix), true);
   const creating = foundryPayload(prefix);
   assert.equal(creating.createFoundry, true);
   assert.equal(creating.foundryModel, "approved-new-model");
   assert.equal(creating.foundryProjectResourceId, "");
   assert.equal(creating.foundryProjectName, "");
+  assert.equal(creating.foundryNewProjectName, "new-project");
+  for (const key of ["foundryModelVersion", "foundryModelSku", "foundryModelCapacity",
+                     "foundryLocation", "foundryModelName"]) assert.equal(Object.hasOwn(creating, key), false);
   assert.equal(Object.hasOwn(creating, "productionWrites"), false);
   $(prefix+"FoundryCreate").checked = false;
   updateFoundryMode(prefix);
@@ -1638,8 +1676,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(reused.foundryModel, "existing-model");
   assert.equal(reused.foundryProjectResourceId, "");
   assert.equal(reused.foundryProjectName, "existing-project-name");
-  assert.equal(reused.foundryModelVersion, "");
-  assert.equal(reused.foundryModelCapacity, "");
+  assert.equal(reused.foundryNewProjectName, "");
 }
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
