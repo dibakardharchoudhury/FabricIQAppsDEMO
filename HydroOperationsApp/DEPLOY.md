@@ -200,7 +200,7 @@ ownership from names or remove valid time-series bindings to force eligibility.
 
 | Source | Core setup | Later refresh |
 |---|---|---|
-| Energy | Loads GeoContext alongside Core/Weather, then verifies twelve layers and nine area polygons | Hosted **Refresh operational snapshots**; initial preparation is setup step 6 |
+| Energy | Loads GeoContext alongside Core/Weather, then verifies twelve layers and nine area polygons | Hosted setup step 6: **Prepare map**, then **Refresh snapshots** |
 | Weather | Creates tables and enables its schedule | **Connect weather** in the hosted app, or scheduled ingestion |
 
 Weather ingestion defaults to UKMet and requires its Global Spot and Land
@@ -223,9 +223,10 @@ for every source with static-cache reuse. A recurring energy schedule is needed
 only if unattended freshness is required; select its cadence deliberately.
 The hosted Administration page exposes **Prepare Norwegian Energy Map** as step 6.
 It uses `all` with cache reuse, not a forced national import. Routine
-**Refresh operational snapshots** uses `operational` and skips network/plant
+**Refresh snapshots** in that same step uses `operational` and skips network/plant
 inventories even if their cache is old. **Advanced: full national source rebuild**
-is the explicit `all` + `force_refresh=true` option and may take tens of minutes.
+is collapsed under **Maintenance and source details** in step 6. It is the explicit
+`all` + `force_refresh=true` option and may take tens of minutes.
 All three reuse active runs and report actual pipeline completion, including
 map-chat failures; a browser-stored flag alone does not mark setup complete.
 Notebook startup, projection changes and SQL/MCP readiness still take time:

@@ -57,21 +57,21 @@ export function AdministrationPage() {
   if (ENERGY_MAP_ENABLED) steps.push({
     n: 6,
     title: 'Prepare Norwegian Energy Map',
-    why: 'Already included in core workspace setup. Uses cached national sources, updates map projections and verifies map chat when enabled. No recurring setup is needed.',
+    why: 'Included in core workspace setup. Prepare once, then refresh operational snapshots here when needed. Cached national inventories are reused; map chat is verified when enabled.',
     done: data.mapPrepared,
     busy: data.mapRefreshState === 'running' || Boolean(data.jobs.map),
-    action: 'Prepare map',
-    run: () => void data.actions.refreshMapData('prepare'),
+    action: data.mapPrepared ? 'Refresh snapshots' : 'Prepare map',
+    run: () => void data.actions.refreshMapData(data.mapPrepared ? 'operational' : 'prepare'),
+    repeatable: true,
+    details: <MapDataRefreshPanel state={data.mapRefreshState} status={data.jobs.map?.status}
+      message={data.mapRefreshMessage} elapsed={data.jobs.map ? fmtElapsed(data.now - data.jobs.map.startedAt) : undefined}
+      onRebuild={() => void data.actions.refreshMapData('rebuild')} />,
   })
 
   return <>
     {data.notice && <div className="notice"><span>{data.notice}</span></div>}
     {Object.entries(data.jobs).filter(([, job]) => job.kind !== 'map').map(([key, job]) => <div key={key} className="v2-progress"><div className="v2-progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="v2-progress-track"><div className="v2-progress-bar" style={{ width: `${job.pct}%` }} /></div></div>)}
     <AdministrationExperience steps={steps} />
-    {ENERGY_MAP_ENABLED && <MapDataRefreshPanel state={data.mapRefreshState} status={data.jobs.map?.status}
-      message={data.mapRefreshMessage} elapsed={data.jobs.map ? fmtElapsed(data.now - data.jobs.map.startedAt) : undefined}
-      onStart={() => void data.actions.refreshMapData('operational')}
-      onRebuild={() => void data.actions.refreshMapData('rebuild')} />}
     <CopilotSettingsPanel />
   </>
 }

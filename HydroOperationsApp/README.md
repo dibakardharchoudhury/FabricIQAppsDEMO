@@ -31,6 +31,12 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > tenant-wide consent. That consent is optional where the tenant allows user consent, since every
 > requested scope is user-consentable.
 
+Administration step 6 is the single entry point for Norwegian Energy Map preparation
+and maintenance in both layouts. Once prepared, its action becomes **Refresh snapshots**.
+Progress and failures stay visible in the step; source details and the exceptional
+full national-source rebuild are collapsed under **Maintenance and source details**.
+There is no separate map-maintenance card.
+
 | Store | Owns | Accessed via |
 |---|---|---|
 | **Lakehouse (STID/weather)** | Engineering master data and weather serving tables | Read-only delegated Rayfin `hydrolakehouse` connector (`fabric-sqlanalytics`) |

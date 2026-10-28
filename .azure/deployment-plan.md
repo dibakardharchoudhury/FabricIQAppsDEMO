@@ -1,6 +1,18 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed and verified - Norwegian Energy Map maintenance update
+> **Status:** Validated - Administration map-control consolidation
+
+## Scoped Administration consolidation
+
+Validation proof, 2026-10-28: the approved target and infrastructure are unchanged.
+Commands passed: `npm run validate-env`, `npm run typecheck`, targeted `npx eslint`,
+`npm run build`, and `node --import tsx --test` for both map-data-refresh suites
+with `TSX_TSCONFIG_PATH=tsconfig.app.json`. Azure CLI confirmed the approved tenant/subscription.
+All validation checks pass:
+- [x] Core validation: environment validation, nine targeted UI/service contracts,
+  TypeScript, targeted ESLint and production build passed (existing bundle warnings).
+- [x] Docker build: not applicable; backend source and image are unchanged.
+- [x] Azure Policy validation: not applicable; no ARM/IaC, permissions or resource delta.
 
 ## Scoped Norwegian Energy Map maintenance update
 
