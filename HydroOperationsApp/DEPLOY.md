@@ -10,6 +10,9 @@ synchronization. Matching draft and published agent definitions are not republis
 the grounding canary still runs before map chat is reported ready.
 Definition comparison ignores service-added optional JSON nulls, so an unchanged
 source is not rewritten or republished merely because Fabric hydrated its metadata.
+Projection reuse also checks the projection-contract version and refuses reuse
+when any owned model table was missing before creation. Increment that version
+when changing projection semantics, even if source Delta versions are unchanged.
 
 Map queries use the GeoContext SQL connector for bounded identity/viewport
 selection, then retrieve complete feature payloads through the existing
@@ -25,6 +28,16 @@ The map-agent projection normalizes negative/nonfinite physical measurements to
 NULL, matching the map's exclusion of invalid installed capacities. Current-view
 questions use the supplied browser summary; SQL queries remain authoritative for
 complete imported-dataset totals, not a substitute for rendered-map membership.
+The NVE inventory itself is Norwegian; its asset `country_code` values can be
+NULL. Both agent-level and source-level SQL instructions prohibit using that
+column as an asset-country filter. Source instructions also distinguish source
+ingestion timestamps from projection build timestamps and require checking
+unexpected empty results against source counts. Agent instructions alone do
+not reliably constrain the separate natural-language-to-SQL generation step.
+Live acceptance on October 28 verified 2,010 imported plants, 35,707.0066 MW
+of known capacity and 33 plants with unknown capacity, including a formerly
+failing paraphrase through hosted Map Chat. Adamselv's 50 MW, owner and NO4
+price area also matched the independently queried imported source row.
 
 ## Quick start: one path for each job
 

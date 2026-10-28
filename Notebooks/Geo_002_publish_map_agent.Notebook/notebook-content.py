@@ -111,6 +111,7 @@ LINK_TABLE = "geo_map_agent_links"
 STATE_TABLE = "geo_map_agent_state"
 STATUS_TABLE = "geo_source_status"
 SOURCE_TABLES = ("geo_map_features", "geo_source_status", "geo_reservoir_areas", "geo_market_asset_links")
+PROJECTION_CONTRACT_VERSION = 1  # Increment when projection semantics change, even if source versions do not.
 ASSET_LAYERS = ("transmission", "regional", "distribution", "sea-cables", "masts", "transformers", "hydro-plants")
 NAVIGABLE_LAYERS = ASSET_LAYERS + ("reservoirs",)
 SOURCE_IDS = ("nve-grid", "nve-hydro", "nve-reservoir", "statnett", "nordpool")
@@ -185,6 +186,11 @@ or unavailable source data, state the limitation. Never invent a successful quer
 Use returned facts and source/observation/ingestion times; cite your scope and as-of.
 If a lookup omitted a requested column, run a follow-up SELECT for that column.
 An omitted column is not evidence that its stored value is unavailable.
+Before reporting a zero asset result, compare the unfiltered layer count with
+geo_source_status.row_count. A positive ready source count contradicts a claim
+that the layer is absent: check the layer predicate and unsupported filters.
+Source freshness is selected by the actual layer_id, not a guessed source name
+or a projection run ID; source ingestion IDs differ from read_model_run_id.
 No web search, outside sources, filesystem access, arbitrary URLs or generated writes.
 
 DATASET VERSUS CURRENT VIEW
@@ -214,6 +220,12 @@ record_kind='asset' identifies real network and hydro assets.
 Hydropower plants use layer_id='hydro-plants'; transformer substations use
 layer_id='transformers'. Both have record_kind='asset'. A complete hydropower
 count is COUNT_BIG(*) with those predicates and no geometry or viewport filter.
+The NVE network and hydropower inventories are Norwegian national datasets.
+country_code is not an asset-country filter: these NVE asset rows normally have
+NULL country_code. "Norwegian" or "in Norway" describes this inventory's scope;
+do not add country_code='NO' or a guessed country label to an asset query.
+country_code is meaningful for reservoir country/area rows and explicitly
+populated operational observations, not proof of an NVE asset's absence.
 The installed_capacity_mw column is selected and queryable for hydropower plants.
 Hydro installed MW, gross head in metres, operation flag/status and 1991-2020 mean annual GWh are
 registry attributes; mean annual production is NOT current generation.
@@ -271,6 +283,18 @@ validates the target and bounds and has sole authority to move the map.
 SOURCE_INSTRUCTIONS = """Use T-SQL SELECT queries only against the four selected dbo objects.
 Check the single geo_map_agent_state ready row and matching read_model_run_id first.
 Compare built_at_utc with relevant geo_source_status.last_success_at (UTC).
+NVE assets are already a Norwegian national inventory: Norway/Norwegian is the
+dataset scope. country_code is not an asset-country filter; asset rows normally
+have NULL country_code. Never add country_code='NO' or another country predicate
+to NVE asset queries. This column only describes explicitly populated reservoir
+or operational rows. Hydropower stations/plants use record_kind='asset' AND
+layer_id='hydro-plants'. Full counts include rows without geometry; sum
+installed_capacity_mw, excluding NULL and reporting unknown capacity separately.
+Read inventory snapshot time from geo_source_status.last_success_at WHERE
+layer_id='hydro-plants', not asset publication_at_utc or a projection UUID.
+Check unexpected empty asset results against geo_source_status.row_count and
+the unfiltered layer count. An empty filtered asset query is not evidence that
+geo_map_agent_state is missing; read that state separately to establish readiness.
 Use record_kind='asset' for asset counts; reservoir_area for polygon-area questions;
 reservoir_fact for original EL/NO/VASS facts; market_message for retained revisions;
 balance_snapshot, flow_snapshot and frequency_snapshot for stored operational data.
@@ -283,6 +307,8 @@ Never query unselected/raw/synthetic operational tables or use externaldata/OPEN
 Do not infer transformer capacity. The UI live-frequency tile is not this dataset.
 """
 FEWSHOTS = (
+    ("How many Norwegian hydropower plants are imported and what is their total installed capacity?",
+     f"SELECT COUNT_BIG(*) AS plant_count,SUM(e.installed_capacity_mw) AS total_installed_capacity_mw,SUM(CASE WHEN e.installed_capacity_mw IS NULL THEN CAST(1 AS bigint) ELSE CAST(0 AS bigint) END) AS unknown_capacity_count,MAX(st.last_success_at) AS source_snapshot_utc FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' LEFT JOIN dbo.{STATUS_TABLE} st ON st.layer_id=e.layer_id WHERE e.record_kind='asset' AND e.layer_id='hydro-plants';"),
     ("Which read-model run is ready?",
      f"SELECT state, read_model_run_id, built_at_utc FROM dbo.{STATE_TABLE};"),
     ("How many imported assets are there in each layer, not just visible rows?",
@@ -545,7 +571,9 @@ def build_source_definition(binding):
     tables = []
     for name, fields in SELECTED_SCHEMAS.items():
         columns = [element("lakehouse_tables.column", column, True, [], f"dbo/{name}/{column}",
-                           data_type=SQL_TYPES[kind]) for column, kind in fields]
+                           data_type=SQL_TYPES[kind],
+                           **({"description": "Country of a reservoir/operational observation; NULL for NVE national assets. This is not an asset-country filter: the NVE inventory itself is Norwegian."}
+                              if column == "country_code" else {})) for column, kind in fields]
         tables.append(element("lakehouse_tables.table", name, True, columns, f"dbo/{name}",
                               description=TABLE_DESCRIPTIONS[name]))
     return {
@@ -1027,7 +1055,8 @@ class MapReadModels:
     def write_state(self, state, run_id, built_at, versions, entity_count=0, link_count=0, message=""):
         row = {"state": state, "read_model_run_id": run_id, "built_at_utc": built_at,
                "entity_count": entity_count, "link_count": link_count,
-               "source_versions_json": compact_json(versions), "message": message}
+               "source_versions_json": compact_json({**versions, "_projection_contract": PROJECTION_CONTRACT_VERSION}),
+               "message": message}
         self.write_owned(STATE_TABLE, self.spark.createDataFrame([row], spark_schema(STATE_FIELDS)))
 
     def build(self):
@@ -1114,7 +1143,10 @@ class MapReadModels:
         if len(rows) != 1:
             return None
         state = rows[0].asDict()
-        if state["state"] != "ready" or json.loads(state["source_versions_json"]) != versions:
+        stored_versions = json.loads(state["source_versions_json"])
+        if (state["state"] != "ready"
+                or stored_versions.pop("_projection_contract", 1) != PROJECTION_CONTRACT_VERSION
+                or stored_versions != versions):
             return None
         run_id = guid(state["read_model_run_id"], "stored read-model run")
         if (not isinstance(state["built_at_utc"], datetime)

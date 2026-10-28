@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Norwegian Energy Map maintenance update; existing deployment retained
+> **Status:** Deployed and verified - Norwegian Energy Map maintenance update
 
 ## Scoped Norwegian Energy Map maintenance update
 
@@ -18,7 +18,7 @@ Validation proof for this scope:
 - TypeScript and targeted ESLint: passed.
 - Nine frontend contracts: panel states, actual pipeline payloads, active-run
   sharing, controller intent routing and separate GeoContext authentication.
-- 165 Python contracts: 46 map-agent, 43 workspace and 76 ingestion tests passed,
+- 166 Python contracts: 47 map-agent, 43 workspace and 76 ingestion tests passed,
   including unchanged-projection reuse, concurrent source-change rejection,
   matching-publication reuse and three-attempt grounding failure handling.
 - `git diff --check`: passed. No infrastructure/template or role-assignment delta.
@@ -26,7 +26,8 @@ Validation proof for this scope:
   `2246fddf-6fd7-4e64-951b-6b1aed710693` without running ingestion.
   The current live notebook already has three canary attempts; the old failed
   run's generic error is not proof of its exact underlying tool response.
-  Updated notebook execution and hosted UI acceptance are separate gates.
+  This historical failure is not attributed to the later independently
+  reproduced country-filter issue without its original query evidence.
 - Live definition comparison reproduced unnecessary publication caused by Fabric
   adding `description: null` to columns. The regression failed before
   null-normalized comparison and passes after it. Read-only live comparison now
@@ -38,6 +39,39 @@ Validation proof for this scope:
 - Both local UI shells render six setup cards, operational refresh and a collapsed
   advanced rebuild; desktop and narrow-window layouts were checked without
   triggering ingestion.
+- Canonical deployment completed at 05:11:43 UTC on October 28: hosted app
+  1.0.1181 / `266e0f3`, coordinator v45, image `src-c4bc9dd11d069fa6`.
+  The orchestrator printed `SUCCESS` and `DEPLOYED_APP_URL` after endpoint,
+  CORS/preflight and POST readiness checks. All 42 Entra SPA redirects were
+  preserved; capacity remained Active. Authenticated hosted Administration
+  displayed the six setup cards and separate operational/advanced actions.
+- Map-only notebook job `e7f57959-af38-402c-8847-e1679ccc687c` completed
+  04:57:50-05:02:26 UTC (about 4m35s), retaining ready projection UUID
+  `2246fddf-6fd7-4e64-951b-6b1aed710693`. No national reimport, NB11 run,
+  work-order creation or demo-data reset was performed.
+- Substantive acceptance exposed a separate semantic failure after the nonce
+  canary passed. Native query tracing showed generated SQL adding
+  `country_code='NO'` to the Norwegian NVE inventory, excluding its null-country
+  asset rows. Correcting answer-level instructions alone was insufficient.
+  The governed source-level SQL instructions now explicitly prohibit this
+  filter, explain inventory scope and snapshot timestamps, and distinguish an
+  empty filtered result from missing readiness state. Column metadata and a
+  natural-language SQL example reinforce this contract.
+- After publication, fresh native MCP sessions returned 2,010 plants,
+  35,707.0066 MW and 33 unknown-capacity plants for both the original full-dataset
+  prompt and the formerly failing paraphrase. Source import time was
+  `2026-10-27T15:59:46.021Z`; projection build time was
+  `2026-10-27 17:31:58 UTC`. These are distinct freshness facts.
+- Authenticated hosted Map Chat passed the natural count/capacity question,
+  formerly failing paraphrase and Adamselv facts. Adamselv returned 50 MW,
+  STATKRAFT ENERGI AS and NO4, independently verified against the imported
+  Eventhouse Delta shortcut. Full totals also matched the independently
+  queried source data, not a browser viewport sample.
+- The final notebook source was installed with AST readback verification and
+  dynamic GeoContext binding preserved. A subsequent live
+  `configure_and_publish` completed with all mutations blocked, proving the
+  published configuration can be reused. No transport rewrite or extra model
+  shaping was introduced. These functional checks are not a load/SLO benchmark.
 
 ## Current scoped architecture hardening
 
@@ -1636,11 +1670,13 @@ Service references:
 ### Norwegian Energy Map maintenance (October 28, 2026, 04:44 UTC)
 
 The [scoped map validation](#scoped-norwegian-energy-map-maintenance-update)
-records the commands and results: nine frontend tests, 165 Python tests,
+records the commands and results: nine frontend tests, 166 Python tests,
 environment validation, production build, TypeScript, targeted ESLint and Git
 whitespace validation passed. This is an application/notebook-only update on
 the approved existing target; infrastructure what-if, Docker build and new role
-assignments are not applicable. Live publication remains a separate gate.
+assignments are not applicable. Canonical publication and hosted Map Chat
+acceptance passed as recorded in that section; notebook-only semantic changes
+were subsequently installed and verified without redeploying the app bundle.
 
 ### Minimal capability execution (October 28, 2026)
 

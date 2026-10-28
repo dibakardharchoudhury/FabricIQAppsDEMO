@@ -243,6 +243,7 @@ class OwnershipAndBindingTests(HelpersTest):
         spark.conf.set.assert_not_called()
         for changed in ({**state, "state": "building"},
                         {**state, "state": "error"},
+                        {**state, "source_versions_json": json.dumps({**versions, "_projection_contract": 999})},
                         {**state, "source_versions_json": "{}"}):
             row.asDict.return_value = changed
             self.assertIsNone(models.reusable_projection(versions))
@@ -521,6 +522,24 @@ class RestTests(HelpersTest):
 
 
 class InstructionsAndModelsTests(HelpersTest):
+    def test_norwegian_inventory_questions_do_not_filter_nullable_asset_country(self):
+        instructions = self.ns["AI_INSTRUCTIONS"]
+        self.assertIn("country_code is not an asset-country filter", instructions)
+        self.assertIn("zero asset result", instructions)
+        question, query = next((question, query) for question, query in self.ns["FEWSHOTS"]
+                               if "Norwegian hydropower plants" in question)
+        self.assertIn("COUNT_BIG(*)", query)
+        self.assertIn("SUM(e.installed_capacity_mw)", query)
+        self.assertIn("e.layer_id='hydro-plants'", query)
+        self.assertNotIn("country_code", query)
+        source = self.call("build_source_definition", self.binding)
+        self.assertIn("country_code is not an asset-country filter", source["dataSourceInstructions"])
+        self.assertIn("Norway", source["dataSourceInstructions"])
+        self.assertIn("geo_source_status.row_count", source["dataSourceInstructions"])
+        columns = source["elements"][0]["children"][0]["children"]
+        country = next(column for column in columns if column["display_name"] == "country_code")
+        self.assertIn("not an asset-country filter", country["description"])
+
     def test_navigation_lookup_includes_requested_asset_facts(self):
         examples = self.ns["FEWSHOTS"]
         navigation = next(query for question, query in examples if "Adamselv for navigation" in question)
