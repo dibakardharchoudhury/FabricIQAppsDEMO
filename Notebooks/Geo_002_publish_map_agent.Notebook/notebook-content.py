@@ -557,6 +557,17 @@ def build_source_definition(binding):
     }
 
 
+def definition_content(part):
+    # Fabric materializes absent optional fields as null on definition readback.
+    def normalize(value):
+        if isinstance(value, dict):
+            return {key: normalize(item) for key, item in value.items() if item is not None}
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        return value
+    return normalize(decode_part(part))
+
+
 def desired_definition(parts, binding):
     inspect_definition(parts, binding)
     updated = deepcopy(parts)
@@ -764,8 +775,11 @@ class FabricMapAgentAPI:
     def configure_and_publish(self):
         parts = self.get_definition()
         desired = desired_definition(parts, self.binding)
-        before = compact_json([parts[path] for path in sorted(parts)])
-        if before != compact_json(desired["parts"]):
+        desired_parts = {part["path"]: part for part in desired["parts"]}
+        unchanged = parts.keys() == desired_parts.keys() and all(
+            definition_content(parts[path]) == definition_content(part) for path, part in desired_parts.items()
+        )
+        if not unchanged:
             self.verify_owned_target()
             response = self.request("POST", f"{self.workspace_path}/dataAgents/{self.agent_id}/updateDefinition",
                                     {"definition": desired}, accepted=(200, 202))
@@ -777,7 +791,7 @@ class FabricMapAgentAPI:
         inspect_definition(parts, self.binding, require_selection=True)
         published_current = all(
             part["path"].replace("/draft/", "/published/") in parts
-            and decode_part(parts[part["path"].replace("/draft/", "/published/")]) == decode_part(part)
+            and definition_content(parts[part["path"].replace("/draft/", "/published/")]) == definition_content(part)
             for part in desired["parts"] if "/draft/" in part["path"]
         )
         if published_current:

@@ -27,6 +27,14 @@ Validation proof for this scope:
   The current live notebook already has three canary attempts; the old failed
   run's generic error is not proof of its exact underlying tool response.
   Updated notebook execution and hosted UI acceptance are separate gates.
+- Live definition comparison reproduced unnecessary publication caused by Fabric
+  adding `description: null` to columns. The regression failed before
+  null-normalized comparison and passes after it. Read-only live comparison now
+  confirms the published contract is semantically unchanged. The updated notebook
+  has been installed and AST-verified while preserving its target GeoContext.
+- Both local UI shells render six setup cards, operational refresh and a collapsed
+  advanced rebuild; desktop and narrow-window layouts were checked without
+  triggering ingestion.
 
 ## Current scoped architecture hardening
 

@@ -8,6 +8,8 @@ Retries with unchanged source Delta versions reuse the last complete owned
 projection and its run ID, rather than rewriting the tables and restarting SQL
 synchronization. Matching draft and published agent definitions are not republished;
 the grounding canary still runs before map chat is reported ready.
+Definition comparison ignores service-added optional JSON nulls, so an unchanged
+source is not rewritten or republished merely because Fabric hydrated its metadata.
 
 Map queries use the GeoContext SQL connector for bounded identity/viewport
 selection, then retrieve complete feature payloads through the existing

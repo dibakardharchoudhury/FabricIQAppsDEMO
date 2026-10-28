@@ -363,6 +363,11 @@ class RestTests(HelpersTest):
             if "/draft/" in path:
                 published_path = path.replace("/draft/", "/published/")
                 parts[published_path] = self.call("encode_part", published_path, self.call("decode_part", part))
+        for stage in ("draft", "published"):
+            path = self.call("source_part_path", self.binding, stage)
+            source = self.call("decode_part", parts[path])
+            source["elements"][0]["children"][0]["children"][0]["description"] = None
+            parts[path] = self.call("encode_part", path, source)
         api = self.api()
         api.get_definition = Mock(return_value=parts)
         api.verify_owned_target = Mock()
