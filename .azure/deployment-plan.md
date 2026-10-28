@@ -18,7 +18,7 @@ Validation proof for this scope:
 - TypeScript and targeted ESLint: passed.
 - Nine frontend contracts: panel states, actual pipeline payloads, active-run
   sharing, controller intent routing and separate GeoContext authentication.
-- 164 Python contracts: 45 map-agent, 43 workspace and 76 ingestion tests passed,
+- 165 Python contracts: 46 map-agent, 43 workspace and 76 ingestion tests passed,
   including unchanged-projection reuse, concurrent source-change rejection,
   matching-publication reuse and three-attempt grounding failure handling.
 - `git diff --check`: passed. No infrastructure/template or role-assignment delta.
@@ -32,6 +32,9 @@ Validation proof for this scope:
   null-normalized comparison and passes after it. Read-only live comparison now
   confirms the published contract is semantically unchanged. The updated notebook
   has been installed and AST-verified while preserving its target GeoContext.
+- A ready state cannot be reused when any owned projection table was missing
+  before table creation; regression coverage prevents falsely serving newly
+  created empty tables as the previous complete snapshot.
 - Both local UI shells render six setup cards, operational refresh and a collapsed
   advanced rebuild; desktop and narrow-window layouts were checked without
   triggering ingestion.
@@ -1633,7 +1636,7 @@ Service references:
 ### Norwegian Energy Map maintenance (October 28, 2026, 04:44 UTC)
 
 The [scoped map validation](#scoped-norwegian-energy-map-maintenance-update)
-records the commands and results: nine frontend tests, 164 Python tests,
+records the commands and results: nine frontend tests, 165 Python tests,
 environment validation, production build, TypeScript, targeted ESLint and Git
 whitespace validation passed. This is an application/notebook-only update on
 the approved existing target; infrastructure what-if, Docker build and new role

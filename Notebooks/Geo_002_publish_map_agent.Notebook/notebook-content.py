@@ -1032,9 +1032,10 @@ class MapReadModels:
 
     def build(self):
         self.preflight()
+        models_existed = all(self.spark.catalog.tableExists(table) for table in MODEL_SCHEMAS)
         self.ensure_models()
         versions = self.source_versions()
-        reusable = self.reusable_projection(versions)
+        reusable = self.reusable_projection(versions) if models_existed else None
         if reusable is not None:
             return reusable
         from pyspark import StorageLevel

@@ -262,6 +262,19 @@ class OwnershipAndBindingTests(HelpersTest):
         with self.assertRaisesRegex(self.error, "changed during reuse"):
             models.reusable_projection({"source": 1})
 
+    def test_missing_model_cannot_reuse_ready_state_after_creating_empty_tables(self):
+        models = self.ns["MapReadModels"](Mock(), self.binding)
+        models.preflight = Mock()
+        models.ensure_models = Mock()
+        models.source_versions = Mock(return_value={})
+        models.spark.catalog.tableExists.return_value = False
+        models.reusable_projection = Mock()
+        # Stop at the fresh-build import: this offline fixture deliberately has no Spark.
+        with patch.dict(sys.modules, {"pyspark": None}), self.assertRaises(ModuleNotFoundError):
+            models.build()
+        models.ensure_models.assert_called_once()
+        models.reusable_projection.assert_not_called()
+
     def test_restricted_native_spn_is_rejected_without_credentials_workaround(self):
         def token(claims):
             return "header." + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=") + ".signature"
