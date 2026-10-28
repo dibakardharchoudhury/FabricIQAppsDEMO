@@ -394,6 +394,16 @@ missing source-fingerprinted images, and republishes the hosted coordinator only
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
 
+**Foundry setup can create Fabric resources.** Before configuring the Hosted Agent,
+setup creates or reuses its required AppBackend gateway. On a fresh target this uses
+Rayfin with `--exclude-services staticHosting`, so Fabric can already show the
+`hydro-operations-ui` **App** item with its SQL database, SQL analytics endpoint and
+GraphQL API. That is backend provisioning, not website publication or proof that
+the Foundry agents are ready. Progress labels it **Fabric backend gateway**, followed
+by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds should
+**Deploy app** publish the website and run its authentication/CORS/connector checks.
+`FOUNDRY_SETUP_SUCCESS` confirms configuration readback, not agent execution.
+
 Fabric IQ connections use the Fabric API audience
 `https://api.fabric.microsoft.com` and `metadata.type=fabric_iq_preview`,
 matching portal-created Data Agent tools. Setup reuses an existing verified

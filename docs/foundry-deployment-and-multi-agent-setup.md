@@ -93,7 +93,7 @@ The separate setup stage (also used by combined CLI deployment;
 | Step | Behaviour | Skipped when |
 |---|---|---|
 | Preflight | Verifies tenant/subscription and resolves project/model before backend creation; validates catalog defaults for an approved new project | never |
-| 0. Backend identity | Creates a missing AppBackend without static hosting | Target already has one |
+| 0. Backend identity | Creates a missing Fabric AppBackend and its SQL/GraphQL dependencies without static hosting | Target already has one |
 | 1. Foundry project | Reuses the verified project, or creates target-named resources using `Azure-Samples/azd-ai-starter-basic` with explicit resource-creation approval | Existing project |
 | 2. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
 | 3. Connections | Compares `hydro-fabric-iq` and `hydro-fabric-ontology` with the live project connections; writes and verifies only missing or changed connections | source/authentication already matches |
@@ -103,7 +103,15 @@ The separate setup stage (also used by combined CLI deployment;
 | 7. Publish | Creates or refreshes the azd environment's project, tenant and registry identity from live metadata, applies runtime settings and publishes; waits until the active version has the exact image digest and configuration | live agent already matches |
 | 8. Verify | The existing gate: active, numeric version, immutable digest, source identity and native binding all match | never |
 
-The local app shows these as separate progress stages: *Foundry project*, *Foundry agents*, *Hosted Agent*.
+The local app shows these as separate progress stages: *Foundry project*,
+*Fabric backend gateway*, *Foundry agents*, *Hosted Agent*. Backend preparation
+uses Rayfin with `--exclude-services staticHosting`: the Fabric workspace can
+already show the `hydro-operations-ui` **App** item, its SQL database and SQL
+analytics endpoint, and the GraphQL API. The Hosted Agent needs the backend's
+identity, API URL and publishable key in its verified source configuration.
+These resources do not mean the website was published or that the agents are ready.
+The standalone Foundry action returns after verified multi-agent configuration;
+the separate **Deploy app** action publishes the website afterward.
 
 An existing project and model do not prove that the five specialists and hosted coordinator
 exist or match this checkout and Fabric target. Setup checks live state, but an unchanged

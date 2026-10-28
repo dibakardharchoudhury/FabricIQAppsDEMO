@@ -51,6 +51,20 @@ class WorkspaceActionTests(unittest.TestCase):
             self.assertIn("Foundry multi-agent setup module", response.get_json()["error"])
             start.assert_not_called()
 
+    def test_foundry_page_discloses_backend_creation_before_website_publication(self):
+        response = self.client.get("/")
+        try:
+            html = response.get_data(as_text=True)
+        finally:
+            response.close()
+        foundry_pane = html.split('<section id="paneFoundry"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("AppBackend with SQL/GraphQL dependencies", foundry_pane)
+        self.assertIn("Does not publish the website.", foundry_pane)
+        self.assertIn("A Fabric App item can already appear during backend setup.", foundry_pane)
+        self.assertIn("After Foundry setup succeeds", foundry_pane)
+        self.assertNotIn("Updates agents only", html)
+        self.assertIn("five Foundry specialist agents", html)
+
     def test_full_workflow_prepares_energy_and_foundry_before_final_app(self):
         target = {
             "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo", "connectionId": "yes",
@@ -1267,14 +1281,16 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
 
     def test_deploy_progress_shows_each_foundry_stage_in_the_order_the_deployer_prints_them(self):
         phases = SERVER.FOUNDRY_PHASES
-        for name in ("Foundry project", "Foundry agents", "Hosted Agent"):
+        for name in ("Foundry project", "Fabric backend gateway", "Foundry agents", "Hosted Agent"):
             self.assertIn(name, phases)
         indexes = [index for index, _markers in SERVER.FOUNDRY_MARKERS]
         self.assertEqual(indexes, sorted(set(indexes)))
         self.assertLess(max(indexes), len(phases) - 1)
         deployer_lines = [
             "[1/8] Checking Azure tenant", "[2/8] Resolving the tenant SPA", "[3/8] Resetting local Rayfin deployment state",
-            "Foundry: project - resolving the Foundry project.", "Foundry: agents - provisioning the specialist prompt agents.",
+            "Foundry: project - resolving the Foundry project.",
+            "Foundry: backend gateway - preparing the Fabric AppBackend identity required by the Hosted Agent.",
+            "Foundry: agents - provisioning the specialist prompt agents.",
             "Foundry: Hosted Agent - converging hydro-orchestrator.",
         ]
         job, seen = SERVER.Job(phases), []
@@ -1284,13 +1300,15 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                     job.phase_index = index
             seen.append(phases[job.phase_index])
         self.assertEqual(seen, [
-            "Checking prerequisites", "Resolving SPA", "Preparing source/gateway", "Foundry project", "Foundry agents",
-            "Hosted Agent",
+            "Checking prerequisites", "Resolving SPA", "Preparing source/gateway", "Foundry project",
+            "Fabric backend gateway", "Foundry agents", "Hosted Agent",
         ])
         # The markers must be lines the deployer really prints, not an assumption.
         printed = (SERVER.SCRIPT_DIR / "provision_foundry_agents.py").read_text(encoding="utf-8")
         for marker in ("Foundry: project", "Foundry: agents", "Foundry: Hosted Agent"):
             self.assertIn(f'"{marker}', printed)
+        deployer = (SERVER.SCRIPT_DIR / "deploy_fabric_app.py").read_text(encoding="utf-8")
+        self.assertIn('"Foundry: backend gateway', deployer)
 
     def test_deploy_job_limit_covers_project_creation_build_and_publish(self):
         self.assertGreaterEqual(SERVER.FOUNDRY_TIMEOUT_S, 75 * 60)

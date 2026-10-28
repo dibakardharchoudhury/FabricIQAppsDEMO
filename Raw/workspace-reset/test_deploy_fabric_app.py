@@ -111,6 +111,84 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
     )
 
 
+class FoundryBackendGatewayTests(unittest.TestCase):
+    def test_existing_backend_skips_rayfin_but_identifies_the_progress_phase(self):
+        with (
+            patch.object(DEPLOY, "appbackend_identity_present", return_value=True),
+            patch.object(DEPLOY, "ensure_rayfin_login") as login,
+            patch.object(DEPLOY, "run_rayfin_deployment") as run,
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            DEPLOY.ensure_appbackend_identity("tenant", "workspace")
+        login.assert_not_called()
+        run.assert_not_called()
+        self.assertIn("Foundry: backend gateway", output.getvalue())
+        self.assertIn("Reusing the configured AppBackend identity", output.getvalue())
+
+    def test_new_backend_excludes_static_hosting_and_requires_identity_readback(self):
+        for readback in (True, False):
+            with (
+                self.subTest(readback=readback),
+                patch.object(DEPLOY, "appbackend_identity_present", side_effect=[False, readback]),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                    {"RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "11111111-1111-1111-1111-111111111111"},
+                    None,
+                )),
+                patch.object(DEPLOY, "ensure_rayfin_login") as login,
+                patch.object(DEPLOY, "rayfin24", return_value=["backend-command"]) as command,
+                patch.object(DEPLOY, "run_rayfin_deployment") as run,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                if readback:
+                    DEPLOY.ensure_appbackend_identity("tenant", "workspace")
+                else:
+                    with self.assertRaisesRegex(DEPLOY.DeployError, "did not record its identity"):
+                        DEPLOY.ensure_appbackend_identity("tenant", "workspace")
+                login.assert_called_once_with("tenant", "workspace")
+                command.assert_called_once_with(
+                    "up", "--workspace-id", "workspace", "--exclude-services", "staticHosting", "--yes",
+                )
+                run.assert_called_once_with(["backend-command"], "tenant")
+                self.assertIn("Fabric App item and its SQL/GraphQL dependencies", output.getvalue())
+                self.assertIn("without static hosting", output.getvalue())
+
+    def test_foundry_only_returns_before_any_website_publication_for_new_or_existing_target(self):
+        for reuse in (True, False):
+            with (
+                self.subTest(reuse=reuse),
+                patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": ""}),
+                patch.object(DEPLOY, "prefer_tenant_scoped_azure_cli_config"),
+                patch.object(DEPLOY, "ensure_azure_tenant", return_value="tenant"),
+                patch.object(DEPLOY, "resolve_workspace", return_value=("workspace", "Demo", "capacity")),
+                patch.object(DEPLOY, "resolve_spa", return_value="11111111-1111-1111-1111-111111111111"),
+                patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
+                patch.object(DEPLOY, "write_rayfin_redirects"),
+                patch.object(DEPLOY, "prepare_rayfin_env", return_value=reuse),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=({}, None)),
+                patch.object(DEPLOY, "configure_geo_connector"),
+                patch.object(DEPLOY, "ensure_deploy_dependencies"),
+                patch.object(DEPLOY, "node24_script", return_value=["validate-command"]),
+                patch.object(DEPLOY, "run_stream"),
+                patch.object(DEPLOY, "provision_foundry_agents") as provision,
+                patch.object(DEPLOY, "verify_foundry_agents") as verify,
+                patch.object(DEPLOY, "ensure_rayfin_login") as login,
+                patch.object(DEPLOY, "run_rayfin_deployment") as publish,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                timings = Mock()
+                DEPLOY._deploy(argparse.Namespace(
+                    push_config=False, tenant="tenant", workspace="workspace", stage="foundry",
+                    client_id=None, energy_map="keep",
+                ), timings)
+                provision.assert_called_once_with("tenant", "workspace")
+                verify.assert_not_called()
+                login.assert_not_called()
+                publish.assert_not_called()
+                self.assertEqual([call.args[0] for call in timings.stage.call_args_list], [1, 2, 3])
+                self.assertIn("FOUNDRY_SETUP_SUCCESS", output.getvalue())
+                self.assertIn("no website published; agent execution is separate", output.getvalue())
+
+
 class FoundryGraphPrerequisiteTests(unittest.TestCase):
     def test_core_energy_finalize_does_not_start_a_second_ingestion(self):
         for publish_only in (True, False):

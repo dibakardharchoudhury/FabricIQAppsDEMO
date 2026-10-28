@@ -2098,14 +2098,21 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
 
     A target that has no AppBackend yet would otherwise stop at Foundry provisioning, so create the backend (without
     static hosting) first. Existing targets already carry the identity and skip this entirely."""
+    print(
+        "Foundry: backend gateway - preparing the Fabric AppBackend identity required by the Hosted Agent; "
+        "this does not publish the website.",
+        flush=True,
+    )
     if appbackend_identity_present():
+        print("Reusing the configured AppBackend identity; no backend creation is needed.", flush=True)
         return
     values, _ = current_rayfin_target()
     if not GUID_RE.fullmatch(_public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")):
         raise DeployError("Complete the current shared Lakehouse/SQL setup before creating an AppBackend.")
     print(
-        "No AppBackend exists for this target yet; creating it (without static hosting) so the Hosted Agent "
-        "can be configured against its identity.",
+        "No AppBackend exists for this target yet; creating the Fabric App item and its SQL/GraphQL dependencies "
+        "without static hosting so the Hosted Agent can be configured against its identity. "
+        "Deploy app remains the separate website publication step.",
         flush=True,
     )
     ensure_rayfin_login(tenant, workspace_id)
@@ -2508,7 +2515,11 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     else:
         provision_foundry_agents(tenant_id, workspace_id)
         if stage == "foundry":
-            print("FOUNDRY_SETUP_SUCCESS (configuration readback verified; agent execution is separate).", flush=True)
+            print(
+                "FOUNDRY_SETUP_SUCCESS (backend identity and multi-agent configuration readback verified; "
+                "no website published; agent execution is separate).",
+                flush=True,
+            )
             return
     values, _ = current_rayfin_target()
     if _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true":

@@ -459,10 +459,10 @@
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
         <h2>Set up Foundry agents</h2>
       </div>
-      <p class="hint">Run Core setup and materialize the ontology graph first. Updates agents only, not the website.</p>
+      <p class="hint">Run Core setup and materialize the ontology graph first. Creates or reuses the Fabric backend gateway (AppBackend with SQL/GraphQL dependencies) required by the Hosted Agent, then configures the Foundry multi-agent setup. Does not publish the website.</p>
       <div id="deployFoundryFields"></div>
       <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
-      <p class="hint">Next: <strong>Deploy app</strong>. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
+      <p class="hint">After Foundry setup succeeds, <strong>Deploy app</strong> publishes the website using the prepared backend. A Fabric App item can already appear during backend setup. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
       <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
     </div>
   </section>
@@ -577,7 +577,7 @@ function renderFoundryFields(prefix, clientId) {
       <label>Model deployment name
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
     </div>
-    <p class="hint">Enter these once. Setup configures the agents, connections and hosted orchestrator automatically.</p>
+    <p class="hint">Enter these once. Setup prepares the Fabric backend gateway, five Foundry specialist agents, connections and hosted orchestrator. A missing backend creates a Fabric App item and SQL/GraphQL dependencies, but does not publish the website.</p>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
       <span>Check this box if you want to create a new Foundry project with the multi-agent setup.</span></label>
     <p id="${prefix}FoundryCreateHelp" class="hint">Creating resources is billable; global inference may apply. Existing projects are reused.</p>

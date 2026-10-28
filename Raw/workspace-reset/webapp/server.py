@@ -117,11 +117,12 @@ DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
 ]
 FOUNDRY_PHASES = [
     "Queued", "Checking prerequisites", "Resolving SPA", "Preparing source/gateway",
-    "Foundry project", "Foundry agents", "Hosted Agent", "Done",
+    "Foundry project", "Fabric backend gateway", "Foundry agents", "Hosted Agent", "Done",
 ]
 FOUNDRY_MARKERS = [
     (1, ("[1/8]",)), (2, ("[2/8]",)), (3, ("[3/8]",)),
-    (4, ("Foundry: project",)), (5, ("Foundry: agents",)), (6, ("Foundry: Hosted Agent",)),
+    (4, ("Foundry: project",)), (5, ("Foundry: backend gateway",)),
+    (6, ("Foundry: agents",)), (7, ("Foundry: Hosted Agent",)),
 ]
 ENERGY_PHASES = ["Queued", "Checking prerequisites", "Preparing energy sources", "Verifying read models", "Done"]
 ENERGY_MARKERS = [
