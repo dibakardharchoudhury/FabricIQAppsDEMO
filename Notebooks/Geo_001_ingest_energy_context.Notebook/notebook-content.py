@@ -41,7 +41,7 @@
 # IDs and one page, not 800,000 feature dictionaries. Normalized gzip JSONL shards
 # are read by Spark once per layer; Delta `replaceWhere` atomically replaces only a
 # complete layer. Source/validation failures retain the previous partition.
-# Imports use provider-bounded pages of up to 2,000 records, fast lossless gzip,
+# Imports use provider-bounded pages of up to 1,000 records, fast lossless gzip,
 # and one initial status transaction. Per-layer phase timings are logged and archived.
 # Bronze responses, rejected geometry and attempt logs are retained under
 # `Files/bronze/geo_context/<source>/<run_id>/<layer>/`; nothing is vacuumed here.
@@ -251,7 +251,8 @@ AREA_POINTS = {
     "LT": (24.0, 55.2), "PL": (19.1, 52.1),
 }
 NVE_EXTENT = (-15.0, 48.0, 45.0, 82.0)  # also rejects swapped Norwegian lon/lat
-ARCGIS_CHUNK_SIZE = 2000  # also bounded by the layer's advertised maxRecordCount
+# NVE rejects object-ID queries above 1,000 even when maxRecordCount advertises 2,000.
+ARCGIS_CHUNK_SIZE = 1000
 NORMALIZED_SHARD_ROWS = 10000  # gzip shards allow parallel Spark input
 UMM_HORIZON_DAYS = 30
 UMM_PAGE_SIZE = 500

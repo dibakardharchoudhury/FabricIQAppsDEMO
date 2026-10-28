@@ -628,10 +628,30 @@ class HTTPAndArcGISTests(HelpersTest):
         bodies = self.arcgis_bodies()
         bodies[1]["maxRecordCount"] = 2
         http, details = SequenceHTTP(bodies), {}
-        self.assertEqual(self.ns["ARCGIS_CHUNK_SIZE"], 2000)
+        self.assertEqual(self.ns["ARCGIS_CHUNK_SIZE"], 1000)
         rows = list(self.call("iter_arcgis", http, self.ns["GRID_SERVICE"] + "/4", details))
         self.assertEqual(len(rows), 3)
         self.assertEqual(details["page_size"], 2)
+        self.assertTrue(details["reconciled"])
+
+    def test_arcgis_caps_id_queries_despite_larger_advertised_record_limit(self):
+        ids = list(range(1, 2002))
+        bodies = [
+            {"copyrightText": "Fixture notice"},
+            {"fields": [{"name": "objectid"}], "maxRecordCount": 2000},
+            {"count": len(ids)}, {"objectIdFieldName": "objectid", "objectIds": ids},
+            {"type": "FeatureCollection", "features": [feature(oid) for oid in ids[:1000]]},
+            {"type": "FeatureCollection", "features": [feature(oid) for oid in ids[1000:2000]]},
+            {"type": "FeatureCollection", "features": [feature(ids[-1])]},
+            {"count": len(ids)}, {"objectIdFieldName": "objectid", "objectIds": ids},
+        ]
+        http, details = SequenceHTTP(bodies), {}
+        rows = list(self.call("iter_arcgis", http, self.ns["GRID_SERVICE"] + "/4", details))
+        pages = [call for call in http.calls if "objectIds" in (call[1] or {})]
+        self.assertEqual([len(call[1]["objectIds"].split(",")) for call in pages], [1000, 1000, 1])
+        self.assertTrue(all(call[2] == "POST" for call in pages))
+        self.assertEqual(len(rows), len(ids))
+        self.assertEqual(details["page_size"], 1000)
         self.assertTrue(details["reconciled"])
 
     def test_arcgis_missing_duplicate_unexpected_and_truncated_ids_fail(self):
