@@ -33,7 +33,10 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 
 Administration step 6 is the single entry point for Norwegian Energy Map preparation
 and maintenance in both layouts. Once prepared, its action becomes **Refresh snapshots**.
-Progress and failures stay visible in the step; source details and the exceptional
+Running progress appears above Guided Setup in the same full-width banner stack as
+telemetry and weather, with the live Fabric status and elapsed time. The map bar is
+indeterminate because Fabric does not report a completion percentage. Completion
+and failures stay visible in the step; source details and the exceptional
 full national-source rebuild are collapsed under **Maintenance and source details**.
 There is no separate map-maintenance card.
 

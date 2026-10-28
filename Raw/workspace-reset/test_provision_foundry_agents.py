@@ -473,6 +473,7 @@ class PreparedFoundryTests(unittest.TestCase):
         ready = {"name": "chosen-chat", "properties": {
             "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
             "capabilities": {"chatCompletion": "true"},
+            "rateLimits": [{"key": "token", "count": 40000, "renewalPeriod": 60}],
         }}
         with patch.object(module, "request_with_read_retry", return_value=Mock(
             ok=True, json=lambda: {"value": [ready]},
@@ -495,6 +496,7 @@ class PreparedFoundryTests(unittest.TestCase):
         ready = {"name": "chosen-chat", "properties": {
             "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
             "capabilities": {"chatCompletion": "true"},
+            "rateLimits": [{"key": "token", "count": 40000, "renewalPeriod": 60}],
         }}
         with patch.object(module, "request_with_read_retry", return_value=Mock(
             ok=True, json=lambda: ready,
@@ -514,6 +516,35 @@ class PreparedFoundryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "HTTP 404"):
                 module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
             request.assert_called_once()
+
+    def test_model_preflight_rejects_undersized_and_unverifiable_capacity_without_mutating_it(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.run_capture.return_value = "access"
+        project_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/project"
+        ready = {"name": "chosen-chat", "properties": {
+            "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
+            "capabilities": {"chatCompletion": "true"},
+        }}
+        with patch.object(module, "request_with_read_retry", return_value=Mock(
+            ok=True, json=lambda: ready,
+        )) as request:
+            for limits in ([], [{"key": "request", "count": 100, "renewalPeriod": 60}],
+                           [{"key": "token", "count": True, "renewalPeriod": 60}],
+                           [{"key": "token", "count": float("nan"), "renewalPeriod": 60}],
+                           [{"key": "token", "count": float("inf"), "renewalPeriod": 60}],
+                           [{"key": "token", "count": 40000, "renewalPeriod": 0}]):
+                ready["properties"]["rateLimits"] = limits
+                with self.subTest(limits=limits), self.assertRaisesRegex(RuntimeError, "no verifiable token"):
+                    module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
+            for count, period in ((10000, 60), (20000, 60), (60000, 120)):
+                ready["properties"]["rateLimits"] = [{"key": "token", "count": count, "renewalPeriod": period}]
+                with self.subTest(count=count), self.assertRaisesRegex(RuntimeError, "requires at least 40,000"):
+                    module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
+            ready["properties"]["rateLimits"] = [{"key": "token", "count": 80000, "renewalPeriod": 120}]
+            self.assertEqual(module.read_model_selection(deploy, "tenant", project_id, "chosen-chat"), "chosen-chat")
+            self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+        deploy.run_stream.assert_not_called()
 
     def prepared(self):
         deploy = Mock()

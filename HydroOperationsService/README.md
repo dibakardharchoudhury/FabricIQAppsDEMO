@@ -1,5 +1,21 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Model throughput and runtime failures
+
+The model catalog's minimum/default capacity is not proof that the deployment can
+serve the orchestration prompt, catalog and structured-output schema. Verify the
+selected deployment's live token/request limits and available regional quota.
+An undersized deployment can reject even the first planning call with HTTP 429.
+Increasing pay-as-you-go quota allocation does not reserve provisioned compute;
+do not change the selected model, region or deployment type as an implicit fallback.
+
+Model throttling, including wrapped SDK failures, retains HTTP 429 and the
+`model_rate_limit` category across streaming, JSON and persisted-result recovery.
+The operator sees a quota-specific message, not a generic HTTP 500. Failure audits
+retain the original status without provider diagnostics or credentials. Requests
+and approvals are not automatically replayed; inspect the prior audit first.
+Item creation and agent/configuration readback are not end-to-end execution tests.
+
 ## Native answer fidelity
 
 The hosted semantic workflow sends the original user question unchanged to the

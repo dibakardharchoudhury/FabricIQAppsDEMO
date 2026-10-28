@@ -20,6 +20,7 @@ import httpx
 from azure.identity.aio import DefaultAzureCredential
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from filelock import FileLock, Timeout as LockTimeout
+from openai import RateLimitError
 
 from .contracts import (
     Approval, Contract, Outcome, Proposal, ResolvedScope, ReviewInput, ReviewRequest, SourceIdentity,
@@ -29,6 +30,7 @@ from .foundry_supervisor import (
     ChatAnswer, ChatRequest, EquipmentSelection, FoundrySupervisor, HistoricalContext, HistoricalTurn, NativeBinding,
     NativeSource, RunJournal, ToolEvidence, previous_receipts,
     safe_exception_signature,
+    exception_chain_contains,
 )
 from pydantic import Field, ValidationError, model_validator
 from starlette.responses import JSONResponse, StreamingResponse
@@ -520,6 +522,7 @@ def create_delegated_app(
                     "run_id": str(chat.run_id), "status": "failed", "category": category,
                     "source": source.model_dump(mode="json"),
                     "requested_at": chat.requested_at.isoformat(), "failed_at": utc_now().isoformat(),
+                    "http_status": status,
                 })
             except (OSError, SourceFailure, ValueError) as error:
                 logger.error("Cannot persist delegated failure audit for %s (%s).",
@@ -529,6 +532,13 @@ def create_delegated_app(
                 return HTTPException(500, detail)
             logger.error("Delegated run %s failed (%s).", chat.run_id, category)
             return HTTPException(status, detail)
+
+        def execution_failed(error: Exception) -> HTTPException:
+            if exception_chain_contains(error, RateLimitError):
+                return failed(429, "model_rate_limit",
+                              "The Foundry model throughput quota was exceeded. "
+                              "Review deployment token/request limits and the prior run audit before retrying.")
+            return failed(500, "execution", "Orchestration failed; inspect the execution audit.")
 
         try:
             credential = await verifier.verify(body, deadline)
@@ -682,7 +692,7 @@ def create_delegated_app(
                             failed(502, failure.category, str(failure))
                         except Exception as failure:
                             logger.error("Detached orchestration failed (%s).", safe_exception_signature(failure))
-                            failed(500, "execution", "Orchestration failed; inspect the execution audit.")
+                            execution_failed(failure)
                         finally:
                             await stream_credential.close()
 
@@ -758,8 +768,11 @@ def create_delegated_app(
                             logger.error("Streamed orchestration failed (ValidationError: %s).", signature)
                         else:
                             logger.error("Streamed orchestration failed (%s).", safe_exception_signature(failure))
-                        yield line(terminal_event("Orchestration failed; no answer was certified."))
-                        error = failed(500, "execution", "Orchestration failed; inspect the execution audit.")
+                        error = execution_failed(failure)
+                        yield line(terminal_event(
+                            "Foundry model rate limit reached; no answer was certified."
+                            if error.status_code == 429 else "Orchestration failed; no answer was certified."
+                        ))
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     finally:
                         if not task.done():
@@ -801,7 +814,7 @@ def create_delegated_app(
             raise
         except Exception as error:
             logger.error("Delegated invocation failed (%s).", type(error).__name__)
-            raise failed(500, "execution", "Orchestration failed; inspect the execution audit.") from None
+            raise execution_failed(error) from None
         finally:
             body.tokens.clear()
             if credential is not None:

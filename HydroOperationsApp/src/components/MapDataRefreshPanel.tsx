@@ -1,15 +1,12 @@
-export function MapDataRefreshPanel({ state, status, message, elapsed, onRebuild }: {
+export function MapDataRefreshPanel({ state, message, onRebuild }: {
   state: 'idle' | 'running' | 'complete' | 'error'
-  status?: string
   message?: string
-  elapsed?: string
   onRebuild: () => void
 }) {
   const running = state === 'running'
   return <div className="map-data-refresh">
-    {state !== 'idle' && <div className="map-data-refresh-status" role={state === 'error' ? 'alert' : 'status'} aria-live="polite">
-      <strong>{running ? status || 'Starting' : state === 'complete' ? 'Completed' : state === 'error' ? 'Update needs attention' : 'Ready to update'}</strong>
-      {running && <><progress aria-label="Map data update is running" /><span>{elapsed}</span></>}
+    {(state === 'complete' || state === 'error') && <div className="map-data-refresh-status" role={state === 'error' ? 'alert' : 'status'} aria-live="polite">
+      <strong>{state === 'complete' ? 'Completed' : 'Update needs attention'}</strong>
       {message && <p>{message}</p>}
     </div>}
     <details>

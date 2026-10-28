@@ -1873,6 +1873,23 @@ button.v2-signal-row:hover,
   background: var(--cp-accent);
 }
 
+.v2-progress-bar--indeterminate {
+  width: 25%;
+  animation: v2-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes v2-progress-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(400%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-progress-bar--indeterminate {
+    animation: none;
+    transform: translateX(150%);
+  }
+}
+
 .v2-admin-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

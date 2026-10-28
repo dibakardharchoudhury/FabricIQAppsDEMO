@@ -37,7 +37,12 @@ export class HostedInvocationError extends Error {
   readonly detail: Record<string, unknown> | undefined
   readonly status: number
   constructor(status: number, detail?: Record<string, unknown>) {
-    super(detail?.category === 'native_refusal'
+    super(detail?.category === 'model_rate_limit'
+      ? 'The Foundry model throughput quota was exceeded (HTTP 429). ' +
+        'The service owner must review the model deployment token/request limits and the prior run audit before retrying. ' +
+        'No answer or write outcome is certified.' +
+        (detail.audit_available === false ? ' The execution audit could not be saved; contact the service owner.' : '')
+      : detail?.category === 'native_refusal'
       ? 'The selected Fabric Data Agent refused the request. Its owner must review the provider response before retrying. ' +
         'No direct-source fallback was used. No answer or write outcome is certified.' +
         (detail.audit_available === false ? ' The execution audit could not be saved; contact the service owner.' : '')
@@ -322,8 +327,12 @@ export class HostedTransport {
         if (result.status === 'completed') return record(result.answer)
         if (result.status === 'failed') {
           const failure = result.failure
-          throw new HostedInvocationError(500,
-            failure && typeof failure === 'object' && !Array.isArray(failure) ? record(failure) : undefined)
+          const detail = failure && typeof failure === 'object' && !Array.isArray(failure) ? record(failure) : undefined
+          const status = detail?.http_status
+          throw new HostedInvocationError(
+            typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500,
+            detail,
+          )
         }
         if (result.status !== 'running' || result.run_id !== runId) {
           throw new Error('Hosted run recovery returned an invalid status contract.')

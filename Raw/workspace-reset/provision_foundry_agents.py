@@ -10,6 +10,7 @@ import hashlib
 from typing import NamedTuple
 import importlib.util
 import json
+import math
 import os
 import re
 import time
@@ -17,6 +18,8 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import requests
+
+MINIMUM_ORCHESTRATION_TPM = 40_000
 
 
 def request_with_read_retry(method: str, url: str, **kwargs) -> requests.Response:
@@ -712,7 +715,33 @@ def read_model_selection(deploy, tenant: str, project_id: str, wanted: str) -> s
         deployments.extend([page] if wanted else page.get("value", []))
         url = None if wanted else page.get("nextLink")
     try:
-        return select_model_deployment(deployments, wanted)
+        model = select_model_deployment(deployments, wanted)
+        selected = next(item for item in deployments if item["name"] == model)
+        token_limits = [
+            limit for limit in selected.get("properties", {}).get("rateLimits") or []
+            if isinstance(limit, dict) and limit.get("key") == "token"
+        ]
+        if not token_limits or any(
+            type(limit.get("count")) not in (int, float) or not math.isfinite(limit["count"]) or limit["count"] <= 0
+            or type(limit.get("renewalPeriod")) not in (int, float)
+            or not math.isfinite(limit["renewalPeriod"]) or limit["renewalPeriod"] <= 0
+            for limit in token_limits
+        ):
+            raise RuntimeError(
+                f"Model '{model}' has no verifiable token throughput limit. "
+                "Inspect the selected model deployment's quota before setting up orchestration."
+            )
+        tpm = min(limit["count"] * 60 / limit["renewalPeriod"] for limit in token_limits)
+        if tpm < MINIMUM_ORCHESTRATION_TPM:
+            raise RuntimeError(
+                f"Model '{model}' has {tpm:g} tokens/minute; Hydro orchestration requires at least "
+                f"{MINIMUM_ORCHESTRATION_TPM:,} for its planner, catalog and structured output. "
+                "Increase this deployment's allocation within available regional quota, then retry. "
+                "The catalog minimum/default is not runtime-ready capacity. No model or region was substituted."
+            )
+        print(f"Foundry: verified model '{model}' allocation: {tpm:g} tokens/minute. "
+              "Concurrent requests may need additional quota; runtime execution remains a separate check.", flush=True)
+        return model
     except RuntimeError as exc:
         raise deploy.DeployError(str(exc)) from exc
 

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import jwt
+from openai import RateLimitError
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr, ValidationError
 from starlette.requests import Request
@@ -675,6 +676,43 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("RuntimeError", combined)
             self.assertNotIn("private diagnostic content", combined)
             self.assertEqual(contexts, ["closed"])
+
+    async def test_model_throttling_keeps_429_category_and_audit_without_private_diagnostics(self):
+        for streaming in (False, True):
+            for wrapped in (False, True):
+                with self.subTest(streaming=streaming, wrapped=wrapped), TemporaryDirectory() as directory:
+                    async def fail(_request):
+                        error = RateLimitError(
+                            "private provider diagnostics",
+                            response=httpx.Response(429, request=httpx.Request("POST", "https://model.test")),
+                            body={"error": {"code": "rate_limit_exceeded"}},
+                        )
+                        if wrapped:
+                            raise SourceFailure("Foundry model request failed (HTTP 429).") from error
+                        raise error
+
+                    app, _, _, contexts = self.ingress(Path(directory), run=fail)
+                    initial = self.invocation()
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                                 base_url="http://test") as client:
+                        response = await client.post("/invocations", json={**initial, "stream": streaming})
+                        if streaming:
+                            messages = [json.loads(line) for line in response.text.splitlines()]
+                            self.assertEqual(messages[-1]["status"], 429)
+                            self.assertIn("rate limit", messages[-2]["event"]["detail"].lower())
+                            detail = messages[-1]["detail"]
+                        else:
+                            self.assertEqual(response.status_code, 429)
+                            detail = response.json()["detail"]
+                        self.assertEqual(detail["category"], "model_rate_limit")
+                        self.assertNotIn("private provider diagnostics", response.text)
+                        recovery = await client.post("/invocations", json={
+                            "operation": "result", "run_id": detail["run_id"], "tokens": initial["tokens"],
+                        })
+                        self.assertEqual(recovery.json()["status"], "failed")
+                        self.assertEqual(recovery.json()["failure"]["category"], "model_rate_limit")
+                        self.assertEqual(recovery.json()["failure"]["http_status"], 429)
+                    self.assertEqual(contexts, ["closed"])
 
     async def test_native_refusal_survives_streaming_and_persisted_result_without_private_text(self):
         async def fail(_request):

@@ -26,6 +26,44 @@ test('native provider moderation processing error is not mislabeled as a Data Ag
   assert.match(error.message, /No answer or write outcome is certified/)
 })
 
+test('model throttling stays actionable across JSON, streaming and interrupted-run recovery without retry', async () => {
+  for (const delivery of ['json', 'stream', 'recovery'] as const) {
+    const operations: string[] = []
+    const failure = { category: 'model_rate_limit', http_status: 429, message: 'private provider diagnostics' }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+      const body = JSON.parse(String(init?.body))
+      operations.push(body.operation)
+      if (body.operation === 'result') return response({ status: 'failed', failure })
+      if (delivery === 'json') return response({ detail: failure }, 429)
+      if (delivery === 'stream') return new Response(
+        `${JSON.stringify({ type: 'error', status: 429, detail: failure })}\n`,
+        { headers: { 'Content-Type': 'application/x-ndjson' } },
+      )
+      let sent = false
+      return new Response(new ReadableStream({
+        pull(controller) {
+          if (sent) controller.error(new Error('connection reset'))
+          else {
+            sent = true
+            controller.enqueue(new TextEncoder().encode(`${JSON.stringify({
+              type: 'run', run_id: 'run-throttled', source,
+            })}\n`))
+          }
+        },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+    })
+    await assert.rejects(client.run({ question: 'Review telemetry and draft work.' }, () => {}), error => {
+      assert.ok(error instanceof HostedInvocationError)
+      assert.equal(error.status, 429)
+      assert.match(error.message, /model.*throughput quota/i)
+      assert.match(error.message, /HTTP 429/)
+      assert.doesNotMatch(error.message, /private provider diagnostics|HTTP 500/)
+      return true
+    })
+    assert.deepEqual(operations, delivery === 'recovery' ? ['run', 'result'] : ['run'])
+  }
+})
+
 test('normal Send acquires missing access before submitting exactly once, with no background popup', async () => {
   const cached = new Map<string, string>()
   let popups = 0

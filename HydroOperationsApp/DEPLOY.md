@@ -409,6 +409,17 @@ by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds sh
 **Deploy app** publish the website and run its authentication/CORS/connector checks.
 `FOUNDRY_SETUP_SUCCESS` confirms configuration readback, not agent execution.
 
+Model preflight requires a verified allocation of at least **40,000 tokens/minute**
+for the planner, source catalog and structured output. The catalog minimum/default
+can be too small even for the first question; setup rejects undersized or
+unverifiable limits rather than publishing a known-throttled coordinator.
+For a new project, `HYDRO_FOUNDRY_MODEL_CAPACITY` can override the catalog capacity
+before the canonical deployment command. Capacity units are model/SKU-specific:
+verify the resulting live token limit and available regional quota. Existing model
+allocation is never silently changed, and concurrent requests can require more.
+Runtime model throttling retains HTTP 429 with an explicit quota message and a
+failed-run audit; it is not reported as successful execution or automatically replayed.
+
 Fabric IQ connections use the Fabric API audience
 `https://api.fabric.microsoft.com` and `metadata.type=fabric_iq_preview`,
 matching portal-created Data Agent tools. Setup reuses an existing verified
