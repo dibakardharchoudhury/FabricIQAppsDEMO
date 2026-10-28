@@ -503,6 +503,9 @@ silently replaced.
 
 Choose **Deploy app**. It verifies prepared agents, publishes the website and checks
 runtime/CORS, SQL and authentication. It does not rebuild agents or seed data.
+The launcher preserves the target's prepared energy-map setting; app publication
+does not offer a second enable/disable selector. Run **Energy setup** first to
+prepare map data and enable its navigation.
 Readiness requires browser-equivalent preflights and POST checks for `/graphql`
 and `/api/auth/v1/token`, plus `/connectors/hydrolakehouse/graphql`,
 `/connectors/hydrooperations/graphql` and, with energy enabled,

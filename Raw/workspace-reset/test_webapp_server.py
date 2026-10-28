@@ -1994,5 +1994,39 @@ assert.ok(coreOnly.includes("Publishing map read models"));
             SERVER.JOBS.clear()
 
 
+class PreparedEnergyPublicationTests(unittest.TestCase):
+    def test_app_publication_uses_prepared_energy_setting_without_another_selector(self):
+        target = {"tenant": "tenant.example", "workspace": "Demo"}
+        client = SERVER.app.test_client()
+        with patch.object(SERVER, "_start", return_value="job") as start:
+            response = client.post("/api/deploy-app", json=target)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        argv = start.call_args.args[0]
+        self.assertEqual(argv[argv.index("--energy-map") + 1], "keep")
+        for value in ("enabled", "disabled"):
+            with self.subTest(value=value), patch.object(SERVER, "_start") as start:
+                response = client.post("/api/deploy-app", json={**target, "energyMap": value})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("preserves the prepared energy-map setting", response.get_json()["error"])
+                start.assert_not_called()
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("appEnergyMap", page)
+        self.assertNotIn("Energy-map navigation", page)
+
+    def test_full_workflow_enables_energy_before_preserving_it_for_publication(self):
+        target = {
+            "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo",
+            "connectionId": "yes", "parameters": PIPELINE_PARAMS, "energyMap": "enabled",
+        }
+        with patch.object(SERVER, "_start_workflow", return_value="job") as start:
+            response = SERVER.app.test_client().post("/api/full-workflow", json=target)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        steps = start.call_args.args[0]
+        energy = next(step for step in steps if step["name"] == "Energy setup")["argv"]
+        publish = steps[-1]["argv"]
+        self.assertEqual(energy[energy.index("--energy-map") + 1], "enabled")
+        self.assertEqual(publish[publish.index("--energy-map") + 1], "keep")
+
+
 if __name__ == "__main__":
     unittest.main()

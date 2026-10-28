@@ -1032,6 +1032,8 @@ def _deploy_invocation(data: dict, *, stage: str = "app") -> list[str]:
     energy = data.get("energyMap", "keep")
     if energy not in ("keep", "enabled", "disabled"):
         raise ValueError("Energy map must be keep, enabled or disabled.")
+    if stage == "app" and energy != "keep":
+        raise ValueError("App publication preserves the prepared energy-map setting. Run Energy setup first.")
 
     argv = [
         str(DEPLOY_SCRIPT),
@@ -1051,7 +1053,7 @@ def api_full_workflow():
     try:
         sync_argv, sync_env = _sync_invocation(data)
         core_steps = _core_setup_steps(data, phase_offset=len(SYNC_PHASES) - 1)
-        deploy_argv = _deploy_invocation(data)
+        deploy_argv = _deploy_invocation({**data, "energyMap": "keep"})
         deploy_env = _deploy_environment(data)
         foundry_argv = _deploy_invocation(data, stage="foundry")
     except ValueError as exc:

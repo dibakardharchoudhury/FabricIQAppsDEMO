@@ -472,14 +472,7 @@
       <div class="card-head"><h2>Deploy Fabric app last</h2></div>
       <p class="hint">Publishes the prepared app and verifies authentication, CORS and connectors. Does not rerun data or agent setup.</p>
       <div id="deployAuthenticationFields"></div>
-      <div class="grid">
-        <label>Energy-map navigation
-          <select id="appEnergyMap">
-            <option value="keep">Keep this target's setting</option>
-            <option value="enabled">Enable (requires verified energy setup)</option>
-            <option value="disabled">Disable</option>
-          </select></label>
-      </div>
+      <p class="hint">Uses the energy-map setting already prepared for this target. Run Energy setup to prepare map data before publication.</p>
       <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
@@ -1044,7 +1037,6 @@ $("deployBtn").addEventListener("click", async () => {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     clientId: spaClientValue("deployClientId"),
-    energyMap: $("appEnergyMap").value,
   }, $("deployPanel"), () => refresh());
 });
 
