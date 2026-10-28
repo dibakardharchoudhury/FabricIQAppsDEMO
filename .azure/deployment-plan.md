@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Native Data Agent passthrough in mixed workflows
+> **Status:** Validated - Prose-only native evidence follow-up
 
 ## Scoped native Data Agent passthrough
 
@@ -35,6 +35,18 @@ The pre-fix live request returned an unchanged 4,527-character native answer
 (matching SHA-256, one display occurrence), but also invoked another briefing model.
 The new regression proves zero briefing-model calls and refuses cached replacement
 briefings. No test approved a draft or created an operational record.
+
+Follow-up, 2026-10-28: hosted acceptance exposed a valid prose-only native answer
+being rejected for missing structured records. The native invocation now records
+the exact answer as receipt evidence when no record arrays exist; the compiler
+checks completeness before skipping unnecessary native display projections.
+Fresh validation passed 196 backend contracts (one skipped), including actual
+native invocation, catalog fulfillment and mixed-workflow compilation for prose,
+and 54 hosted packaging/deployment contracts. Target tenant/subscription,
+`npm run validate-env`, `npm run build` and whitespace checks passed. Frontend, Dockerfile, locks,
+infrastructure and permissions are unchanged from the preceding validated scope.
+Local Docker remains unavailable; the canonical ACR build and live exact-question
+acceptance are deployment gates, not outcomes claimed by these local tests.
 
 ## Scoped Administration consolidation
 

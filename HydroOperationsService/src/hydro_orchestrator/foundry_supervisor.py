@@ -2789,6 +2789,13 @@ class FoundrySupervisor:
             "source": "data-agent", "response": body, "source_answer_sha256": payload["source_answer_sha256"],
         })
         self.invocation_inputs[raw.id] = sha256(question.encode()).hexdigest()
+        fields = tuple(
+            key for key, value in payload.items()
+            if isinstance(value, list) and all(isinstance(row, dict) for row in value)
+        )
+        if not fields:
+            payload["source_answer_receipt"] = [{"source_identity": receipt["id"], "response": text}]
+            fields = ("source_answer_receipt",)
         self.evidence[receipt["id"]] = ToolEvidence(
             id=receipt["id"], source=request.source, tool="fabriciq-data-agent",
             arguments={"assignment": question}, completed_at=utc_now(), result=payload,
@@ -2801,10 +2808,7 @@ class FoundrySupervisor:
                 )
                 for requirement in (self.answer_contract.requirements if self.answer_contract else ())
                 if requirement.kind == "native_claims" and requirement.authority == "native"
-                for index, field in enumerate(
-                    key for key, value in payload.items()
-                    if isinstance(value, list) and all(isinstance(row, dict) for row in value)
-                )
+                for index, field in enumerate(fields)
             ),
         )
         response = AgentResponse(
@@ -3517,6 +3521,7 @@ class FoundrySupervisor:
         charts: list[PlannedChart] = []
         limitations: list[str] = []
         summary_parts: list[str] = []
+        native_receipts = {item.evidence_id for item in self.native_answers()}
         for requirement in contract.requirements:
             matches = [
                 dataset
@@ -3633,6 +3638,9 @@ class FoundrySupervisor:
                 )
             if not any(dataset.complete for _receipt, dataset in matches):
                 raise SourceFailure(f"Required answer view {view.id} has no complete source result.")
+            if (view.kind == "native_claims" and view.authority == "native" and view.chart is None
+                    and all(receipt.id in native_receipts for receipt, _dataset in matches)):
+                continue
             if view.mode == "grouped" and any(
                 dataset.group_by != view.group_by for _receipt, dataset in matches
             ):

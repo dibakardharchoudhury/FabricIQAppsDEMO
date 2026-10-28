@@ -13,6 +13,8 @@ unchanged and fully expanded beside the editable approval cards. Native result-f
 projections remain available to evidence checks and the audit, but are not rendered
 as a second, sparse table. No additional briefing model is invoked or replayed when
 an original native answer exists, including mixed draft workflows.
+Verified prose-only answers are native evidence too; the workflow does not require
+or invent a business-record table to accept them.
 Independent source tables and explicitly
 requested charts retain their existing presentation and exact source values.
 

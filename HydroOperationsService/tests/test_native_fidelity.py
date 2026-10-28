@@ -13,7 +13,7 @@ from hydro_orchestrator.live_sources import SourceFailure
 from hydro_orchestrator.native_fidelity import source_answer
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, ChatRequest, EvidenceDataset, FoundrySupervisor, NativeBinding,
-    OperatorAnswerContract, RunJournal, SpecialistResult, ToolEvidence,
+    OperatorAnswerContract, RunJournal, SemanticDecision, SpecialistResult, ToolEvidence,
 )
 from hydro_orchestrator.contracts import utc_now
 from hydro_orchestrator.presentation import client_presentation
@@ -137,7 +137,7 @@ class NativeMixedWorkflowTests(unittest.TestCase):
             )
             self.assertIsNone(owner.native_answer(request), "This must exercise the multi-specialist path.")
             plan = owner.contract_answer_plan(request)
-            self.assertEqual(len(plan.tables), 1, "Typed source rows remain available for evidence and analysis.")
+            self.assertEqual(plan.tables, (), "The original answer must not require a second table projection.")
             answer = owner.answer(request, plan, use_projected_summary=True)
             self.assertEqual(answer.native_answers[0].text, text)
             presentation = client_presentation(answer).text
@@ -229,6 +229,9 @@ class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_semantic_execution_keeps_original_question_and_bypasses_reconstruction(self):
         question, text, body = NativeFidelityTests().body()
+        text = "## Telemetry findings\n\nEQUIP_RTI_T005 had BAD speed telemetry today. No open same-signal work was returned.\n"
+        body["output"][0]["output"] = json.dumps({"response": text})
+        body["output"][1]["content"][0]["text"] = text.strip()
         version = AgentVersion(
             name="hydro-fabric-iq-agent", version="4", model="test",
             tools=({"type": "fabric_iq_preview", "project_connection_id": "native-data",
@@ -250,10 +253,15 @@ class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):
                 SOURCE, Path(root), semantic_planning=True, analysis_model="test",
                 native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}),
             )
+            owner.semantic_decision = SemanticDecision.model_validate(decision("fabric-iq", "native_claims", False))
+            owner.answer_contract = OperatorAnswerContract.model_validate(
+                decision("fabric-iq", "native_claims", False)["plan"]["answer_contract"],
+            )
             request = ChatRequest(
                 run_id=uuid4(), source=SOURCE, question=question, deadline=utc_now() + timedelta(minutes=3),
             )
             journal = RunJournal(Path(root) / "receipts")
+            journal.save("tool_catalog", await SourceTools().catalog(request))
             with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=project):
                 result, _, elapsed = await owner.invoke(
                     "fabric-iq", "A planner-rephrased assignment must not replace the operator's question.",
@@ -274,3 +282,14 @@ class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(answer.analysis)
             self.assertEqual(bridge.call.await_count, 1)
             self.assertEqual(journal.read("native_response:" + body["id"])["response"], body)
+            owner.specialists.append(SpecialistResult(
+                role="work-order", agent_name="hydro-work-order-agent", version="3",
+                response_id="work-review", duration_ms=1, text="Reviewed.", input_digest="a" * 64,
+            ))
+            self.assertIsNone(owner.native_answer(request))
+            await owner.fulfill_catalog_requirements(request, journal)
+            plan = owner.contract_answer_plan(request)
+            self.assertEqual(plan.tables, ())
+            combined = owner.answer(request, plan, use_projected_summary=True)
+            self.assertEqual(combined.native_answers[0].text, text)
+            self.assertEqual(client_presentation(combined).text.count(text), 1)
