@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from datetime import timedelta
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,7 +12,8 @@ from uuid import uuid4
 from hydro_orchestrator.live_sources import SourceFailure
 from hydro_orchestrator.native_fidelity import source_answer
 from hydro_orchestrator.foundry_supervisor import (
-    AgentVersion, ChatRequest, FoundrySupervisor, NativeBinding, RunJournal, SpecialistResult,
+    AgentVersion, ChatRequest, EvidenceDataset, FoundrySupervisor, NativeBinding,
+    OperatorAnswerContract, RunJournal, SpecialistResult, ToolEvidence,
 )
 from hydro_orchestrator.contracts import utc_now
 from hydro_orchestrator.presentation import client_presentation
@@ -92,6 +94,86 @@ class NativeFidelityTests(unittest.TestCase):
         for case in cases:
             with self.subTest(case=case), self.assertRaises(SourceFailure):
                 source_answer(case, question, "fabriciq-data-agent")
+
+
+class NativeMixedWorkflowTests(unittest.TestCase):
+    def owner(self, root):
+        owner = FoundrySupervisor(
+            "https://test.services.ai.azure.com/api/projects/test", AsyncMock(), NodeSourceBridge(),
+            SourceTools(), SOURCE, Path(root), semantic_planning=True, analysis_model="test",
+        )
+        owner.answer_contract = OperatorAnswerContract.model_validate(
+            decision("fabric-iq", "native_claims", False)["plan"]["answer_contract"],
+        )
+        text = "## BAD telemetry today\n\n| Turbine | Open work |\n|---|---|\n| T005 | None |\n"
+        records = {
+            "registry": [{"equipment_id": "EQUIP_RTI_T005", "opcua_node_id": "T005.speed", "unit": "rpm"}],
+            "quality": [{"equipment_id": "EQUIP_RTI_T005", "bad_sample_count": 8}],
+            "work": [{"equipmentId": "EQUIP_RTI_T001", "workOrderNumber": "WO-1", "status": "Ready"}],
+        }
+        owner.evidence["native-read"] = ToolEvidence(
+            id="native-read", source=SOURCE, tool="fabriciq-data-agent", arguments={},
+            completed_at=utc_now(),
+            result={"response": text, "source_answer_sha256": sha256(text.encode()).hexdigest(), **records},
+            datasets=tuple(EvidenceDataset(
+                kind="native_claims", field=field, authority="native", scope="population",
+                complete=True, identity_fields=("source_identity",),
+            ) for field in records),
+        )
+        owner.specialists = [
+            SpecialistResult(
+                role=role, agent_name=f"hydro-{role}-agent", version="4",
+                response_id=f"response-{role}", duration_ms=1, input_digest="a" * 64, text="Completed.",
+            ) for role in ("fabric-iq", "work-order")
+        ]
+        return owner, text
+
+    def test_mixed_workflow_displays_original_native_answer_without_sparse_projection(self):
+        with tempfile.TemporaryDirectory() as root:
+            owner, text = self.owner(root)
+            request = ChatRequest(
+                run_id=uuid4(), source=SOURCE, deadline=utc_now() + timedelta(minutes=3),
+                question="Which turbines had BAD telemetry today? Check open work and help with drafts.",
+            )
+            self.assertIsNone(owner.native_answer(request), "This must exercise the multi-specialist path.")
+            plan = owner.contract_answer_plan(request)
+            self.assertEqual(len(plan.tables), 1, "Typed source rows remain available for evidence and analysis.")
+            answer = owner.answer(request, plan, use_projected_summary=True)
+            self.assertEqual(answer.native_answers[0].text, text)
+            presentation = client_presentation(answer).text
+            self.assertEqual(presentation.count(text), 1)
+            self.assertNotIn("opcua\\_node\\_id", presentation, "Raw result-file columns must not replace the answer.")
+            self.assertNotIn("workOrderNumber", presentation)
+            self.assertEqual(owner.evidence["native-read"].result["quality"][0]["bad_sample_count"], 8)
+
+    def test_structured_only_native_results_still_have_a_visible_projection(self):
+        with tempfile.TemporaryDirectory() as root:
+            owner, _ = self.owner(root)
+            receipt = owner.evidence["native-read"]
+            result = {key: value for key, value in receipt.result.items() if key != "response"}
+            owner.evidence[receipt.id] = receipt.model_copy(update={"result": result})
+            request = ChatRequest(
+                run_id=uuid4(), source=SOURCE, question="Show the returned records.",
+                deadline=utc_now() + timedelta(minutes=3),
+            )
+            plan = owner.contract_answer_plan(request)
+            self.assertEqual(len(plan.tables), 1)
+            presentation = client_presentation(owner.answer(request, plan, use_projected_summary=True)).text
+            self.assertIn("opcua\\_node\\_id", presentation)
+
+    def test_original_text_does_not_bypass_required_source_completeness(self):
+        with tempfile.TemporaryDirectory() as root:
+            owner, _ = self.owner(root)
+            receipt = owner.evidence["native-read"]
+            owner.evidence[receipt.id] = receipt.model_copy(update={
+                "datasets": tuple(dataset.model_copy(update={"complete": False}) for dataset in receipt.datasets),
+            })
+            request = ChatRequest(
+                run_id=uuid4(), source=SOURCE, question="Show quality and draft work.",
+                deadline=utc_now() + timedelta(minutes=3),
+            )
+            with self.assertRaisesRegex(SourceFailure, "incomplete"):
+                owner.contract_answer_plan(request)
 
 
 class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):

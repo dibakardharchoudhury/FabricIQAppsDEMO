@@ -8,6 +8,14 @@ displays the original Data Agent `response` without table reconstruction or an
 additional briefing model for native-only answers. The audit retains the raw
 Foundry response and a SHA-256 digest of the original answer.
 
+Mixed retrieval and work-order workflows also display that original Markdown
+unchanged and fully expanded beside the editable approval cards. Native result-file
+projections remain available to evidence checks and the audit, but are not rendered
+as a second, sparse table. No additional briefing model is invoked or replayed when
+an original native answer exists, including mixed draft workflows.
+Independent source tables and explicitly
+requested charts retain their existing presentation and exact source values.
+
 A tool-processing diagnostic is not itself a content-filter refusal. A diagnostic
 can be accepted only when Foundry completed successfully, the final reply matches
 the source answer, and explicit final content-filter decisions report no block.

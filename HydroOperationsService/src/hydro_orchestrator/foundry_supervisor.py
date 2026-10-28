@@ -4095,6 +4095,8 @@ class FoundrySupervisor:
         return None
 
     def needs_analysis(self) -> bool:
+        if self.native_answers():
+            return False
         plan = self.semantic_decision.plan if self.semantic_decision else None
         return bool(self.analysis_model) and (
             self.semantic_decision.analysis_requested if plan is not None and self.semantic_decision is not None
@@ -4104,11 +4106,11 @@ class FoundrySupervisor:
     async def analysis_for(
         self, request: ChatRequest, answer: ChatAnswer, journal: RunJournal,
     ) -> AnalysisReport | None:
+        if not self.needs_analysis() or not answer.tables:
+            return None
         saved = journal.read("answer_analysis")
         if saved is not None:
             return AnalysisReport.model_validate(saved["analysis"])
-        if not self.needs_analysis() or not answer.tables:
-            return None
         root_cause = (
             await self.root_cause_evidence(request, journal)
             if any(item.role == "rca" for item in self.specialists) else None
@@ -4937,7 +4939,7 @@ class FoundrySupervisor:
                         **projection.model_dump(mode="json"),
                     })
                     result = owner.answer(request, plan, use_projected_summary=True)
-                    if owner.analysis_model:
+                    if owner.needs_analysis():
                         owner.emit_event(
                             f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
                             "Writing the grounded briefing: comparing the verified evidence with open work and "

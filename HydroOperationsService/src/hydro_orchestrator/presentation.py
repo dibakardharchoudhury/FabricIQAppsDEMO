@@ -121,7 +121,14 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             )
     else:
         sections.append(literal(answer.summary))
+    native_receipts = {item.evidence_id for item in native}
+    charted_tables = {chart.table_id for chart in answer.charts}
     for table in answer.tables:
+        # Native result-file projections remain audit/analysis inputs, not a second rendering of the source answer.
+        if table.rows and table.id not in charted_tables and all(
+            row.source.evidence_id in native_receipts for row in table.rows
+        ):
+            continue
         keys = [column.key for column in table.columns]
         lines = [f"## {literal(table.title)}", "",
                  "| " + " | ".join(literal(column.label) for column in table.columns) + " |",

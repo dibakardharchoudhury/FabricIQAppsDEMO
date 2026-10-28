@@ -180,7 +180,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   const presentedText = message.text && (
     message.backendOwned ? message.text : stripOptionsMarker(streaming ? '' : operatorNarrative(message.text))
   )
-  const draftParts = draftReady && presentedText ? draftAnswerParts(presentedText) : undefined
+  const draftParts = draftReady && presentedText ? draftAnswerParts(presentedText, message.backendOwned) : undefined
   const answer = presentedText && (message.failed
     ? <p className="v2-agent-failure" role="alert">{presentedText}</p>
     : message.backendOwned

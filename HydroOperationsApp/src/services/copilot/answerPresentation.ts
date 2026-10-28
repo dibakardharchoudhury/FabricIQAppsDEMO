@@ -12,7 +12,8 @@ export function operatorNarrative(text: string): string {
     .join('\n\n')
 }
 
-export function draftAnswerParts(text: string): { summary: string; details: string } {
+export function draftAnswerParts(text: string, backendOwned = false): { summary: string; details: string } {
+  if (backendOwned) return { summary: text, details: '' }
   const trimmed = text.trim()
   const heading = trimmed.search(/\n#{1,6}\s+/)
   if (heading < 0) return { summary: trimmed, details: '' }

@@ -64,6 +64,16 @@ class PresentationTests(unittest.TestCase):
         self.assertIn("## Fabric Data Agent answer\n\n" + original, combined.text)
         self.assertIn("## Hydro workflow result", combined.text)
         self.assertIn("A\\|\\[B\\]\\n\\<C\\>", combined.text)
+        native_projection = answer.model_copy(update={
+            "native_answers": (native.model_copy(update={"evidence_id": "read"}),),
+        })
+        self.assertNotIn("## Returned readings", client_presentation(native_projection).text)
+        native_chart = client_presentation(native_projection.model_copy(update={
+            "charts": (PlannedChart(table_id="source", kind="bar", x_key="asset", y_keys=("value",)),),
+        }))
+        self.assertIn("## Returned readings", native_chart.text)
+        self.assertEqual(native_chart.text.count(original), 1)
+        self.assertEqual(native_chart.visualizations, charted.visualizations)
 
     def test_keyed_rows_reject_wrong_columns_missing_values_and_numeric_coercion(self):
         row = {"values": {"value": 0.0, "unit": "C"}, "source": {"evidence_id": "receipt", "path": "/rows/0"}}

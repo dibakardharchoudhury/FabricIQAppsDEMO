@@ -1,6 +1,40 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Administration map-control consolidation
+> **Status:** Validated - Native Data Agent passthrough in mixed workflows
+
+## Scoped native Data Agent passthrough
+
+Reuse the approved FEATURE tenant, workspace, SPA, capacity and Foundry project.
+No infrastructure, permissions or operational-data writes are added. Mixed
+retrieval/draft workflows must not invoke a second briefing model, replay a cached
+briefing, render native audit rows as a replacement table, or collapse the original
+Markdown. Independent checks, requested charts and human approval stay unchanged.
+
+All validation checks pass:
+- [x] 1. Core Validation: expected Azure tenant/subscription; environment validation,
+  TypeScript, targeted ESLint, production build, 56 frontend contracts, 196 source/
+  presentation/planning/analysis/workflow contracts (one skipped), and actual component
+  rendering with source tables visible and editable approval cards intact.
+- [x] 2. Docker Build context: 47 hosted packaging/deployment contracts passed.
+  Dockerfile and locks are unchanged; local Docker daemon is unavailable. The
+  canonical orchestrator must build and activate the changed source-fingerprinted
+  image through the existing ACR path before reporting deployment success.
+- [x] 3. Azure Policy Validation: no IaC, RBAC, identity, network or region delta;
+  existing source verification, duplicate checks and explicit human approval remain.
+
+### Section 7: Validation Proof - native mixed-workflow passthrough
+
+Validation date: 2026-10-28. `npm run validate-env`, `npm run typecheck`, targeted
+`npx eslint`, and `npm run build` passed with existing bundle warnings.
+`node --import tsx --test` passed answer-presentation and copilot-settings suites.
+Python unittest passed native-fidelity, presentation, semantic-planning, analysis,
+supervisor and work-review suites, plus 47 hosted deployment/packaging contracts.
+Actual `CopilotResponse` rendering retained the complete Markdown table, both
+source/workflow headings and the editable approval card, with no collapsed details.
+The pre-fix live request returned an unchanged 4,527-character native answer
+(matching SHA-256, one display occurrence), but also invoked another briefing model.
+The new regression proves zero briefing-model calls and refuses cached replacement
+briefings. No test approved a draft or created an operational record.
 
 ## Scoped Administration consolidation
 

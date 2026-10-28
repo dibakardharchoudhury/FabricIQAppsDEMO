@@ -52,6 +52,11 @@ test('operator narrative excludes technical inventories and pointer ledgers but 
   assert.doesNotMatch(result, /52 fields|call_123|Raw IDs|Source observations|Returned source/)
 })
 
+test('backend-owned draft answers keep the complete original Markdown visible without splitting or trimming', () => {
+  const text = '## Fabric Data Agent answer\r\n\r\n| Turbine | Open work |\r\n|---|---|\r\n| T005 | None |\r\n\r\n## Hydro workflow result\r\nReview the editable draft.\r\n'
+  assert.deepEqual(draftAnswerParts(text, true), { summary: text, details: '' })
+})
+
 test('draft answers keep their explanation visible and collapse only detailed evidence', () => {
   assert.deepEqual(
     draftAnswerParts(`T005 has a BAD-quality speed reading, but no physical fault is established.
