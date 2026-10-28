@@ -1,6 +1,54 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed - authenticated native acceptance verified
+> **Status:** Validated - minimal capability orchestration; publication pending
+
+## Current scoped architecture hardening
+
+The existing approved tenant, FEATURE workspace, Foundry project/model and F8
+capacity are unchanged. No infrastructure, permissions, source topology or
+operational-data writes are requested. Publish through the canonical Python
+orchestrator only, after the normal clean-branch and validation gates.
+
+The runtime now pins only selected agent-mode capabilities; reader-only work
+has no remote specialist dependency. Consecutive independent readers run in one
+Framework superstep with a four-read concurrency cap and sibling cancellation.
+Q&A has no RCA/maintenance-authoring skill. Models receive only their pinned
+role/current-turn tool schemas. Semantic `analysis_requested` prevents an
+automatic narrative model after factual retrieval, while permitting one
+tool-less weather interpretation without a Weather agent loop. Planning and
+briefing HTTP clients close explicitly. An absolute ten-minute execution budget
+is separate from credential admission. Audit manifests identify actual
+providers and session-local persistence; the UI hides unused capabilities.
+
+All validation checks pass for the scoped application change:
+- [x] 1. Core Validation (CLI, auth, build, validate, what-if): approved tenant
+  and subscription verified; environment validation, TypeScript, targeted
+  ESLint and `git diff --check` pass. The final backend run completed 210 cases:
+  209 passed and the opt-in live evaluator was skipped. A separate ten-case
+  real-model evaluation passed, including negation, clarification, native
+  ontology routing, diagnostic-only drafts, fault-gated repairs and reader-only
+  forecast comparison. Final planning times were approximately 5.3-14.1 seconds;
+  this is not an end-to-end latency SLO. Five pre-existing backend type
+  diagnostics remain unchanged; no new diagnostic was introduced.
+  No Bicep or ARM infrastructure delta exists, so build/validate/what-if of an
+  infrastructure template is not applicable.
+- [x] 2. Docker Build (if containerized): unchanged deny-by-default Docker
+  context and dependency manifests. The canonical orchestrator owns the
+  source-fingerprinted ACR build and image/readiness verification; no standalone
+  Docker or alternative azd deployment is authorized.
+- [x] 3. Azure Policy Validation: unchanged region, SKU, networking, identity,
+  permissions and existing resource boundary; no resource-policy delta.
+
+Role Assignment Verification: no role assignments are generated or modified.
+Runtime source identity, native answer fidelity and separate human-approved
+write contracts remain unchanged. Current tests cover approval idempotency,
+failed/expired approval and uncertain-write reconciliation with no live writes.
+Twelve frontend agent/Weather contracts also pass. Production session receipts,
+locks and checkpoints are not independent-replica failover or distributed
+exactly-once execution. Verified centralized trace ingestion, distributed
+persistence/admission and sustained load testing remain explicit rollout gates.
+Canonical publication and signed-browser acceptance of this new runtime are
+pending; older successful native runs below do not certify these new changes.
 
 ## Semantic orchestration and Fabric IQ acceptance
 
@@ -1518,6 +1566,28 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Minimal capability execution (October 28, 2026)
+
+The [current scoped architecture proof](#current-scoped-architecture-hardening)
+records the unchanged target, decisions, applicability and remaining boundaries.
+Executed validation:
+
+- `python -m unittest test_foundry_supervisor test_semantic_planning
+  test_presentation test_source_auth test_durable_service -q`: 210 cases,
+  209 passed and one live opt-in skipped.
+- With the opt-in environment and existing deployed model,
+  `python -m unittest test_semantic_planning.LiveSemanticArchitectureTests -v`:
+  all ten semantic cases passed, with no business reads/writes or HTTP
+  resource warnings after explicit client-lifecycle correction.
+- `python -m unittest test_deploy_hosted_agent test_provision_foundry_agents -q`:
+  86 packaging/provisioning regressions passed.
+- Node 24 `--import tsx --test` for `agent-trace.test.ts` and
+  `weather-agent.test.ts`: all 12 passed.
+- `npm run validate-env`, `npm run build`, TypeScript `--noEmit`,
+  targeted `eslint` for `AgentCrewTrace.tsx`, and `git diff --check` passed.
+  Vite retains existing large-chunk warnings; Pylance retains exactly the
+  five pre-existing backend diagnostics and introduces no new ones.
 
 ### Current deployment-tool optimization (October 24, 2026)
 

@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { Activity, Check, ClipboardCheck, CloudSun, ExternalLink, GitBranch, Search, Telescope, Workflow } from 'lucide-react'
 import type { AgentRole, OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
 import { AGENT_DISPLAY_NAMES } from '../services/copilot/orchestration'
@@ -59,6 +59,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
   const status = pending && !currentEvents.length ? 'queued' : executionStatus(currentEvents)
   const focused = selected ?? automaticCrewRole(currentEvents) ?? events[0].role
   const participants = new Set(events.map(event => event.role)).size
+  const activeCrew = CREW.filter(member => member.role === 'supervisor' || events.some(event => event.role === member.role))
   const focusedEvents = displayedEvents.filter(event => event.role === focused)
   const trace = focusedEvents.flatMap(event => event.trace ?? []).sort((a, b) => a.timestamp - b.timestamp)
   const start = Math.min(...events.map(event => event.timestamp))
@@ -70,19 +71,22 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
     .sort((a, b) => a.timestamp - b.timestamp).slice(-3)
   const insightsLink = applicationInsightsLink(import.meta.env.VITE_RAYFIN_FOUNDRY_APP_INSIGHTS_RESOURCE_ID)
   const traceQuery = responseTraceQuery(focusedEvents.flatMap(event => event.responseIds ?? (event.responseId ? [event.responseId] : [])))
-  return <section className={`agent-crew status-${status}${compact ? ' compact' : ''}${paused ? ' motion-paused' : ''}`} aria-label="Hydro agent crew execution">
+  return <section className={`agent-crew status-${status}${compact ? ' compact' : ''}${paused ? ' motion-paused' : ''}`} aria-label="Hydro capability execution flow">
     <header className="agent-crew-heading">
       <Activity size={14} />
-      <strong>Agent crew</strong>
+      <strong>Execution flow</strong>
       <span className="crew-run-status" role="status">{STATUS_LABELS[status]}</span>
       <button type="button" className="crew-size-toggle" aria-expanded={!compact} onClick={() => setExpanded(compact)}>{compact ? 'Expand flow' : 'Compact flow'}</button>
       <button type="button" className="crew-motion-toggle" onClick={() => setPaused(value => !value)} aria-pressed={paused}>{paused ? 'Resume motion' : 'Pause motion'}</button>
     </header>
-    <div className="crew-stage">
+    <div className="crew-stage" style={{
+      '--crew-participants': activeCrew.length,
+      '--crew-specialists': Math.max(1, activeCrew.length - 1),
+    } as CSSProperties}>
       <svg className="crew-wires" viewBox="0 0 800 56" preserveAspectRatio="none" aria-hidden="true">
         {communications.map(flow => {
-          const index = CREW.findIndex(member => member.role === flow.role) - 1
-          const x = (index + 0.5) * 800 / (CREW.length - 1)
+          const index = activeCrew.findIndex(member => member.role === flow.role) - 1
+          const x = (index + 0.5) * 800 / Math.max(1, activeCrew.length - 1)
           const path = `M400 0 C400 28 ${x} 28 ${x} 56`
           return <g key={flow.id} className={`crew-wire${currentEventIds && !currentEventIds.includes(flow.id) ? ' historical' : ''}${flow.waiting ? ' waiting' : ''}${flow.failed ? ' failed' : ''}`}>
             <path d={path} />
@@ -92,7 +96,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
         })}
       </svg>
       <span className="crew-wire-label">{currentCommunications.some(flow => flow.waiting) ? 'Supervisor dispatched task · awaiting specialist' : currentCommunications.some(flow => flow.failed) ? 'Specialist failure returned to Supervisor' : currentCommunications.length && currentCommunications.every(flow => flow.receivedAt !== undefined) ? 'Supervisor verifying returned evidence' : status === 'running' ? 'Supervisor compiling and certifying' : 'See execution receipts below'}</span>
-      {CREW.map(member => {
+      {activeCrew.map(member => {
         const runs = currentEvents.filter(event => event.role === member.role)
         const event = runs[runs.length - 1]
         const state = event?.status ?? 'idle'
@@ -132,7 +136,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
     {approvals.length > 0 && <p className="crew-review-status" role="status">Human review (application): {approvals.filter(state => state === 'created').length} created, {approvals.filter(state => state === 'rejected').length} rejected, {approvals.filter(state => state === 'pending').length} awaiting decision.{reviewStatus === 'error' && ' A draft expired or a SQL write outcome is uncertain. Check existing work before retrying.'}{approvals.includes('validating') && ' Checking identity and existing work; no SQL write yet.'}{approvals.includes('saving') && ' Writing the approved SQL draft; do not submit again.'}</p>}
     {!compact && <details className="crew-diagnostics">
       <summary>Execution receipts <span>{trace.length} events for {jobOf(focused) || AGENT_DISPLAY_NAMES[focused]}</span></summary>
-      <p>Foundry events and application workflow/tools are labeled separately. Supervisor is the deterministic Agent Framework control plane, not another prompt agent. These are execution records, not private reasoning or an Application Insights span export.</p>
+      <p>Only selected capabilities appear. A source-reader step is application code, not a specialist model call. Fabric IQ calls the native Data Agent without an extra prompt-agent hop. Supervisor uses one semantic planning call and deterministic Agent Framework execution. These are execution records, not private reasoning or an Application Insights span export.</p>
       {insightsLink && <a className="crew-insights-link" href={insightsLink} target="_blank" rel="noreferrer">Open linked Application Insights <ExternalLink size={12} /></a>}
       {traceQuery && <details className="crew-query"><summary>Find these responses in Foundry telemetry</summary><p>Use this query in the linked Application Insights Logs. No matching rows means trace ingestion is unverified, not that execution succeeded or failed.</p><pre><code>{traceQuery}</code></pre></details>}
       {focusedEvents.map(event => <div className="crew-identities" key={event.id}>

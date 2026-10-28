@@ -24,7 +24,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from filelock import FileLock
 from jsonschema import Draft202012Validator
 from openai import APIStatusError, APITimeoutError
-from pydantic import AwareDatetime, Field, ValidationError, model_validator
+from pydantic import AwareDatetime, Field, TypeAdapter, ValidationError, model_validator
 
 from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentity, WorkOrderDraft, utc_now
 from .live_sources import Bridge, NativeSourceRefusal, NativeSourceServiceError, SourceFailure
@@ -47,7 +47,7 @@ CONTROL_PLANE_VERSION = "1"
 MAX_CHAT_RUN_DURATION = timedelta(minutes=10)
 ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "supervisor": ("source-reconciliation", "grounded-presentation"),
-    "qa": ("condition-triage", "source-reconciliation", "maintenance-planning"),
+    "qa": ("source-reconciliation",),
     "rca": ("root-cause-evidence", "maintenance-planning"),
     "work-order": ("maintenance-planning", "work-order-review"),
     "fabric-iq": ("source-reconciliation",),
@@ -1159,6 +1159,7 @@ class SemanticDecision(Contract):
     proposal_priority: Literal["Low", "Medium", "High", "Critical"]
     equipment_selection: EquipmentSelection | None = None
     reuse_prior_evidence: bool
+    analysis_requested: bool = False
 
     @model_validator(mode="after")
     def explicit_execution(self) -> "SemanticDecision":
@@ -1235,6 +1236,10 @@ Use the smallest complete plan:
   verification. It is not the default investigator, work-order author or compulsory pre/post-processing hop.
 - Weather handles forecast/observation interpretation with vendor, issue, target, valid time and units kept
   separate. Do not read turbine telemetry for a weather question or infer equipment faults from weather.
+  Weather is a scoped capability, not a mandatory prompt-agent hop. When source arguments are known,
+  retrieve forecasts/observations with execution=reader, even for comparisons; analysis_requested can
+  request one tool-less interpretation of the resulting evidence. Use the Weather agent only when
+  dependent identity resolution or adaptive source queries are genuinely needed.
 - RCA/Sleuth owns evidence-backed fault investigations and competing hypotheses, not confirmed diagnoses.
   Do not add RCA merely because evidence reports a data-quality problem or the operator requests diagnostic
   work. BAD telemetry is a validity observation, not proof of mechanical failure. A telemetry-quality
@@ -1261,6 +1266,11 @@ dependent on their evidence. Reuse earlier receipts only when explicitly request
 are supplied; otherwise read fresh. No source step may be replaced by a conversation-only answer.
 
 Every requested dataset/relationship and requested comparison needs an answer requirement and supported view.
+Set analysis_requested=true only when this turn requests interpretation, explanations, recommendations,
+forecast comparison or an investigation briefing. Leave it false for factual lists, counts, source queries,
+charts, pure draft staging and source-free conversation. Retrieval agents do not imply a second answer
+model. Reader-only plans may request interpretation without introducing a specialist agent. The original
+native Data Agent answer is still returned unchanged, even when it contains its own interpretation.
 The evidence field is NOT free-form prose: it is exactly <dataset key>_<scope>_<authority>.
 For a complete facility list/count use evidence="facilities_population_direct" and a view with
 kind="facilities", scope="population", presentation="direct_records_table".
@@ -2113,28 +2123,48 @@ class FoundrySupervisor:
             })
         return values
 
-    async def versions(self, journal: RunJournal) -> dict[Role, AgentVersion]:
+    async def versions(
+        self, journal: RunJournal, *, roles: frozenset[Role] | None = None,
+    ) -> dict[Role, AgentVersion]:
         contracts = await self.bridge.call({"action": "agent_contracts"})
         names, expected = contracts.get("names"), contracts.get("tools")
         if not isinstance(names, dict) or not isinstance(expected, dict):
             raise SourceFailure("Shared deployed-agent contracts are unavailable.")
+        try:
+            configured_names: dict[Role, str] = TypeAdapter(dict[Role, str]).validate_python(names, strict=True)
+        except ValidationError:
+            raise SourceFailure("Shared deployed-agent identities contain an invalid role or name.") from None
+        if "supervisor" in configured_names or any(not name.strip() for name in configured_names.values()):
+            raise SourceFailure("Specialist identities cannot replace the hosted control plane or use empty names.")
         if self.native_binding is not None and self.native_binding.toolbox is not None:
-            names = {**names, "fabric-iq": self.native_binding.toolbox}
+            configured_names["fabric-iq"] = self.native_binding.toolbox
+        if roles is not None:
+            if roles.difference(configured_names):
+                raise SourceFailure("The execution plan selected an unconfigured specialist.")
+        selected_names: dict[Role, str] = {
+            role: name for role, name in configured_names.items() if roles is None or role in roles
+        }
         saved = journal.read("agent_versions")
         control_plane = AgentVersion(
             name=CONTROL_PLANE_AGENT, version=CONTROL_PLANE_VERSION,
             model=self.analysis_model or "deterministic", tools=(),
         )
         if saved is not None:
-            if set(saved) != {*names, "supervisor"}:
-                raise SourceFailure("Recovered agent manifest does not contain exactly the configured roles.")
-            versions = {role: AgentVersion.model_validate(saved[role]) for role in saved}
-            if any(versions[role].name != name for role, name in names.items()):
+            if not {*selected_names, "supervisor"}.issubset(saved) or set(saved).difference({*configured_names, "supervisor"}):
+                raise SourceFailure("Recovered agent manifest does not contain the selected configured roles.")
+            versions = {role: AgentVersion.model_validate(saved[role]) for role in (*selected_names, "supervisor")}
+            if any(versions[role].name != name for role, name in selected_names.items()):
                 raise SourceFailure("Recovered agent manifest changed the configured agent identities.")
             recovered_plane = versions["supervisor"]
             if (recovered_plane.name, recovered_plane.version) != (CONTROL_PLANE_AGENT, CONTROL_PLANE_VERSION):
                 raise SourceFailure("Recovered agent manifest belongs to a different control-plane revision.")
             return cast(dict[Role, AgentVersion], versions)
+        if not selected_names:
+            reader_versions: dict[Role, AgentVersion] = {"supervisor": control_plane}
+            journal.save("agent_versions", {
+                role: version.model_dump(mode="json") for role, version in reader_versions.items()
+            })
+            return reader_versions
         token = await self.credential.get_token("https://ai.azure.com/.default")
 
         async def read(role: Role, name: str, client: httpx.AsyncClient) -> tuple[Role, AgentVersion]:
@@ -2193,7 +2223,7 @@ class FoundrySupervisor:
                                       tools=tuple(live_tools))
 
         async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
-            values = await asyncio.gather(*(read(role, name, client) for role, name in names.items()))
+            values = await asyncio.gather(*(read(role, name, client) for role, name in selected_names.items()))
         versions = dict(values)
         versions["supervisor"] = control_plane
         journal.save("agent_versions", {role: version.model_dump(mode="json") for role, version in versions.items()})
@@ -2217,11 +2247,14 @@ class FoundrySupervisor:
                 "explicit_native_sources": request.native_sources,
             }
             started = perf_counter()
-            async with asyncio.timeout(min(60, max(1, (request.deadline - utc_now()).total_seconds()))):
-                async with BoundedAIProjectClient(
-                    endpoint=self.endpoint, credential=self.credential, request_timeout=60, transport_retries=0,
-                ) as client:
-                    response = await client.get_openai_client().responses.create(
+            async with asyncio.timeout(60):
+                async with (
+                    BoundedAIProjectClient(
+                        endpoint=self.endpoint, credential=self.credential, request_timeout=60, transport_retries=0,
+                    ) as client,
+                    client.get_openai_client() as openai_client,
+                ):
+                    response = await openai_client.responses.create(
                         model=self.analysis_model, instructions=SEMANTIC_PLANNER_INSTRUCTIONS,
                         input=json.dumps(context, default=str), store=False,
                         reasoning={"effort": "low"}, max_output_tokens=6000,
@@ -2745,10 +2778,9 @@ class FoundrySupervisor:
                     role, tool_name,
                 )
                 arguments = normalized_arguments
-            catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
-            specification = next((tool for tool in catalog.tools if tool.name == tool_name), None)
+            specification = next((tool for tool in permitted_catalog.tools if tool.name == tool_name), None)
             if specification is None:
-                raise ToolInputError("Selected tool is not enabled by the backend source catalog. Choose a listed tool.")
+                raise ToolInputError("Selected tool is not enabled for this role and current request. Choose a listed tool.")
             if tool_name == "propose_work_order" and not self.proposal_requested(request):
                 raise ToolInputError(
                     "This turn did not explicitly request a new work-order proposal. Treat any historical draft as "
@@ -2920,9 +2952,25 @@ class FoundrySupervisor:
             raise SourceFailure("Grouped-backlog intent returned an unsupported contract.")
         required_backlog_group = backlog_contract["group_by"]
         permitted_catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
-        if not proposal_authorized:
+        if role != "fabric-iq":
+            query_definition = next(
+                (tool for tool in version.tools if tool.get("name") == "hydro_query"), None,
+            )
+            parameters = query_definition.get("parameters") if query_definition is not None else None
+            properties = parameters.get("properties") if isinstance(parameters, dict) else None
+            tool_parameter = properties.get("tool_name") if isinstance(properties, dict) else None
+            allowed_tools = tool_parameter.get("enum") if isinstance(tool_parameter, dict) else None
+            if not isinstance(allowed_tools, list) or not allowed_tools or any(
+                not isinstance(name, str) or not name for name in allowed_tools
+            ):
+                raise SourceFailure("The pinned specialist has no explicit governed tool allowlist.")
             permitted_catalog = permitted_catalog.model_copy(update={
-                "tools": tuple(tool for tool in permitted_catalog.tools if tool.name != "propose_work_order"),
+                "tools": tuple(
+                    tool for tool in permitted_catalog.tools
+                    if tool.name in allowed_tools
+                    and (tool.name != "propose_work_order" or proposal_authorized)
+                    and (tool.name != "visualize_dataset" or request.charts_requested)
+                ),
             })
         context = {
             "assignment": question, "operator_question": request.question,
@@ -3861,10 +3909,12 @@ class FoundrySupervisor:
             return None
         try:
             async with asyncio.timeout(ANALYSIS_ATTEMPTS * ANALYSIS_TIMEOUT_SECONDS + 5):
-                async with BoundedAIProjectClient(
-                    endpoint=self.endpoint, credential=self.credential, request_timeout=ANALYSIS_TIMEOUT_SECONDS,
-                ) as project_client:
-                    openai_client = project_client.get_openai_client()
+                async with (
+                    BoundedAIProjectClient(
+                        endpoint=self.endpoint, credential=self.credential, request_timeout=ANALYSIS_TIMEOUT_SECONDS,
+                    ) as project_client,
+                    project_client.get_openai_client() as openai_client,
+                ):
                     for _attempt in range(ANALYSIS_ATTEMPTS):
                         self.healthy(request)
                         response = await openai_client.responses.create(
@@ -3909,8 +3959,9 @@ class FoundrySupervisor:
 
     def needs_analysis(self) -> bool:
         plan = self.semantic_decision.plan if self.semantic_decision else None
-        return bool(self.analysis_model) and not (
-            plan is not None and all(step.execution == "reader" for step in plan.steps)
+        return bool(self.analysis_model) and (
+            self.semantic_decision.analysis_requested if plan is not None and self.semantic_decision is not None
+            else True
         )
 
     async def analysis_for(
@@ -4236,8 +4287,21 @@ class FoundrySupervisor:
                           analysis=analysis, native_answers=self.native_answers())
 
     async def run(self, request: ChatRequest) -> ChatAnswer:
+        execution = asyncio.timeout(max(
+            0.0, (request.requested_at + MAX_CHAT_RUN_DURATION - utc_now()).total_seconds(),
+        ))
         try:
-            return await self._run(request)
+            async with execution:
+                return await self._run(request)
+        except TimeoutError:
+            if execution.expired():
+                logger.error("Hydro run %s exceeded its end-to-end execution budget.", request.run_id)
+                self.emit_event(
+                    f"{request.run_id}:chief", "supervisor", "error", "Supervisor",
+                    "The end-to-end execution deadline was exceeded; no successful answer was committed.",
+                    agent_name=CONTROL_PLANE_AGENT,
+                )
+            raise
         finally:
             tasks = tuple(self.source_tasks.values())
             for task in tasks:
@@ -4333,7 +4397,12 @@ class FoundrySupervisor:
             self.healthy(request)
             if not request.required_specialists and not request.required_evidence_kinds and not request.native_sources:
                 return await self.converse(request, journal)
-            versions = await self.versions(journal)
+            selected_roles: frozenset[Role] | None = (
+                frozenset(
+                    step.specialist for step in self.semantic_decision.plan.steps if step.execution == "agent"
+                ) if self.semantic_decision is not None and self.semantic_decision.plan is not None else None
+            )
+            versions = await self.versions(journal, roles=selected_roles)
             self.emit_event(
                 f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
                 "Compiling the governed request, evidence, and presentation contract.",
@@ -4411,6 +4480,27 @@ class FoundrySupervisor:
                         return
                     started = perf_counter()
                     plan = await owner.compile_orchestration_plan(request, journal)
+                    journal.save("execution_manifest", {
+                        "planning": "semantic" if owner.semantic_planning else "legacy-governed",
+                        "analysis_requested": owner.semantic_decision.analysis_requested
+                        if owner.semantic_decision is not None else None,
+                        "capabilities": [{
+                            "role": step.specialist, "execution": step.execution,
+                            "provider": (
+                                "governed-reader" if step.execution == "reader"
+                                else "native-fabric-responses" if step.specialist == "fabric-iq"
+                                and owner.native_binding is not None and owner.native_binding.toolbox is not None
+                                else "foundry-prompt-agent"
+                            ),
+                            "name": versions[step.specialist].name if step.execution == "agent" else None,
+                            "version": versions[step.specialist].version if step.execution == "agent" else None,
+                        } for step in plan.steps],
+                        "limits": {
+                            "execution_seconds": MAX_CHAT_RUN_DURATION.total_seconds(),
+                            "parallel_readers": 4, "delegations": owner.max_delegations,
+                        },
+                        "persistence": "hosting-session-filesystem",
+                    })
                     elapsed = (perf_counter() - started) * 1000
                     response_text = plan.model_dump_json(by_alias=True)
                     semantic = journal.read("semantic_decision") if owner.semantic_planning else None
@@ -4452,9 +4542,9 @@ class FoundrySupervisor:
                     await ctx.send_message(turn.model_dump_json())
 
             class ExecuteDelegation(Executor):
-                def __init__(self, index: int):
+                def __init__(self, index: int, end_index: int):
                     super().__init__(id=f"specialist_handoff_{index + 1}")
-                    self.index = index
+                    self.index, self.end_index = index, end_index
 
                 @handler
                 async def handle(self, encoded_turn: str, ctx: WorkflowContext[str]) -> None:
@@ -4519,12 +4609,27 @@ class FoundrySupervisor:
                     else:
                         if delegation.execution == "reader":
                             catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
+                            read_steps = plan.steps[self.index:self.end_index]
+                            if any(step.execution != "reader" for step in read_steps):
+                                raise SourceFailure("Independent retrieval cannot cross a specialist dependency.")
+                            planned = [(step, read) for step in read_steps for read in step.reads]
+                            concurrency = asyncio.Semaphore(4)
+
+                            async def retrieve(read: PlannedRead) -> ToolEvidence:
+                                async with concurrency:
+                                    return await owner.governed_read(
+                                        request, journal, catalog, read.tool,
+                                        canonical_source_arguments(request, read.arguments()), read.evidence_kind,
+                                    )
+
+                            for offset, step in enumerate(read_steps, start=self.index):
+                                owner.emit_event(
+                                    f"{request.run_id}:reader:{offset}", step.specialist, "running",
+                                    "Governed source retrieval", step.reason or step.question,
+                                    agent_name=CONTROL_PLANE_AGENT,
+                                )
                             reads = [
-                                asyncio.create_task(owner.governed_read(
-                                    request, journal, catalog, read.tool,
-                                    canonical_source_arguments(request, read.arguments()), read.evidence_kind,
-                                ))
-                                for read in delegation.reads
+                                asyncio.create_task(retrieve(read)) for _, read in planned
                             ]
                             try:
                                 receipts = await asyncio.gather(*reads)
@@ -4533,7 +4638,7 @@ class FoundrySupervisor:
                                     if not task.done():
                                         task.cancel()
                                 await asyncio.gather(*reads, return_exceptions=True)
-                            for read, receipt in zip(delegation.reads, receipts, strict=True):
+                            for (_, read), receipt in zip(planned, receipts, strict=True):
                                 if not any(
                                     dataset.kind == read.evidence_kind and dataset.authority == "direct"
                                     and dataset.complete and dataset.role != "audit"
@@ -4544,13 +4649,14 @@ class FoundrySupervisor:
                                 if prior is not None and prior != receipt:
                                     raise SourceFailure("Factual retrieval replaced an immutable receipt.")
                                 owner.evidence[receipt.id] = receipt
-                            owner.emit_event(
-                                f"{request.run_id}:reader:{self.index}", delegation.specialist, "completed",
-                                "Governed source retrieval", delegation.reason or delegation.question,
-                                agent_name=CONTROL_PLANE_AGENT,
-                            )
+                            for offset, step in enumerate(read_steps, start=self.index):
+                                owner.emit_event(
+                                    f"{request.run_id}:reader:{offset}", step.specialist, "completed",
+                                    "Governed source retrieval", step.reason or step.question,
+                                    agent_name=CONTROL_PLANE_AGENT,
+                                )
                             updated = turn.model_copy(update={"evidence": tuple(owner.evidence.values())})
-                            journal.save(f"specialist_stage:{self.index + 1}", updated.model_dump(mode="json"))
+                            journal.save(f"specialist_stage:{self.end_index}", updated.model_dump(mode="json"))
                             await ctx.send_message(updated.model_dump_json())
                             return
                         root_cause_scope: list[str] = []
@@ -4564,14 +4670,13 @@ class FoundrySupervisor:
                                 for later in plan.steps[self.index + 1:]
                             )
                         )
-                        async with asyncio.timeout(max(1.0, (request.deadline - utc_now()).total_seconds())):
-                            if (delegation.specialist == "fabric-iq" and len(plan.steps) == 1
-                                    and request.historical_context is None):
-                                delegation = delegation.model_copy(update={"question": request.question})
-                            await owner.handoff(
-                                delegation, request, journal, versions,
-                                maintenance_gate_required=maintenance_gate_required,
-                            )
+                        if (delegation.specialist == "fabric-iq" and len(plan.steps) == 1
+                                and request.historical_context is None):
+                            delegation = delegation.model_copy(update={"question": request.question})
+                        await owner.handoff(
+                            delegation, request, journal, versions,
+                            maintenance_gate_required=maintenance_gate_required,
+                        )
                         new_receipts = [
                             receipt for evidence_id, receipt in owner.evidence.items()
                             if evidence_id not in prior_evidence_ids
@@ -4715,7 +4820,16 @@ class FoundrySupervisor:
             chief, verifier, presenter = ExecuteSupervisor(), VerifyEvidence(), PresentGroundedAnswer()
             step_count = len(self.semantic_decision.plan.steps) if self.semantic_decision \
                 and self.semantic_decision.plan else 8
-            handoffs = [ExecuteDelegation(index) for index in range(step_count)]
+            handoffs = []
+            index = 0
+            steps = self.semantic_decision.plan.steps if self.semantic_decision and self.semantic_decision.plan else ()
+            while index < step_count:
+                end_index = index + 1
+                if steps and steps[index].execution == "reader":
+                    while end_index < step_count and steps[end_index].execution == "reader":
+                        end_index += 1
+                handoffs.append(ExecuteDelegation(index, end_index))
+                index = end_index
             builder = WorkflowBuilder(
                 name="hydro-foundry-supervisor-v2",
                 start_executor=chief,
@@ -4738,6 +4852,7 @@ class FoundrySupervisor:
             prepared = PreparedAnswer.model_validate(journal.read("prepared_answer"))
             journal.save("evidence", {
                 "receipts": [item.model_dump(mode="json") for item in self.evidence.values()],
+                "execution_manifest": journal.read("execution_manifest"),
                 "supervisor": {"response_id": prepared.supervisor_response_id, "version": prepared.supervisor_version,
                                "duration_ms": prepared.supervisor_duration_ms,
                                "model_round_count": prepared.supervisor_model_round_count,

@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,16 +7,18 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 from datetime import timedelta
+from time import perf_counter
 
+from azure.identity.aio import AzureCliCredential
 from pydantic import ValidationError
 from jsonschema import Draft202012Validator
 
-from hydro_orchestrator.contracts import utc_now
+from hydro_orchestrator.contracts import SourceIdentity, utc_now
 from hydro_orchestrator.foundry_supervisor import (
     ChatRequest, FoundrySupervisor, NativeBinding, RunJournal, SemanticDecision, SourceCatalog,
     strict_output_schema, semantic_output_schema,
 )
-from hydro_orchestrator.live_sources import SourceFailure
+from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from test_durable_service import SOURCE
 
 
@@ -126,6 +129,16 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValidationError, "must follow a checked RCA"):
             SemanticDecision.model_validate(planned)
 
+    def test_analysis_is_an_explicit_semantic_choice_not_an_extra_agent_hop(self):
+        for reader in (True, False):
+            with self.subTest(reader=reader):
+                planned = decision(reader=reader)
+                self.owner.semantic_decision = SemanticDecision.model_validate(planned)
+                self.assertFalse(self.owner.needs_analysis())
+                planned["analysis_requested"] = True
+                self.owner.semantic_decision = SemanticDecision.model_validate(planned)
+                self.assertTrue(self.owner.needs_analysis())
+
     async def test_semantic_intent_not_phrase_classifier_owns_requirements(self):
         self.journal.save("semantic_decision", {"decision": decision()})
         request = await self.owner.plan_semantically(self.request, self.journal)
@@ -141,7 +154,9 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_decision_is_journaled_and_not_replanned_on_resume(self):
         response = SimpleNamespace(status="completed", id="resp_plan", output_text=json.dumps(decision()))
         client = AsyncMock()
-        api = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=response)))
+        api = AsyncMock()
+        api.responses.create.return_value = response
+        api.__aenter__.return_value = api
         client.get_openai_client = lambda: api
         client.__aenter__.return_value = client
         with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
@@ -149,6 +164,7 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
             second = await self.owner.plan_semantically(self.request, self.journal)
         self.assertEqual(first, second)
         api.responses.create.assert_awaited_once()
+        api.__aexit__.assert_awaited_once()
         self.assertEqual(self.journal.read("semantic_decision")["response_id"], "resp_plan")
         self.assertFalse(api.responses.create.call_args.kwargs["store"])
 
@@ -162,11 +178,27 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.required_specialists, ())
         self.assertEqual(request.required_evidence_kinds, ("native_claims",))
 
+    async def test_planner_http_client_closes_on_timeout_without_a_successful_decision(self):
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        api = AsyncMock()
+        api.__aenter__.return_value = api
+        api.responses.create.side_effect = TimeoutError("Injected model timeout")
+        client.get_openai_client = lambda: api
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            with self.assertRaises(TimeoutError):
+                await self.owner.plan_semantically(self.request, self.journal)
+        api.__aexit__.assert_awaited_once()
+        client.__aexit__.assert_awaited_once()
+        self.assertIsNone(self.journal.read("semantic_decision"))
+
     async def test_explicit_native_engine_cannot_be_silently_removed(self):
         self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
         response = SimpleNamespace(status="completed", id="resp_plan", output_text=json.dumps(decision()))
         client = AsyncMock()
-        api = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=response)))
+        api = AsyncMock()
+        api.responses.create.return_value = response
+        api.__aenter__.return_value = api
         client.get_openai_client = lambda: api
         client.__aenter__.return_value = client
         with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
@@ -204,3 +236,106 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         raw["clarification"] = None
         with self.assertRaises(ValidationError):
             SemanticDecision.model_validate(raw)
+
+
+@unittest.skipUnless(
+    os.environ.get("HYDRO_EVALUATE_LIVE_PLANNER") == "1",
+    "Opt-in evaluation calls the existing deployed planning model, never operational source tools.",
+)
+class LiveSemanticArchitectureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_minimal_capability_selection_and_semantic_boundaries(self):
+        endpoint = os.environ["HYDRO_FOUNDRY_PROJECT_ENDPOINT"]
+        model = os.environ["HYDRO_FOUNDRY_PLANNING_MODEL"]
+        cases = [
+            ("facility-facts", "List every facility with its canonical ID and name."),
+            ("ontology-rollup", "For every facility, count its open work orders, including any facilities with zero."),
+            ("native-alias", "Ask Sparky how work orders, equipment and facilities relate."),
+            ("diagnostic-drafts",
+             "Which turbines had BAD telemetry quality today, and what work is already open for these? "
+             "Prepare editable telemetry-quality investigation drafts for uncovered equipment. Do not save them."),
+            ("conditional-repair",
+             "Investigate the cause of abnormal turbine temperature and prepare editable repair work orders "
+             "only for verified faults not covered by open work. Do not save anything."),
+            ("weather-comparison",
+             "Compare Aurora and UKMet forecasts for every forecast target over the next 24 hours. "
+             "Keep forecast issues and units separate and explain the differences. Do not query turbine telemetry."),
+            ("no-new-draft",
+             "Show existing work orders. Do not create, prepare or stage any new work-order drafts."),
+            ("no-investigation",
+             "Only list turbine temperature measurements. Do not investigate causes or draft maintenance."),
+            ("ambiguous-action", "Send somebody out to fix it."),
+            ("source-free-explanation",
+             "Explain the difference between a telemetry-quality observation and a proven physical fault. "
+             "Explain the workflow without claiming any current equipment facts."),
+        ]
+        bridge = NodeSourceBridge()
+        try:
+            config = await bridge.call({"action": "configuration"})
+            source = SourceIdentity(**{key: config[key] for key in (
+                "tenant_id", "workspace_id", "ontology_id", "configuration_digest",
+            )}, generation=2)
+            source_catalog = await bridge.call({"action": "source_contracts"})
+            async with AzureCliCredential(tenant_id=str(source.tenant_id), process_timeout=60) as credential:
+                await credential.get_token("https://ai.azure.com/.default")
+                for case, question in cases:
+                    with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                        root = Path(temporary)
+                        journal = RunJournal(root / "receipts")
+                        journal.save("tool_catalog", source_catalog)
+                        tools = AsyncMock()
+                        owner = FoundrySupervisor(
+                            endpoint, credential, bridge, tools, source, root,
+                            analysis_model=model, semantic_planning=True,
+                            native_binding=NativeBinding(
+                                source=source, connections={"data-agent": "hydro-fabric-iq"},
+                                toolbox="hydro-fabric-iq-tools",
+                            ),
+                        )
+                        request = ChatRequest(
+                            run_id=uuid4(), source=source, question=question,
+                            deadline=utc_now() + timedelta(minutes=3),
+                        )
+                        started = perf_counter()
+                        await owner.plan_semantically(request, journal)
+                        planned = owner.semantic_decision
+                        self.assertIsNotNone(planned)
+                        steps = planned.plan.steps if planned.plan else ()
+                        roles = [step.specialist for step in steps]
+                        print(json.dumps({
+                            "case": case, "mode": planned.mode, "roles": roles,
+                            "execution": [step.execution for step in steps],
+                            "analysis_requested": planned.analysis_requested,
+                            "duration_ms": round((perf_counter() - started) * 1000),
+                        }), flush=True)
+                        self.assertFalse(tools.mock_calls, "Planning must not execute business reads or writes.")
+                        if case in ("ontology-rollup", "native-alias"):
+                            self.assertEqual(roles, ["fabric-iq"])
+                        elif case == "facility-facts":
+                            self.assertEqual(roles, ["qa"])
+                            self.assertTrue(all(step.execution == "reader" for step in steps))
+                            self.assertFalse(planned.analysis_requested)
+                        elif case == "diagnostic-drafts":
+                            self.assertEqual(roles, ["fabric-iq", "work-order"])
+                            self.assertTrue(planned.proposal_requested)
+                            self.assertFalse(steps[-1].requires_verified_issue)
+                        elif case == "conditional-repair":
+                            self.assertIn("rca", roles)
+                            self.assertIn("work-order", roles)
+                            self.assertLess(roles.index("rca"), roles.index("work-order"))
+                            self.assertTrue(steps[roles.index("work-order")].requires_verified_issue)
+                        elif case == "weather-comparison":
+                            self.assertTrue(steps)
+                            self.assertEqual(set(roles), {"weather"})
+                            self.assertTrue(all(step.execution == "reader" for step in steps))
+                            self.assertTrue(planned.analysis_requested)
+                        elif case in ("no-new-draft", "no-investigation"):
+                            self.assertFalse(planned.proposal_requested)
+                            self.assertFalse({"rca", "work-order", "weather"}.intersection(roles))
+                            self.assertFalse(planned.analysis_requested)
+                        elif case == "ambiguous-action":
+                            self.assertEqual(planned.mode, "clarify")
+                            self.assertFalse(planned.proposal_requested)
+                        else:
+                            self.assertEqual(planned.mode, "conversation")
+        finally:
+            await bridge.aclose()

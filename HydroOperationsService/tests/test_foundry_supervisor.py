@@ -506,13 +506,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
         journal = RunJournal(self.root / "toolbox-manifest")
         with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient", side_effect=client):
-            versions = await owner.versions(journal)
+            versions = await owner.versions(journal, roles=frozenset({"fabric-iq"}))
+            self.assertEqual(set(versions), {"supervisor", "fabric-iq"})
             self.assertEqual(versions["fabric-iq"].name, name)
             self.assertEqual(versions["fabric-iq"].version, "2")
             self.assertEqual(versions["fabric-iq"].model, "native-fabric-responses")
             self.assertFalse(any("/agents/hydro-fabric-iq-agent" in url for url in requests))
-            self.assertEqual(await owner.versions(journal), versions)
+            self.assertEqual(await owner.versions(journal, roles=frozenset({"fabric-iq"})), versions)
         self.assertEqual(sum("/toolboxes/" in url for url in requests), 2)
+        self.assertEqual(len(requests), 2)
 
     async def test_native_responses_cannot_certify_unverified_quality_work_prose(self):
         question = "Which turbines had BAD telemetry quality today, and what work is already open for these?"
@@ -655,6 +657,52 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             versions = await owner.versions(journal)
         self.assertEqual(versions["weather"].name, "hydro-weather-agent")
         self.assertEqual(versions["weather"].tools[0]["name"], "hydro_query")
+
+    async def test_only_selected_model_agents_are_live_dependencies(self):
+        requests = []
+
+        def read_agent(request):
+            requests.append(request.url.path)
+            self.assertTrue(request.url.path.endswith("/agents/hydro-weather-agent"))
+            version = self.versions["weather"]
+            return httpx.Response(200, json={
+                "name": version.name, "versions": {"latest": {
+                    "version": version.version,
+                    "definition": {"kind": "prompt", "model": version.model, "tools": list(version.tools)},
+                }},
+            })
+
+        owner = self.make_owner()
+        journal = RunJournal(self.root / "selected-readback")
+        network = httpx.AsyncClient(transport=httpx.MockTransport(read_agent))
+        self.addAsyncCleanup(network.aclose)
+        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient", return_value=network):
+            versions = await owner.versions(journal, roles=frozenset({"weather"}))
+            self.assertEqual(set(versions), {"supervisor", "weather"})
+            self.assertEqual(await owner.versions(journal, roles=frozenset({"weather"})), versions)
+            with self.assertRaisesRegex(SourceFailure, "selected configured roles"):
+                await owner.versions(journal, roles=frozenset({"qa"}))
+        self.assertEqual(len(requests), 1)
+
+    async def test_reader_manifest_requires_no_model_auth_or_remote_agent_metadata(self):
+        owner = self.make_owner()
+        journal = RunJournal(self.root / "reader-manifest")
+        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient") as network:
+            versions = await owner.versions(journal, roles=frozenset())
+        self.assertEqual(set(versions), {"supervisor"})
+        self.assertEqual(set(journal.read("agent_versions")), {"supervisor"})
+        owner.credential.get_token.assert_not_awaited()
+        network.assert_not_called()
+
+    async def test_unselected_native_toolbox_is_not_a_weather_dependency(self):
+        owner = self.make_owner(native_binding=NativeBinding(
+            source=SOURCE, connections={"data-agent": "native-data"}, toolbox="unavailable-native-toolbox",
+        ))
+        journal = RunJournal(self.root / "reader-with-native-binding")
+        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient") as network:
+            versions = await owner.versions(journal, roles=frozenset())
+        self.assertEqual(set(versions), {"supervisor"})
+        network.assert_not_called()
 
     async def test_every_governed_direct_dataset_scope_has_a_deterministic_route(self):
         catalog = await self.bridge.call({"action": "source_contracts"})
@@ -1178,7 +1226,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     def test_all_roles_receive_nonempty_bounded_operation_skills(self):
         expected = {
             "supervisor": {"source-reconciliation", "grounded-presentation"},
-            "qa": {"condition-triage", "source-reconciliation", "maintenance-planning"},
+            "qa": {"source-reconciliation"},
             "rca": {"root-cause-evidence", "maintenance-planning"},
             "work-order": {"maintenance-planning", "work-order-review"},
             "fabric-iq": {"source-reconciliation"},
@@ -1484,6 +1532,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence["supervisor"]["response_id"], "resp_semantic_test")
         self.assertEqual(evidence["supervisor"]["model_round_count"], 1)
         self.assertTrue(evidence["supervisor"]["output"]["model_invoked"])
+        self.assertEqual(evidence["execution_manifest"]["capabilities"][0]["provider"], "governed-reader")
+        self.assertIsNone(evidence["execution_manifest"]["capabilities"][0]["name"])
         self.assertIn("specialist_handoff_1", journal.read("workflow_graph")["definition"])
         self.assertNotIn("specialist_handoff_2", journal.read("workflow_graph")["definition"])
 
@@ -1509,6 +1559,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "arguments_json": json.dumps({"quality": quality, "lookback": "6h", "equipment_type": "turbine"}),
             "evidence_kind": "signal_quality",
         } for quality in ("BAD", "UNCERTAIN")]
+        template = raw["plan"]["steps"][0]
+        raw["plan"]["steps"] = [{**template, "reads": [read]} for read in template["reads"]]
         journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
         journal.save("semantic_decision", {
             "decision": raw, "response_id": "resp_parallel_test", "duration_ms": 12,
@@ -1518,6 +1570,93 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             await owner.run(self.request)
         self.assertTrue(cancelled.is_set())
         self.assertIsNone(journal.read("answer"))
+
+    async def test_independent_reader_stages_share_one_bounded_parallel_superstep(self):
+        from test_semantic_planning import decision
+        self.tools.quality_snapshot = True
+        original_execute = self.tools.execute
+        active = 0
+        peak = 0
+        first_wave_started = asyncio.Event()
+
+        async def execute(name, arguments, request):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            if active == 4:
+                first_wave_started.set()
+            try:
+                await asyncio.wait_for(first_wave_started.wait(), timeout=2)
+                return await original_execute(name, arguments, request)
+            finally:
+                active -= 1
+
+        self.tools.execute = execute
+        raw = decision(kind="signal_quality")
+        template = raw["plan"]["steps"][0]
+        raw["plan"]["steps"] = [{
+            **template, "reads": [{
+                "tool": "query_signal_quality_snapshot",
+                "arguments_json": json.dumps({
+                    "quality": quality, "lookback": lookback, "equipment_type": "turbine",
+                }),
+                "evidence_kind": "signal_quality",
+            } for quality in ("BAD", "UNCERTAIN", "GOOD")],
+        } for lookback in ("6h", "12h")]
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        journal.save("semantic_decision", {
+            "decision": raw, "response_id": "resp_independent_stages", "duration_ms": 12,
+        })
+        owner = self.make_owner(semantic_planning=True, analysis_model="test-model")
+        answer = await owner.run(self.request)
+        self.assertEqual(peak, 4)
+        self.assertEqual(active, 0)
+        self.assertEqual(self.tools.calls, 6)
+        self.assertTrue(answer.tables)
+        self.assertEqual(answer.specialists, ())
+        graph = journal.read("workflow_graph")["definition"]
+        self.assertIn("specialist_handoff_1", graph)
+        self.assertNotIn("specialist_handoff_2", graph)
+        self.assertEqual(len(journal.read("evidence")["receipts"]), 6)
+
+    async def test_end_to_end_timeout_cancels_catalog_work_before_any_answer_is_committed(self):
+        cancelled = asyncio.Event()
+
+        async def blocked_catalog(request):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        owner = self.make_owner(semantic_planning=True, analysis_model="test-model")
+        owner.tools.catalog = blocked_catalog
+        with patch("hydro_orchestrator.foundry_supervisor.MAX_CHAT_RUN_DURATION", timedelta(seconds=.1)):
+            with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
+                with self.assertRaises(TimeoutError):
+                    await owner.run(self.request.model_copy(update={"requested_at": utc_now()}))
+        self.assertTrue(cancelled.is_set())
+        self.assertIsNone(RunJournal(self.root / str(self.request.run_id) / "receipts").read("answer"))
+        self.assertEqual(self.calls, {})
+
+    async def test_specialists_only_see_current_role_tools_and_skills(self):
+        await self.owner.run(self.request)
+        for payload in self.payloads:
+            reference = payload.get("agent_reference")
+            if reference is None or reference["name"] == "hydro-fabric-iq-agent":
+                continue
+            role = next(role for role, version in self.versions.items() if version.name == reference["name"])
+            context = json.loads(payload["input"][0]["content"][0]["text"])
+            query = next(tool for tool in self.versions[role].tools if tool["name"] == "hydro_query")
+            allowed = set(query["parameters"]["properties"]["tool_name"]["enum"])
+            exposed = {tool["name"] for tool in context["permitted_source_catalog"]["tools"]}
+            self.assertLessEqual(exposed, allowed)
+            self.assertNotIn("visualize_dataset", exposed)
+            if role == "qa":
+                self.assertEqual(
+                    [skill["name"] for skill in context["trusted_operation_skills"]],
+                    ["source-reconciliation"],
+                )
+                self.assertNotIn("propose_work_order", exposed)
 
     def function(self, name, arguments):
         return {"type": "function_call", "id": f"fc_{uuid4().hex}", "call_id": f"call_{uuid4().hex}",

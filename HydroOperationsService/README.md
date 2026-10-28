@@ -2,18 +2,95 @@
 
 ## Agent access and current source policy
 
-Before a hosted invocation, the browser checks delegated access for Fabric,
-Foundry, Lakehouse/SQL connectors and Eventhouse. **Connect agent access** in
-Foundry chat or Battle authorizes one missing audience per click and rechecks
-the complete set. It never replays a question or a work-order decision. A
-resource-specific preflight failure means no invocation was sent; a later
-transport failure still requires checking the exact existing run before retry.
-Refreshed tokens must meet the operation's minimum remaining lifetime.
+The existing sign-in session acquires delegated source access implicitly.
+Consent or an expired sign-in can still require the identity provider's
+interaction; there is no separate per-agent connection workflow. A failed
+source preflight never invokes the agent or replays an approval.
 
-Ordinary operational questions use governed source reads. Only an explicitly
-requested Data Agent uses the native quality/work specialization; independent
-verification still requires direct evidence. Historical matching ("had BAD")
-retains matching samples separately from the latest state.
+The semantic planner selects ontology-backed Fabric Data Agent execution for
+cross-source business questions and explicit native requests. Exact governed
+reads and independent checks use direct tools. Native source failure never
+silently changes authority. Historical matching ("had BAD") retains matching
+samples separately from the latest state.
+
+## Current minimal-agent execution architecture
+
+The production controller combines **one tool-less structured planning call**
+with deterministic Microsoft Agent Framework `Executor` / `WorkflowBuilder`
+stages. It is not a manager agent chatting with every specialist. The semantic
+decision selects capabilities, explicit source reads, conditions and answer
+requirements; code validates the catalog, identities, permissions, evidence,
+budgets and human-approved writes. Legacy phrase-based compatibility routing
+still exists; it is not the production semantic planner.
+
+| Capability | When it is needed | Execution boundary |
+|---|---|---|
+| Fabric IQ | Ontology relationships, synonyms and cross-source business facts | Verified native Data Agent Responses tool; **no intervening Fabric IQ prompt model**. Original answer and SHA remain unchanged. |
+| Q&A | Exact direct reads, adaptive source queries and explicitly requested independent verification | Deterministic reader when arguments are known; scoped query agent only for adaptive retrieval. No RCA or maintenance-authoring skills. |
+| Weather | Forecast/observation facts and vendor/issue/time-aware comparisons | Reader by default; one optional tool-less briefing for requested interpretation. Scoped Weather prompt agent only for genuinely dependent/adaptive queries. |
+| RCA | Requested fault investigation and competing evidence-backed hypotheses | Separate reasoning agent with checked, source-referenced structured assessment. Not a compulsory telemetry-quality or drafting stage. |
+| Work Order | Requested maintenance review or editable draft preparation | Separate scoped reasoning agent and deterministic coverage/draft validators. No direct production-write tool; approval remains a separate authenticated application boundary. |
+
+Registered capabilities are not mandatory invocations. Existing compatibility
+prompt agents are retained, not deleted or substituted for the native tool.
+Only selected **agent-mode** capabilities require remote agent/toolbox version
+readback. Reader-only plans need no specialist metadata or model credentials
+for retrieval; unused Weather/RCA/Work Order/native resources cannot block them.
+Selected immutable versions remain pinned across recovery, and a changed plan
+cannot silently expand a saved manifest.
+
+Consecutive fully specified, independent reader steps share one Framework
+superstep, capped at **four concurrent source reads**. RCA, native calls,
+selection-dependent work and approval gates are never parallelized against
+their dependencies. Failure cancels and drains sibling reader tasks before
+returning; partial evidence cannot become a successful answer. The whole run,
+including planning, catalog/version discovery and presentation, has an absolute
+ten-minute execution budget measured from its immutable request clock.
+Credential-admission lease time is not a per-stage execution deadline.
+
+Models see only tool schemas permitted by their pinned role and current turn.
+Unrequested chart tools and unauthorized proposal tools are omitted; callbacks
+and the shared bridge independently enforce permission. `analysis_requested`
+is a typed semantic choice, not an automatic second model after factual
+retrieval. Simple facts, counts, charts and pure draft staging do not need a
+rewriter. Reader-only weather comparison can request interpretation without
+introducing a Weather agent loop.
+Planning and briefing HTTP clients are closed explicitly on success, failure
+and cancellation rather than leaving their connection pools to garbage collection.
+
+The execution audit includes the accepted capability/provider manifest,
+version pins, limits and persistence boundary. The UI shows only participating
+capabilities, distinguishing application readers from model calls. Agent
+Framework's warning that registered-agent tool schemas are omitted from the
+request is expected: schemas are verified on the remote agent definition;
+local `FunctionTool` callbacks provide dispatch, not replacement declarations.
+
+**Enterprise boundary:** current receipts, checkpoints, locks and recovery use
+the hosting session's filesystem. This supports recovery within that session,
+not independent-replica failover, global admission control or a distributed
+exactly-once scheduler. Linked Application Insights and response IDs do not
+prove trace ingestion or establish a latency SLO. Cross-replica persistence,
+centralized admission/retention, verified OpenTelemetry export and sustained
+load/quality evaluations remain production rollout requirements. No new cloud
+resources, diagnostic export, data ingestion or operational writes are enabled
+implicitly by this hardening.
+
+This design follows Microsoft's [agent-versus-multiagent decision guidance](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns),
+[explicit workflow execution model](https://learn.microsoft.com/en-us/agent-framework/concepts/workflows/builder-and-execution),
+[checkpoint storage guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints)
+and [workflow observability guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/observability).
+Older dated deployment sections below are historical evidence, not the current
+architecture or a certification of those outstanding enterprise requirements.
+
+The opt-in live architecture evaluation uses the **existing** project/model,
+calls no business source tools and creates no agents or work orders. Set
+`HYDRO_EVALUATE_LIVE_PLANNER=1`, `HYDRO_FOUNDRY_PROJECT_ENDPOINT` and
+`HYDRO_FOUNDRY_PLANNING_MODEL`, then run
+`python -m unittest test_semantic_planning.LiveSemanticArchitectureTests -v`
+with this service's `src` and `tests` on `PYTHONPATH`. It checks ten representative
+paraphrased/negated intents, native fidelity routing, reader-only forecasts,
+diagnostic versus fault-gated drafting and clarification. The ordinary suite
+skips real-model calls.
 
 ## October 26 current audit
 
