@@ -1,6 +1,32 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed and authenticated - minimal capability orchestration; distributed rollout gates remain
+> **Status:** Validated - Norwegian Energy Map maintenance update; existing deployment retained
+
+## Scoped Norwegian Energy Map maintenance update
+
+The approved tenant, workspace, capacity, SPA and Foundry project remain unchanged.
+No new resources, permissions, schedules or operational-data writes are required.
+Administration adds cached map preparation as step 6, operational-only maintenance,
+and an explicitly advanced forced national rebuild. Operational refresh cannot
+mark initial map setup complete. Active refreshes retain their original mode.
+The map publisher reuses a complete owned projection only when all four source
+Delta versions still match; a new MCP grounding check remains mandatory.
+Matching draft and published definitions do not trigger another publication.
+
+Validation proof for this scope:
+- `npm run validate-env` and `npm run build`: passed; existing chunk-size warnings.
+- TypeScript and targeted ESLint: passed.
+- Nine frontend contracts: panel states, actual pipeline payloads, active-run
+  sharing, controller intent routing and separate GeoContext authentication.
+- 164 Python contracts: 45 map-agent, 43 workspace and 76 ingestion tests passed,
+  including unchanged-projection reuse, concurrent source-change rejection,
+  matching-publication reuse and three-attempt grounding failure handling.
+- `git diff --check`: passed. No infrastructure/template or role-assignment delta.
+- Read-only live MCP diagnostic returned `state=ready` and stored run ID
+  `2246fddf-6fd7-4e64-951b-6b1aed710693` without running ingestion.
+  The current live notebook already has three canary attempts; the old failed
+  run's generic error is not proof of its exact underlying tool response.
+  Updated notebook execution and hosted UI acceptance are separate gates.
 
 ## Current scoped architecture hardening
 
@@ -1595,6 +1621,15 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Norwegian Energy Map maintenance (October 28, 2026, 04:44 UTC)
+
+The [scoped map validation](#scoped-norwegian-energy-map-maintenance-update)
+records the commands and results: nine frontend tests, 164 Python tests,
+environment validation, production build, TypeScript, targeted ESLint and Git
+whitespace validation passed. This is an application/notebook-only update on
+the approved existing target; infrastructure what-if, Docker build and new role
+assignments are not applicable. Live publication remains a separate gate.
 
 ### Minimal capability execution (October 28, 2026)
 

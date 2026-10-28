@@ -219,6 +219,49 @@ class OwnershipAndBindingTests(HelpersTest):
                 models.write_owned(table, Mock())
         spark.sql.assert_not_called()
 
+    def test_unchanged_sources_reuse_ready_projection_without_spark_rebuild(self):
+        from datetime import datetime, timezone
+        spark = Mock()
+        models = self.ns["MapReadModels"](spark, self.binding)
+        versions = {name: 7 for name in self.ns["SOURCE_TABLES"]}
+        state = {"state": "ready", "read_model_run_id": RUN_ID,
+                 "built_at_utc": datetime.now(timezone.utc), "source_versions_json": json.dumps(versions),
+                 "entity_count": 120, "link_count": 3}
+        row = Mock()
+        row.asDict.return_value = state
+        spark.table.return_value.limit.return_value.collect.return_value = [row]
+        models.preflight = Mock()
+        models.ensure_models = Mock()
+        models.source_versions = Mock(return_value=versions)
+        models.write_owned = Mock()
+        result = models.build()
+        self.assertTrue(result["projection_reused"])
+        self.assertEqual(result["read_model_run_id"], RUN_ID)
+        models.preflight.assert_called_once()
+        models.ensure_models.assert_called_once()
+        models.write_owned.assert_not_called()
+        spark.conf.set.assert_not_called()
+        for changed in ({**state, "state": "building"},
+                        {**state, "state": "error"},
+                        {**state, "source_versions_json": "{}"}):
+            row.asDict.return_value = changed
+            self.assertIsNone(models.reusable_projection(versions))
+        row.asDict.return_value = {**state, "entity_count": 0}
+        with self.assertRaisesRegex(self.error, "invalid build metadata"):
+            models.reusable_projection(versions)
+
+    def test_reuse_rejects_source_changes_during_verification(self):
+        from datetime import datetime, timezone
+        models = self.ns["MapReadModels"](Mock(), self.binding)
+        state = {"state": "ready", "read_model_run_id": RUN_ID, "built_at_utc": datetime.now(timezone.utc),
+                 "source_versions_json": '{"source":1}', "entity_count": 1, "link_count": 0}
+        row = Mock()
+        row.asDict.return_value = state
+        models.spark.table.return_value.limit.return_value.collect.return_value = [row]
+        models.source_versions = Mock(return_value={"source": 2})
+        with self.assertRaisesRegex(self.error, "changed during reuse"):
+            models.reusable_projection({"source": 1})
+
     def test_restricted_native_spn_is_rejected_without_credentials_workaround(self):
         def token(claims):
             return "header." + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=") + ".signature"
@@ -314,6 +357,41 @@ class DefinitionTests(HelpersTest):
 
 
 class RestTests(HelpersTest):
+    def test_matching_draft_and_published_contract_do_not_republish(self):
+        parts = self.desired_parts()
+        for path, part in list(parts.items()):
+            if "/draft/" in path:
+                published_path = path.replace("/draft/", "/published/")
+                parts[published_path] = self.call("encode_part", published_path, self.call("decode_part", part))
+        api = self.api()
+        api.get_definition = Mock(return_value=parts)
+        api.verify_owned_target = Mock()
+        api.request = Mock()
+        api.configure_and_publish()
+        api.request.assert_not_called()
+        api.get_definition.assert_called_once()
+
+    def test_matching_draft_with_missing_or_changed_publication_still_publishes(self):
+        for stale in (False, True):
+            with self.subTest(stale=stale):
+                parts = self.desired_parts()
+                published = copy.deepcopy(parts)
+                for path, part in list(parts.items()):
+                    if "/draft/" in path:
+                        published_path = path.replace("/draft/", "/published/")
+                        published[published_path] = self.call("encode_part", published_path, self.call("decode_part", part))
+                initial = copy.deepcopy(published if stale else parts)
+                if stale:
+                    path = self.ns["PUBLISHED_STAGE_PART"]
+                    initial[path] = self.call("encode_part", path, {"aiInstructions": "older instructions"})
+                api = self.api()
+                api.get_definition = Mock(side_effect=[initial, published])
+                api.verify_owned_target = Mock()
+                api.request = Mock(return_value=Response())
+                api.configure_and_publish()
+                api.request.assert_called_once()
+                self.assertTrue(api.request.call_args.args[1].endswith("/staging/publish"))
+
     def test_discovery_paginates_and_encodes_tokens(self):
         session = Mock(request=Mock(side_effect=[
             Response({"value": [], "continuationToken": "a/b+=c"}),

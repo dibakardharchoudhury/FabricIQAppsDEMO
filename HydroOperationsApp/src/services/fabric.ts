@@ -1368,7 +1368,7 @@ let mapRefreshInFlight: Promise<JobStatus> | undefined
 let mapRefreshStatus: JobStatus = 'NotStarted'
 let mapRefreshStartedAt: string | undefined
 
-export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, onExistingRun?: (startedAt?: string) => void): Promise<JobStatus> {
+export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, onExistingRun?: (startedAt?: string) => void, refreshMode: 'all' | 'operational' = 'all'): Promise<JobStatus> {
   if (onStatus) mapRefreshListeners.add(onStatus)
   if (mapRefreshInFlight) {
     onExistingRun?.(mapRefreshStartedAt)
@@ -1389,7 +1389,7 @@ export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, o
         pipelineParameters: {
           workspace_id: requireWorkspaceId(), geo_lakehouse_id: geoLakehouseId,
           env_suffix: '', map_agent_name: mapDataAgentName(eventhouseName, configuredMapAgentName),
-          refresh_mode: 'all', force_refresh: forceRefresh,
+          refresh_mode: refreshMode, force_refresh: forceRefresh,
         },
         onReuseActive: startedAt => {
           mapRefreshStartedAt = startedAt ?? mapRefreshStartedAt

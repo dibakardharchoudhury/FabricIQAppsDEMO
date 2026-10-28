@@ -5,14 +5,17 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MapDataRefreshPanel } from '../src/components/MapDataRefreshPanel.tsx'
 
 const render = (state: 'idle' | 'running' | 'complete' | 'error', message?: string) =>
-  renderToStaticMarkup(createElement(MapDataRefreshPanel, { state, message, status: 'Running', elapsed: '5m 10s', onStart: () => {} }))
+  renderToStaticMarkup(createElement(MapDataRefreshPanel, { state, message, status: 'Running', elapsed: '5m 10s', onStart: () => {}, onRebuild: () => {} }))
 
-test('Administration documents the existing all-source notebook and serial chat refresh', () => {
+test('Administration separates initial setup, operational refresh and advanced national rebuild', () => {
   const html = render('idle')
-  assert.match(html, /Update all map data/)
-  assert.match(html, /Geo_001_ingest_energy_context/)
+  assert.match(html, /Refresh operational snapshots/)
+  assert.match(html, /Initial preparation is step 6/)
+  assert.match(html, /skips the large national network/)
   assert.match(html, /04_Pipe_EnergyMap/)
-  assert.match(html, /Geo_002_publish_map_agent/)
+  assert.match(html, /Agent configuration is published only when changed/)
+  assert.match(html, /<summary>Advanced: full national source rebuild<\/summary>/)
+  assert.match(html, /Rebuild all map sources/)
   for (const source of ['NVE Nettanlegg4', 'NVE hydropower', 'NVE reservoir', 'Statnett', 'Nord Pool UMM']) {
     assert.ok(html.includes(source), source)
   }
@@ -23,6 +26,7 @@ test('Administration documents the existing all-source notebook and serial chat 
 test('active runs disable a duplicate start without inventing percentage progress', () => {
   const html = render('running', 'Refreshing map data')
   assert.match(html, /disabled=""/)
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 2)
   assert.match(html, /<progress aria-label="Map data update is running"><\/progress>/)
   assert.ok(!html.includes('value="'))
   assert.match(html, /5m 10s/)

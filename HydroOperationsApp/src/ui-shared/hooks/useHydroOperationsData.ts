@@ -124,6 +124,7 @@ function useHydroOperationsDataController() {
   const [streamState, setStreamState] = useState<ActionState>('idle')
   const [weatherState, setWeatherState] = useState<ActionState>('idle')
   const [mapRefreshState, setMapRefreshState] = useState<ActionState>('idle')
+  const [mapPrepared, setMapPrepared] = useState(false)
   const [mapRefreshMessage, setMapRefreshMessage] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
@@ -373,7 +374,7 @@ function useHydroOperationsDataController() {
     } finally { endJob('weather') }
   }, [authenticate, jobs.weather, user, weatherState])
 
-  const updateAllMapData = useCallback(async () => {
+  const refreshMapData = useCallback(async (intent: 'prepare' | 'operational' | 'rebuild' = 'operational') => {
     if (!ENERGY_MAP_ENABLED) {
       setMapRefreshState('error')
       setMapRefreshMessage('Energy map provisioning is disabled for this deployment.')
@@ -381,31 +382,38 @@ function useHydroOperationsDataController() {
     }
     if (mapRefreshState === 'running' || jobs.map) return
     setMapRefreshState('running')
-    setMapRefreshMessage('Starting the full map refresh in Fabric...')
-    beginProgress('map', 'Refreshing map sources and chat data', MAP_REFRESH_MAX_AGE_MS)
+    const description = intent === 'prepare' ? 'Preparing the map using cached national sources'
+      : intent === 'rebuild' ? 'Rebuilding all map sources, bypassing the source cache'
+        : 'Updating operational map snapshots; national network and plant imports are skipped'
+    setMapRefreshMessage(`${description} in Fabric...`)
+    beginProgress('map', description, MAP_REFRESH_MAX_AGE_MS)
     let attached = false
     try {
       const status = await refreshEnergyMap(
         value => updateJob('map', humanStatus(value)),
-        true,
+        intent === 'rebuild',
         startedAt => {
           attached = true
-          setMapRefreshMessage('A map refresh is already running. Monitoring that run instead of starting a duplicate; it may use the normal source cache.')
+          setMapRefreshMessage('A map refresh is already running. Monitoring that run instead of starting a duplicate; its original refresh mode is unchanged.')
           if (startedAt) setJobs(current => current.map
             ? { ...current, map: { ...current.map, startedAt: Date.parse(startedAt), label: 'Monitoring existing map refresh' } } : current)
         },
+        intent === 'operational' ? 'operational' : 'all',
       )
       if (status === 'Completed') {
         setMapRefreshState('complete')
+        if (!attached && intent !== 'operational') setMapPrepared(true)
         setMapRefreshMessage(attached
-          ? 'The existing map refresh completed. Start a full update if you still need to bypass its source cache.'
-          : `All configured map sources refreshed. Completed ${new Date().toLocaleString()}.`)
+          ? 'The existing map refresh completed using its original refresh mode.'
+          : `${description}. Map pipeline completed ${new Date().toLocaleString()}.`)
       } else {
+        setMapPrepared(false)
         setMapRefreshState('error')
         setMapRefreshMessage(`Map refresh ${humanStatus(status).toLowerCase()}. A queued or running job continues in Fabric; starting again will reattach rather than duplicate it.`)
       }
     } catch (error) {
-      console.error('Full map data refresh failed.', error)
+      console.error('Map data refresh failed.', error)
+      setMapPrepared(false)
       setMapRefreshState('error')
       setMapRefreshMessage(error instanceof Error ? error.message : 'Map data refresh failed.')
     } finally { endJob('map') }
@@ -867,6 +875,7 @@ function useHydroOperationsDataController() {
     streamState,
     weatherState,
     mapRefreshState,
+    mapPrepared,
     mapRefreshMessage,
     stid,
     ontology,
@@ -915,7 +924,7 @@ function useHydroOperationsDataController() {
       refreshOperationalData,
       startStream,
       connectWeather,
-      updateAllMapData,
+      refreshMapData,
       connectStid,
       refreshStid,
       connectTelemetry,

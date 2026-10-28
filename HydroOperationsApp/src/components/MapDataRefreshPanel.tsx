@@ -1,23 +1,26 @@
 import { Database, RefreshCw } from 'lucide-react'
 
-export function MapDataRefreshPanel({ state, status, message, elapsed, onStart }: {
+export function MapDataRefreshPanel({ state, status, message, elapsed, onStart, onRebuild }: {
   state: 'idle' | 'running' | 'complete' | 'error'
   status?: string
   message?: string
   elapsed?: string
   onStart: () => void
+  onRebuild: () => void
 }) {
   const running = state === 'running'
   return <section className="map-data-refresh" aria-labelledby="map-data-refresh-title">
     <header>
       <Database size={22} />
-      <div><span className="eyebrow">MAP DATA</span><h2 id="map-data-refresh-title">Update map data sources</h2></div>
+      <div><span className="eyebrow">MAP MAINTENANCE</span><h2 id="map-data-refresh-title">Norwegian Energy Map</h2></div>
       <button type="button" onClick={onStart} disabled={running}>
-        <RefreshCw size={16} />{running ? 'Updating map data...' : 'Update all map data'}
+        <RefreshCw size={16} />{running ? 'Updating map data...' : 'Refresh operational snapshots'}
       </button>
     </header>
-    <p>Start <code>Geo_001_ingest_energy_context</code> through <code>04_Pipe_EnergyMap</code>.
-      When map chat is enabled, <code>Geo_002_publish_map_agent</code> follows ingestion to refresh its data and republish the map agent.</p>
+    <p>Initial preparation is step 6 above and is also part of core workspace setup.
+      Routine refresh updates reservoir statistics, power balance, exchange, stored frequency and market messages;
+      it skips the large national network and hydropower inventories.
+      <code>04_Pipe_EnergyMap</code> then prepares map-chat projections when enabled. Agent configuration is published only when changed.</p>
     <div className="map-data-refresh-status" role={state === 'error' ? 'alert' : 'status'} aria-live="polite">
       <strong>{running ? status || 'Starting' : state === 'complete' ? 'Completed' : state === 'error' ? 'Update needs attention' : 'Ready to update'}</strong>
       {running && <><progress aria-label="Map data update is running" /><span>{elapsed}</span></>}
@@ -34,7 +37,13 @@ export function MapDataRefreshPanel({ state, status, message, elapsed, onStart }
         <li><strong>Map chat, when enabled:</strong> typed data projections, source readiness and the dedicated Data Agent.</li>
       </ul>
     </details>
-    <p className="map-data-refresh-help">A new run bypasses the 24-hour source cache and may take tens of minutes on the Fabric capacity.
+    <details className="map-data-refresh-advanced">
+      <summary>Advanced: full national source rebuild</summary>
+      <p>Use only when national inventories need a forced reload. This bypasses the 24-hour source cache,
+        downloads every network and plant layer again, and can take tens of minutes. It is not routine maintenance.</p>
+      <button type="button" onClick={onRebuild} disabled={running}>Rebuild all map sources</button>
+    </details>
+    <p className="map-data-refresh-help">Operational updates still require Fabric notebook startup and map-chat readiness checks.
       Existing runs are monitored rather than duplicated. Progress resumes after reloading this app; closing a tab does not cancel the cloud run.
       Last-good source data is retained on import failure. No recurring schedule is enabled.</p>
     <p className="map-data-refresh-help">The live frequency tile continues to fetch on demand; this action updates its separate stored snapshot.

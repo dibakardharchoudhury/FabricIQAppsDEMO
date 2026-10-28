@@ -4,6 +4,10 @@ Map-agent publication validates the current read-model run through its published
 MCP tool. It retries unsuccessful grounding checks up to three times, 30 seconds
 apart, to allow Lakehouse SQL synchronization; exhausted checks fail with the last
 tool response. Publication alone is not proof of working map chat.
+Retries with unchanged source Delta versions reuse the last complete owned
+projection and its run ID, rather than rewriting the tables and restarting SQL
+synchronization. Matching draft and published agent definitions are not republished;
+the grounding canary still runs before map chat is reported ready.
 
 Map queries use the GeoContext SQL connector for bounded identity/viewport
 selection, then retrieve complete feature payloads through the existing
@@ -181,7 +185,7 @@ ownership from names or remove valid time-series bindings to force eligibility.
 
 | Source | Core setup | Later refresh |
 |---|---|---|
-| Energy | Loads GeoContext alongside Core/Weather, then verifies twelve layers and nine area polygons | **Refresh energy sources** |
+| Energy | Loads GeoContext alongside Core/Weather, then verifies twelve layers and nine area polygons | Hosted **Refresh operational snapshots**; initial preparation is setup step 6 |
 | Weather | Creates tables and enables its schedule | **Connect weather** in the hosted app, or scheduled ingestion |
 
 Weather ingestion defaults to UKMet and requires its Global Spot and Land
@@ -202,6 +206,15 @@ reservoir statistics, Statnett and UMM refresh on each eligible run. Use
 `refresh_mode=operational` for only the changing operational sources, or `all`
 for every source with static-cache reuse. A recurring energy schedule is needed
 only if unattended freshness is required; select its cadence deliberately.
+The hosted Administration page exposes **Prepare Norwegian Energy Map** as step 6.
+It uses `all` with cache reuse, not a forced national import. Routine
+**Refresh operational snapshots** uses `operational` and skips network/plant
+inventories even if their cache is old. **Advanced: full national source rebuild**
+is the explicit `all` + `force_refresh=true` option and may take tens of minutes.
+All three reuse active runs and report actual pipeline completion, including
+map-chat failures; a browser-stored flag alone does not mark setup complete.
+Notebook startup, projection changes and SQL/MCP readiness still take time:
+operational mode is lighter, not an instant/live feed.
 Do not overlap Core ingestion and standalone energy refreshes against the same
 GeoContext tables. Parallelism overlaps independent Core/energy branches, not
 multiple writers to one energy snapshot.

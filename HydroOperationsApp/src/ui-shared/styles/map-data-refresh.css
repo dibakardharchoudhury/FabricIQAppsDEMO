@@ -11,8 +11,14 @@
 .map-data-refresh-status p { flex-basis: 100%; margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .map-data-refresh-status progress { width: min(200px, 45%); accent-color: #0f766e; }
 .map-data-refresh summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.map-data-refresh-advanced { margin-top: 16px; }
+.map-data-refresh-advanced p { font-size: 12px; line-height: 1.6; color: var(--cp-text-muted); }
+.map-data-refresh-advanced button { padding: 8px 12px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface); color: var(--cp-text); cursor: pointer; }
 .map-data-refresh li { font-size: 12px; line-height: 1.65; margin: 5px 0; }
 .map-data-refresh > .map-data-refresh-help { font-size: 11px; margin-bottom: 0; }
+@media (min-width: 981px) {
+  .setup-steps { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+}
 @media (max-width: 600px) {
   .map-data-refresh header { flex-wrap: wrap; }
   .map-data-refresh header button { width: 100%; }

@@ -54,6 +54,15 @@ export function AdministrationPage() {
       run: () => void data.actions.connectWeather(),
     },
   ]
+  if (ENERGY_MAP_ENABLED) steps.push({
+    n: 6,
+    title: 'Prepare Norwegian Energy Map',
+    why: 'Already included in core workspace setup. Uses cached national sources, updates map projections and verifies map chat when enabled. No recurring setup is needed.',
+    done: data.mapPrepared,
+    busy: data.mapRefreshState === 'running' || Boolean(data.jobs.map),
+    action: 'Prepare map',
+    run: () => void data.actions.refreshMapData('prepare'),
+  })
 
   return <>
     {data.notice && <div className="notice"><span>{data.notice}</span></div>}
@@ -61,7 +70,8 @@ export function AdministrationPage() {
     <AdministrationExperience steps={steps} />
     {ENERGY_MAP_ENABLED && <MapDataRefreshPanel state={data.mapRefreshState} status={data.jobs.map?.status}
       message={data.mapRefreshMessage} elapsed={data.jobs.map ? fmtElapsed(data.now - data.jobs.map.startedAt) : undefined}
-      onStart={() => void data.actions.updateAllMapData()} />}
+      onStart={() => void data.actions.refreshMapData('operational')}
+      onRebuild={() => void data.actions.refreshMapData('rebuild')} />}
     <CopilotSettingsPanel />
   </>
 }

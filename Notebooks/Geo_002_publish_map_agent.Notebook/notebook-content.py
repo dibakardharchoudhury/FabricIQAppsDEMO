@@ -773,7 +773,16 @@ class FabricMapAgentAPI:
                 self.wait_operation(response)
             else:
                 response.close()
-        inspect_definition(self.get_definition(), self.binding, require_selection=True)
+            parts = self.get_definition()
+        inspect_definition(parts, self.binding, require_selection=True)
+        published_current = all(
+            part["path"].replace("/draft/", "/published/") in parts
+            and decode_part(parts[part["path"].replace("/draft/", "/published/")]) == decode_part(part)
+            for part in desired["parts"] if "/draft/" in part["path"]
+        )
+        if published_current:
+            inspect_definition(parts, self.binding, require_selection=True, stage="published")
+            return
         self.verify_owned_target()
         response = self.request("POST", f"{self.workspace_path}/dataAgents/{self.agent_id}/staging/publish", {
             "publishedDescription": (
@@ -1008,13 +1017,16 @@ class MapReadModels:
         self.write_owned(STATE_TABLE, self.spark.createDataFrame([row], spark_schema(STATE_FIELDS)))
 
     def build(self):
-        from pyspark import StorageLevel
-        from pyspark.sql import functions as F
         self.preflight()
         self.ensure_models()
+        versions = self.source_versions()
+        reusable = self.reusable_projection(versions)
+        if reusable is not None:
+            return reusable
+        from pyspark import StorageLevel
+        from pyspark.sql import functions as F
         self.spark.conf.set("spark.sql.session.timeZone", "UTC")
         run_id, built_at = str(uuid4()), datetime.now(timezone.utc)
-        versions = self.source_versions()
         self.write_state("building", run_id, built_at, versions, message="Projection replacement in progress; do not answer from partial models")
         entities = None
         finished = False
@@ -1074,12 +1086,31 @@ class MapReadModels:
             finished = True
             return {"read_model_run_id": run_id, "built_at_utc": built_at.isoformat(),
                     "entity_count": metrics["rows"], "link_count": link_metrics["rows"],
-                    "source_versions": versions, "table_locations": self.locations}
+                    "source_versions": versions, "table_locations": self.locations,
+                    "projection_reused": False}
         finally:
             if entities is not None:
                 entities.unpersist()
             if not finished:
                 self.write_state("error", run_id, built_at, versions, message="Read-model build failed; no complete projection is advertised")
+
+    def reusable_projection(self, versions):
+        rows = self.spark.table(STATE_TABLE).limit(2).collect()
+        if len(rows) != 1:
+            return None
+        state = rows[0].asDict()
+        if state["state"] != "ready" or json.loads(state["source_versions_json"]) != versions:
+            return None
+        run_id = guid(state["read_model_run_id"], "stored read-model run")
+        if (not isinstance(state["built_at_utc"], datetime)
+                or not isinstance(state["entity_count"], int) or state["entity_count"] <= 0
+                or not isinstance(state["link_count"], int) or state["link_count"] < 0):
+            raise ProvisioningError("Stored ready projection has invalid build metadata; refusing to reuse it")
+        if self.source_versions() != versions:
+            raise ProvisioningError("Map sources changed during reuse verification; retry after ingestion finishes")
+        return {"read_model_run_id": run_id, "built_at_utc": state["built_at_utc"].isoformat(),
+                "entity_count": state["entity_count"], "link_count": state["link_count"],
+                "source_versions": versions, "table_locations": self.locations, "projection_reused": True}
 
 # METADATA ********************
 
