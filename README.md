@@ -107,8 +107,11 @@ by the selected live v2 workspace/item identity, not the old path alone. It requ
 entity selections, descriptions and custom content; only the known schema/type conversion,
 omitted empty defaults and generated authored-description markers are accepted. Missing,
 ambiguous or lossy source readback still fails setup before any runtime readiness claim.
-Fresh setup and reruns prune separately attached Lakehouse/Eventhouse sources only when the
-selected ontology entities' authoritative physical bindings cover every selected table.
+NB09 never creates a separate Lakehouse source for a new v2 agent: the selected Ontology
+already owns its Lakehouse bindings. NB09 reruns and NB11 SQL publication prune previously
+attached Lakehouse/Eventhouse sources only when the selected ontology entities' authoritative
+physical bindings cover every selected table. NB11 checks this again after project source
+metadata is available and verifies removal in both draft and published definitions.
 Source guidance is retained in the agent instructions; operational SQL execution sources,
 uncovered custom tables and custom source metadata remain intact.
 

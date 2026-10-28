@@ -3197,7 +3197,7 @@ def resolve_data_agent_id() -> Optional[str]:
 
 def verify_agent_source_readback(
     agent_id: str, submitted_sql_source: dict, published: bool = False,
-    retained_sources: dict | None = None,
+    retained_sources: dict | None = None, removed_sources: list | None = None,
 ) -> list:
     parts = definition_parts(get_item_definition(agent_id))
     path = SQL_DATASOURCE_PATH.replace("/draft/", "/published/", 1) if published else SQL_DATASOURCE_PATH
@@ -3211,8 +3211,29 @@ def verify_agent_source_readback(
         retained_path = draft_path.replace("/draft/", "/published/", 1) if published else draft_path
         retained = next((part for part in parts if part["path"] == retained_path), None)
         if retained is None or decode_payload(retained["payload"]) != expected:
-            raise RuntimeError(f"Legacy SQL selection/custom content readback failed at {retained_path!r}.")
+            raise RuntimeError(f"Retained Data Agent content readback failed at {retained_path!r}.")
+    for draft_path in removed_sources or []:
+        removed_path = draft_path.replace("/draft/", "/published/", 1) if published else draft_path
+        if any(part["path"] == removed_path for part in parts):
+            raise RuntimeError(f"Duplicate Ontology-covered source remains at {removed_path!r}.")
     return parts
+
+
+def prune_agent_ontology_sources(parts: list) -> tuple:
+    if not project_ontology_item_id or not selected_ontology_entities(
+        parts, workspace_id, project_ontology_item_id,
+    ):
+        return parts, []
+    response = api_request(
+        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/ontologies/{project_ontology_item_id}",
+    )
+    response.raise_for_status()
+    item = response.json()
+    generation = item.get("properties", {}).get("generation")
+    if item.get("id") != project_ontology_item_id or type(generation) is not int or generation != 2:
+        raise RuntimeError("Data Agent source cleanup requires verified live numeric Ontology generation 2.")
+    ontology_parts = definition_parts(get_item_definition(project_ontology_item_id))
+    return prune_ontology_duplicate_sources(parts, ontology_parts, workspace_id, project_ontology_item_id)
 
 
 def resolve_agent_extension_target() -> tuple:
@@ -3367,15 +3388,29 @@ def extend_data_agent_sql_source(agent_id: str) -> dict:
         {},
     )
     parts = upsert_part(parts, DRAFT_STAGE_CONFIG_PATH, build_stage_obj(existing_stage))
+    parts, removed_sources = prune_agent_ontology_sources(parts)
+    if removed_sources:
+        retained_sql_sources.update({
+            part["path"]: decode_payload(part["payload"])
+            for part in parts if part["path"] == DRAFT_STAGE_CONFIG_PATH
+            or (part["path"].startswith("Files/Config/draft/ontologies/")
+                and part["path"].endswith("/ontology.json"))
+        })
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • SQL data source ->", sql_part_path, f"({len(SQL_TABLES)} table(s), nested column tree)")
     update_item_definition(agent_id, {"parts": parts})
-    verify_agent_source_readback(agent_id, submitted_sql_source, retained_sources=retained_sql_sources)
+    verify_agent_source_readback(
+        agent_id, submitted_sql_source, retained_sources=retained_sql_sources,
+        removed_sources=removed_sources,
+    )
 
     enable_preview_runtime(agent_id)
     publish_data_agent(agent_id, "Operational SQL source added.")
-    verify_agent_source_readback(agent_id, submitted_sql_source, published=True, retained_sources=retained_sql_sources)
+    verify_agent_source_readback(
+        agent_id, submitted_sql_source, published=True, retained_sources=retained_sql_sources,
+        removed_sources=removed_sources,
+    )
     print("🌐 Data Agent republished with operational SQL source.")
     return {
         "status": "published",

@@ -1549,19 +1549,6 @@ try:
         )
         parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
 
-        discovered_lakehouse_schema = lakehouse_schema_map()
-        existing_lakehouse_ds = next(
-            (
-                decode_payload(p.get("payload", ""))
-                for p in parts if p.get("path") == LAKEHOUSE_DATASOURCE_PATH
-            ),
-            {},
-        )
-        submitted_lakehouse_source = build_lakehouse_datasource_obj(
-            existing_lakehouse_ds, discovered_lakehouse_schema,
-        )
-        parts = upsert_part(parts, LAKEHOUSE_DATASOURCE_PATH, submitted_lakehouse_source)
-
         existing_kusto_ds = next(
             (
                 decode_payload(p.get("payload", ""))
@@ -1572,7 +1559,6 @@ try:
         submitted_kusto_source = build_kusto_datasource_obj(existing_kusto_ds)
         parts = upsert_part(parts, KUSTO_DATASOURCE_PATH, submitted_kusto_source)
         submitted_direct_sources = {
-            LAKEHOUSE_DATASOURCE_PATH: submitted_lakehouse_source,
             KUSTO_DATASOURCE_PATH: submitted_kusto_source,
         }
         parts = update_operational_source_guidance(parts)

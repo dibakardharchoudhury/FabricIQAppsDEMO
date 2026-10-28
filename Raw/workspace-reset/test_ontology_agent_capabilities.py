@@ -32,7 +32,7 @@ def source(number):
 def functions(number, *names, **overrides):
     namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib, "re": re,
                  "provision_shared_store": False, "OPERATIONAL_STORE_NAME": "HydroOperationalStore",
-                 "sql_db_item_name": "sql",
+                 "sql_db_item_name": "sql", "project_ontology_item_id": "",
                  "refresh_ontology_context": Mock(side_effect=lambda parts, _ontology: parts)}
     namespace.update(overrides)
     tree = ast.parse(source(number))
@@ -41,6 +41,7 @@ def functions(number, *names, **overrides):
         "ontology_context_matches_source",
         "normalize_lakehouse_elements",
         "selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources",
+        "prune_agent_ontology_sources",
     }
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)
@@ -1049,7 +1050,7 @@ class CapabilityTests(unittest.TestCase):
         )
         for fail_at in (
             "create_data_agent", "validate_agent_ontology_sources", "update_item_definition",
-            "verify_agent_source_readback", "publish_data_agent", "lakehouse_schema_map",
+            "verify_agent_source_readback", "publish_data_agent",
         ):
             status = Mock()
             ns = functions("009", "upsert_part", "encode_payload")
@@ -1449,8 +1450,8 @@ class CapabilityTests(unittest.TestCase):
                     part["payload"] for part in state["parts"]
                     if part["path"] == f"Files/Config/{stage}/stage_config.json"
                 ))["aiInstructions"]
-                self.assertEqual(instructions.count("Retain asset guidance"), 1)
                 self.assertEqual(instructions.count("Retain telemetry guidance"), 1)
+            ns["lakehouse_schema_map"].assert_not_called()
         sql, extended = self.sql_extension_namespace(state["parts"])
         sql["extend_data_agent_sql_source"]("agent")
         for stage in ("draft", "published"):
@@ -1654,7 +1655,7 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(retained_lakehouse["dataSourceInstructions"], "Custom Lakehouse guidance")
             self.assertEqual(retained_lakehouse["elements"][0]["id"], "lakehouse-schema")
             retained_lakehouse_table = retained_lakehouse["elements"][0]["children"][0]
-            self.assertTrue(retained_lakehouse_table["is_selected"])
+            self.assertFalse(retained_lakehouse_table["is_selected"])
             retained_kusto = ns["decode_payload"](
                 actual[prefix + "kusto-source/datasource.json"]["payload"]
             )
@@ -1879,6 +1880,7 @@ class CapabilityTests(unittest.TestCase):
         def publish(agent_id, description):
             self.assertEqual(agent_id, "agent")
             parts = state["definition"]["parts"]
+            parts[:] = [part for part in parts if not part["path"].startswith("Files/Config/published/")]
             for part in list(parts):
                 if part["path"].startswith("Files/Config/draft/"):
                     published = {**part, "path": part["path"].replace("/draft/", "/published/", 1)}
@@ -1888,6 +1890,84 @@ class CapabilityTests(unittest.TestCase):
         ns["update_item_definition"] = Mock(side_effect=update)
         ns["publish_data_agent"] = Mock(side_effect=publish)
         return ns, state
+
+    def ontology_duplicate_fixture(self):
+        context = json_part("Files/Config/draft/ontologies/ontology/ontology.json", {
+            "artifactId": "ontology", "workspaceId": "ws",
+            "elements": [{"display_name": "facilities", "type": "ontology.entity", "is_selected": True}],
+        })
+        duplicate = json_part("Files/Config/draft/lakehouse/datasource.json", {
+            "type": "lakehouse_tables", "artifactId": "lakehouse", "workspaceId": "ws",
+            "metadata": {}, "dataSourceInstructions": "Retain asset source guidance.",
+            "elements": [{"type": "lakehouse_tables.schema", "display_name": "dbo", "is_selected": False,
+                          "children": [{"type": "lakehouse_tables.table", "display_name": "silver_facilities",
+                                        "is_selected": True}]}],
+        })
+        texts = {
+            "expressions.tmdl":
+                'expression Assets =\n\tAzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/ws/lakehouse")\n'
+                "\tannotation ONT_WorkspaceId = ws\n\tannotation ONT_ItemId = lakehouse\n"
+                "\tannotation ONT_ItemKind = Lakehouse\n",
+            "entities/facilities.tmdl": "entity facilities\n\tbackingTable: facilities\n",
+            "tables/facilities.tmdl":
+                "table facilities\n\tpartition facilities = entity\n\t\tsource\n"
+                "\t\t\tentityName: silver_facilities\n\t\t\texpressionSource: Assets\n",
+        }
+        ontology = [{"path": path, "payloadType": "InlineBase64",
+                     "payload": base64.b64encode(text.encode()).decode()} for path, text in texts.items()]
+        return [context, duplicate], {"definition": {"parts": ontology}}
+
+    def test_sql_publication_removes_legacy_ontology_duplicate_and_preserves_custom_content(self):
+        baseline, ontology = self.ontology_duplicate_fixture()
+        custom = json_part("Files/Config/draft/custom.json", {"operator": "retain"})
+        baseline += [custom, {**baseline[1], "path": baseline[1]["path"].replace("/draft/", "/published/")}]
+        ns, state = self.sql_extension_namespace(baseline)
+        ns.update(project_ontology_item_id="ontology", FABRIC_API_BASE="base",
+                  api_request=Mock(return_value=Mock(json=lambda: {"id": "ontology", "properties": {"generation": 2}})))
+        ns["get_item_definition"].side_effect = lambda item: copy.deepcopy(
+            ontology if item == "ontology" else state)
+        before_ontology = copy.deepcopy(ontology)
+        for _ in range(2):
+            ns["extend_data_agent_sql_source"]("agent")
+            parts = {part["path"]: part for part in state["definition"]["parts"]}
+            for stage in ("draft", "published"):
+                self.assertNotIn(f"Files/Config/{stage}/lakehouse/datasource.json", parts)
+                self.assertIn(ns["SQL_DATASOURCE_PATH"].replace("/draft/", f"/{stage}/"), parts)
+                self.assertEqual(parts[custom["path"].replace("/draft/", f"/{stage}/")]["payload"], custom["payload"])
+                self.assertEqual(parts[baseline[0]["path"].replace("/draft/", f"/{stage}/")]["payload"],
+                                 baseline[0]["payload"])
+                instructions = ns["decode_payload"](
+                    parts[f"Files/Config/{stage}/stage_config.json"]["payload"])["aiInstructions"]
+                self.assertEqual(instructions.count("Retain asset source guidance."), 1)
+        self.assertEqual(ontology, before_ontology)
+
+    def test_sql_duplicate_cleanup_requires_exact_live_generation_two_identity(self):
+        baseline, ontology = self.ontology_duplicate_fixture()
+        for item, generation in (("ontology", 1), ("ontology", "2"), ("ontology", True), ("other", 2)):
+            with self.subTest(item=item, generation=generation):
+                ns, _ = self.sql_extension_namespace(baseline)
+                ns.update(project_ontology_item_id="ontology", FABRIC_API_BASE="base",
+                          api_request=Mock(return_value=Mock(json=lambda: {
+                              "id": item, "properties": {"generation": generation},
+                          })))
+                with self.assertRaisesRegex(RuntimeError, "verified live numeric"):
+                    ns["extend_data_agent_sql_source"]("agent")
+                ns["update_item_definition"].assert_not_called()
+                ns["publish_data_agent"].assert_not_called()
+
+    def test_sql_duplicate_removal_must_survive_draft_and_published_readback(self):
+        baseline, _ = self.ontology_duplicate_fixture()
+        ns, state = self.sql_extension_namespace(baseline)
+        submitted = ns["build_sql_datasource_obj"]({}, "sql-id", {})
+        state["definition"]["parts"].append(json_part(ns["SQL_DATASOURCE_PATH"], submitted))
+        removed = baseline[1]["path"]
+        for published in (False, True):
+            if published:
+                ns["publish_data_agent"]("agent", "test")
+            with self.assertRaisesRegex(RuntimeError, "Duplicate Ontology-covered source remains"):
+                ns["verify_agent_source_readback"](
+                    "agent", submitted, published=published, removed_sources=[removed],
+                )
 
     def test_sql_extension_publishes_without_ontology_or_nb09_evidence(self):
         for baseline in ([], [json_part("Files/Config/draft/custom.json", {"custom": True})]):
