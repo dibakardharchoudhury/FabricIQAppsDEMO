@@ -2,7 +2,7 @@ import { HostedSourceAccessError } from '../hostedSourceAccess.ts'
 
 export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq' | 'weather'
 export const AGENT_DISPLAY_NAMES: Record<AgentRole, string> = {
-  supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky', weather: 'Weather',
+  supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky', weather: 'Gale',
 }
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
 

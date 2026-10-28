@@ -113,7 +113,7 @@ which data each tool can reach.
 
 The shared chat/Battle renderer reuses the existing yellow Signal Sprint helper in a
 Supervisor-led communication diagram, with role badges: Chief (Supervisor), Gauge (Q&A), Sleuth (RCA),
-Fixer (work orders), Sparky (Fabric IQ), and Weather. The thinking game and crew share the same
+Fixer (work orders), Sparky (Fabric IQ), and Gale (Weather). The thinking game and crew share the same
 `CopilotHelper` component and existing character styles; there is no separate SVG mascot.
 Execution receipts are collapsed by default so the answer retains the screen space. Only actual running
 agents animate; unused agents remain standing by. Animations can be paused and respect

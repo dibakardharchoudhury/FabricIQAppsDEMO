@@ -40,7 +40,7 @@ Operator ─► SPA (Fabric-hosted) ─ signed-in user's delegated tokens ─►
                                        ┌────────────── Foundry Responses ────────────────┐
                                        ▼                 ▼                  ▼             ▼
                                hydro-qa-agent   hydro-rca-agent   hydro-work-order-agent   hydro-fabric-iq-agent   hydro-weather-agent
-                                  (Gauge)          (Sleuth)            (Fixer)                 (Sparky)              (Weather)
+                                  (Gauge)          (Sleuth)            (Fixer)                 (Sparky)              (Gale)
         Specialist tool calls are executed by the hosted runtime (Node source bridge) under the user's tokens:
         Asset + Weather Lakehouse connector · Eventhouse KQL · hydrooperations shared-SQL connector · published Data Agent connection
 ```

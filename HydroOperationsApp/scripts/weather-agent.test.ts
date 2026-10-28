@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { agentDefinition, AGENT_NAMES, WEATHER_TOOLS, parseDelegation } from '../src/services/copilot/agentDefinitions.ts'
-import { requiredSpecialists } from '../src/services/copilot/orchestration.ts'
+import { AGENT_DISPLAY_NAMES, createOrchestrationEvent, requiredSpecialists } from '../src/services/copilot/orchestration.ts'
 import { WEATHER_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_DATASETS, describeToolEvidence } from '../src/services/copilot/domainContract.ts'
 import { collectWeatherRows, requiredEvidenceKinds, permittedEvidenceKinds, compileOrchestrationPlan, validatePlanRequirements, handle } from './local-fabric-sources.mjs'
+
+test('Gale is the Weather crew name without changing the routing or Foundry identity', () => {
+  assert.equal(AGENT_DISPLAY_NAMES.weather, 'Gale')
+  const event = createOrchestrationEvent('weather', 'running', 'Reading forecasts')
+  assert.equal(event.role, 'weather')
+  assert.equal(event.label, 'Gale - Weather Agent')
+  assert.equal(AGENT_NAMES.weather, 'hydro-weather-agent')
+})
 
 test('weather is a distinct read-only specialist, not the legacy single-model copilot', () => {
   assert.equal(AGENT_NAMES.weather, 'hydro-weather-agent')
