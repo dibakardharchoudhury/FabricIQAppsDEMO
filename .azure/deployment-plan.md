@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - semantic native contract correction; publication pending
+> **Status:** Validated - bounded semantic plan correction; publication pending
 
 ## Current scoped architecture hardening
 
@@ -25,17 +25,24 @@ execution now uses its explicit evidence contract, consistently with the MCP
 compatibility branch; legacy completeness validation remains unchanged.
 Native call timeout is bounded by the overall execution budget, not the
 credential admission lease.
+Typed/catalog-invalid model plans receive at most one validation-feedback
+correction inside the same 60-second planner budget, with no business execution
+before acceptance. Immutable attempt receipts survive interrupted correction;
+the supervisor reports the actual model-round count. Repeated invalid plans
+fail closed. Missing planner configuration fails before client creation.
 
 All validation checks pass for the scoped application change:
 - [x] 1. Core Validation (CLI, auth, build, validate, what-if): approved tenant
   and subscription verified; environment validation, TypeScript, targeted
-  ESLint and `git diff --check` pass. The final backend run completed 211 cases:
-  210 passed and the opt-in live evaluator was skipped. A separate ten-case
+  ESLint and `git diff --check` pass. The final backend run completed 215 cases:
+  214 passed and the opt-in live evaluator was skipped. A separate eleven-case
   real-model evaluation passed, including negation, clarification, native
   ontology routing, diagnostic-only drafts, fault-gated repairs and reader-only
-  forecast comparison. Final planning times were approximately 5.3-14.1 seconds;
+  forecast comparison and the exact freshness-draft acceptance prompt.
+  Final planning times were approximately 5.7-15.5 seconds;
   this is not an end-to-end latency SLO. Five pre-existing backend type
-  diagnostics remain unchanged; no new diagnostic was introduced.
+  diagnostics were reduced to four by explicitly requiring configured planning
+  models before client creation; no new diagnostic was introduced.
   No Bicep or ARM infrastructure delta exists, so build/validate/what-if of an
   infrastructure template is not applicable.
 - [x] 2. Docker Build (if containerized): unchanged deny-by-default Docker
@@ -61,6 +68,10 @@ The exact prompt reproduces the failure in a new regression, which passes after
 the scoped fix alongside the legacy completeness/fidelity checks.
 Publication and repeat signed-browser diagnostic acceptance of that correction
 remain pending; earlier successful runs do not certify it.
+The v43 repeat (`340c2431-8f75-4fce-90c3-a3b70c6c97ad`) stopped before source
+execution because the model put reads on an agent-mode Work Order step.
+An exact cross-field regression reproduces this rejection; bounded plan repair
+and interrupted-attempt recovery now pass regression and live-planner checks.
 
 ## Semantic orchestration and Fabric IQ acceptance
 
@@ -1586,11 +1597,11 @@ records the unchanged target, decisions, applicability and remaining boundaries.
 Executed validation:
 
 - `python -m unittest test_foundry_supervisor test_semantic_planning
-  test_presentation test_source_auth test_durable_service -q`: 211 cases,
-  210 passed and one live opt-in skipped after the native-contract correction.
+  test_presentation test_source_auth test_durable_service -q`: 215 cases,
+  214 passed and one live opt-in skipped after native-contract and plan corrections.
 - With the opt-in environment and existing deployed model,
   `python -m unittest test_semantic_planning.LiveSemanticArchitectureTests -v`:
-  all ten semantic cases passed, with no business reads/writes or HTTP
+  all eleven semantic cases passed, with no business reads/writes or HTTP
   resource warnings after explicit client-lifecycle correction.
 - `python -m unittest test_deploy_hosted_agent test_provision_foundry_agents -q`:
   86 packaging/provisioning regressions passed.
@@ -1599,7 +1610,7 @@ Executed validation:
 - `npm run validate-env`, `npm run build`, TypeScript `--noEmit`,
   targeted `eslint` for `AgentCrewTrace.tsx`, and `git diff --check` passed.
   Vite retains existing large-chunk warnings; Pylance retains exactly the
-  five pre-existing backend diagnostics and introduces no new ones.
+  four remaining pre-existing backend errors and introduces no new ones.
 
 Initial authenticated publication: app 1.0.1173 / `f1784e6`, hosted coordinator
 v42, toolbox `hydro-fabric-iq-tools:2`, image `src-6dc7a516a6ddd2f2`. Canonical
@@ -1622,6 +1633,16 @@ redirects passed. Capacity readback remained Active F8.
   Four focused native regressions and the full 211-case suite pass after
   isolating that legacy schema from semantic native execution. Provider-error,
   source/equipment identity and separate draft/approval validators remain.
+
+The subsequent v43 publication (app 1.0.1174 / `7c5ed6e`, image
+`src-d408ab690422534e`) also passed canonical deployment checks. Its diagnostic
+run `340c2431-8f75-4fce-90c3-a3b70c6c97ad` was rejected at typed plan validation
+before dispatch, exposing the need for one bounded model correction. New
+regressions verify cross-field correction, repeat catalog rejection, recovery
+without reissuing a committed invalid attempt and absent-model failure.
+The latest eleven-case live evaluation includes that exact diagnostic prompt;
+all cases passed in one planning call each, approximately 5.7-15.5 seconds.
+This tests model planning, not the pending authenticated end-to-end rerun.
 
 ### Current deployment-tool optimization (October 24, 2026)
 

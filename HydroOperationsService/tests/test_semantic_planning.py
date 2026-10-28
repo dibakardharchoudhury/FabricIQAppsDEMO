@@ -178,6 +178,87 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.required_specialists, ())
         self.assertEqual(request.required_evidence_kinds, ("native_claims",))
 
+    async def test_invalid_agent_reads_get_one_correction_before_any_source_execution(self):
+        invalid = decision()
+        invalid["plan"]["steps"][0]["execution"] = "agent"
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        api.responses.create.side_effect = [
+            SimpleNamespace(status="completed", id="resp_invalid", output_text=json.dumps(invalid)),
+            SimpleNamespace(status="completed", id="resp_corrected", output_text=json.dumps(decision())),
+        ]
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            first = await self.owner.plan_semantically(self.request, self.journal)
+            self.assertEqual(await self.owner.plan_semantically(self.request, self.journal), first)
+        self.assertEqual(api.responses.create.await_count, 2)
+        api.__aexit__.assert_awaited_once()
+        feedback = json.loads(api.responses.create.call_args_list[1].kwargs["input"])["validation_feedback"]
+        self.assertEqual(feedback["response_id"], "resp_invalid")
+        self.assertIn("Reader steps require explicit reads", feedback["errors"][0]["msg"])
+        self.assertEqual(self.journal.read("semantic_decision")["response_id"], "resp_corrected")
+        self.assertEqual(self.journal.read("semantic_decision")["model_round_count"], 2)
+        self.assertEqual(self.journal.read("semantic_planning_attempt:1")["response_id"], "resp_invalid")
+        self.assertEqual(self.journal.read("semantic_planning_attempt:2")["response_id"], "resp_corrected")
+        self.owner.bridge.call.assert_not_called()
+        self.assertFalse(self.owner.evidence)
+        self.assertFalse(self.owner.specialists)
+
+    async def test_unconfigured_planner_fails_before_client_or_source_execution(self):
+        self.owner.analysis_model = None
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient") as client:
+            with self.assertRaisesRegex(SourceFailure, "configured planning model"):
+                await self.owner.plan_semantically(self.request, self.journal)
+        client.assert_not_called()
+        self.owner.bridge.call.assert_not_called()
+        self.assertIsNone(self.journal.read("semantic_decision"))
+
+    async def test_repeated_invalid_plan_fails_closed_after_one_correction(self):
+        invalid = decision()
+        invalid["plan"]["steps"][0]["reads"][0]["arguments_json"] = '{"entity":"secrets"}'
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        api.responses.create.side_effect = [
+            SimpleNamespace(status="completed", id=f"resp_invalid_{index}", output_text=json.dumps(invalid))
+            for index in (1, 2)
+        ]
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            with self.assertRaisesRegex(SourceFailure, "after one bounded correction"):
+                await self.owner.plan_semantically(self.request, self.journal)
+        self.assertEqual(api.responses.create.await_count, 2)
+        self.assertIsNone(self.journal.read("semantic_decision"))
+        self.owner.bridge.call.assert_not_called()
+        self.assertFalse(self.owner.evidence)
+        self.assertFalse(self.owner.specialists)
+
+    async def test_interrupted_plan_correction_resumes_without_reissuing_committed_attempt(self):
+        invalid = decision()
+        invalid["plan"]["steps"][0]["execution"] = "agent"
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        api.responses.create.side_effect = [
+            SimpleNamespace(status="completed", id="resp_invalid", output_text=json.dumps(invalid)),
+            TimeoutError("Interrupted correction"),
+        ]
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            with self.assertRaises(TimeoutError):
+                await self.owner.plan_semantically(self.request, self.journal)
+            api.responses.create.reset_mock()
+            api.responses.create.side_effect = None
+            api.responses.create.return_value = SimpleNamespace(
+                status="completed", id="resp_resumed", output_text=json.dumps(decision()),
+            )
+            await self.owner.plan_semantically(self.request, self.journal)
+        api.responses.create.assert_awaited_once()
+        self.assertEqual(self.journal.read("semantic_decision")["model_round_count"], 2)
+        self.assertEqual(self.journal.read("semantic_planning_attempt:1")["response_id"], "resp_invalid")
+        self.assertFalse(self.owner.evidence)
+
     async def test_planner_http_client_closes_on_timeout_without_a_successful_decision(self):
         client = AsyncMock()
         client.__aenter__.return_value = client
@@ -253,6 +334,12 @@ class LiveSemanticArchitectureTests(unittest.IsolatedAsyncioTestCase):
             ("diagnostic-drafts",
              "Which turbines had BAD telemetry quality today, and what work is already open for these? "
              "Prepare editable telemetry-quality investigation drafts for uncovered equipment. Do not save them."),
+            ("freshness-drafts",
+             "Use the ontology-backed Fabric Data Agent to review the latest telemetry quality and freshness "
+             "for turbines T004, T005, T007, T009, and T014. Prepare one editable, review-only diagnostic "
+             "investigation work-order draft for each target with stale, missing, BAD or UNCERTAIN telemetry. "
+             "Check existing open work first. This concerns data-quality investigation, not mechanical "
+             "root-cause analysis or physical repair. Do not save or approve any work orders."),
             ("conditional-repair",
              "Investigate the cause of abnormal turbine temperature and prepare editable repair work orders "
              "only for verified faults not covered by open work. Do not save anything."),
@@ -305,6 +392,7 @@ class LiveSemanticArchitectureTests(unittest.IsolatedAsyncioTestCase):
                             "case": case, "mode": planned.mode, "roles": roles,
                             "execution": [step.execution for step in steps],
                             "analysis_requested": planned.analysis_requested,
+                            "model_round_count": journal.read("semantic_decision")["model_round_count"],
                             "duration_ms": round((perf_counter() - started) * 1000),
                         }), flush=True)
                         self.assertFalse(tools.mock_calls, "Planning must not execute business reads or writes.")
@@ -314,7 +402,7 @@ class LiveSemanticArchitectureTests(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(roles, ["qa"])
                             self.assertTrue(all(step.execution == "reader" for step in steps))
                             self.assertFalse(planned.analysis_requested)
-                        elif case == "diagnostic-drafts":
+                        elif case in ("diagnostic-drafts", "freshness-drafts"):
                             self.assertEqual(roles, ["fabric-iq", "work-order"])
                             self.assertTrue(planned.proposal_requested)
                             self.assertFalse(steps[-1].requires_verified_issue)

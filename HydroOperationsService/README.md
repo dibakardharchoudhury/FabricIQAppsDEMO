@@ -15,13 +15,19 @@ samples separately from the latest state.
 
 ## Current minimal-agent execution architecture
 
-The production controller combines **one tool-less structured planning call**
+The production controller combines **a tool-less structured planner**
 with deterministic Microsoft Agent Framework `Executor` / `WorkflowBuilder`
 stages. It is not a manager agent chatting with every specialist. The semantic
 decision selects capabilities, explicit source reads, conditions and answer
 requirements; code validates the catalog, identities, permissions, evidence,
 budgets and human-approved writes. Legacy phrase-based compatibility routing
 still exists; it is not the production semantic planner.
+Normally planning is one model call. A typed/catalog validation rejection permits
+one feedback correction within the same 60-second planning budget, before any
+source execution. Both candidates are immutable audited receipts; recovery
+reuses committed attempts and the supervisor reports the actual model-call
+count. Repeated invalid plans fail closed rather than triggering source or
+write retries. Missing planning configuration fails before opening a client.
 
 | Capability | When it is needed | Execution boundary |
 |---|---|---|
