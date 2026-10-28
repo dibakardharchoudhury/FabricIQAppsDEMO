@@ -121,7 +121,7 @@ class NativeDataAgentCall:
         if not texts or not any(text.strip() for text in texts):
             raise SourceFailure("The native Data Agent returned no original answer text.")
         return {
-            "response": "\n\n".join(texts), "documents": self.documents,
+            "response": "".join(texts), "documents": self.documents,
             "tables": self.tables, "native_response": self.result,
         }
 

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from hydro_orchestrator.live_sources import SourceFailure
 from hydro_orchestrator.native_fidelity import source_answer
+from hydro_orchestrator.native_data_agent import NativeDataAgentCall
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, ChatRequest, EvidenceDataset, FoundrySupervisor, NativeBinding,
     OperatorAnswerContract, RunJournal, SemanticDecision, SpecialistResult, ToolEvidence,
@@ -180,24 +181,21 @@ class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):
     async def test_complete_native_workflow_certifies_and_replays_without_answer_reconstruction(self):
         question, text, body = NativeFidelityTests().body()
         version = AgentVersion(
-            name="hydro-fabric-iq-agent", version="4", model="test",
+            name="hydro-fabric-iq-tools", version="4", model="native-fabric-responses",
             tools=({"type": "fabric_iq_preview", "project_connection_id": "native-data",
                     "server_label": "fabriciq-data-agent"},),
         )
-        body["agent_reference"] = {"type": "agent_reference", "name": version.name, "version": version.version}
-        body["tools"] = list(version.tools)
-        raw = SimpleNamespace(id=body["id"], model_dump=lambda **kwargs: copy.deepcopy(body))
-        client = MagicMock()
-        client.__aenter__.return_value = client
-        client.responses.create = AsyncMock(return_value=raw)
-        project = MagicMock()
-        project.__aenter__.return_value = project
-        project.get_openai_client.return_value = client
+        call = NativeDataAgentCall("native-source-1", {"input": question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
         with tempfile.TemporaryDirectory() as root:
             owner = FoundrySupervisor(
                 "https://test.services.ai.azure.com/api/projects/test", AsyncMock(), NodeSourceBridge(),
                 SourceTools(), SOURCE, Path(root), semantic_planning=True, analysis_model="test",
-                native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}),
+                native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                             toolbox=version.name),
             )
             owner.versions = AsyncMock(return_value={
                 "supervisor": AgentVersion(name="hydro-orchestrator", version="1", model="test", tools=()),
@@ -213,7 +211,8 @@ class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):
                 "decision": decision("fabric-iq", "native_claims", False),
                 "response_id": "planning-1", "duration_ms": 1,
             })
-            with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=project):
+            with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                       new_callable=AsyncMock, return_value=call) as native:
                 answer = await owner.run(request)
                 replay = await owner.run(request)
             self.assertEqual(answer, replay)
@@ -222,7 +221,9 @@ class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(journal.read("prepared_answer")["answer"]["native_response"], text)
             self.assertEqual(journal.read("answer")["native_response"], text)
             self.assertEqual(journal.read("evidence")["supervisor"]["response_id"], "planning-1")
-            client.responses.create.assert_awaited_once()
+            native.assert_awaited_once()
+            self.assertEqual(native.call_args.args[3], question)
+            self.assertEqual(answer.specialists[0].model_round_count, 0)
             self.assertEqual(owner.tools.calls, 0)
             owner.fulfill_catalog_requirements.assert_not_awaited()
             owner.analysis_for.assert_not_awaited()

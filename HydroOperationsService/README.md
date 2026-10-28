@@ -18,11 +18,13 @@ Item creation and agent/configuration readback are not end-to-end execution test
 
 ## Native answer fidelity
 
-The hosted semantic workflow sends the original user question unchanged to the
-pinned Fabric IQ agent. It accepts exactly one selected-source tool call and
-displays the original Data Agent `response` without table reconstruction or an
-additional briefing model for native-only answers. The audit retains the raw
-Foundry response and a SHA-256 digest of the original answer.
+The hosted semantic workflow sends the original user question unchanged through
+the native Fabric Data Agent Responses transport. The selected Foundry toolbox
+version and connection remain verified and pinned, but production does not invoke
+the Fabric IQ prompt wrapper. It displays the original source answer without table
+reconstruction or an additional briefing model. The audit retains the native
+provider response, usage and a SHA-256 digest of the original answer. Multiple
+source text blocks are concatenated in provider order without inserting characters.
 
 Mixed retrieval and work-order workflows also display that original Markdown
 unchanged and fully expanded beside the editable approval cards. Native result-file
@@ -34,7 +36,9 @@ or invent a business-record table to accept them.
 Independent source tables and explicitly
 requested charts retain their existing presentation and exact source values.
 
-A tool-processing diagnostic is not itself a content-filter refusal. A diagnostic
+The retained compatibility prompt-agent path has additional wrapper-fidelity
+checks; it is not the production semantic transport. A tool-processing diagnostic
+is not itself a content-filter refusal. A diagnostic
 can be accepted only when Foundry completed successfully, the final reply matches
 the source answer, and explicit final content-filter decisions report no block.
 Missing safety decisions, actual filtering, source failures, changed questions,
@@ -88,8 +92,8 @@ write retries. Missing planning configuration fails before opening a client.
 
 Registered capabilities are not mandatory invocations. Existing compatibility
 prompt agents are retained, not deleted or substituted for the native tool.
-Only selected **agent-mode** capabilities require remote agent/toolbox version
-readback. Reader-only plans need no specialist metadata or model credentials
+Only selected **agent-mode** capabilities and native transport require remote
+agent/toolbox version readback. Reader-only plans need no specialist metadata or model credentials
 for retrieval; unused Weather/RCA/Work Order/native resources cannot block them.
 Selected immutable versions remain pinned across recovery, and a changed plan
 cannot silently expand a saved manifest.
@@ -104,6 +108,16 @@ ten-minute execution budget measured from its immutable request clock.
 Credential-admission lease time is not a per-stage execution deadline.
 Native Responses calls use their bounded call timeout inside that absolute
 execution budget, not the remaining admission lease.
+
+Identical source reads within a run share one pending/completed task and one tool
+budget charge. Source identity, arguments and read clock are checked before the
+receipt is committed; a failed shared read is not silently retried. Downstream
+specialists receive native evidence once, rather than receiving another copy of
+the full answer in completed-specialist context. The immutable audit and displayed
+native answer remain complete. Planner and specialist inputs use compact canonical
+JSON; receipts record input bytes, observed provider usage and elapsed model time.
+Input bytes are not a token count, and a 40,000-TPM allocation is not a measured
+multi-user throughput guarantee.
 
 Semantic native execution preserves the provider's original answer and typed
 artifacts under the selected native evidence contract. It does not impose the

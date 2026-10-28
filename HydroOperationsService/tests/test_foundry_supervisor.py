@@ -24,7 +24,7 @@ from hydro_orchestrator.foundry_supervisor import (
     FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeAnswer, NativeBinding, OperatorAnswerContract, RunJournal,
-    SemanticDecision, SpecialistResult, ToolEvidence,
+    SemanticDecision, SourceCatalog, SpecialistResult, ToolEvidence,
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, safe_exception_signature,
     transient_native_failure,
@@ -312,6 +312,49 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             recovered.save("prepared_answer", journal.read("prepared_answer"))
             self.assertEqual(await restarted.run(request), answer)
             self.assertEqual(invoke.call_count, 1)
+
+    async def test_production_semantic_handoff_uses_native_transport_without_wrapper_model(self):
+        from test_semantic_planning import decision
+        question = "Which turbines have unreliable telemetry? Preserve the Fabric answer exactly."
+        text = "## Original Fabric answer\r\n\r\n| Turbine | Quality |\n|---|---|\n| T005 | BAD |\n"
+        request = self.request.model_copy(update={
+            "question": question, "native_sources": ("data-agent",),
+        })
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=())
+        owner = self.make_owner(
+            semantic_planning=True, analysis_model="test-model",
+            native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                         toolbox=version.name),
+        )
+        owner.run_id = request.run_id
+        owner.semantic_decision = SemanticDecision.model_validate(decision("fabric-iq", "native_claims", False))
+        owner.answer_contract = owner.semantic_decision.plan.answer_contract
+        call = NativeDataAgentCall("native-direct", {"input": question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
+        journal = RunJournal(self.root / "semantic-direct")
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call) as native:
+            owner.invoke = AsyncMock(side_effect=AssertionError("An unnecessary wrapper model was invoked."))
+            await owner.handoff(owner.semantic_decision.plan.steps[0], request, journal, {"fabric-iq": version})
+        native.assert_awaited_once()
+        self.assertEqual(native.call_args.args[3], question)
+        owner.invoke.assert_not_awaited()
+        self.assertEqual(client_presentation(owner.native_answer(request)).text.encode(), text.encode())
+
+    def test_native_specialist_text_is_not_duplicated_in_downstream_model_context(self):
+        text = "Original Fabric answer. " * 1000
+        self.owner.specialists = [SpecialistResult(
+            role="fabric-iq", agent_name="native-toolbox", version="1", response_id="native-1",
+            duration_ms=10, input_digest="a" * 64, text=text,
+        )]
+        for role in ("qa", "rca", "work-order", "weather"):
+            with self.subTest(role=role):
+                context = self.owner.model_specialists(role)
+                self.assertNotIn("text", context[0], "The original answer is already supplied in evidence.")
+        self.assertEqual(self.owner.specialists[0].text, text, "Immutable receipts must retain the full answer.")
 
     async def test_legacy_native_quality_tables_pass_existing_bridge_without_sending_or_rewriting_large_source(self):
         question = "Which turbines had BAD telemetry quality today, and what work is already open for these?"
@@ -1600,6 +1643,73 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(evidence["execution_manifest"]["capabilities"][0]["name"])
         self.assertIn("specialist_handoff_1", journal.read("workflow_graph")["definition"])
         self.assertNotIn("specialist_handoff_2", journal.read("workflow_graph")["definition"])
+
+    async def test_identical_parallel_readers_share_one_validated_source_call(self):
+        self.tools.quality_snapshot = True
+        request = self.request.model_copy(update={"question": "Read BAD telemetry."})
+        catalog = SourceCatalog.model_validate(await self.tools.catalog(request))
+        journal = RunJournal(self.root / "coalesced-read")
+        original = self.tools.execute
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def execute(name, arguments, current):
+            started.set()
+            await release.wait()
+            return await original(name, arguments, current)
+
+        self.tools.execute = execute
+        arguments = {"quality": "BAD", "lookback": "6h", "equipment_type": "turbine"}
+        first = asyncio.create_task(self.owner.governed_read(
+            request, journal, catalog, "query_signal_quality_snapshot", arguments, "signal_quality",
+        ))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        second = asyncio.create_task(self.owner.governed_read(
+            request, journal, catalog, "query_signal_quality_snapshot", arguments, "signal_quality",
+        ))
+        await asyncio.sleep(0)
+        release.set()
+        receipts = await asyncio.gather(first, second)
+        self.assertEqual(receipts[0], receipts[1])
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(self.owner.tool_calls, 1)
+
+    async def test_failed_shared_reader_is_not_retried_or_committed(self):
+        self.tools.failure = True
+        catalog = SourceCatalog.model_validate(await self.tools.catalog(self.request))
+        journal = RunJournal(self.root / "failed-shared-read")
+        arguments = {"equipment_id": "TEST_T005"}
+        results = await asyncio.gather(*(
+            self.owner.governed_read(
+                self.request, journal, catalog, "query_telemetry", arguments, "telemetry",
+            ) for _ in range(2)
+        ), return_exceptions=True)
+        self.assertTrue(all(isinstance(result, SourceFailure) for result in results))
+        with self.assertRaises(SourceFailure):
+            await self.owner.governed_read(
+                self.request, journal, catalog, "query_telemetry", arguments, "telemetry",
+            )
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(self.owner.tool_calls, 1)
+        self.assertTrue(all(journal.read(key) is None for key in self.owner.source_tasks))
+
+    async def test_invalid_reader_identity_is_rejected_before_receipt_commit(self):
+        catalog = SourceCatalog.model_validate(await self.tools.catalog(self.request))
+        journal = RunJournal(self.root / "invalid-shared-read")
+        original = self.tools.execute
+
+        async def execute(name, arguments, request):
+            receipt = await original(name, arguments, request)
+            return receipt.model_copy(update={"tool": "unexpected_reader"})
+
+        self.tools.execute = execute
+        with self.assertRaisesRegex(SourceFailure, "source, query, or read clock"):
+            await self.owner.governed_read(
+                self.request, journal, catalog, "query_telemetry",
+                {"equipment_id": "TEST_T005"}, "telemetry",
+            )
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(len(self.owner.source_tasks), 1)
+        self.assertTrue(all(journal.read(key) is None for key in self.owner.source_tasks))
 
     async def test_parallel_semantic_reads_cancel_siblings_before_failed_run_returns(self):
         from test_semantic_planning import decision

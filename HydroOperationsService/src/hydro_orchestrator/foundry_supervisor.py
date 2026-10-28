@@ -1029,7 +1029,7 @@ class SpecialistResult(Contract):
     version: str
     response_id: str
     duration_ms: float
-    model_round_count: int | None = Field(default=None, ge=1)
+    model_round_count: int | None = Field(default=None, ge=0)
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     text: str
     report: dict[str, object] | None = None
@@ -1762,14 +1762,29 @@ class FoundrySupervisor:
             )
         key = "tool:" + _encoded({"name": name, "arguments": arguments}).decode()
         saved = journal.read(key)
-        if saved is None:
-            async with self.tool_lock:
-                self.tool_calls += 1
-                if self.tool_calls > 40:
-                    raise SourceFailure("The per-run source-tool budget was exceeded.")
+
+        async def read_source() -> ToolEvidence:
             supplied = await self.tools.execute(name, arguments, request)
             result = ToolEvidence.model_validate(supplied.model_dump(mode="json"))
+            self.healthy(request)
+            if (
+                result.source != request.source or result.tool != name or result.arguments != arguments
+                or result.completed_at > utc_now() or result.completed_at < request.requested_at
+            ):
+                raise SourceFailure("Deterministic evidence changed its source, query, or read clock.")
             journal.save(key, result.model_dump(mode="json"))
+            return result
+
+        if saved is None:
+            async with self.tool_lock:
+                task = self.source_tasks.get(key)
+                if task is None:
+                    self.tool_calls += 1
+                    if self.tool_calls > 40:
+                        raise SourceFailure("The per-run source-tool budget was exceeded.")
+                    task = asyncio.create_task(read_source())
+                    self.source_tasks[key] = task
+            result = await task
         else:
             result = ToolEvidence.model_validate(saved)
         self.healthy(request)
@@ -2110,7 +2125,10 @@ class FoundrySupervisor:
 
     def model_specialists(self, role: Role, compact: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not compact:
-            return [item.model_dump(mode="json") for item in self.specialists]
+            return [
+                item.model_dump(mode="json", exclude={"text"} if item.role == "fabric-iq" else set())
+                for item in self.specialists
+            ]
         values: list[dict[str, object]] = []
         for item in self.specialists:
             report = item.report
@@ -2142,7 +2160,7 @@ class FoundrySupervisor:
             raise SourceFailure("Shared deployed-agent identities contain an invalid role or name.") from None
         if "supervisor" in configured_names or any(not name.strip() for name in configured_names.values()):
             raise SourceFailure("Specialist identities cannot replace the hosted control plane or use empty names.")
-        if not self.semantic_planning and self.native_binding is not None and self.native_binding.toolbox is not None:
+        if self.native_binding is not None and self.native_binding.toolbox is not None:
             configured_names["fabric-iq"] = self.native_binding.toolbox
         if roles is not None:
             if roles.difference(configured_names):
@@ -2174,7 +2192,7 @@ class FoundrySupervisor:
         token = await self.credential.get_token("https://ai.azure.com/.default")
 
         async def read(role: Role, name: str, client: httpx.AsyncClient) -> tuple[Role, AgentVersion]:
-            if (not self.semantic_planning and role == "fabric-iq"
+            if (role == "fabric-iq"
                     and self.native_binding is not None and self.native_binding.toolbox is not None):
                 headers = {"Authorization": f"Bearer {token.token}"}
                 response = await client.get(f"{self.endpoint}/toolboxes/{name}?api-version=v1", headers=headers)
@@ -2272,7 +2290,7 @@ class FoundrySupervisor:
                             started = perf_counter()
                             response = await openai_client.responses.create(
                                 model=model, instructions=SEMANTIC_PLANNER_INSTRUCTIONS,
-                                input=json.dumps(context, default=str), store=False,
+                                input=_encoded(context).decode(), store=False,
                                 reasoning={"effort": "low"}, max_output_tokens=6000,
                                 text={"format": {
                                     "type": "json_schema", "name": "hydro_semantic_decision", "strict": True,
@@ -2285,6 +2303,9 @@ class FoundrySupervisor:
                                 "response_id": response.id, "text": response.output_text,
                                 "model": model, "duration_ms": (perf_counter() - started) * 1000,
                                 "input_digest": digest,
+                                "input_bytes": len(_encoded(context)),
+                                "usage": response.usage.model_dump(mode="json")
+                                if getattr(response, "usage", None) is not None else None,
                             }
                             journal.save(key, receipt)
                         response_id, text, elapsed = receipt.get("response_id"), receipt.get("text"), receipt.get("duration_ms")
@@ -2593,9 +2614,14 @@ class FoundrySupervisor:
                     if result.report is not None:
                         await self.validate_specialist_report(selected, result.report)
                 else:
-                    if (not self.semantic_planning and selected == "fabric-iq"
-                            and self.native_binding is not None and self.native_binding.toolbox is not None):
-                        result = await self.invoke_data_agent(delegation.question, request, journal, versions[selected])
+                    if selected == "fabric-iq" and (
+                        self.semantic_planning
+                        or self.native_binding is not None and self.native_binding.toolbox is not None
+                    ):
+                        result = await self.invoke_data_agent(
+                            request.question if self.semantic_planning else delegation.question,
+                            request, journal, versions[selected],
+                        )
                     else:
                         response, assessment, elapsed = await self.invoke(
                             selected, delegation.question, request, journal, versions, selected_native,
@@ -2672,6 +2698,7 @@ class FoundrySupervisor:
             "request_id": call.request_id, "result": call.result,
         })
         payload = call.source_payload()
+        payload["source_answer_sha256"] = sha256(str(payload["response"]).encode("utf-8")).hexdigest()
         result = _validated_native_result(json.dumps(payload))
         for index, table in enumerate(call.tables):
             field = f"native_table_{index}"
@@ -2698,7 +2725,7 @@ class FoundrySupervisor:
             role="fabric-iq", agent_name=version.name, version=version.version,
             response_id=call.request_id, duration_ms=(perf_counter() - started) * 1000,
             input_digest=sha256(_encoded(call.arguments)).hexdigest(),
-            text=str(result["response"]),
+            text=str(result["response"]), model_round_count=0,
         )
 
     def record_native_result(
@@ -2721,6 +2748,9 @@ class FoundrySupervisor:
             if isinstance(value, list) and all(isinstance(item, dict) for item in value)
             and (not responses_transport or key not in {"documents", "tables"})
         )
+        if not fields and self.semantic_decision is not None:
+            native_result["source_answer_receipt"] = [{"source_identity": identity}]
+            fields = ("source_answer_receipt",)
         group_by: Literal["equipment_id", "facility_id"] | None = None
         if native_presentation is not None:
             chart = native_presentation.get("chart")
@@ -3269,7 +3299,7 @@ class FoundrySupervisor:
             for completion_attempt in range(2):
                 input_repairs.clear()
                 try:
-                    model_input = json.dumps(active_context)
+                    model_input = _encoded(active_context).decode()
                     if role == "fabric-iq":
                         assignment = active_context.get("assignment", question)
                         if not isinstance(assignment, str) or not assignment.strip():
@@ -3511,7 +3541,13 @@ class FoundrySupervisor:
                 item.tool == "propose_work_order" for item in self.evidence.values()
             ):
                 raise SourceFailure("Fixer returned neither a staged approval card nor a structured review.")
-            return response, completed_report, (perf_counter() - started) * 1000
+            elapsed = (perf_counter() - started) * 1000
+            journal.save(f"specialist_usage:{response.response_id}", {
+                "role": role, "response_id": response.response_id,
+                "input_bytes": len(model_input.encode("utf-8")),
+                "usage": response.usage_details, "duration_ms": elapsed,
+            })
+            return response, completed_report, elapsed
 
     def contract_answer_plan(self, request: ChatRequest) -> AnswerPlan:
         contract = self.answer_contract

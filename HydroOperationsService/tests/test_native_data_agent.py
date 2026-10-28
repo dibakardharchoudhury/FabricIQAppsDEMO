@@ -94,6 +94,14 @@ class NativeDataAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://api.fabric.microsoft.com/.default", scopes)
         self.assertIn("https://analysis.windows.net/powerbi/api/.default", scopes)
 
+    async def test_multiple_source_text_blocks_are_concatenated_without_inserted_characters(self):
+        self.response["output"][-1]["content"] = [
+            {"type": "output_text", "text": "Original\r\n"},
+            {"type": "output_text", "text": "\r\n| T005 | BAD |\n"},
+        ]
+        result = await self.invoke()
+        self.assertEqual(result.source_payload()["response"], "Original\r\n\r\n| T005 | BAD |\n")
+
     async def test_workspace_scoped_connection_is_validated_without_reusing_its_host(self):
         self.target = self.target.replace("api.fabric.microsoft.com",
                                           f"{self.workspace.hex}.zc7.w.api.fabric.microsoft.com")
