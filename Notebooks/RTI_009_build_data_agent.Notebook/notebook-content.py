@@ -1034,14 +1034,12 @@ Use the existing SQL database for work orders, maintenance notifications, inspec
 CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
 CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = """### Cross-source operational joins
 
-Plan independent single-source queries; never cross-source SQL/KQL JOINs.
-1. Lakehouse: read facilities and equipment_id/facility_id/opcua_node_id mappings.
-2. Eventhouse: BAD-history aggregates use opcua_node_id,bad_sample_count=count(),first_bad_utc=min(event_time),last_bad_utc=max(event_time). Never dump raw events. 'Had BAD today' means any BAD event in today's UTC window, not latest-only.
-3. SQL: independently query equipmentId/opcuaNodeId work using returned keys.
-4. Match returned keys; conserve totals; report unmatched/duplicate keys.
-Rollups: LEFT OUTER JOIN + COUNT DISTINCT child keys + zero-fill; AntiJoin only selects unmatched entities. Federation questions MUST contain only positive all-parent aggregation, e.g. "Return all parents with distinct eligible-child counts using a left join; zero-fill". Always place status filters in sub_questions; never repeat status exclusions or negative wording in the federation question.
-Pass EVERY required returned identifier/count tuple, not previews. Combined-query failure requires one independent-read correction.
-Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative."""
+Resolve ontology reference keys, then query telemetry/SQL independently; never use federation. Each tool question must address only that tool's own source.
+Match equipment_id/equipmentId and opcua_node_id/opcuaNodeId. Pass EVERY required returned identifier/count tuple, not previews. Retain all parents, including zero-child rows; count distinct WOs; conserve totals; report unmatched/duplicate keys.
+Label source failures and successful reads; never infer data or widen windows.
+"Had BAD today" means any BAD event in today's UTC window, not latest-only. Latest quality means arg_max before quality filtering. Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative.
+Retain each registered signal's quality/event_time/unit; summary counts must reconcile exactly to returned rows.
+Use query execution UTC (KQL now()) as query_asof_utc, not the newest reading or clustered snapshot timestamps. Return age_seconds; readings older than 60 seconds are stale unless the operator specifies otherwise. Missing readings remain missing."""
 
 GLOBAL_SCOPE_MARKER = "### Conversation scope"
 GLOBAL_SCOPE_INSTRUCTIONS = """### Conversation scope

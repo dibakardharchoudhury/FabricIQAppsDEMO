@@ -99,6 +99,26 @@ def data_agent_instruction_namespace():
 
 
 class DataAgentInstructionTests(unittest.TestCase):
+    def test_existing_federation_recipe_is_replaced_with_independent_reads_and_query_time_freshness(self):
+        ns = data_agent_instruction_namespace()
+        stage = {"experimental": {"enableExperimentalFeatures": True}, "aiInstructions": (
+            "Keep this operator preamble.\n\n### Cross-source operational joins\n"
+            "Federation questions MUST use an obsolete recipe.\n\n"
+            "## Operational data\nKeep this SQL policy."
+        )}
+        result = ns["build_stage_obj"](stage)
+        instructions = result["aiInstructions"]
+        self.assertIn(ns["CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS"], instructions)
+        self.assertNotIn("obsolete recipe", instructions)
+        self.assertIn("Each tool question must address only that tool's own source", instructions)
+        self.assertIn("query_asof_utc", instructions)
+        self.assertIn("age_seconds; readings older than 60 seconds are stale", instructions)
+        self.assertIn("summary counts must reconcile exactly", instructions)
+        self.assertIn("Keep this operator preamble.", instructions)
+        self.assertIn("## Operational data\nKeep this SQL policy.", instructions)
+        self.assertEqual(result["experimental"], stage["experimental"])
+        self.assertEqual(ns["build_stage_obj"](result), result)
+
     def test_live_entity_metadata_replaces_only_generated_context(self):
         context_path = "Files/Config/draft/ontologies/model/ontology.json"
         context = {
@@ -292,21 +312,18 @@ class DataAgentInstructionTests(unittest.TestCase):
             "actual query results", "EVERY required returned identifier/count tuple",
             "Treat null/0001 timestamps as missing", "Compare active-node coverage",
             "report missing counts", "equate empty BAD results with healthy turbines",
-            "independent single-source queries", "never cross-source SQL/KQL JOINs",
-            "one independent-read correction", "Never dump raw events",
-            "1. Lakehouse: read facilities", "2. Eventhouse: BAD-history aggregates",
-            "3. SQL: independently query", "4. Match returned keys",
-            "bad_sample_count=count(),first_bad_utc=min(event_time),last_bad_utc=max(event_time)", "not previews",
+            "query telemetry/SQL independently", "never use federation",
+            "Each tool question must address only that tool's own source", "not previews",
             "any BAD event in today's UTC window, not latest-only",
-            "LEFT OUTER JOIN", "COUNT DISTINCT child keys", "zero-fill",
-            "AntiJoin only selects unmatched entities", "positive all-parent aggregation",
-            "place status filters in sub_questions",
+            "zero-child rows", "count distinct WOs", "report unmatched/duplicate keys",
+            "summary counts must reconcile exactly", "query_asof_utc", "age_seconds",
         ):
             self.assertIn(phrase, text)
         for phrase in (
             "do not call the Ontology", "Do not search Ontology", "future ontology capability",
             "ontology-only execution", "RTI Demo Hydropower Plant",
             "Federation-disabled queries",
+            "Federation questions MUST", "place status filters in sub_questions",
         ):
             self.assertNotIn(phrase, text)
 

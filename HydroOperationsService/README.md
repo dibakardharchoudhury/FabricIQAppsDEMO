@@ -16,6 +16,13 @@ multiple tool calls, and rewritten answers fail explicitly. No filter is disable
 and no failure falls back to direct tables. Legacy structured evidence workflows
 retain their existing schema contracts.
 
+The Data Agent keeps one ontology context and the operational SQL execution
+adapter. An ontology-only capability test exposes reference and telemetry queries
+but not operational SQL records, so the SQL adapter is not a redundant source.
+Multi-source requests use independent source-native queries and exact canonical
+key matching instead of requiring a federation tool. Telemetry freshness uses
+query execution UTC time, not the newest available reading in an old snapshot.
+
 ## Agent access and current source policy
 
 The existing sign-in session acquires delegated source access implicitly.
