@@ -1371,6 +1371,95 @@ class CapabilityTests(unittest.TestCase):
             with self.subTest(elements=malformed), self.assertRaisesRegex(RuntimeError, "malformed"):
                 normalize(malformed)
 
+    def test_fresh_nb09_and_following_sql_extension_do_not_publish_duplicate_sources(self):
+        state = {"parts": []}
+        texts = {
+            "expressions.tmdl": (
+                'expression Assets =\n\tAzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/ws/lakehouse")\n'
+                "\tannotation ONT_WorkspaceId = ws\n\tannotation ONT_ItemId = lakehouse\n"
+                "\tannotation ONT_ItemKind = Lakehouse\n"
+            ),
+            "entities/facilities.tmdl": (
+                "entity facilities\n\tbackingTable: facilities\n"
+                "\tadditionalBackingTable\n\t\ttable: events\n"
+            ),
+            "tables/facilities.tmdl": (
+                "table facilities\n\tpartition facilities = entity\n\t\tsource\n"
+                "\t\t\tentityName: silver_facilities\n\t\t\texpressionSource: Assets\n"
+            ),
+            "tables/events.tmdl": (
+                "table events\n\tpartition events = m\n\t\tsource =\n"
+                '\t\t\tAzureDataExplorer.Contents("https://cluster.kusto.fabric.microsoft.com", "Eventhouse", "OPCUAEvents")\n'
+                "\tannotation ONT_WorkspaceId = ws\n\tannotation ONT_ItemId = kusto-db\n"
+                "\tannotation ONT_ItemKind = KQLDatabase\n\tannotation ONT_ItemName = Eventhouse\n"
+            ),
+        }
+        ontology_parts = [{"path": path, "payloadType": "InlineBase64",
+                           "payload": base64.b64encode(text.encode()).decode()} for path, text in texts.items()]
+
+        def update(_agent, definition):
+            state["parts"] = copy.deepcopy(definition["parts"])
+
+        def publish(*_args):
+            state["parts"] = [part for part in state["parts"] if "/published/" not in part["path"]]
+            state["parts"] += [{**copy.deepcopy(part), "path": part["path"].replace("/draft/", "/published/", 1)}
+                               for part in list(state["parts"]) if "/draft/" in part["path"]]
+
+        ns = functions(
+            "009", "upsert_part", "encode_payload", "decode_payload", "validate_agent_ontology_sources",
+            "require_v2_ontology", "verify_agent_source_readback", "build_datasource_obj",
+            "_ds_element", "merge_source_elements", "build_lakehouse_datasource_obj", "build_kusto_datasource_obj",
+            workspace_id="ws", ontology_id="ontology", ontology_name="ontology-name", uuid=uuid,
+            get_ontology_generation=Mock(return_value=2), data_agent_name="agent",
+            DATA_AGENT_DESCRIPTION="description", FABRIC_API_BASE="base",
+            DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
+            DATASOURCE_PATH="Files/Config/draft/ontology-source/datasource.json",
+            LAKEHOUSE_DATASOURCE_PATH="Files/Config/draft/lakehouse-source/datasource.json",
+            KUSTO_DATASOURCE_PATH="Files/Config/draft/kusto-source/datasource.json",
+            DATASOURCE_SCHEMA_URL="datasource-schema", DATASOURCE_TYPE="ontology",
+            ONTOLOGY_ELEMENTS=[("facilities", "facility_id")],
+            LAKEHOUSE_DATASOURCE_TYPE="lakehouse_tables", KUSTO_DATASOURCE_TYPE="kusto",
+            LAKEHOUSE_SOURCE_INSTRUCTIONS="Retain asset guidance", KUSTO_SOURCE_INSTRUCTIONS="Retain telemetry guidance",
+            LAKEHOUSE_TABLES=[("silver_facilities", "Facilities")],
+            lakehouse_id="lakehouse", lakehouse_name="Lakehouse",
+            kql_db_id="kusto-db", kql_db_name="Eventhouse", kql_table_name="OPCUAEvents",
+            get_spn_access_token_for_fabric=Mock(),
+            create_data_agent=Mock(return_value={"id": "agent", "_created_this_run": True}),
+            get_item_definition=Mock(side_effect=lambda item_id: {"definition": {"parts": copy.deepcopy(
+                ontology_parts if item_id == "ontology" else state["parts"]
+            )}}),
+            build_stage_obj=lambda existing: {**existing, "aiInstructions": existing.get("aiInstructions", "Original")},
+            update_operational_source_guidance=lambda parts: parts,
+            lakehouse_schema_map=Mock(return_value={"silver_facilities": [("facility_id", "string")]}),
+            update_item_definition=Mock(side_effect=update), publish_data_agent=Mock(side_effect=publish),
+            enable_preview_runtime=Mock(), persist_agent_status=Mock(),
+            is_known_ontology_v2_product_limitation=lambda reason: False,
+            probe_data_agent_ontology=Mock(return_value={"status": "verified", "reason": "Verified", "evidence": {}}),
+        )
+        deployment = next(node for node in ast.parse(source("009")).body
+                          if isinstance(node, ast.Try) and "create_data_agent" in ast.unparse(node))
+        for _ in range(2):
+            exec(compile(ast.Module(body=[deployment], type_ignores=[]), "fresh-source-topology", "exec"), ns)
+            for stage in ("draft", "published"):
+                paths = {part["path"] for part in state["parts"]}
+                self.assertIn(f"Files/Config/{stage}/ontology-source/datasource.json", paths)
+                self.assertNotIn(f"Files/Config/{stage}/lakehouse-source/datasource.json", paths)
+                self.assertNotIn(f"Files/Config/{stage}/kusto-source/datasource.json", paths)
+                instructions = ns["decode_payload"](next(
+                    part["payload"] for part in state["parts"]
+                    if part["path"] == f"Files/Config/{stage}/stage_config.json"
+                ))["aiInstructions"]
+                self.assertEqual(instructions.count("Retain asset guidance"), 1)
+                self.assertEqual(instructions.count("Retain telemetry guidance"), 1)
+        sql, extended = self.sql_extension_namespace(state["parts"])
+        sql["extend_data_agent_sql_source"]("agent")
+        for stage in ("draft", "published"):
+            sources = [json.loads(base64.b64decode(part["payload"]))
+                       for part in extended["definition"]["parts"]
+                       if part["path"].startswith(f"Files/Config/{stage}/")
+                       and part["path"].endswith("/datasource.json")]
+            self.assertEqual({source["type"] for source in sources}, {"ontology", "sql_database"})
+
     def test_nb09_failed_runtime_rerun_preserves_sql_and_custom_capabilities(self):
         sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
                                           if assign_to(node, "SQL_TABLES")))
