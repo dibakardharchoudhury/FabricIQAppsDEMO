@@ -363,7 +363,6 @@ function useHydroOperationsDataController() {
       const status = await runWeatherNotebooks(update => updateJob('weather', humanStatus(update)))
       if (status === 'Completed') {
         setWeatherState('complete')
-        setNotice('Configured weather ingestion completed and serving metrics refreshed. UKMet is the default provider.')
       } else {
         setWeatherState('error')
         setNotice(`Weather load ${humanStatus(status).toLowerCase()}.`)

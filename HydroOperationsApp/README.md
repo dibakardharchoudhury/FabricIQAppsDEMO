@@ -39,6 +39,8 @@ indeterminate because Fabric does not report a completion percentage. Completion
 and failures stay visible in the step; source details and the exceptional
 full national-source rebuild are collapsed under **Maintenance and source details**.
 There is no separate map-maintenance card.
+Successful weather ingestion completes quietly without a global alert banner;
+weather failures and sign-in requirements remain visible.
 
 | Store | Owns | Accessed via |
 |---|---|---|

@@ -58,18 +58,23 @@ test('concurrent refresh modes join the first run without upgrading it to a forc
   assert.deepEqual(await Promise.all([first, second]), ['Completed', 'Completed'])
 })
 
-test('controller routes each action correctly and operational refresh does not claim initial setup', async () => {
+function controllerAction(name) {
   const source = readFileSync(new URL('../src/ui-shared/hooks/useHydroOperationsData.ts', import.meta.url), 'utf8')
   const tree = ts.createSourceFile('hook.ts', source, ts.ScriptTarget.Latest, true)
   let action
   function visit(node) {
-    if (ts.isVariableDeclaration(node) && node.name.getText(tree) === 'refreshMapData') {
+    if (ts.isVariableDeclaration(node) && node.name.getText(tree) === name) {
       action = node.initializer.arguments[0].getText(tree)
     }
     ts.forEachChild(node, visit)
   }
   visit(tree)
   assert.ok(action)
+  return action
+}
+
+test('controller routes each action correctly and operational refresh does not claim initial setup', async () => {
+  const action = controllerAction('refreshMapData')
   for (const intent of ['prepare', 'operational', 'rebuild']) {
     let parameters
     let prepared = false
@@ -84,5 +89,35 @@ test('controller routes each action correctly and operational refresh does not c
     assert.equal(parameters[1], intent === 'rebuild')
     assert.equal(parameters[3], intent === 'operational' ? 'operational' : 'all')
     assert.equal(prepared, intent !== 'operational')
+  }
+})
+
+test('weather ingestion completes quietly but still displays unsuccessful runs and errors', async () => {
+  const action = controllerAction('connectWeather')
+  for (const result of ['Completed', 'Failed', new Error('Weather source unavailable')]) {
+    const notices = []
+    let state
+    let ended
+    const { connectWeather } = compile(`export const connectWeather = ${action}`, {
+      weatherState: 'idle', jobs: {}, user: {}, WEATHER_ETA_MS: 1000,
+      authenticate: async () => { throw new Error('Unexpected sign-in') },
+      setWeatherState: value => { state = value },
+      setNotice: value => { notices.push(value) },
+      beginProgress: () => {}, updateJob: () => {}, humanStatus: value => value,
+      endJob: key => { ended = key },
+      runWeatherNotebooks: async () => {
+        if (result instanceof Error) throw result
+        return result
+      },
+    })
+    await connectWeather()
+    assert.equal(ended, 'weather')
+    assert.equal(state, result === 'Completed' ? 'complete' : 'error')
+    assert.deepEqual(notices, [
+      undefined,
+      ...(result === 'Completed' ? [] : [
+        result instanceof Error ? result.message : 'Weather load failed.',
+      ]),
+    ])
   }
 })
