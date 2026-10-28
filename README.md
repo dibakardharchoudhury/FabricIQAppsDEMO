@@ -101,6 +101,13 @@ RTI_009 tracks publication separately from functional validation. Healthy runtim
 Ontology-v2 API response is recorded as `known_product_limitation`; publication alone is never
 misreported as readiness.
 
+Fabric can promote an ontology `datasource.json` into an
+`ontologies/<name>/ontology.json` context during publication. NB09 verifies that conversion
+by the selected live v2 workspace/item identity, not the old path alone. It requires unchanged
+entity selections, descriptions and custom content; only the known schema/type conversion,
+omitted empty defaults and generated authored-description markers are accepted. Missing,
+ambiguous or lossy source readback still fails setup before any runtime readiness claim.
+
 The Data Agent smoke check uses the selected ontology as semantic context and permits source-native
 SQL on its associated Lakehouse static binding. It compares the first five facility IDs/names with
 independently read configured Lakehouse rows. Expected values are not supplied in the prompt;

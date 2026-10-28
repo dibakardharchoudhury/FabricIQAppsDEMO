@@ -600,6 +600,30 @@ def validate_agent_ontology_sources(
         raise RuntimeError("No verified published v2 ontology source exists; publish success is unverified.")
 
 
+def ontology_context_matches_source(source: dict, context: dict) -> bool:
+    """Verify Fabric's datasource-to-ontology-context conversion without losing authored content."""
+    schema = (
+        "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
+        "definition/ontology/1.0.0/schema.json"
+    )
+    if source.get("type") != "ontology" or context.get("$schema") != schema:
+        return False
+    expected = dict(source)
+    expected.pop("$schema", None)
+    expected.pop("type")
+    for key, default in (("metadata", {}), ("dataSourceInstructions", None), ("userDescription", None)):
+        if key in expected and expected[key] == default and key not in context:
+            expected.pop(key)
+    # Fabric records the descriptions supplied with the legacy entity selections as authored.
+    if ("entitiesWithUserAuthoredDescriptions" not in expected
+            and "entitiesWithUserAuthoredDescriptions" in context):
+        expected["entitiesWithUserAuthoredDescriptions"] = [
+            element["display_name"] for element in expected.get("elements", [])
+            if element.get("description") and element.get("type") == "ontology.entity"
+        ]
+    return expected == {key: value for key, value in context.items() if key != "$schema"}
+
+
 def verify_agent_source_readback(
     agent_id: str,
     ontology_id: str,
@@ -614,9 +638,23 @@ def verify_agent_source_readback(
     for draft_path, expected in (expected_sources or {}).items():
         path = draft_path.replace("/draft/", "/published/", 1) if published else draft_path
         source_part = next((part for part in parts if part.get("path") == path), None)
-        if source_part is None or decode_payload(source_part.get("payload", "")) != expected:
+        matches = source_part is not None and decode_payload(source_part["payload"]) == expected
+        if source_part is None and expected.get("type") == "ontology":
+            prefix = "Files/Config/published/" if published else "Files/Config/draft/"
+            contexts = [
+                decode_payload(part["payload"]) for part in parts
+                if part["path"].startswith(prefix) and is_ontology_context_path(part["path"])
+            ]
+            candidates = [
+                context for context in contexts
+                if context.get("artifactId") == expected.get("artifactId")
+                and context.get("workspaceId") == expected.get("workspaceId")
+            ]
+            matches = len(candidates) == 1 and ontology_context_matches_source(expected, candidates[0])
+        if not matches:
             raise RuntimeError(
                 f"Data Agent source readback at {path!r} does not match the submitted source; "
+                "no exact source or lossless ontology-context conversion was found; "
                 "source retention and publish success are unverified."
             )
     return parts

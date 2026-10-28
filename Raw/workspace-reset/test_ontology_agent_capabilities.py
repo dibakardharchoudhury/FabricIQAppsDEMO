@@ -38,6 +38,7 @@ def functions(number, *names, **overrides):
     tree = ast.parse(source(number))
     included = set(names) | {
         "definition_parts", "is_ontology_context_path", "operational_source_path",
+        "ontology_context_matches_source",
         "normalize_lakehouse_elements",
         "selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources",
     }
@@ -99,6 +100,60 @@ def data_agent_instruction_namespace():
 
 
 class DataAgentInstructionTests(unittest.TestCase):
+    def test_publication_accepts_only_lossless_ontology_context_conversion(self):
+        legacy_path = "Files/Config/draft/ontology-model/datasource.json"
+        context_path = "Files/Config/published/ontologies/model/ontology.json"
+        expected = {
+            "$schema": "legacy-schema", "type": "ontology", "artifactId": "ontology",
+            "workspaceId": "ws", "displayName": "model", "metadata": {},
+            "dataSourceInstructions": None, "userDescription": None,
+            "elements": [{"id": "facilities", "type": "ontology.entity",
+                          "display_name": "facilities", "is_selected": False,
+                          "description": "Keep this description.", "children": []}],
+        }
+        converted = {key: copy.deepcopy(expected[key]) for key in (
+            "artifactId", "workspaceId", "displayName", "elements",
+        )}
+        converted.update({
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
+                       "definition/ontology/1.0.0/schema.json",
+            "entitiesWithUserAuthoredDescriptions": ["facilities"],
+        })
+        for mutation in ("none", "missing", "duplicate", "identity", "selection",
+                         "description", "custom", "authored"):
+            with self.subTest(mutation=mutation):
+                actual = copy.deepcopy(converted)
+                submitted = copy.deepcopy(expected)
+                if mutation == "identity":
+                    actual["artifactId"] = "other"
+                elif mutation in ("selection", "description"):
+                    actual["elements"][0][
+                        "is_selected" if mutation == "selection" else "description"
+                    ] = True if mutation == "selection" else "Changed"
+                elif mutation == "custom":
+                    submitted["metadata"] = {"operator": "must retain"}
+                elif mutation == "authored":
+                    submitted["entitiesWithUserAuthoredDescriptions"] = []
+                parts = [] if mutation == "missing" else [json_part(context_path, actual)]
+                if mutation == "duplicate":
+                    parts.append(json_part(context_path.replace("/model/", "/duplicate/"), actual))
+                ns = functions(
+                    "009", "verify_agent_source_readback", "decode_payload",
+                    "validate_agent_ontology_sources", "require_v2_ontology",
+                    "ontology_context_matches_source",
+                    workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+                    get_item_definition=Mock(return_value={"definition": {"parts": parts}}),
+                )
+                if mutation == "none":
+                    self.assertEqual(ns["verify_agent_source_readback"](
+                        "agent", "ontology", {legacy_path: submitted}, published=True,
+                    ), parts)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        ns["verify_agent_source_readback"](
+                            "agent", "ontology", {legacy_path: submitted}, published=True,
+                        )
+
     def test_existing_federation_recipe_is_replaced_with_independent_reads_and_query_time_freshness(self):
         ns = data_agent_instruction_namespace()
         stage = {"experimental": {"enableExperimentalFeatures": True}, "aiInstructions": (
