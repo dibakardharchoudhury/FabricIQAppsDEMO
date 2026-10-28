@@ -154,13 +154,16 @@ development edits. Set `checkout` in gitignored `launcher.local.json` beside
 `launch.py`. The configured checkout must have no tracked modifications. The
 launcher retains the original local pipeline settings file; restarting the server
 preserves that settings path. The version API reports the actual source checkout.
+Relaunching waits for the previous server to release its port. Windows connection
+resets during shutdown/startup are retried within bounded waits, not reported as
+an unhandled traceback. A running deployment job still prevents shutdown.
 Existing saved project ARM IDs migrate into the project-name field; retired browser
 endpoint/registry/graph overrides are no longer submitted. Other choices are shared
 between the standalone and full-workflow forms and saved per tenant/workspace. See the
 [three-step quick start and defaults table](../../HydroOperationsApp/DEPLOY.md#quick-start-one-path-for-each-job).
 
-For the merged Weather/energy-map changes, launch from an updated `feat/dibakar`
-checkout and explicitly select **Branch = `feat/dibakar`** when using Git sync or
+For the merged Weather/energy-map changes, launch from an updated `main`
+checkout and select **Branch = `main`** when using Git sync or
 **Full Deploy**; those branch fields prefill from the current local checkout. **Deploy app**
 verifies prepared Foundry specialists, including Weather, without creating or
 publishing agents. It does not update Fabric notebook source or run Weather

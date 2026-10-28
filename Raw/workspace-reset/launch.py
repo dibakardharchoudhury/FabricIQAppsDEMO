@@ -30,6 +30,8 @@ HERE = Path(__file__).resolve().parent
 REQUIREMENTS = HERE / "requirements.txt"
 SERVER = HERE / "webapp" / "server.py"
 APP_URL = "http://127.0.0.1:5000/"
+# Windows can take about two seconds to report a closed localhost port.
+PORT_PROBE_TIMEOUT = 3
 
 
 def server_path() -> Path:
@@ -64,10 +66,15 @@ def fail(message: str) -> None:
 def stop_existing_server() -> None:
     """Stop an existing local Fabric Demo server so current code owns the port."""
     try:
-        with urllib.request.urlopen(APP_URL, timeout=1) as response:
+        with urllib.request.urlopen(APP_URL, timeout=PORT_PROBE_TIMEOUT) as response:
             body = response.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError:
-        return
+    except urllib.error.HTTPError as exc:
+        fail(f"Could not identify the service on port 5000 (HTTP {exc.code}).")
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+        reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if isinstance(reason, ConnectionRefusedError):
+            return
+        fail(f"Could not identify the service on port 5000: {reason}. Retry after it becomes responsive.")
 
     if "Initialize Your Fabric Demo" not in body:
         fail("Port 5000 is already used by another application. Stop it, then retry.")
@@ -85,14 +92,25 @@ def stop_existing_server() -> None:
         if exc.code == 409:
             fail("The existing local app is running a job. Wait for it to finish, then relaunch.")
         fail(f"Could not stop the existing local app (HTTP {exc.code}).")
-    except urllib.error.URLError as exc:
-        fail(f"Could not stop the existing local app: {exc.reason}")
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+        reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if not isinstance(reason, (ConnectionError, TimeoutError)):
+            fail(f"Could not stop the existing local app: {reason}")
+        print(f"  Connection closed while stopping the existing app; verifying its port is released ({reason}).")
 
-    for _ in range(30):
+    for attempt in range(30):
         try:
-            urllib.request.urlopen(APP_URL, timeout=0.5).close()
-        except urllib.error.URLError:
-            return
+            urllib.request.urlopen(APP_URL, timeout=PORT_PROBE_TIMEOUT).close()
+        except urllib.error.HTTPError as exc:
+            fail(f"Could not verify the existing local app stopped (HTTP {exc.code}).")
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+            reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+            if isinstance(reason, ConnectionRefusedError):
+                return
+            if not isinstance(reason, (ConnectionError, TimeoutError)):
+                fail(f"Could not verify the existing local app stopped: {reason}")
+            if attempt == 0:
+                print(f"  Existing app is closing; waiting for port 5000 to be released ({reason}).")
         time.sleep(0.2)
     fail("The existing local app did not stop. Use its Stop server button, then retry.")
 
@@ -147,16 +165,21 @@ def main() -> int:
         popen_kwargs["start_new_session"] = True
     proc = subprocess.Popen([sys.executable, str(selected_server)], env=env, **popen_kwargs)
 
-    for _ in range(60):
+    last_error = ""
+    for attempt in range(60):
         try:
             urllib.request.urlopen(APP_URL, timeout=1).close()
             break
-        except urllib.error.URLError:
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+            last_error = str(exc)
             if proc.poll() is not None:
                 fail("The server stopped before it was ready (is port 5000 already in use?).")
+            if attempt == 0:
+                print(f"  Waiting for the local app to become ready ({exc}).")
             time.sleep(0.5)
     else:
-        fail("The server did not become ready in time. Try opening " + APP_URL + " manually.")
+        fail(f"The server did not become ready in time. Last connection error: {last_error}. "
+             f"Try opening {APP_URL} manually.")
 
     webbrowser.open(APP_URL)
     print(f"   The app is running at {APP_URL} (PID {proc.pid}).")
