@@ -1963,6 +1963,17 @@ class FoundrySupervisor:
                 )
             await execute_required(name, arguments, "telemetry", "focus")
 
+    async def validate_specialist_report(self, role: Role, report: dict[str, object]) -> dict[str, object]:
+        if role not in ("rca", "work-order"):
+            raise SourceFailure("Only RCA and Work Order have structured assessment validators.")
+        payload: dict[str, object] = {
+            "action": "validate_rca" if role == "rca" else "validate_work_review",
+            "report": json.dumps(report),
+        }
+        if role == "rca":
+            payload["receipts"] = self.model_evidence("rca")
+        return await self.bridge.call(payload)
+
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         def model_result(item: ToolEvidence) -> dict[str, object]:
             return {
@@ -2487,11 +2498,7 @@ class FoundrySupervisor:
                             )
                         self.evidence[receipt.id] = receipt
                     if result.report is not None:
-                        await self.bridge.call({
-                            "action": "validate_rca" if selected == "rca" else "validate_work_review",
-                            "report": json.dumps(result.report),
-                            "receipts": [item.receipt() for item in self.evidence.values()],
-                        })
+                        await self.validate_specialist_report(selected, result.report)
                 else:
                     if selected == "fabric-iq" and self.native_binding is not None and self.native_binding.toolbox is not None:
                         result = await self.invoke_data_agent(delegation.question, request, journal, versions[selected])
@@ -2802,7 +2809,6 @@ class FoundrySupervisor:
 
         async def report(**kwargs) -> dict[str, object]:
             nonlocal completed_report
-            action = "validate_rca" if role == "rca" else "validate_work_review"
             if completed_report is not None:
                 raise SourceFailure("A specialist cannot replace its completed structured assessment.")
             if role == "rca":
@@ -2833,10 +2839,7 @@ class FoundrySupervisor:
                     },
                 }
             try:
-                validated_report = await self.bridge.call({
-                    "action": action, "report": json.dumps(kwargs),
-                    "receipts": [item.receipt() for item in self.evidence.values()],
-                })
+                validated_report = await self.validate_specialist_report(role, kwargs)
             except SourceFailure as error:
                 allowed_evidence_ids = ", ".join(list(self.evidence)[:20])
                 allowed_references = ", ".join(rca_reference_examples(self.evidence)[:20])

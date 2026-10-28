@@ -61,7 +61,7 @@ type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetr
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
-  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, live telemetry, weather forecasts, or maintenance work. The deterministic Supervisor dispatches bounded Q&A, RCA, Weather and Work Order specialists and verifies their receipts. Weather uses the read-only Lakehouse connector; explicit published Data Agent requests use Sparky. Direct ontology-native chat is unavailable. Work-order drafts require your review and approval before any SQL write.' },
+  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, telemetry, weather, or maintenance work. The Supervisor selects only the capabilities your question needs. Fabric IQ uses the ontology-backed Fabric Data Agent for cross-source business questions and preserves its original answer; Q&A handles precise direct reads and independent checks. Weather interprets forecasts, RCA investigates potential faults, and Work Order prepares review-only drafts. Telemetry-quality investigation drafts do not require a mechanical RCA. No work order is saved without your review and approval.' },
 }
 
 function readPersistedSetup(): PersistedSetup {

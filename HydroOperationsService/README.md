@@ -380,6 +380,11 @@ The SDK sanitizes exchange status; that code alone does not establish a permissi
 problem. An Active capacity can still reject requests with `CapacityLimitExceeded`;
 retries, identity changes and
 partial-source answers do not establish readiness.
+Structured completion validation uses the same path-preserving evidence projection:
+RCA receives its verifiable source rows, while the Work Order review-schema validator
+does not receive unused receipts. Cached handoffs use the same validation path.
+Complete native artifacts remain in the audit and never inflate the bounded Node
+validation request.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.

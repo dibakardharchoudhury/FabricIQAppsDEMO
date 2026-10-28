@@ -368,6 +368,22 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("native_source_output", context[0]["result"])
             self.assertNotIn("native_response", context[0]["result"])
             self.assertNotIn("documents", context[0]["result"])
+        work_report = {"decision": "needs_clarification", "reason": "Review the verified quality observations."}
+        self.assertEqual(await owner.validate_specialist_report("work-order", work_report), work_report)
+        reference = {"evidence_id": "verified-native", "path": "/affected_signals/0"}
+        rca_report = {
+            "observations": [reference],
+            "hypotheses": [
+                {"category": category, "supporting": [reference], "contradicting": [],
+                 "missing": ["fresh_measurements"]}
+                for category in ("sensor_or_ingestion", "sampling_or_quality")
+            ],
+            "maintenance_follow_up": {
+                "decision": "not_supported", "reason": "missing_issue_evidence",
+                "equipment_ids": [], "evidence": [],
+            },
+        }
+        self.assertEqual(await owner.validate_specialist_report("rca", rca_report), rca_report)
         self.assertEqual(owner.evidence["verified-native"].result, evidence)
         self.assertFalse(self.calls)
         self.assertEqual(self.tools.calls, 0)
