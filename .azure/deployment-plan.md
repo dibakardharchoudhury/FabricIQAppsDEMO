@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed - authenticated native acceptance verified
 
 ## Semantic orchestration and Fabric IQ acceptance
 
@@ -91,7 +91,27 @@ presentation. The source values and native answer are unchanged. All 137
 supervisor/presentation tests pass, including the exact final table-rendering
 regression; required environment validation passes and Pyright remains at the
 same five baseline diagnostics. No infrastructure or authorization delta was
-introduced. Publish and authenticated acceptance of this correction are pending.
+introduced. Canonical publication completed as v1.0.1170 / coordinator v41
+(`bf9e164`) with endpoint/CORS checks passing. Authenticated run
+`cc45133f-d5a0-4fe7-acbc-c8022073f2ec` verified five editable, review-only
+telemetry-availability drafts for T004/T005/T007/T009/T014, no QA/RCA hop,
+unchanged native source text/SHA, no metadata columns and no production writes.
+
+An additional native parity check found a real federation-intent error: run
+`41fac50c-1c86-46df-bb50-31090dca3998` reported zero work despite ten SQL rows
+because a zero-inclusive count was compiled as AntiJoin. Notebook-owned source
+guidance now explicitly puts positive all-parent aggregation in the federation
+question and status predicates in source sub-questions; the original user
+question and source answer are not rewritten by the app. Draft/published
+readback preserved the ontology and operational SQL adapter. The policy remains
+within 5,500 characters / 700 words; all 92 ontology/Data Agent contracts pass.
+Final audited count runs `f9feb37d-9574-41f4-a789-383d760a7106` and
+`6a6d4aa0-ecae-4e39-bb45-3f220c078ec6` used successful nondegraded Aggregation
+receipts, returning Sloy 3 / Foyers 3 / Pitlochry 4. The unmatched-population
+control `a9f32036-e43b-4212-a8d7-abb7caceee6a` correctly returned no facilities.
+All preserve exact native presentation and SHA; no production writes occurred.
+Current telemetry is stale; these drafts investigate availability, not a proven
+mechanical fault or invented current-day BAD events.
 
 All validation checks pass:
 - [x] 1. Core Validation (CLI, auth, build, validate, what-if): existing-resource

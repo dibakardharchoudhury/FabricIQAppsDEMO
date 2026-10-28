@@ -1038,15 +1038,15 @@ Plan independent single-source queries; never cross-source SQL/KQL JOINs.
 1. Lakehouse: read facilities and equipment_id/facility_id/opcua_node_id mappings.
 2. Eventhouse: BAD-history aggregates use opcua_node_id,bad_sample_count=count(),first_bad_utc=min(event_time),last_bad_utc=max(event_time). Never dump raw events. 'Had BAD today' means any BAD event in today's UTC window, not latest-only.
 3. SQL: independently query equipmentId/opcuaNodeId work using returned keys.
-4. Match returned keys; conserve totals; report unmatched/duplicate keys; include zero-order facilities.
-All-parent counts: LEFT OUTER JOIN + COUNT DISTINCT child keys + zero-fill; AntiJoin only selects unmatched entities. Federation questions must express positive all-parent aggregation; place status filters in sub_questions.
+4. Match returned keys; conserve totals; report unmatched/duplicate keys.
+Rollups: LEFT OUTER JOIN + COUNT DISTINCT child keys + zero-fill; AntiJoin only selects unmatched entities. Federation questions MUST contain only positive all-parent aggregation, e.g. "Return all parents with distinct eligible-child counts using a left join; zero-fill". Always place status filters in sub_questions; never repeat status exclusions or negative wording in the federation question.
 Pass EVERY required returned identifier/count tuple, not previews. Combined-query failure requires one independent-read correction.
 Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative."""
 
 GLOBAL_SCOPE_MARKER = "### Conversation scope"
 GLOBAL_SCOPE_INSTRUCTIONS = """### Conversation scope
 
-Use all facilities/assets unless narrowed. Resolve follow-ups; never inherit prior filters into standalone questions or infer scope from an app selection."""
+Use all facilities/assets unless narrowed. Resolve references; standalone questions inherit neither filters nor app selections."""
 
 RUNNING_BAD_MARKER = '### Canonical "running bad" questions'
 RUNNING_BAD_INSTRUCTIONS = """### Canonical "running bad" questions
@@ -1074,7 +1074,7 @@ For requested charts include actual rows in fenced csv: event_time,value,quality
 DIRECT_RUNTIME_ROUTING_MARKER = "### Authoritative source routing"
 DIRECT_RUNTIME_ROUTING_INSTRUCTIONS = """### Authoritative source routing
 
-Prefer one authoritative source; combine as needed. Use available tools and actual query results. Verify sources/columns before declaring capability absent; explanation/empty output does not prove missing bindings. Distinguish tool errors, partial reads and completed joins. Make at most one targeted corrective retry for execution/coverage/validation failure; never invent repairs or widen the requested window."""
+Use available tools and actual query results; prefer one authoritative source. Verify bindings/columns before declaring capability absent. Distinguish tool errors, partial reads and completed joins. Retry execution/coverage/validation failure once; never invent repairs or widen the requested window."""
 
 COUNT_QUERY_GUIDANCE_MARKER = "### Operational count queries"
 COUNT_QUERY_GUIDANCE = """
