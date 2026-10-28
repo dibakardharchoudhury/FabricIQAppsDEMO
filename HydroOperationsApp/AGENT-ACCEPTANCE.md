@@ -1,5 +1,25 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
+## October 28 unusable-content response correction
+
+The exact provider template "There's content here I can't work with. Try asking
+a new question. If that doesn't work, there might be an issue with the content
+or your source data." previously passed as domain evidence. Reproduction tests
+confirmed false success in direct and orchestrated execution. It now fails
+with `native_refusal`, without a rewritten answer, automatic retry or fallback.
+Typographic apostrophes are recognized; quoting the template inside a usable
+answer does not reject that answer. Specialist-return events no longer claim
+verification before the deterministic verifier runs.
+
+The shared browser was verified on app **v1.0.1213**, while the reported screenshot
+showed **v1.0.1211**. The unchanged screenshot question, including open-work
+coverage and requested work-order drafts, returned a native answer in **77.332
+seconds** (`resp_fab8ZJrv438QxJrBKYsmIdQAdJLi`). It included 15 turbines,
+existing work and five suggested diagnosis drafts. No work orders were created.
+This confirms the current source can answer that question; it does not identify
+the upstream cause of the earlier generic response, independently certify the
+SQL/telemetry values, or constitute authenticated browser acceptance.
+
 ## October 28 direct-query latency correction
 
 Direct Data Agent is now an explicit read-only default; Foundry orchestration

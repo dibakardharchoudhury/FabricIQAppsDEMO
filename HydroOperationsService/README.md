@@ -277,6 +277,12 @@ non-streamed and detached execution, persisted failure/result recovery, and
 the hosted UI. The UI requests source-owner review instead of claiming a
 connectivity problem; it never displays arbitrary provider error text.
 Refusal-bearing partial rows are also rejected, not certified.
+The provider's exact "There's content here I can't work with" failure template
+is also rejected in direct and orchestrated execution, including typographic
+apostrophes. Quoting that message inside an otherwise usable answer does not
+trigger the template check. No answer is rewritten or automatically replayed.
+Specialist-return events describe output as awaiting validation, not already
+verified before the deterministic verifier runs.
 No-RCA work-order handoffs preserve verified direct evidence and source
 population/provenance metadata. Keep the pinned deterministic workflow and existing project.
 Historical version/test counts below are not this release's runtime certificate.

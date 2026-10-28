@@ -46,6 +46,10 @@ from hydro_orchestrator.service import ChatInput, create_app, follow_up_intent
 from test_durable_service import SOURCE, HEADERS, TOKEN
 
 ENDPOINT = "https://test.services.ai.azure.com/api/projects/test"
+UNUSABLE_NATIVE_RESPONSE = (
+    "There's content here I can't work with. Try asking a new question. "
+    "If that doesn't work, there might be an issue with the content or your source data."
+)
 
 
 class SourceTools:
@@ -3180,6 +3184,51 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(getattr(caught.exception, "category", None), "native_refusal")
                 self.assertIn("owner", str(caught.exception))
                 self.assertNotIn("private provider diagnostics", str(caught.exception))
+
+    def test_native_unusable_content_message_is_not_domain_evidence(self):
+        for text in (UNUSABLE_NATIVE_RESPONSE, UNUSABLE_NATIVE_RESPONSE.replace("'", "\u2019")):
+            for payload in (text, {"response": text}, {"documents": [{"content": text}]}):
+                with self.subTest(payload=payload):
+                    with self.assertRaises(SourceFailure) as caught:
+                        _validated_native_result(json.dumps(payload))
+                    self.assertEqual(caught.exception.category, "native_refusal")
+
+    def test_usable_native_answer_can_quote_an_unusable_content_message(self):
+        text = f"The operator reported: {UNUSABLE_NATIVE_RESPONSE}\nThe telemetry table has 15 turbines."
+        self.assertEqual(_validated_native_result(json.dumps({"response": text}))["response"], text)
+
+    async def test_native_unusable_content_fails_direct_and_orchestrated_handoffs_without_replay(self):
+        from test_semantic_planning import decision
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=())
+        binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}, toolbox=version.name)
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        call = NativeDataAgentCall("unusable-content", {"input": request.question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": UNUSABLE_NATIVE_RESPONSE},
+            ]}],
+        }, [], [])
+        for direct in (True, False):
+            with self.subTest(direct=direct):
+                owner = self.make_owner(semantic_planning=True, analysis_model="test-model", native_binding=binding)
+                owner.run_id = request.run_id
+                owner.semantic_decision = SemanticDecision.model_validate(decision("fabric-iq", "native_claims", False))
+                owner.answer_contract = owner.semantic_decision.plan.answer_contract
+                owner.invoke = AsyncMock(side_effect=AssertionError("An unnecessary model was invoked."))
+                journal = RunJournal(self.root / f"unusable-content-{direct}")
+                with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                           new_callable=AsyncMock, return_value=call) as native:
+                    with self.assertRaises(SourceFailure) as caught:
+                        if direct:
+                            await owner.invoke_data_agent(request.question, request, journal, version, passthrough=True)
+                        else:
+                            await owner.handoff(owner.semantic_decision.plan.steps[0], request, journal,
+                                                {"fabric-iq": version})
+                    self.assertEqual(caught.exception.category, "native_refusal")
+                    native.assert_awaited_once()
+                owner.invoke.assert_not_awaited()
+                self.assertFalse(owner.evidence)
+                self.assertFalse(owner.specialists)
+                self.assertFalse(any("verified output" in event.get("label", "") for event in owner.chief_trace))
 
     async def test_native_service_error_payload_fails_without_fallback_or_false_completion(self):
         self.mode = "native_error_payload"

@@ -79,7 +79,12 @@ class BoundedAIProjectClient(AIProjectClient):
 
 
 def _is_native_refusal_text(value: str) -> bool:
-    normalized = " ".join(value.casefold().split())
+    normalized = " ".join(value.casefold().replace("\u2019", "'").split())
+    if normalized == (
+        "there's content here i can't work with. try asking a new question. "
+        "if that doesn't work, there might be an issue with the content or your source data."
+    ):
+        return True
     if "error during output moderation" in normalized:
         return False
     return any(marker in normalized for marker in (
@@ -2662,7 +2667,7 @@ class FoundrySupervisor:
             )
             self.chief_trace.append({
                 "id": f"{call_id}:return", "timestamp": int(utc_now().timestamp() * 1000),
-                "source": "foundry", "label": f"{versions[selected].name} returned verified output.",
+                "source": "foundry", "label": f"{versions[selected].name} returned output for validation.",
                 "responseId": result.response_id, "callId": call_id, "activity": "delegation-return",
             })
             self.emit_event(

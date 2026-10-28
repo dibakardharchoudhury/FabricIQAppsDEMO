@@ -819,6 +819,36 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SourceAuthorizationError):
                 await leases[0].get_token(self.policy.scopes["fabric"])
 
+    async def test_unusable_native_content_is_failed_in_stream_and_recovered_result(self):
+        async def fail(_request):
+            _validated_native_result(json.dumps({"response": (
+                "There's content here I can't work with. Try asking a new question. "
+                "If that doesn't work, there might be an issue with the content or your source data."
+            )}))
+
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming), TemporaryDirectory() as directory:
+                app, _, _, contexts = self.ingress(Path(directory), run=fail)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                             base_url="http://test") as client:
+                    response = await client.post("/invocations", json={**self.invocation(), "stream": streaming})
+                    if streaming:
+                        messages = [json.loads(line) for line in response.text.splitlines()]
+                        self.assertEqual(messages[-1]["type"], "error")
+                        self.assertEqual(messages[-1]["status"], 502)
+                        self.assertEqual(messages[-2]["event"]["status"], "error")
+                        detail = messages[-1]["detail"]
+                    else:
+                        self.assertEqual(response.status_code, 502)
+                        detail = response.json()["detail"]
+                    self.assertEqual(detail["category"], "native_refusal")
+                    recovered = await client.post("/invocations", json={
+                        "operation": "result", "run_id": detail["run_id"], "tokens": self.invocation()["tokens"],
+                    })
+                    self.assertEqual(recovered.json()["status"], "failed")
+                    self.assertEqual(recovered.json()["failure"]["category"], "native_refusal")
+                self.assertEqual(contexts, ["closed"])
+
     async def test_ingress_validation_and_auth_errors_never_echo_token_input(self):
         with TemporaryDirectory() as directory:
             app, leases, _, _ = self.ingress(Path(directory))
