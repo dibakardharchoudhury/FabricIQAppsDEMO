@@ -52,8 +52,6 @@ azure-validate completed actual checks on 2026-10-27:
   access and default-deny network ACLs. No role assignments are deployed.
 - No application build, Bicep compilation or container build applies to a
   literal ARM template creating an empty vault.
-- An approved private connectivity path and credential provisioning remain
-  separate prerequisites before notebooks can use this empty vault.
 
 ### New vault deployment receipt
 
@@ -64,11 +62,40 @@ succeeded. Independent `az keyvault show` readback verified:
 - Resource group: `Power`; region: `norwayeast`; tenant matches the target.
 - RBAC=true, softDelete=true, retentionDays=90, purgeProtection=true.
 - publicNetworkAccess=Disabled. No credentials, role assignments or private
-  endpoints were created. No existing vault or Entra redirect was modified.
+  endpoints were created by the ARM vault deployment itself. No existing vault
+  or Entra redirect was modified.
+
+The repository's `key_vault_preflight.ensure_key_vault_access` then created
+`mpe-kv-kv-hydro-7c42e1f2`, approved the corresponding vault private-link
+connection, and verified Fabric endpoint state `Succeeded` / `Approved`.
+Public network access remains disabled. No secret values were read or written.
+
+## Continued deployment investigation (October 28)
+
+- Read-only Fabric verification confirms the new workspace is empty
+  (`items: []`) and Git integration is `NotConnected`.
+- The only visible saved GitHub connection belongs to another repository
+  (`esbran/Renewable`); it was not reused for this project's source import.
+- Microsoft Graph discovery found one Team joined by the deployment user
+  (`Super Mega Team`) with a `General` channel, and verified the signed-in
+  user's address. The operator explicitly asked to ignore Teams/email. The
+  repository contract does not support skipping Operations Agent Teams and
+  email-alert provisioning, so no notification targets or alerts were set.
+- The other Hydro feature workspace has a dedicated notebook application and
+  private vault tied to workspace `313d99ca-4280-4772-87cb-2c928164c428`.
+  Its secrets were not read or reused, and its identity was not expanded to
+  this workspace.
+- The target vault remains empty. No new notebook application, service
+  principal, credential or role assignment was created.
+
+Full setup and app publication remain blocked on required notebook identity
+provisioning and approved Git/notification configuration. The app deployment
+orchestrator previously stopped before publishing because this new workspace
+had no Eventhouse. Do not report the hosted app or agent as ready.
 
 This satisfies the operator's new-vault request, not the full deployment.
-Notebook credentials, approved connectivity, Teams/email destinations and core
-Fabric resources still need setup before application publication.
+Notebook identity credentials, Git import/core Fabric resources, and required
+Teams/email provisioning still need setup before application publication.
 
 ## Knowledge Graph live-source publication
 
