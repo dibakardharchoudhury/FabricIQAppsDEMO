@@ -15,6 +15,7 @@ or double-click one of the thin shims that just call this file:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -29,6 +30,26 @@ HERE = Path(__file__).resolve().parent
 REQUIREMENTS = HERE / "requirements.txt"
 SERVER = HERE / "webapp" / "server.py"
 APP_URL = "http://127.0.0.1:5000/"
+
+
+def server_path() -> Path:
+    config = HERE / "launcher.local.json"
+    if not config.exists():
+        return SERVER
+    settings = json.loads(config.read_text(encoding="utf-8"))
+    if not isinstance(settings, dict) or not isinstance(settings.get("checkout"), str) or not settings["checkout"].strip():
+        raise ValueError("launcher.local.json requires a checkout path.")
+    checkout = Path(settings["checkout"]).expanduser().resolve(strict=True)
+    server = checkout / "Raw" / "workspace-reset" / "webapp" / "server.py"
+    if not server.is_file():
+        raise ValueError(f"No Fabric Demo server exists in {checkout}.")
+    status = subprocess.run(
+        ["git", "-C", str(checkout), "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True, text=True, timeout=30, check=True,
+    )
+    if status.stdout.strip():
+        raise ValueError(f"The configured deployment checkout has modified tracked files: {checkout}.")
+    return server
 
 
 def fail(message: str) -> None:
@@ -81,10 +102,16 @@ def main() -> int:
     print("   Initialize Your Fabric Demo - local web app")
     print("  ===================================================\n")
 
+    try:
+        selected_server = server_path()
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        fail(f"Could not verify the deployment checkout: {exc}")
+    print(f"  Deployment source: {selected_server.parent.parent.parent.parent}")
+
     # 1. Install / update Python dependencies (quiet).
     print("  [1/2] Checking dependencies...")
     deps = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-q", "-r", str(REQUIREMENTS)]
+        [sys.executable, "-m", "pip", "install", "-q", "-r", str(selected_server.parent.parent / "requirements.txt")]
     )
     if deps.returncode != 0:
         fail("Could not install dependencies. Check your internet connection and try again.")
@@ -106,6 +133,7 @@ def main() -> int:
     stop_existing_server()
     env = os.environ.copy()
     env["FABRIC_UI_NO_BROWSER"] = "1"  # this launcher opens the browser once, below
+    env.setdefault("FABRIC_UI_PIPELINE_DEFAULTS_FILE", str(HERE / "webapp" / "pipeline-defaults.local.json"))
     popen_kwargs: dict[str, object] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -117,7 +145,7 @@ def main() -> int:
         popen_kwargs["creationflags"] = 0x00000008 | 0x00000200
     else:
         popen_kwargs["start_new_session"] = True
-    proc = subprocess.Popen([sys.executable, str(SERVER)], env=env, **popen_kwargs)
+    proc = subprocess.Popen([sys.executable, str(selected_server)], env=env, **popen_kwargs)
 
     for _ in range(60):
         try:

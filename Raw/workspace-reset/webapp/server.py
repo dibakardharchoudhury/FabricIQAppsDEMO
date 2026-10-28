@@ -52,7 +52,9 @@ DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
 PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
 DEPLOY_SCRIPT = SCRIPT_DIR / "deploy_fabric_app.py"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-PIPELINE_DEFAULTS_FILE = Path(__file__).with_name("pipeline-defaults.local.json")
+PIPELINE_DEFAULTS_FILE = Path(
+    os.environ.get("FABRIC_UI_PIPELINE_DEFAULTS_FILE") or Path(__file__).with_name("pipeline-defaults.local.json")
+).expanduser().resolve()
 REPO_ROOT = SCRIPT_DIR.parent.parent
 RAYFIN_TARGET_FILE = REPO_ROOT / "HydroOperationsApp" / "rayfin" / ".env"
 _pipeline_defaults_lock = threading.RLock()
@@ -1307,7 +1309,7 @@ def app_version():
 
     response = jsonify(
         version=f"v1.0.{commit_count}", timestamp=timestamp, revision=revision,
-        branch=branch, repository=repository,
+        branch=branch, repository=repository, checkout=str(REPO_ROOT),
     )
     response.headers["Cache-Control"] = "no-store"
     return response

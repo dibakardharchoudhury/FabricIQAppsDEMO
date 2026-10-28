@@ -123,13 +123,14 @@ Invalid local configuration produces a visible error. The Teams ID fields link
 directly to Microsoft's channel-link documentation; see also
 [how to get the IDs](../../HydroOperationsApp/DEPLOY.md#find-your-teams-team-and-channel-ids).
 
-Foundry setup uses one **Foundry project name** and **Model deployment name** for
+Foundry setup selects the **Azure subscription** first, followed by one
+**Foundry project name** and **Model deployment name** for
 both reuse and approved creation. Enter them once; setup configures the agents,
 connections and hosted orchestrator automatically. A full project ARM ID can still
 disambiguate duplicate names or scoped access. A matching subscription is selected
 automatically when unambiguous. Endpoints, connected registries and ontology graph
-ownership are resolved internally; only a subscription override appears in the
-collapsed **Advanced settings (optional)**. No graph-binding JSON is required.
+ownership are resolved internally. Catalog name, version, deployment type,
+capacity and region are not form inputs. No graph-binding JSON is required.
 **Fabric App authentication** offers **Use a pre-created app registration** when
 an administrator has prepared a specific target-tenant SPA. Otherwise registration
 discovery/reuse or creation is automatic. Selecting this option requires a valid
@@ -147,6 +148,12 @@ Region, model version, pay-as-you-go SKU and minimum/default capacity are automa
 Regional Standard is preferred, followed by DataZoneStandard and GlobalStandard;
 the form discloses global inference. Provisioned capacity is never automatic.
 Quota, access and unresolved/ambiguous model identities fail explicitly, not by guessing.
+
+The launcher can use a separate clean deployment checkout without overwriting local
+development edits. Set `checkout` in gitignored `launcher.local.json` beside
+`launch.py`. The configured checkout must have no tracked modifications. The
+launcher retains the original local pipeline settings file; restarting the server
+preserves that settings path. The version API reports the actual source checkout.
 Existing saved project ARM IDs migrate into the project-name field; retired browser
 endpoint/registry/graph overrides are no longer submitted. Other choices are shared
 between the standalone and full-workflow forms and saved per tenant/workspace. See the

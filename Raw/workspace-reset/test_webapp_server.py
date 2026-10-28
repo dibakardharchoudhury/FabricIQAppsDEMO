@@ -1482,12 +1482,12 @@ console.log(JSON.stringify([
                 self.assertIn(f'id="{prefix}{suffix}"', form)
             self.assertIn(f'foundryPayload("{prefix}")', page)
             normal_fields = form[:form.index('<details')]
-            self.assertEqual(normal_fields.count('type="text"'), 2)
+            self.assertEqual(normal_fields.count('type="text"'), 3)
+            self.assertLess(form.index(f'id="{prefix}AzureSubscriptionId"'), form.index(f'id="{prefix}FoundryProjectName"'))
             self.assertIn("FoundryCreate", normal_fields)
             self.assertIn("Automatic multi-agent setup", normal_fields)
             self.assertIn("billable", normal_fields)
-            self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
-            self.assertIn("<summary>Advanced settings (optional)</summary>", form)
+            self.assertNotIn("FoundryOverrides", form)
             self.assertNotIn("FoundryNewProjectOptions", form)
             self.assertNotIn("FoundryNewModel", form)
             self.assertNotIn("FoundryNewProjectName", form)
@@ -1616,7 +1616,7 @@ const fields = {};
 const $ = id => fields[id];
 const suffixes = [
   "AzureSubscriptionId", "FoundryProjectName",
-  "FoundryModel", "FoundryCreate", "FoundryOverrides",
+  "FoundryModel", "FoundryCreate",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
 """ + functions + """
@@ -1625,7 +1625,6 @@ for (const prefix of ["deploy", "workflow"]) {
     fields[prefix + suffix] = {value:"", checked:false, disabled:false, hidden:false, open:false, textContent:""};
   }
   updateFoundryMode(prefix);
-  assert.equal($(prefix+"FoundryOverrides").open, false);
   assert.equal(foundryPayload(prefix).createFoundry, false);
   assert.equal(foundryPayload(prefix).foundryModel, "");
   assert.equal(foundryValid(prefix), true);
@@ -1644,7 +1643,6 @@ for (const prefix of ["deploy", "workflow"]) {
   $(prefix+"FoundryCreate").checked = true;
   updateFoundryMode(prefix);
   assert.equal(foundryValid(prefix), true);
-  assert.equal($(prefix+"FoundryOverrides").open, false);
   assert.equal($(prefix+"FoundryProjectName").disabled, false);
   assert.equal($(prefix+"FoundryModel").disabled, false);
   assert.equal($(prefix+"FoundryProjectName").value, "existing-project-name");

@@ -1,4 +1,7 @@
 import importlib.util
+import json
+import subprocess
+import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
@@ -27,6 +30,66 @@ class FakeResponse:
 
 
 class ExistingServerTests(unittest.TestCase):
+    def test_launch_uses_selected_sources_and_preserves_original_preferences(self):
+        with tempfile.TemporaryDirectory() as root:
+            here = Path(root) / "development" / "Raw" / "workspace-reset"
+            server = Path(root) / "release" / "Raw" / "workspace-reset" / "webapp" / "server.py"
+            with (
+                patch.object(LAUNCH, "HERE", here),
+                patch.object(LAUNCH, "server_path", return_value=server),
+                patch.object(LAUNCH.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run,
+                patch.object(LAUNCH.shutil, "which", return_value="az"),
+                patch.object(LAUNCH, "stop_existing_server"),
+                patch.object(LAUNCH.subprocess, "Popen") as start,
+                patch.object(LAUNCH.urllib.request, "urlopen"),
+                patch.object(LAUNCH.webbrowser, "open"),
+                patch.dict(LAUNCH.os.environ, {}, clear=True),
+            ):
+                self.assertEqual(LAUNCH.main(), 0)
+            self.assertEqual(start.call_args.args[0], [LAUNCH.sys.executable, str(server)])
+            self.assertEqual(run.call_args.args[0][-1], str(server.parent.parent / "requirements.txt"))
+            self.assertEqual(
+                start.call_args.kwargs["env"]["FABRIC_UI_PIPELINE_DEFAULTS_FILE"],
+                str(here / "webapp" / "pipeline-defaults.local.json"),
+            )
+
+    def test_default_launcher_uses_its_own_server(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(LAUNCH, "HERE", Path(root)):
+            self.assertEqual(LAUNCH.server_path(), LAUNCH.SERVER)
+
+    def test_configured_clean_checkout_supplies_the_server(self):
+        with tempfile.TemporaryDirectory() as root:
+            here = Path(root)
+            checkout = here / "release"
+            server = checkout / "Raw" / "workspace-reset" / "webapp" / "server.py"
+            server.parent.mkdir(parents=True)
+            server.write_text("# test server\n", encoding="utf-8")
+            (here / "launcher.local.json").write_text(json.dumps({"checkout": str(checkout)}), encoding="utf-8")
+            with patch.object(LAUNCH, "HERE", here), patch.object(
+                LAUNCH.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=""),
+            ) as verify:
+                self.assertEqual(LAUNCH.server_path(), server)
+            self.assertEqual(verify.call_args.args[0][:3], ["git", "-C", str(checkout)])
+
+    def test_modified_configured_checkout_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            here = Path(root)
+            server = here / "Raw" / "workspace-reset" / "webapp" / "server.py"
+            server.parent.mkdir(parents=True)
+            server.write_text("# test server\n", encoding="utf-8")
+            (here / "launcher.local.json").write_text(json.dumps({"checkout": root}), encoding="utf-8")
+            with patch.object(LAUNCH, "HERE", here), patch.object(
+                LAUNCH.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=" M server.py"),
+            ), self.assertRaisesRegex(ValueError, "modified tracked files"):
+                LAUNCH.server_path()
+
+    def test_invalid_configuration_does_not_fall_back_to_the_old_checkout(self):
+        with tempfile.TemporaryDirectory() as root:
+            here = Path(root)
+            (here / "launcher.local.json").write_text('{"checkout": null}', encoding="utf-8")
+            with patch.object(LAUNCH, "HERE", here), self.assertRaisesRegex(ValueError, "checkout path"):
+                LAUNCH.server_path()
+
     def test_no_existing_server_needs_no_shutdown(self):
         with patch.object(
             LAUNCH.urllib.request,

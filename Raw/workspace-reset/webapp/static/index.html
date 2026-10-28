@@ -567,6 +567,10 @@ function updateSpaChoice(clientId) {
 
 function renderFoundryFields(prefix, clientId) {
   return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Automatic multi-agent setup.</strong></p>
+    <label>Azure subscription
+      <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
+    <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
+    <p id="${prefix}FoundryStatus" class="phelp" role="status">Subscription is selected before the project and model are verified.</p>
     <div class="grid">
       <label>Foundry project name
         <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or automatic discovery" /></label>
@@ -577,15 +581,6 @@ function renderFoundryFields(prefix, clientId) {
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
       <span>Allow creating a missing Foundry project (billable; global inference may apply).</span></label>
     <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
-    <details id="${prefix}FoundryOverrides" class="foundry-block">
-      <summary>Advanced settings (optional)</summary>
-      <div class="grid">
-        <label>Azure subscription
-          <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
-      </div>
-      <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
-      <p id="${prefix}FoundryStatus" class="phelp" role="status">Project, model and subscription are verified automatically during setup.</p>
-    </details>
     ${renderSpaFields(clientId)}`;
 }
 $("workflowFoundryFields").innerHTML = renderFoundryFields("workflow", "workflowDeployClientId");

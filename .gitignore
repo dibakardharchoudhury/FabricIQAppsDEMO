@@ -8,6 +8,7 @@ credentials.json
 secrets.json
 SPN.txt
 Raw/workspace-reset/webapp/pipeline-defaults.local.json
+Raw/workspace-reset/launcher.local.json
 
 # Python cache
 __pycache__/
