@@ -159,7 +159,10 @@ def _validated_native_result(output: object) -> dict[str, object]:
         dict(payload) if isinstance(payload, dict)
         else {"native_output": payload}
     )
-    native_result.update(_native_markdown_tables_from_payload(native_result))
+    table_payload = (
+        native_result.get("response") if isinstance(native_result.get("native_response"), dict) else native_result
+    )
+    native_result.update(_native_markdown_tables_from_payload(table_payload))
     if not _has_native_domain_evidence(native_result):
         raise SourceFailure("Native execution returned only connection metadata without domain evidence.")
     return native_result
@@ -1980,6 +1983,7 @@ class FoundrySupervisor:
                 key: data for key, data in item.result.items()
                 if item.tool != "fabriciq-data-agent"
                 or key not in {"documents", "native_response", "native_source_output"}
+                and not (key == "tables" and "native_response" in item.result)
             }
 
         def model_receipt(item: ToolEvidence) -> dict[str, object]:
@@ -2577,7 +2581,13 @@ class FoundrySupervisor:
             "tool_name": call.tool_name, "arguments": call.arguments,
             "request_id": call.request_id, "result": call.result,
         })
-        result = _validated_native_result(json.dumps(call.source_payload()))
+        payload = call.source_payload()
+        result = _validated_native_result(json.dumps(payload))
+        for index, table in enumerate(call.tables):
+            field = f"native_table_{index}"
+            while field in result:
+                field += "_rows"
+            result[field] = table["rows"]
         bundle = quality_work_evidence(call, request.requested_at)
         checked = await self.bridge.call({
             "action": "validate_quality_work_evidence", "question": request.question,
@@ -2613,9 +2623,12 @@ class FoundrySupervisor:
         ), None)
         if native_text is not None:
             native_result["citation_fragments"] = list(_bounded_citation_fragments(native_text))
+        native_payload = native_result.get("native_source_output", native_result)
+        responses_transport = isinstance(native_payload, dict) and isinstance(native_payload.get("native_response"), dict)
         fields = tuple(
             key for key, value in native_result.items()
             if isinstance(value, list) and all(isinstance(item, dict) for item in value)
+            and (not responses_transport or key not in {"documents", "tables"})
         )
         group_by: Literal["equipment_id", "facility_id"] | None = None
         if native_presentation is not None:
@@ -2642,7 +2655,10 @@ class FoundrySupervisor:
                 )
                 for scope in sorted(scopes) for index, field in enumerate(fields)
             ),
-            limitations=("Native connection receipt does not attest SQL/combined-source provenance.",),
+            limitations=(
+                "Source-native results are retained in the execution audit; cross-source reads are not atomic."
+                if responses_transport else "Native connection receipt does not attest SQL/combined-source provenance.",
+            ),
         )
 
     async def invoke(

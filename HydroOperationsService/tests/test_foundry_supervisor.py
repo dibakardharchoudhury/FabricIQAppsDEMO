@@ -388,6 +388,62 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.calls)
         self.assertEqual(self.tools.calls, 0)
 
+    async def test_native_responses_datasets_include_source_rows_not_provider_documents_or_schema(self):
+        question = "Verify the turbine identities and their configured instrumentation."
+        request = self.request.model_copy(update={"question": question, "native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(
+            source=SOURCE, connections={"data-agent": "native-data"}, toolbox="hydro-fabric-iq-tools",
+        ))
+        owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "kind": "native_claims", "scope": "population", "authority": "native", "purpose": "identity",
+            }],
+            "views": [{
+                "id": "native-identities", "title": "Verified identities", "kind": "native_claims",
+                "scope": "population", "presentation": "native_records_table",
+            }],
+        })
+        schema = "| Column Name | Data Type |\n| --- | --- |\n| equipment_id | varchar |"
+        answer = "| equipment_id |\n| --- |\n| TEST_T005 |"
+        rows = [{"equipment_id": "TEST_T005", "instrument_id": "I005"}]
+        facility_rows = [{"equipment_id": "TEST_T005", "facility_name": "Sloy"}]
+        call = NativeDataAgentCall("verified-native-rows", {"input": question}, {
+            "output": [
+                {"type": "function_call_output", "output": schema},
+                {"type": "message", "role": "assistant", "content": [
+                    {"type": "output_text", "text": answer},
+                ]},
+            ],
+        }, [{"id": "result", "content": schema, "metadata": "text/plain"}], [{
+            "id": "result-rows", "columns": ["equipment_id", "instrument_id"], "rows": rows,
+        }, {
+            "id": "facility-rows", "columns": ["equipment_id", "facility_name"], "rows": facility_rows,
+        }])
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call):
+            await owner.invoke_data_agent(
+                question, request, RunJournal(self.root / "native-rows"),
+                AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=()),
+            )
+        evidence = owner.evidence["verified-native-rows"]
+        self.assertEqual(evidence.result["native_table_0"], rows)
+        self.assertEqual(evidence.result["documents"], call.documents)
+        self.assertEqual(evidence.result["native_response"], call.result)
+        self.assertEqual(evidence.result["response"], answer)
+        expected_fields = {"native_table_0", "native_table_1", "native_table_1_rows"}
+        self.assertEqual({dataset.field for dataset in evidence.datasets}, expected_fields)
+        self.assertEqual({
+            key for key, value in evidence.result.items() if key.startswith("native_") and isinstance(value, list)
+        }, expected_fields)
+        self.assertEqual(evidence.result["native_table_1_rows"], facility_rows)
+        self.assertEqual(evidence.result["native_table_1"], [{"equipment_id": "TEST_T005"}])
+        projected = owner.model_evidence("work-order")[0]["result"]
+        self.assertNotIn("tables", projected)
+        self.assertNotIn("documents", projected)
+        self.assertEqual(projected["native_table_0"], rows)
+        self.assertFalse(any("does not attest SQL" in limitation for limitation in evidence.limitations))
+
     async def test_native_responses_requires_its_declared_transport_before_execution(self):
         binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
                                 toolbox="hydro-fabric-iq-tools")

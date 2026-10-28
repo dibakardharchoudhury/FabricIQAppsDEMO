@@ -884,6 +884,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(owner.native_credential)
             self.assertIsNot(owner.native_credential, owner.credential)
             self.assertEqual(owner.foundry_call_id, "current-platform-call")
+            self.assertEqual(owner.native_workload_origin, "https://verified-native.test")
             return ChatAnswer(
                 run_id=request.run_id, source=request.source, requested_at=request.requested_at,
                 source_read_times=(), summary="Composition fixture, not a live source answer.",
@@ -891,13 +892,19 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 audit_url=f"/chat/runs/{request.run_id}/evidence",
             )
 
-        for changed in (False, True):
-            with self.subTest(changed=changed), TemporaryDirectory() as directory:
+        for changed, workload_origin in (
+            (False, "https://verified-native.test"),
+            (True, "https://verified-native.test"),
+            (False, None),
+        ):
+            with self.subTest(changed=changed, workload_origin=workload_origin), TemporaryDirectory() as directory:
                 actual = source.model_copy(update={"workspace_id": SPA}) if changed else source
+                blocked = changed or workload_origin is None
                 bridge = AsyncMock()
                 bridge.call.side_effect = [
                     {"tenant_id": str(TENANT), "configuration_digest": source.configuration_digest},
-                    {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test"},
+                    {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test",
+                     "workload_origin": workload_origin},
                 ]
                 app = create_fabric_delegated_app(
                     Path(directory), self.verifier, source,
@@ -915,8 +922,8 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                                 "/invocations", json=self.invocation(),
                                 headers={"x-agent-foundry-call-id": "current-platform-call"},
                             )
-                        self.assertEqual(response.status_code, 500 if changed else 200, response.text)
-                        self.assertEqual(run.call_count, 0 if changed else 1)
+                        self.assertEqual(response.status_code, 500 if blocked else 200, response.text)
+                        self.assertEqual(run.call_count, 0 if blocked else 1)
                         self.assertNotIn(
                             "chat_intent", [call.args[0]["action"] for call in bridge.call.call_args_list],
                         )

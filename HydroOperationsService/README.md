@@ -385,6 +385,10 @@ RCA receives its verifiable source rows, while the Work Order review-schema vali
 does not receive unused receipts. Cached handoffs use the same validation path.
 Complete native artifacts remain in the audit and never inflate the bounded Node
 validation request.
+Native Responses datasets expose actual typed result rows, never result-document
+envelopes or schema markdown from provider tool traces. The original source answer,
+documents and provider trace remain unchanged in the audit. Dependent analysis can
+cite the row projections without turning file metadata into a business-data table.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.
