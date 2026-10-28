@@ -262,6 +262,52 @@ class IncrementalProvisionTests(unittest.TestCase):
 
 
 class PreparedFoundryTests(unittest.TestCase):
+    def test_account_scopes_discovery_discards_other_account_hints_and_rejects_conflicting_id(self):
+        subscription = str(uuid.uuid4())
+        root = f"/subscriptions/{subscription}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/"
+        selected = root + "selected-account/projects/shared-project"
+        other = root + "other-account/projects/shared-project"
+        endpoint = "https://selected-account.services.ai.azure.com/api/projects/shared-project"
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.az.side_effect = lambda *args: list(args)
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({
+            "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
+            "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": other,
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint.replace("selected-account", "other-account"),
+            "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "old-model",
+        }, None)
+
+        def capture(argv):
+            if argv[:2] == ["resource", "list"]:
+                return json.dumps([{"id": other}, {"id": selected}])
+            if argv[:2] == ["resource", "show"]:
+                self.assertEqual(argv[argv.index("--ids") + 1], selected)
+                return json.dumps({"id": selected, "properties": {"endpoints": {"AI Foundry API": endpoint}}})
+            raise AssertionError(argv)
+
+        deploy.run_capture.side_effect = capture
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_ACCOUNT_NAME": "selected-account",
+            "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "shared-project",
+            "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "", "HYDRO_FOUNDRY_CREATE": "false",
+            "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": "", "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "",
+            "HYDRO_FOUNDRY_MODEL": "",
+        }), patch.object(module, "resolve_subscription", return_value=subscription), \
+                patch.object(module, "read_model_selection", return_value="ready-chat") as model:
+            result = module.resolve_project(deploy, "tenant", "workspace")
+            self.assertEqual((result.project_id, result.endpoint), (selected, endpoint))
+            model.assert_called_once_with(deploy, "tenant", selected, "")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": other}):
+                with self.assertRaisesRegex(RuntimeError, "does not match the Foundry account name"):
+                    module.resolve_project(deploy, "tenant", "workspace")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": "missing-account"}):
+                with self.assertRaisesRegex(RuntimeError, "was not found"):
+                    module.resolve_project(deploy, "tenant", "workspace")
+        deploy.run_stream.assert_not_called()
+
     def test_named_creation_ignores_saved_target_then_reuses_only_the_named_project(self):
         subscription = str(uuid.uuid4())
         base = f"/subscriptions/{subscription}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/"

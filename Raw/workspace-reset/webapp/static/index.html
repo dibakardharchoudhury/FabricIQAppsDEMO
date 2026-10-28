@@ -565,12 +565,14 @@ function renderFoundryFields(prefix, clientId) {
     <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
     <p id="${prefix}FoundryStatus" class="phelp" role="status">Subscription is selected before the project and model are verified.</p>
     <div class="grid">
+      <label>Foundry account name (optional)
+        <input id="${prefix}FoundryAccountName" type="text" maxlength="64" placeholder="Existing parent account or exact name to create" /></label>
       <label>Foundry project name
         <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or automatic discovery" /></label>
       <label>Model deployment name
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
     </div>
-    <p class="hint">Enter these once. Setup prepares the Fabric backend gateway, five Foundry specialist agents, connections and hosted orchestrator. A missing backend creates a Fabric App item and SQL/GraphQL dependencies, but does not publish the website.</p>
+    <p class="hint">A Foundry account is the parent Azure resource; the project lives inside it. A blank account name keeps automatic naming/discovery. Setup prepares the Fabric backend gateway, five Foundry specialist agents, connections and hosted orchestrator. A missing backend creates a Fabric App item and SQL/GraphQL dependencies, but does not publish the website.</p>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
       <span>Check this box if you want to create a new Foundry project with the multi-agent setup.</span></label>
     <p id="${prefix}FoundryCreateHelp" class="hint">Creating resources is billable; global inference may apply. Existing projects are reused.</p>
@@ -993,6 +995,7 @@ function foundryPayload(prefix) {
   const resourceId = /^\/subscriptions\//i.test(project);
   return {
     azureSubscriptionId: value("AzureSubscriptionId"),
+    foundryAccountName: value("FoundryAccountName"),
     foundryProjectResourceId: resourceId ? project : "",
     foundryProjectName: resourceId ? "" : project,
     foundryModel: value("FoundryModel"),
@@ -1000,6 +1003,12 @@ function foundryPayload(prefix) {
   };
 }
 function foundryValid(prefix) {
+  const account = $(prefix + "FoundryAccountName").value.trim();
+  if (account && !/^[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]$/.test(account)) {
+    $(prefix + "FoundryCreationStatus").textContent =
+      "Foundry account name must be 2-64 letters, digits or hyphens, starting and ending with a letter or digit.";
+    return false;
+  }
   if (!$(prefix + "FoundryCreate").checked) {
     $(prefix + "FoundryCreationStatus").textContent = "";
     return true;
@@ -1026,7 +1035,7 @@ for (const prefix of ["deploy", "workflow"]) {
     updateFoundryMode(prefix);
     refresh();
   });
-  for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
+  for (const suffix of ["FoundryAccountName", "FoundryProjectName", "FoundryModel"]) {
     $(prefix + suffix).addEventListener("input", refresh);
   }
 }
@@ -1148,7 +1157,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryProjectName", "FoundryModel",
+  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName", "FoundryModel",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
 function restoreTargetSettings() {

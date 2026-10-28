@@ -220,7 +220,7 @@ def _load_sibling(name: str):
 
 PROJECT_RESOURCE_RE = re.compile(
     r"/subscriptions/([0-9a-f-]{36})/resourceGroups/[^/?#]+/providers/"
-    r"Microsoft\.CognitiveServices/accounts/[A-Za-z0-9-]+/projects/[A-Za-z0-9_.-]+",
+    r"Microsoft\.CognitiveServices/accounts/(?P<account>[A-Za-z0-9-]+)/projects/[A-Za-z0-9_.-]+",
     re.IGNORECASE,
 )
 
@@ -504,9 +504,10 @@ def resolve_project(
     """Resolve the target before backend mutation; create only in the provisioning pass."""
     values, _ = deploy.current_rayfin_target()
     print("Foundry: project - resolving the Foundry project.", flush=True)
-    from deploy_foundry_project import enabled, requested_project_name
+    from deploy_foundry_project import enabled, requested_account_name, requested_project_name
 
     try:
+        account_name = requested_account_name()
         new_project_name = requested_project_name()
     except ValueError as error:
         raise deploy.DeployError(str(error)) from error
@@ -530,11 +531,16 @@ def resolve_project(
         and deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID").casefold() in ("", subscription.casefold())
     )
     saved_project_id = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID") if same_target and not new_project_name else ""
+    saved_identity = PROJECT_RESOURCE_RE.fullmatch(saved_project_id)
+    if account_name and saved_identity and saved_identity["account"].casefold() != account_name.casefold():
+        saved_project_id = ""
     saved_endpoint = (
         deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT")
         if same_target and (not explicit_project_id or explicit_project_id.casefold() == saved_project_id.casefold())
         else ""
     )
+    if account_name and saved_identity and saved_identity["account"].casefold() != account_name.casefold():
+        saved_endpoint = ""
     explicit_endpoint = "" if new_project_name else os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip()
     project_name = new_project_name or os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
     if project_name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):
@@ -562,6 +568,12 @@ def resolve_project(
             ]
             print(f"Foundry: checking {len(projects)} matching project resource(s) for '{wanted_name}'; "
                   "unrelated project metadata is skipped.", flush=True)
+        if account_name:
+            projects = [
+                project for project in projects
+                if (identity := PROJECT_RESOURCE_RE.fullmatch(project["id"]))
+                and identity["account"].casefold() == account_name.casefold()
+            ]
         for project in projects:
             detail = json.loads(deploy.run_capture(deploy.az(
                 "resource", "show", "--ids", project["id"], "--api-version", "2025-06-01", "-o", "json",
@@ -579,6 +591,8 @@ def resolve_project(
         identity = PROJECT_RESOURCE_RE.fullmatch(project_id)
         if not identity or identity[1].casefold() != subscription.casefold():
             raise deploy.DeployError("The selected Foundry project resource ID must belong to the selected subscription.")
+        if account_name and identity["account"].casefold() != account_name.casefold():
+            raise deploy.DeployError("The selected Foundry project resource ID does not match the Foundry account name.")
         if project_name and project_id.rsplit("/", 1)[-1].casefold() != project_name.casefold():
             raise deploy.DeployError("The selected Foundry project resource ID does not match the existing project name.")
         detail = json.loads(deploy.run_capture(deploy.az(

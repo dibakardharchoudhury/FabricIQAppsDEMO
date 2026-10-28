@@ -41,9 +41,21 @@ def requested_project_name() -> str:
     return name
 
 
+def requested_account_name() -> str:
+    name = os.environ.get("HYDRO_FOUNDRY_ACCOUNT_NAME", "").strip()
+    if name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", name):
+        raise ValueError("Foundry account name must be 2-64 letters, digits or hyphens, starting and ending with a letter or digit.")
+    return name
+
+
 def environment_name(tenant: str, workspace: str, subscription: str = "") -> str:
     """Stable per target, so reruns reuse one azd environment (and its resource-name salt)."""
     project = requested_project_name()
+    account = requested_account_name()
+    if account:
+        return "hydro-foundry-" + hashlib.sha256(
+            f"{tenant.lower()}|{subscription.lower()}|{workspace.lower()}|{account.lower()}|{project.lower()}".encode()
+        ).hexdigest()[:12]
     if project:
         return "hydro-foundry-" + hashlib.sha256(
             f"{tenant.lower()}|{subscription.lower()}|{workspace.lower()}|{project.lower()}".encode()
@@ -218,6 +230,7 @@ def ensure_foundry_project(
 ) -> str:
     """Provision a Foundry project and return its endpoint once the signed-in user can create agents in it."""
     try:
+        account_name = requested_account_name()
         deployments = deployments_parameter(model, model_settings)
     except ValueError as error:
         raise deploy.DeployError(str(error)) from error
@@ -238,6 +251,8 @@ def ensure_foundry_project(
     }
     if requested_project_name():
         settings["AZURE_AI_PROJECT_NAME"] = requested_project_name()
+    if account_name:
+        settings["AZURE_AI_ACCOUNT_NAME"] = account_name
     hosted.set_azd_environment(deploy, directory, name, settings)
     print(
         f"Foundry: provisioning environment {name} in {location} (Foundry account, project, model {model}, "
@@ -255,6 +270,8 @@ def ensure_foundry_project(
         raise deploy.DeployError("Provisioning finished but reported no valid Foundry project endpoint.")
     if requested_project_name() and parsed.path.rstrip("/").rsplit("/", 1)[-1].casefold() != requested_project_name().casefold():
         raise deploy.DeployError("Provisioning reported a different project than the requested new project name.")
+    if account_name and values.get("AZURE_AI_ACCOUNT_NAME", "").casefold() != account_name.casefold():
+        raise deploy.DeployError("Provisioning reported a different account than the requested Foundry account name.")
 
     # Role assignments from the template can take a few minutes to take effect for the signed-in user.
     deadline = time.monotonic() + ACCESS_TIMEOUT_S

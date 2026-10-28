@@ -958,6 +958,13 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         ):
             raise ValueError("Foundry project resource ID must be a full project ARM resource ID.")
         env["HYDRO_FOUNDRY_PROJECT_RESOURCE_ID"] = project_id
+    if data.get("foundryAccountName") is not None and not isinstance(data["foundryAccountName"], str):
+        raise ValueError("Foundry account name must be text.")
+    account_name = text("foundryAccountName")
+    if account_name:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", account_name):
+            raise ValueError("Foundry account name must be 2-64 letters, digits or hyphens, starting and ending with a letter or digit.")
+        env["HYDRO_FOUNDRY_ACCOUNT_NAME"] = account_name
     project_name = text("foundryProjectName")
     if project_name:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):

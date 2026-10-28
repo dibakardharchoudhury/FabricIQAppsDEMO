@@ -511,6 +511,7 @@ class ProjectCreationTests(unittest.TestCase):
             "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "test-version",
             "HYDRO_FOUNDRY_MODEL_SKU": "TestSku", "HYDRO_FOUNDRY_MODEL_CAPACITY": "7",
             "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "",
+            "HYDRO_FOUNDRY_ACCOUNT_NAME": "",
         })
         settings.start()
         self.addCleanup(settings.stop)
@@ -762,6 +763,28 @@ class ProjectCreationTests(unittest.TestCase):
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_NEW_PROJECT_NAME": "../bad"}):
             with self.assertRaises(ValueError):
                 project.environment_name("t", "w", "sub")
+
+    def test_named_account_is_exact_and_scopes_state_without_changing_blank_defaults(self):
+        original = project.environment_name("t", "w", "sub")
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": "new-res"}):
+            name = project.environment_name("t", "w", "sub")
+            self.assertNotEqual(name, original)
+            fake = self.fake()
+            fake.azd_values += 'AZURE_AI_ACCOUNT_NAME="new-res"\n'
+            self.create(fake)
+            self.assertEqual(fake.environment_settings()["AZURE_AI_ACCOUNT_NAME"], "new-res")
+            with self.assertRaisesRegex(fake.DeployError, "different account"):
+                self.create(self.fake())
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": "NEW-RES"}):
+                self.assertEqual(name, project.environment_name("T", "W", "SUB"))
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": "other-account"}):
+                self.assertNotEqual(name, project.environment_name("t", "w", "sub"))
+        for invalid in ("a", "-account", "account-", "has.dot", "x" * 65):
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": invalid}):
+                fake = self.fake()
+                with self.assertRaisesRegex(fake.DeployError, "Foundry account name"):
+                    self.create(fake)
+                self.assertEqual(fake.commands("azd", "provision"), [])
 
     def test_shared_project_name_reuses_the_existing_named_creation_pipeline(self):
         with patch.dict(os.environ, {

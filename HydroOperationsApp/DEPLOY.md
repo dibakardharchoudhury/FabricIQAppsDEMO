@@ -199,6 +199,7 @@ These are the same shared fields in **Full Deploy** and **Set up Foundry agents*
 | Field | What to enter | Meaning |
 |---|---|---|
 | **Azure subscription** | Choose the target subscription; use **Refresh subscriptions** to load accessible choices | Where Foundry resources are found or created. Select this **before** the project/model. Fabric capacity can be in a different subscription in the same tenant. |
+| **Foundry account name (optional)** | For example `hydro-demo-account` | Parent Azure AI Services resource containing the project. Scopes existing-project selection to this account and sets the exact account name when creating missing resources. Blank preserves automatic naming/discovery. |
 | **Foundry project name** | For example `hydro-demo-project` | Existing project to reuse, or the exact project name to create with approval below. For duplicate names/scoped access, a full project ARM ID can identify an existing project. |
 | **Model deployment name** | For example `hydro-chat` if that deployment already exists, or a supported catalog chat model name for creation | Not an agent name or API endpoint. An existing alias must resolve to a model/version in the selected subscription; an arbitrary invented alias is not a catalog model. |
 | **Check this box if you want to create a new Foundry project with the multi-agent setup.** | Leave off for reuse; check only to approve creating missing resources | Existing projects are still reused. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
@@ -207,7 +208,11 @@ These are the same shared fields in **Full Deploy** and **Set up Foundry agents*
 
 For an already prepared, unambiguous target, blank project/model fields can use
 saved values or verified discovery. For a new Foundry setup, select the subscription,
-enter the intended project and model names once, and approve creation if needed.
+enter the intended account (optional), project and model names once, and approve creation if needed.
+Account names use 2-64 letters, digits or hyphens and must start and end with a letter
+or digit. The project is a child resource, not another name for the account.
+An account name alone does not approve creation. A conflicting project ARM ID or
+provisioned account readback stops setup instead of silently selecting another account.
 The optional app-registration controls are inside **Fabric App authentication**;
 leave that section unchanged for automatic discovery/reuse.
 Setup configures the specialists, connections, toolbox and hosted coordinator
@@ -487,6 +492,13 @@ successful tool discovery alone does not establish a successful native answer.
   subscription is resolved to its catalog model/version; catalog chat model
   names also work. Both standalone Foundry setup and Full Deploy use this flow.
   Approval resets on reload or target change.
+- **Account naming:** enter **Foundry account name (optional)** to control the parent
+  resource name too. CLI users can set process-local `HYDRO_FOUNDRY_ACCOUNT_NAME`.
+  The template receives it as `AZURE_AI_ACCOUNT_NAME`; the project name remains
+  `AZURE_AI_PROJECT_NAME`. Existing projects are reused only inside the selected
+  account. This is not a rename/move operation and does not adopt an arbitrary
+  existing account from another resource group to create a missing project.
+  Azure name conflicts or missing permissions stop provisioning; no replacement name is generated.
 - **Defaults:** target/project-hashed supporting resource names, capacity region,
   catalog default version (or the resolved deployment's version) and minimum/default
   capacity. Setup prefers regional Standard, then DataZoneStandard, then

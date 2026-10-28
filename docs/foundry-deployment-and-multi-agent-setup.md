@@ -144,8 +144,17 @@ Consequences:
   Every publish uses a generated, untracked azd project under `~/.fabric-demo/hosted-agent/`, keyed by the full
   verified endpoint. Repository-local azd environments and registry hints cannot redirect a deployment.
 - **Creation is opt-in and repeatable.** The new project lives in `~/.fabric-demo/foundry-project/<name>`, where the name
-  is derived from tenant, subscription, workspace and the requested project name. The exact requested
-  name is passed as `AZURE_AI_PROJECT_NAME`; a matching existing project is reused on rerun.
+  is derived from tenant, subscription, workspace and the requested project name, plus the
+  account name when supplied. The exact requested project name is passed as
+  `AZURE_AI_PROJECT_NAME`. The local app's optional **Foundry account name** maps to
+  `HYDRO_FOUNDRY_ACCOUNT_NAME` and template setting `AZURE_AI_ACCOUNT_NAME`; it names
+  the parent Azure AI Services resource, not the child project. Blank account names
+  preserve the existing automatic naming/discovery behavior. A matching existing
+  project in the selected account is reused on rerun. Account names are validated
+  before provisioning and verified in provisioning readback; conflicting explicit
+  project identities fail rather than falling back to another account. Creation
+  remains explicitly opt-in. This setting does not rename/move resources or adopt
+  an arbitrary existing account in another resource group for a missing project.
   Retain this state for reruns; on another machine explicitly
   select the existing endpoint instead of opting into another project. No tenant-specific name is embedded in source.
 - **One target per hosted coordinator.** The stable `hydro-*` names are application contracts, not tenant identities.

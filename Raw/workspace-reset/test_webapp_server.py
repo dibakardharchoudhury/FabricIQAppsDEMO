@@ -1355,6 +1355,15 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Existing Foundry project name"):
                 SERVER._deploy_environment({"foundryProjectName": invalid})
 
+    def test_account_name_is_validated_and_forwarded_without_creation_approval(self):
+        self.assertEqual(SERVER._deploy_environment({"foundryAccountName": "  hydro-account  "}), {
+            "HYDRO_FOUNDRY_ACCOUNT_NAME": "hydro-account",
+        })
+        self.assertEqual(SERVER._deploy_environment({"foundryAccountName": " "}), {})
+        for invalid in ("a", "-account", "account-", "has spaces", "has.dot", "a" * 65, True):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Foundry account name"):
+                SERVER._deploy_environment({"foundryAccountName": invalid})
+
     def test_project_resource_id_is_explicit_validated_and_forwarded_only_to_setup(self):
         project_id = (
             "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/demo"
@@ -1428,8 +1437,10 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         self.assertIsNone(start.call_args.args[1])  # nothing set: the server's own environment still applies
 
     def test_two_name_creation_is_forwarded_to_standalone_and_full_workflow(self):
-        settings = {"foundryNewProjectName": "my-new-project", "foundryModel": "approved-chat", "createFoundry": True}
+        settings = {"foundryAccountName": "my-foundry-account", "foundryNewProjectName": "my-new-project",
+                    "foundryModel": "approved-chat", "createFoundry": True}
         expected = {
+            "HYDRO_FOUNDRY_ACCOUNT_NAME": "my-foundry-account",
             "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "my-new-project",
             "HYDRO_FOUNDRY_MODEL": "approved-chat", "HYDRO_FOUNDRY_CREATE": "true",
         }
@@ -1500,7 +1511,7 @@ console.log(JSON.stringify([
                 self.assertIn(f'id="{prefix}{suffix}"', form)
             self.assertIn(f'foundryPayload("{prefix}")', page)
             normal_fields = form[:form.index('<details')]
-            self.assertEqual(normal_fields.count('type="text"'), 3)
+            self.assertEqual(normal_fields.count('type="text"'), 4)
             self.assertLess(form.index(f'id="{prefix}AzureSubscriptionId"'), form.index(f'id="{prefix}FoundryProjectName"'))
             self.assertIn("FoundryCreate", normal_fields)
             self.assertIn("Automatic multi-agent setup", normal_fields)
@@ -1523,7 +1534,8 @@ console.log(JSON.stringify([
             self.assertIn(f'<div id="{client_id}Fields" hidden>', form)
             self.assertIn("Use a pre-created app registration", form)
             self.assertNotIn("Keep this target's current setting", form)
-            self.assertIn("Enter these once.", form)
+            self.assertIn("Foundry account is the parent Azure resource", form)
+            self.assertIn("FoundryAccountName", form)
             self.assertIn("Saved project or automatic discovery", form)
             self.assertNotIn("usage charges", form)
             self.assertIn("Check this box if you want to create a new Foundry project with the multi-agent setup.", form)
@@ -1604,9 +1616,15 @@ for (const clientId of spaClientIds) {
 const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
-for (const suffix of ["FoundryCreate", "FoundryProjectName", "FoundryModel",
+for (const suffix of ["FoundryCreate", "FoundryAccountName", "FoundryProjectName", "FoundryModel",
                      "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
 """ + function + """
+assert.equal(foundryValid("deploy"), true);
+for (const invalid of ["a", "-account", "account-", "has.dot", "x".repeat(65)]) {
+  fields.deployFoundryAccountName.value = invalid;
+  assert.equal(foundryValid("deploy"), false);
+}
+fields.deployFoundryAccountName.value = "my-account";
 assert.equal(foundryValid("deploy"), true);
 fields.deployFoundryCreate.checked = true;
 assert.equal(foundryValid("deploy"), false);
@@ -1637,7 +1655,7 @@ const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
 const suffixes = [
-  "AzureSubscriptionId", "FoundryProjectName",
+  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName",
   "FoundryModel", "FoundryCreate",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
@@ -1650,6 +1668,8 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(foundryPayload(prefix).createFoundry, false);
   assert.equal(foundryPayload(prefix).foundryModel, "");
   assert.equal(foundryValid(prefix), true);
+  $(prefix+"FoundryAccountName").value = "my-account";
+  assert.equal(foundryPayload(prefix).foundryAccountName, "my-account");
   $(prefix+"FoundryProjectName").value = "existing-project-name";
   $(prefix+"FoundryModel").value = "existing-model";
   assert.equal(foundryPayload(prefix).foundryProjectResourceId, "");
