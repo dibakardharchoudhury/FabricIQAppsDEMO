@@ -11,6 +11,7 @@ import {
   knowledgeFaultPulse,
   knowledgeHaloPadding,
   knowledgeFocusElementIds,
+  layoutOntologyModel,
   telemetryFlowEdgeIds,
 } from '../../knowledgeGraphVisuals'
 import type { AppTheme } from '../../hooks/useTheme'
@@ -34,13 +35,18 @@ const nodeIcons = Object.fromEntries(Object.entries(iconPath).map(([type, path])
   `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`)}`,
 ])) as Record<KnowledgeNode['type'], string>
 
-function applyGraphFocus(graph: Core, nodes: KnowledgeNode[], edges: KnowledgeEdge[], selectedId?: string) {
+function applyGraphFocus(graph: Core, nodes: KnowledgeNode[], edges: KnowledgeEdge[], selectedId?: string, modelView = false) {
   graph.elements().removeClass('focus-dimmed focus-neighbor focus-selected')
   graph.$(':selected').unselect()
   if (!selectedId) return
   const selected = graph.getElementById(selectedId)
   if (selected.empty()) return
   selected.select()
+  if (modelView) {
+    selected.closedNeighborhood().addClass('focus-neighbor')
+    selected.addClass('focus-selected')
+    return
+  }
   graph.elements().addClass('focus-dimmed')
   const context = knowledgeFocusElementIds(nodes, edges, selectedId)
   graph.elements().filter(element => context.has(element.id())).removeClass('focus-dimmed').addClass('focus-neighbor')
@@ -59,7 +65,7 @@ function layoutOptions(layout: GraphLayout, graph: Core): LayoutOptions {
   return { name: 'cose', idealEdgeLength: 145, nodeRepulsion: () => 7800, padding: 64, animate, animationDuration: 620 }
 }
 
-export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, onSelect, controllerRef }: {
+export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, onSelect, controllerRef, modelView = false }: {
   nodes: KnowledgeNode[]
   edges: KnowledgeEdge[]
   selectedId?: string
@@ -67,6 +73,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
   theme: AppTheme
   onSelect: (nodeId: string) => void
   controllerRef: React.MutableRefObject<Core | null>
+  modelView?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const positionCacheRef = useRef(new Map<string, { x: number; y: number }>())
@@ -92,7 +99,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             'background-blacken': -0.04, 'background-image': 'data(icon)', 'background-fit': 'none',
             'background-width': '44%', 'background-height': '44%',
             'border-color': 'data(ring)', 'border-width': 3, label: 'data(label)', color: color('--cp-text'),
-            'font-family': 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': 10.5, 'font-weight': 600, 'min-zoomed-font-size': 7,
+            'font-family': modelView ? 'Segoe UI, Aptos, Calibri, sans-serif' : 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': modelView ? 12 : 10.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 7,
             'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': '118px',
             'text-overflow-wrap': 'anywhere',
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '4px',
@@ -140,21 +147,22 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
       initializedRef.current = false
       graph.destroy()
     }
-  }, [controllerRef, theme])
+  }, [controllerRef, modelView, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
     const flowingEdges = telemetryFlowEdgeIds(nodes, edges)
     const nodesById = new Map(nodes.map(node => [node.id, node]))
+    const css = getComputedStyle(document.documentElement)
     const routes = knowledgeEdgeRoutes(edges)
     const elements: ElementDefinition[] = [
       ...nodes.map(node => ({
         data: {
           ...node,
-          color: KNOWLEDGE_TYPE_COLOR[node.type],
+          color: modelView ? css.getPropertyValue('--cp-accent').trim() : KNOWLEDGE_TYPE_COLOR[node.type],
           size: KNOWLEDGE_NODE_SIZE[node.type],
-          ring: KNOWLEDGE_STATUS_COLOR[node.status],
+          ring: modelView ? css.getPropertyValue('--cp-border-strong').trim() : KNOWLEDGE_STATUS_COLOR[node.status],
           icon: nodeIcons[node.type],
           haloPadding: knowledgeHaloPadding(13, graph.zoom()),
         },
@@ -162,7 +170,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
       ...edges.map(item => ({
         data: {
           ...item,
-          color: KNOWLEDGE_EDGE_COLOR[item.type],
+          color: modelView ? css.getPropertyValue('--cp-link').trim() : KNOWLEDGE_EDGE_COLOR[item.type],
           flow: flowingEdges.has(item.id) ? 1 : 0,
           flowColor: KNOWLEDGE_STATUS_COLOR[nodesById.get(item.source)?.status ?? 'nodata'],
           curveDistance: routes.get(item.id)?.distance ?? 0,
@@ -195,26 +203,28 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         if (position && added.isNode()) added.position(position)
       }
     })
-    applyGraphFocus(graph, nodes, edges, selectedId)
+    applyGraphFocus(graph, nodes, edges, selectedId, modelView)
     if ((!wasInitialized || needsLayout) && graph.nodes().nonempty()) {
       initializedRef.current = true
       previousLayoutRef.current = layout
-      graph.layout(layoutOptions(layout, graph)).run()
+      if (modelView) layoutOntologyModel(graph, layout)
+      else graph.layout(layoutOptions(layout, graph)).run()
     }
-  }, [controllerRef, edges, layout, nodes, selectedId, theme])
+  }, [controllerRef, edges, layout, modelView, nodes, selectedId, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph || !initializedRef.current || previousLayoutRef.current === layout) return
     previousLayoutRef.current = layout
-    graph.layout(layoutOptions(layout, graph)).run()
-  }, [controllerRef, layout, theme])
+    if (modelView) layoutOntologyModel(graph, layout)
+    else graph.layout(layoutOptions(layout, graph)).run()
+  }, [controllerRef, layout, modelView, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
-    applyGraphFocus(graph, nodes, edges, selectedId)
-  }, [controllerRef, edges, nodes, selectedId, theme])
+    applyGraphFocus(graph, nodes, edges, selectedId, modelView)
+  }, [controllerRef, edges, modelView, nodes, selectedId, theme])
 
   useEffect(() => {
     const graph = controllerRef.current

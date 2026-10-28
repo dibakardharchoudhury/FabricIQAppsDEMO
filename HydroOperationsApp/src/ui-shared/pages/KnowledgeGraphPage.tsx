@@ -14,6 +14,7 @@ import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 import { useExpandedView } from '../hooks/useExpandedView'
 import { useTheme } from '../hooks/useTheme'
 import { useTreeExpansion } from '../hooks/useTreeExpansion'
+import { OntologyModelView } from './OntologyModelView'
 
 const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
   { type: 'facility', label: 'Facilities' },
@@ -45,6 +46,17 @@ function navigateTo(tab: string) {
 }
 
 export function KnowledgeGraphPage() {
+  const [view, setView] = useState<'ontology' | 'native'>('ontology')
+  return <div>
+    <div className="kg-view-choice" role="group" aria-label="Knowledge Graph view">
+      <button type="button" aria-pressed={view === 'ontology'} onClick={() => setView('ontology')}>Ontology model</button>
+      <button type="button" aria-pressed={view === 'native'} onClick={() => setView('native')}>Native asset instances</button>
+    </div>
+    {view === 'ontology' ? <OntologyModelView /> : <NativeKnowledgeGraphPage />}
+  </div>
+}
+
+function NativeKnowledgeGraphPage() {
   const data = useHydroOperationsData()
   const { theme } = useTheme()
   const graphView = useExpandedView()

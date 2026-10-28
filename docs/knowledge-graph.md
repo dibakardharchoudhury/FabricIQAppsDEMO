@@ -1,15 +1,34 @@
 # Hydro Operations Knowledge Graph
 
-## Current execution contract and unresolved FEATURE blocker
+## Direct Ontology model and separate native instance view
 
-The production canvas uses **only the explicitly bound, materialized native
-Ontology graph**. The former source-backed default and execution selector are
-retired. Lakehouse/SQL connector joins must not substitute for native topology.
-SQL and Eventhouse may enrich actual native entities. The header counts returned
-instances and native links, not declared relationship types as a readiness claim.
-Advanced details report visible connected components and isolates without
-inventing connecting edges. Selecting an asset in the tree switches to its
-selected-asset scope.
+The default **Ontology model** reads the live numeric generation-2 definition.
+Its nodes are entity types, not asset instances; edges are exactly the declared
+relationship types, resolved by endpoint identity rather than inferred names or
+foreign keys. No GraphModel query, materialization, source-row execution or
+topology fallback is involved. Counts explicitly describe entity/relationship
+types. The inspector retains property definitions, declared keys, direction and
+cardinality; JSON export is labelled `ontology-schema`.
+
+Each real component is laid out and packed separately. Types without declared
+relationships form a compact grid instead of a long row. All labels remain
+visible at overview zoom. Selecting a type highlights its neighborhood without
+dimming the rest of the model into unreadability. Search filters only the type
+list, preserving the complete diagram and every declared edge.
+
+The separate **Native asset instances** view still uses **only the explicitly
+bound, materialized native Ontology graph**. Lakehouse/SQL connector joins cannot
+substitute for native instance topology. SQL and Eventhouse may enrich actual
+native entities. Its counts describe returned instances and links; selecting an
+asset in the tree switches to its selected-asset scope.
+
+A fresh live definition read verified **18 entity types / 17 relationship
+types**, comprising five components. **SparePart**, **WeatherVariable** and
+**WeatherArea** have no declared relationships. Their isolation is real metadata,
+not missing renderer edges. The model displays and identifies them instead of
+inventing associations from equipment descriptions, polymorphic forecast target
+IDs or weather-property names. The bounded read took about 11 seconds including
+Azure CLI token acquisition, with zero GraphModel or source-row requests.
 
 On October 28, the live V14 Ontology passed the numeric generation-2 check, but
 its explicitly bound GraphModel returned **204 No Content** for queryable schema.
@@ -24,7 +43,8 @@ failed live readback: Fabric removed the submitted source metadata, and eligibil
 remained unchanged. The original definition was restored and verified in both
 directions. No unverified workaround is included in the notebooks.
 
-**Native graph availability remains blocked.** Resolve source eligibility through
+**Native instance availability remains blocked; the Ontology model does not depend
+on this prerequisite.** Resolve source eligibility through
 the selected Ontology's supported portal binding/Manage graph workflow or Fabric
 support, then select eligible entities/relationships, Continue and Materialize.
 Verify native readiness and query results against the explicit binding before
@@ -35,10 +55,12 @@ The dated source-backed acceptance records below are historical evidence only;
 they do not describe the current production execution contract or prove native
 materialization.
 
-Validation for this correction: 120 focused graph tests pass, including rejection
-of successful source projections at both snapshot and renderer boundaries,
-preserved native maintenance endpoints, connected-component/isolate diagnostics,
-and selected-asset scope transitions. This is not live native-query acceptance.
+Validation: 125 focused graph tests pass. Tests cover exact schema endpoints,
+parallel declarations, dangling/duplicate identity rejection, immutable input,
+component packing and compact isolate grids in all three layouts, and separation
+from native/source-instance execution. Native maintenance endpoints, rejection
+of source topology at native boundaries, and asset-scope tests remain intact.
+This is not live native-query acceptance.
 
 ## Purpose
 

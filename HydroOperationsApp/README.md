@@ -100,13 +100,21 @@ interactive Digital Twin model remains lazy-loaded when a selected asset support
 automatically without an additional operator action. The bootstrap uses local system fonts and does
 not wait on a third-party font stylesheet.
 
-The **Knowledge Graph** visualizes this composition as a scoped property graph. Its performant
+The **Knowledge Graph** defaults to an **Ontology model**: one node per entity type and
+one arrow per declared relationship, read directly from the live generation-2 definition.
+It does not require graph materialization, execute source-row joins, or claim to show individual
+assets. Relationship endpoint identities and directions are preserved. Components are packed
+separately, genuinely unrelated types remain visible in a compact group, and search filters the
+type list rather than cutting connections out of the diagram. The inspector shows property
+definitions, declared keys and relationship cardinalities. Schema export uses JSON.
+
+The separate **Native asset instances** view visualizes operational composition as a scoped property graph. Its performant
 Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a
 WebGL dependency. It defaults to the selected turbine and synchronizes that selection with Overview,
 Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
 **generation-2 Ontology** and an explicitly bound, materialized ontology-owned
 GraphModel. Source-reconstructed topology is not a canvas fallback. SQL and Eventhouse
-only enrich actual native entities. Header counts describe returned instances and links;
+only enrich actual native entities. Native header counts describe returned instances and links;
 advanced details disclose visible connected components and isolates. Selecting an asset
 in the tree switches to its selected scope. Native exports use OWL/RDF Turtle.
 Missing materialization, source eligibility, access, valid identities or complete reads

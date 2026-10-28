@@ -5,7 +5,7 @@ import test from 'node:test'
 import cytoscape from 'cytoscape'
 import type { KnowledgeEdge, KnowledgeNode } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { summarizeKnowledgeGraph } from '../src/ui-shared/knowledgeGraphModel.ts'
-import { KNOWLEDGE_EDGE_INTERACTION_STYLE, knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeFocusElementIds, knowledgeHaloPadding, knowledgeTelemetryState, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
+import { KNOWLEDGE_EDGE_INTERACTION_STYLE, knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeFocusElementIds, knowledgeHaloPadding, knowledgeTelemetryState, layoutOntologyModel, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
 
 const NOW = Date.parse('2026-10-27T01:00:00Z')
 const node = (id: string, type: KnowledgeNode['type'], reading = false): KnowledgeNode => ({
@@ -20,6 +20,40 @@ const node = (id: string, type: KnowledgeNode['type'], reading = false): Knowled
   reading: reading ? { opcuaNodeId: id, eventTime: new Date(NOW - 5_000).toISOString(), value: 42, quality: 'Good' } : undefined,
 })
 
+test('ontology layout packs real components and isolates without altering endpoints or direction', () => {
+  for (const layout of ['breadthfirst', 'concentric', 'cose'] as const) {
+    const graph = cytoscape({
+      headless: true,
+      styleEnabled: true,
+      elements: [
+        ...['facility', 'equipment', 'weather', 'forecast', ...Array.from({ length: 12 }, (_, index) => `isolate-${index}`)]
+          .map(id => ({ data: { id, type: id === 'facility' ? 'facility' : 'ontology', label: id } })),
+        { data: { id: 'asset-facility', source: 'equipment', target: 'facility' } },
+        { data: { id: 'weather-forecast', source: 'weather', target: 'forecast' } },
+      ],
+    })
+    const before = graph.elements().map(element => ({ id: element.id(), source: element.data('source'), target: element.data('target') }))
+    layoutOntologyModel(graph, layout)
+    assert.deepEqual(graph.elements().map(element => ({ id: element.id(), source: element.data('source'), target: element.data('target') })), before)
+    assert.ok(graph.nodes().every(item => Number.isFinite(item.position('x')) && Number.isFinite(item.position('y'))))
+    const isolateY = new Set(graph.nodes().filter(item => item.id().startsWith('isolate-')).map(item => item.position('y')))
+    assert.ok(isolateY.size > 1, 'unrelated types must form a compact grid, not a long single row')
+    const first = graph.getElementById('facility').closedNeighborhood().boundingBox()
+    const second = graph.getElementById('weather').closedNeighborhood().boundingBox()
+    assert.ok(first.x2 < second.x1 || second.x2 < first.x1 || first.y2 < second.y1 || second.y2 < first.y1, 'component bounds must not overlap')
+    graph.destroy()
+  }
+})
+
+test('default ontology model remains distinct from native asset-instance execution', () => {
+  const page = readFileSync(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
+  const model = readFileSync(new URL('../src/ui-shared/pages/OntologyModelView.tsx', import.meta.url), 'utf8')
+  assert.match(page, /useState<'ontology' \| 'native'>\('ontology'\)/)
+  assert.match(model, /queryOntologyContract\(force\)/)
+  assert.doesNotMatch(model, /\b(?:queryOntologyGraph|queryOntologySourceGraph|GraphModel|graphModelId)\b/)
+  assert.match(model, /Schema only - not individual turbines/)
+  assert.match(model, /Search filters this list, not the diagram/)
+})
 test('topology diagnostics distinguish disconnected components from isolates without adding links', () => {
   const nodes = [node('facility', 'facility'), node('equipment', 'equipment'), node('weather', 'ontology'), node('isolated', 'ontology')]
   const edges: KnowledgeEdge[] = [

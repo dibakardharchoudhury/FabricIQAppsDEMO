@@ -130,6 +130,54 @@ const roles: Record<string, { type: KnowledgeNodeType; key: string }> = {
   MaintenanceNotification: { type: 'notification', key: 'id' },
 }
 
+export function buildOntologyModel(ontology: OntologyContract | null): KnowledgeGraph {
+  const unavailable = (error: string): KnowledgeGraph => ({ nodes: [], edges: [], error })
+  if (!ontology || ontology.generation !== 2) return unavailable('A verified generation-2 Ontology definition is required.')
+  if (!ontology.entityTypes.length) return unavailable('The selected Ontology definition contains no entity types.')
+  const ids = new Set(ontology.entityTypes.map(entity => entity.id))
+  if (ids.size !== ontology.entityTypes.length) return unavailable('The Ontology definition contains duplicate entity type identities.')
+  if (new Set(ontology.relationshipTypes.map(relationship => relationship.id)).size !== ontology.relationshipTypes.length) {
+    return unavailable('The Ontology definition contains duplicate relationship identities.')
+  }
+  const nodes: KnowledgeNode[] = ontology.entityTypes.map(entity => ({
+    id: `ontology-type:${entity.id}`,
+    entityId: entity.id,
+    ontologyEntityTypeId: entity.id,
+    type: roles[entity.localName ?? entity.name]?.type ?? 'ontology',
+    label: (entity.localName ?? entity.name).replaceAll('_', ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2'),
+    subtitle: 'Entity type',
+    status: 'nodata',
+    properties: {
+      'Entity type': entity.name,
+      Namespace: entity.namespace,
+      'Source table': entity.sourceTable,
+      'Key properties': entity.entityIdParts.map(key => Object.entries(entity.propertyMetadata ?? {})
+        .find(([, property]) => property.id === key)?.[0] ?? key).join(', '),
+      'Property count': Object.keys(entity.properties).length,
+      'Declared relationships': ontology.relationshipTypes.filter(relationship =>
+        relationship.sourceEntityTypeId === entity.id || relationship.targetEntityTypeId === entity.id).length,
+    },
+    provenance: `Fabric Ontology ${ontology.displayName} · declared entity type, not an asset instance`,
+  }))
+  const edges: KnowledgeEdge[] = []
+  for (const relationship of ontology.relationshipTypes) {
+    if (!ids.has(relationship.sourceEntityTypeId) || !ids.has(relationship.targetEntityTypeId)) {
+      return unavailable(`Declared relationship ${relationship.name} references an entity type absent from this Ontology definition.`)
+    }
+    edges.push({
+      id: `ontology-relationship:${relationship.id}`,
+      source: `ontology-type:${relationship.sourceEntityTypeId}`,
+      target: `ontology-type:${relationship.targetEntityTypeId}`,
+      type: 'contains',
+      label: (relationship.label ?? relationship.name).replaceAll('_', ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2'),
+      ontologyRelationshipId: relationship.id,
+      ontologyRelationshipName: relationship.name,
+      provenance: `Declared Ontology relationship · ${relationship.sourceKeys.join(', ')} -> ${relationship.targetKeys.join(', ')}; not executed`,
+    })
+  }
+  return { nodes, edges }
+}
+
 function topologyIndex(nodes: KnowledgeNode[], edges: KnowledgeEdge[]) {
   const byId = new Map(nodes.map(node => [node.id, node]))
   const neighbours = new Map<string, string[]>()

@@ -2,11 +2,60 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseOntologyContract, type OntologyContract } from '../src/services/ontologyContract.ts'
 import { parseOntologyGraph, type OntologyGraph } from '../src/services/ontologyGraph.ts'
-import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, NATIVE_GRAPH_LOAD_TIMEOUT_MS, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { buildKnowledgeGraph, buildOntologyModel, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, NATIVE_GRAPH_LOAD_TIMEOUT_MS, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { selectOntology } from '../src/services/ontologyArtifactDiscovery.ts'
 import { createOntologyCache } from '../src/services/ontologyCache.ts'
 
 const part = (path: string, text: string) => ({ path, payload: Buffer.from(text).toString('base64'), payloadType: 'InlineBase64' })
+
+test('ontology model renders every declared type and relationship without native or source instances', () => {
+  const before = JSON.stringify(ontology)
+  const graph = buildOntologyModel(ontology)
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.nodes.length, ontology.entityTypes.length)
+  assert.equal(graph.edges.length, ontology.relationshipTypes.length)
+  assert.ok(graph.nodes.every(node => !node.nativeOid && !node.equipmentId && !node.reading && node.status === 'nodata'))
+  for (const relationship of ontology.relationshipTypes) {
+    const edge = graph.edges.find(item => item.ontologyRelationshipId === relationship.id)!
+    assert.equal(edge.source, `ontology-type:${relationship.sourceEntityTypeId}`)
+    assert.equal(edge.target, `ontology-type:${relationship.targetEntityTypeId}`)
+    assert.equal(edge.nativeOid, undefined)
+  }
+  assert.equal(JSON.stringify(ontology), before)
+})
+
+test('ontology model follows endpoint identities, keeps parallel declarations and does not invent isolate links', () => {
+  const contract = structuredClone(ontology)
+  const relationship = contract.relationshipTypes[0]
+  relationship.sourceEntityName = 'deliberately misleading name'
+  relationship.targetEntityName = relationship.sourceEntityName
+  contract.relationshipTypes.push({ ...relationship, id: 'parallel', name: 'Another declared association', compatibilityUnsupported: true })
+  const graph = buildOntologyModel(contract)
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.edges.length, contract.relationshipTypes.length)
+  const parallel = graph.edges.find(edge => edge.ontologyRelationshipId === 'parallel')!
+  assert.equal(parallel.source, `ontology-type:${relationship.sourceEntityTypeId}`)
+  assert.equal(parallel.target, `ontology-type:${relationship.targetEntityTypeId}`)
+  const isolated = contract.entityTypes.find(entity => !contract.relationshipTypes.some(edge =>
+    edge.sourceEntityTypeId === entity.id || edge.targetEntityTypeId === entity.id))!
+  assert.ok(graph.nodes.some(node => node.ontologyEntityTypeId === isolated.id))
+  assert.ok(!graph.edges.some(edge => edge.source === `ontology-type:${isolated.id}` || edge.target === `ontology-type:${isolated.id}`))
+})
+
+test('ontology model rejects ambiguous or dangling definitions without a partial diagram', () => {
+  const dangling = structuredClone(ontology)
+  dangling.relationshipTypes[0].targetEntityTypeId = 'absent'
+  const duplicateEntity = structuredClone(ontology)
+  duplicateEntity.entityTypes.push(duplicateEntity.entityTypes[0])
+  const duplicateRelationship = structuredClone(ontology)
+  duplicateRelationship.relationshipTypes.push(duplicateRelationship.relationshipTypes[0])
+  for (const contract of [null, dangling, duplicateEntity, duplicateRelationship]) {
+    const graph = buildOntologyModel(contract)
+    assert.ok(graph.error)
+    assert.deepEqual(graph.nodes, [])
+    assert.deepEqual(graph.edges, [])
+  }
+})
 const entity = (name: string, key: string, foreignKey?: string) => part(`entities/${name}.tmdl`, `entity ${name}
     backingTable: ${name}
     keyProperty: ${key}_id

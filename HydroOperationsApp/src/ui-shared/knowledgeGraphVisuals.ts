@@ -1,5 +1,44 @@
 import type { KnowledgeEdge, KnowledgeNode } from './knowledgeGraphModel'
-import type { Css } from 'cytoscape'
+import type { Core, Css } from 'cytoscape'
+
+export function layoutOntologyModel(graph: Core, layout: 'breadthfirst' | 'cose' | 'concentric') {
+  if (graph.nodes().empty()) return
+  const components = graph.elements().components().sort((a, b) =>
+    b.nodes().length - a.nodes().length || a.nodes()[0].id().localeCompare(b.nodes()[0].id()))
+  const connected = components.filter(component => component.edges().nonempty())
+  const isolates = components.filter(component => component.edges().empty()).flatMap(component => component.nodes().toArray())
+  const boxes = connected.map(component => {
+    const roots = ['facility', 'system', 'equipment', 'instrument', 'signal']
+      .map(type => component.nodes().filter(node => node.data('type') === type).map(node => node.id()))
+      .find(ids => ids.length)
+      ?? [component.nodes().sort((a, b) => b.degree() - a.degree() || a.id().localeCompare(b.id()))[0].id()]
+    const options = { name: layout, fit: false, animate: false, nodeDimensionsIncludeLabels: true, padding: 32 }
+    if (layout === 'breadthfirst') component.layout({ ...options, name: 'breadthfirst', roots, directed: false, spacingFactor: 1.35 }).run()
+    else if (layout === 'concentric') component.layout({ ...options, name: 'concentric', minNodeSpacing: 65 }).run()
+    else component.layout({ ...options, name: 'cose', idealEdgeLength: 180, nodeRepulsion: () => 9000 }).run()
+    return { component, bounds: component.nodes().boundingBox({ includeLabels: true, includeOverlays: false }) }
+  })
+  const area = boxes.reduce((sum, { bounds }) => sum + (bounds.w + 100) * (bounds.h + 100), 0)
+  const aspect = Math.max(1, graph.width() / Math.max(1, graph.height()))
+  const pairWidth = boxes.length === 2 && graph.width() >= graph.height()
+    ? boxes.reduce((sum, { bounds }) => sum + bounds.w, 110) : 0
+  const width = Math.max(380, ...boxes.map(({ bounds }) => bounds.w), Math.sqrt(area * aspect), pairWidth)
+  let x = 0
+  let y = 0
+  let rowHeight = 0
+  for (const { component, bounds } of boxes) {
+    if (x && x + bounds.w > width) { x = 0; y += rowHeight + 110; rowHeight = 0 }
+    component.nodes().positions(node => ({ x: node.position('x') - bounds.x1 + x, y: node.position('y') - bounds.y1 + y }))
+    x += bounds.w + 110
+    rowHeight = Math.max(rowHeight, bounds.h)
+  }
+  const columns = Math.max(1, Math.min(Math.floor(width / 190), isolates.length))
+  isolates.forEach((node, index) => node.position({
+    x: (index % columns) * 190 + 60,
+    y: y + rowHeight + (boxes.length ? 140 : 60) + Math.floor(index / columns) * 150,
+  }))
+  graph.fit(undefined, 56)
+}
 
 export const KNOWLEDGE_EDGE_INTERACTION_STYLE: Css.Edge = {
   'overlay-opacity': 0,
