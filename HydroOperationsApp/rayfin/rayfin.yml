@@ -16,6 +16,7 @@ services:
       enabled: true
       externalEntraExchange: true
     allowedRedirectUris:
+      - https://lean-lake-e7891f0381-swedencentral.webapp.fabricapps.net
       - https://sleek-echo-51b3703235-swedencentral.webapp.fabricapps.net
       - https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net
       - https://jade-dew-88c8451584-swedencentral.webapp.fabricapps.net
