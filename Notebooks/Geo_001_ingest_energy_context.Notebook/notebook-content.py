@@ -112,6 +112,9 @@
 #   Historical manual corrections are retained byte-for-byte, not promoted to a
 #   later revision. Serving MUST join message_feature_id AND message_version.
 #   Unsupported/ambiguous notices remain unlinked with coverage counts in run logs.
+#   When no manual links exist, coverage counts only the staged automatic keys;
+#   no empty-manual join/count job is launched. Nonempty manual history keeps all
+#   revision/asset validation and orphan coverage checks.
 # Both new tables have validated flat `Tables/<table>` locations and atomic writes.
 # Auxiliary failures keep last-good tables, are archived/reported, and fail the job.
 # Auxiliary attempt logs do not add rows or change counts in `geo_source_status`.
@@ -1964,13 +1967,9 @@ class SparkStore:
             )).select(F.col("feature_id").alias("asset_feature_id"), F.col("layer_id").alias("asset_layer_id"))
             # Validate curated references with a distributed join, not a driver
             # collection of national network features. Preserve orphaned history.
-            current_manual_rows = real_assets.join(
-                F.broadcast(manual_for_current_messages), ["asset_feature_id", "asset_layer_id"], "inner",
-            ) if manual_count else manual_for_current_messages
-            current_manual = current_manual_rows.select(*LINK_MESSAGE_KEY).distinct()
-            linked_messages = automatic_messages.unionByName(current_manual).distinct().count()
-            current_manual_count = current_manual.count()
-            orphaned_manual_current = manual_for_current_messages.count() - current_manual_rows.count() if manual_count else 0
+            linked_messages, current_manual_count, orphaned_manual_current = current_link_coverage(
+                automatic_messages, manual_for_current_messages, real_assets, manual_count,
+            )
             spool.row_count = automatic_count + manual_count
             spool.details.update({
                 **asset_counts, "source_feature_table_version": source_version,
@@ -2000,6 +1999,21 @@ class SparkStore:
 
 def exclude_manually_curated_messages(automatic, manual):
     return automatic.join(manual.select(*LINK_MESSAGE_KEY).distinct(), list(LINK_MESSAGE_KEY), "left_anti")
+
+
+def current_link_coverage(automatic_messages, manual_for_current_messages, real_assets, manual_count):
+    if not manual_count:
+        return automatic_messages.count(), 0, 0
+    from pyspark.sql import functions as F
+    current_manual_rows = real_assets.join(
+        F.broadcast(manual_for_current_messages), ["asset_feature_id", "asset_layer_id"], "inner",
+    )
+    current_manual = current_manual_rows.select(*LINK_MESSAGE_KEY).distinct()
+    return (
+        automatic_messages.unionByName(current_manual).distinct().count(),
+        current_manual.count(),
+        manual_for_current_messages.count() - current_manual_rows.count(),
+    )
 
 
 def validate_link_frame(frame, manual=False):

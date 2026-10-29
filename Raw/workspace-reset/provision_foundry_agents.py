@@ -72,9 +72,15 @@ def verify_published_identity(definition: dict, workspace: str, ontology: str) -
         raise RuntimeError("No published Data Agent source matches the selected Ontology v2.")
 
 
-def read_data_agent_definition(deploy, workspace: str, agent_id: str, headers: dict, *, collection="dataAgents") -> dict:
+def read_data_agent_definition(
+    deploy, workspace: str, agent_id: str, headers: dict, *, collection="dataAgents",
+    definition_cache: dict[tuple[str, str, str], dict] | None = None,
+) -> dict:
     if collection not in ("dataAgents", "ontologies", "items"):
         raise ValueError("Unsupported Fabric definition collection.")
+    key = (workspace, collection, agent_id)
+    if definition_cache is not None and key in definition_cache:
+        return definition_cache[key]
     response = request_with_read_retry(
         "POST", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/{collection}/{agent_id}/getDefinition",
         headers=headers, timeout=60,
@@ -96,7 +102,12 @@ def read_data_agent_definition(deploy, workspace: str, agent_id: str, headers: d
             time.sleep(2)
         else:
             raise deploy.DeployError(f"{collection} definition read timed out.")
-    return response.json()
+    definition = response.json()
+    if not isinstance(definition, dict):
+        raise deploy.DeployError(f"{collection} definition read returned an invalid object.")
+    if definition_cache is not None:
+        definition_cache[key] = definition
+    return definition
 
 
 def published_sql_source_ready(definition: dict, workspace: str, sql_id: str) -> bool:
@@ -354,7 +365,11 @@ def ensure_native_toolbox(endpoint: str, headers: dict, *, verify_only: bool = F
     return version
 
 
-def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> None:
+def verify_prepared_connections(
+    deploy, tenant: str, workspace: str, ontology: str, values: dict[str, str], *,
+    foundry_headers: dict[str, str] | None = None,
+    definition_cache: dict[tuple[str, str, str], dict] | None = None,
+) -> None:
     value = lambda key: deploy._public_config_value(values, key)
     project_id = value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID")
     agent_id = value("RAYFIN_PUBLIC_FOUNDRY_DATA_AGENT_ID")
@@ -389,14 +404,20 @@ def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: s
         if (not fabric_iq_target_matches(target, workspace, item, ontology=is_ontology)
                 or not definition_matches(connection, fabric_iq_connection_properties(target))):
             raise RuntimeError(f"Prepared Foundry connection {name} no longer matches the selected source/authentication.")
-    definition = read_data_agent_definition(deploy, workspace, agent_id, deploy.fabric_headers(tenant))
+    definition = read_data_agent_definition(
+        deploy, workspace, agent_id, deploy.fabric_headers(tenant), definition_cache=definition_cache,
+    )
     verify_published_identity(definition, workspace, ontology)
-    token = deploy.run_capture(deploy.az(
-        "account", "get-access-token", "--tenant", tenant, "--resource", "https://ai.azure.com",
-        "--query", "accessToken", "-o", "tsv",
-    ))
+    if foundry_headers is None:
+        token = deploy.run_capture(deploy.az(
+            "account", "get-access-token", "--tenant", tenant, "--resource", "https://ai.azure.com",
+            "--query", "accessToken", "-o", "tsv",
+        ))
+        if not token:
+            raise deploy.DeployError("No delegated Foundry token was returned.")
+        foundry_headers = {"Authorization": f"Bearer {token}"}
     ensure_native_toolbox(value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"),
-                          {"Authorization": f"Bearer {token}"}, verify_only=True)
+                          foundry_headers, verify_only=True)
 
 
 def verify_existing(deploy, tenant: str, workspace: str) -> None:
@@ -426,12 +447,11 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     generation = metadata.get("properties", {}).get("generation")
     if type(generation) is not int or generation != 2:
         raise deploy.DeployError("Live numeric Ontology generation 2 is required.")
-    if not deploy._published_operational_source_ready(workspace, values, "", deploy.fabric_headers(tenant)):
+    definition_cache: dict[tuple[str, str, str], dict] = {}
+    if not deploy._published_operational_source_ready(
+        workspace, values, "", deploy.fabric_headers(tenant), definition_cache=definition_cache,
+    ):
         raise deploy.DeployError(f"Published Data Agent/ontology-associated SQL configuration is incomplete. {guidance}")
-    try:
-        verify_prepared_connections(deploy, tenant, workspace, ontology, values)
-    except RuntimeError as error:
-        raise deploy.DeployError(f"{error} {guidance}") from error
     token = deploy.run_capture(deploy.az(
         "account", "get-access-token", "--tenant", tenant, "--resource", "https://ai.azure.com",
         "--query", "accessToken", "-o", "tsv",
@@ -439,6 +459,13 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     if not token:
         raise deploy.DeployError("No delegated Foundry token was returned.")
     headers = {"Authorization": f"Bearer {token}"}
+    try:
+        verify_prepared_connections(
+            deploy, tenant, workspace, ontology, values,
+            foundry_headers=headers, definition_cache=definition_cache,
+        )
+    except RuntimeError as error:
+        raise deploy.DeployError(f"{error} {guidance}") from error
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
         deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, "hydro-fabric-iq",
     ), cwd=deploy.APP_DIR))
@@ -750,6 +777,43 @@ def read_model_selection(deploy, tenant: str, project_id: str, wanted: str) -> s
         raise deploy.DeployError(str(exc)) from exc
 
 
+def read_project_connections(deploy, project_id: str, headers: dict) -> list[dict]:
+    connections: list[dict] = []
+    url = f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview"
+    while url:
+        response = request_with_read_retry("GET", url, headers=headers, timeout=180)
+        if not response.ok:
+            raise deploy.DeployError(f"Cannot read Foundry connections: HTTP {response.status_code}.")
+        page = response.json()
+        rows = page.get("value")
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise deploy.DeployError("Foundry connection inventory is invalid.")
+        connections.extend(rows)
+        url = page.get("nextLink") or ""
+        if url:
+            parsed = urlparse(url)
+            if (parsed.scheme != "https" or parsed.netloc != "management.azure.com"
+                    or parsed.path != f"{project_id}/connections"):
+                raise deploy.DeployError("Unexpected Foundry connection pagination URL.")
+    return connections
+
+
+def prepare_hosted_image(deploy, tenant: str, selection: FoundrySelection) -> None:
+    token = deploy.run_capture(deploy.az(
+        "account", "get-access-token", "--tenant", tenant, "--resource", "https://management.azure.com/",
+        "--query", "accessToken", "-o", "tsv",
+    ))
+    if not token:
+        raise deploy.DeployError("No delegated Azure management token was returned for image preparation.")
+    connections = read_project_connections(deploy, selection.project_id, {"Authorization": f"Bearer {token}"})
+    hosted = _load_sibling("deploy_hosted_agent")
+    try:
+        registry = hosted.registry_name(connections, os.environ.get("HYDRO_ACR_NAME", ""))
+    except RuntimeError as error:
+        raise deploy.DeployError(str(error)) from error
+    hosted.ensure_hosted_image(deploy, registry=registry, subscription=selection.subscription)
+
+
 def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelection | None = None) -> None:
     selection = selection or resolve_project(deploy, tenant, workspace, allow_create=True)
     if not selection.project_id:
@@ -778,14 +842,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
 
     print(f"Foundry: using verified model deployment {model}.", flush=True)
 
-    project_connections = request("GET", f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview", arm_headers).json()
-    connections = project_connections.get("value", [])
-    while project_connections.get("nextLink"):
-        next_link = urlparse(project_connections["nextLink"])
-        if next_link.scheme != "https" or next_link.netloc != "management.azure.com" or next_link.path != f"{project_id}/connections":
-            raise deploy.DeployError("Unexpected Foundry connection pagination URL.")
-        project_connections = request("GET", project_connections["nextLink"], arm_headers).json()
-        connections.extend(project_connections.get("value", []))
+    connections = read_project_connections(deploy, project_id, arm_headers)
     try:
         insights_id = linked_application_insights(connections)
     except RuntimeError as error:

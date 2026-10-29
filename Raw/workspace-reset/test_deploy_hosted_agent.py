@@ -168,6 +168,18 @@ def run(fake, live, **overrides):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_prepared_image_is_built_once_and_publication_still_reads_its_digest(self):
+        fake = FakeDeploy()
+        tag, digest = hosted.ensure_hosted_image(fake, registry="myreg", subscription="sub-1")
+        self.assertEqual(digest, DIGEST_B)
+        self.assertEqual(fake.tags[tag], digest)
+        self.assertFalse(fake.commands("azd", "deploy"))
+        with patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": "true"}):
+            run(fake, [agent(DIGEST_B)])
+        self.assertEqual(len(fake.commands("az", "acr", "build")), 1)
+        self.assertGreaterEqual(len(fake.commands("az", "acr", "repository")), 3)
+        self.assertFalse(fake.commands("azd", "deploy"))
+
     def test_every_file_the_dockerfile_copies_is_fingerprinted(self):
         names = {path.relative_to(REPO_ROOT).as_posix() for path in hosted.packaged_sources(REPO_ROOT)}
         for expected in (

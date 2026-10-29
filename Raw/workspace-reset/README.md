@@ -231,6 +231,21 @@ items and 40 SPA redirects were preserved. The linked timing comparison separate
 the directly measured authentication saving from other service-latency variation;
 it is not a fresh-workspace/setup-pipeline timing guarantee.
 
+The October 29 Full Deploy baseline was **70m 35.688s**: Git sync 677.922s,
+Core setup 1381.391s, energy finalization 540.922s, Foundry 932.890s and app
+publication 702.407s. Git sync now avoids an unchanged Weather Environment rebuild
+only after comparing its authoritative published/staged library inventories,
+compute settings and external-library exports. Fresh/changed Environments still
+publish; comparison read failures stop the sync. The current engine also overlaps
+immutable image preparation with fresh backend provisioning, batches connector application with individual receipt
+validation, and avoids duplicate definition/token reads inside read-only Foundry
+verification. Energy setup consolidates serving queries and redundant notebook
+actions while preserving freshness and publication checks. Detailed substeps now
+emit `DEPLOY_SUBSTEP_TIMING=` records; concurrent durations are not additive.
+See the linked speed section for the complete substep audit and remaining
+service-bound waits. These are regression-tested mechanical reductions, not a
+measured new fresh-workspace deployment duration.
+
 ## What manual sync this replaces
 
 In the Fabric portal the manual flow is:

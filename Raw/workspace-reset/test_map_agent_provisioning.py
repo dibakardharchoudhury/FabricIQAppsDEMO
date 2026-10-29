@@ -266,6 +266,39 @@ class OwnershipAndBindingTests(HelpersTest):
         with self.assertRaisesRegex(self.error, "changed during reuse"):
             models.reusable_projection({"source": 1})
 
+    def test_publication_reuses_only_its_own_preflight_and_rechecks_source_versions(self):
+        from datetime import datetime, timezone
+        models = self.ns["MapReadModels"](Mock(), self.binding)
+        models.preflight = Mock()
+        models.ensure_models = Mock()
+        versions = {name: 7 for name in self.ns["SOURCE_TABLES"]}
+        models.source_versions = Mock(return_value=versions)
+        row = Mock()
+        row.asDict.return_value = {
+            "state": "ready", "read_model_run_id": RUN_ID, "built_at_utc": datetime.now(timezone.utc),
+            "source_versions_json": json.dumps(versions), "entity_count": 120, "link_count": 3,
+        }
+        models.spark.table.return_value.limit.return_value.collect.return_value = [row]
+        api = Mock()
+        api.binding = self.binding
+        api.ensure_agent.return_value = self.agent()
+        api.get_definition.return_value = self.minimal_parts()
+        for _ in range(2):
+            models.preflight.reset_mock()
+            models.source_versions.reset_mock()
+            result = self.call("publish_map_agent", api, models)
+            self.assertTrue(result["projection_reused"])
+            models.preflight.assert_called_once()
+            self.assertEqual(models.source_versions.call_count, 2)
+        models.preflight.reset_mock()
+        models.build()
+        models.preflight.assert_called_once()  # independent builds still validate before writes
+        api.configure_and_publish.reset_mock()
+        models.source_versions.side_effect = [versions, {**versions, "geo_source_status": 8}]
+        with self.assertRaisesRegex(self.error, "changed during reuse"):
+            self.call("publish_map_agent", api, models)
+        api.configure_and_publish.assert_not_called()
+
     def test_missing_model_cannot_reuse_ready_state_after_creating_empty_tables(self):
         models = self.ns["MapReadModels"](Mock(), self.binding)
         models.preflight = Mock()
@@ -837,14 +870,24 @@ class MCPAndOrchestrationTests(HelpersTest):
             self.call("publish_map_agent", api, models)
         models.preflight.assert_not_called()
         models.build.assert_not_called()
+        models._build_preflighted.assert_not_called()
         api.ensure_agent.assert_not_called()
+
+    def test_source_preflight_failure_precedes_agent_or_projection_writes(self):
+        api, models = Mock(), Mock()
+        models.preflight.side_effect = self.error("source identity mismatch")
+        with self.assertRaisesRegex(self.error, "source identity mismatch"):
+            self.call("publish_map_agent", api, models)
+        api.ensure_agent.assert_not_called()
+        models._build_preflighted.assert_not_called()
+        api.configure_and_publish.assert_not_called()
 
     def test_publication_requires_readback_but_never_invokes_runtime_canary(self):
         api, models = Mock(), Mock()
         api.binding = self.binding
         api.ensure_agent.return_value = self.agent()
         api.get_definition.return_value = self.minimal_parts()
-        models.build.return_value = {"read_model_run_id": RUN_ID}
+        models._build_preflighted.return_value = {"read_model_run_id": RUN_ID}
         self.ns["MapAgentMCP"] = Mock(side_effect=AssertionError("Setup must not query the agent"))
         result = self.call("publish_map_agent", api, models)
         self.assertEqual(result["agent_name"], "Hydro_Map_Agent_V6")
@@ -856,6 +899,9 @@ class MCPAndOrchestrationTests(HelpersTest):
             "discovery_and_source_preflight", "read_models", "configure_and_publish",
         })
         self.ns["MapAgentMCP"].assert_not_called()
+        models.preflight.assert_called_once()
+        models._build_preflighted.assert_called_once()
+        models.build.assert_not_called()
         api.configure_and_publish.assert_called_once()
         api.configure_and_publish.side_effect = self.error("Publication readback failed")
         with self.assertRaisesRegex(self.error, "readback"):

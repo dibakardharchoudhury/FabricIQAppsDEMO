@@ -39,6 +39,8 @@
 # all read models pass validation. Queries must check this state and source freshness.
 # Entity properties are extracted in one top-level JSON pass per row, retaining
 # the existing typed-field and malformed-JSON validation. Publication phases log timings.
+# Source/target preflight runs once per publication, before writes; source Delta
+# versions are still captured and rechecked after projection/reuse verification.
 # There is no new schedule or baseline setup/seed/simulator invocation.
 #
 # **Publication:** uses the repository's create -> getDefinition -> patch draft ->
@@ -1112,6 +1114,9 @@ class MapReadModels:
 
     def build(self):
         self.preflight()
+        return self._build_preflighted()
+
+    def _build_preflighted(self):
         models_existed = all(self.spark.catalog.tableExists(table) for table in MODEL_SCHEMAS)
         self.ensure_models()
         versions = self.source_versions()
@@ -1377,7 +1382,7 @@ def publish_map_agent(api, models):
     timings = {"discovery_and_source_preflight": round(time.monotonic() - started, 3)}
     print(compact_json({"phase": "read_models", "timings_seconds": timings}), flush=True)
     started = time.monotonic()
-    projection = models.build()
+    projection = models._build_preflighted()
     timings["read_models"] = round(time.monotonic() - started, 3)
     print(compact_json({"phase": "configure_and_publish", "timings_seconds": timings}), flush=True)
     started = time.monotonic()

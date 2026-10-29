@@ -232,6 +232,37 @@ def azd_bootstrap_values(
     }
 
 
+def ensure_hosted_image(deploy, *, registry: str, subscription: str) -> tuple[str, str]:
+    root = deploy.REPO_ROOT
+    tag = image_tag(root)
+    digest = _registry_digest(deploy, registry, subscription, tag)
+    if digest is not None:
+        return tag, digest
+    print(f"Foundry image preparation: building {IMAGE_REPOSITORY}:{tag} in {registry}.", flush=True)
+    sources = packaged_sources(root)
+    with tempfile.TemporaryDirectory(prefix="hydro-agent-build-") as directory:
+        context = Path(directory)
+        for source in sources:
+            target = context / source.relative_to(root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        if image_tag(context) != tag:
+            raise deploy.DeployError("Hosted source changed while staging its build context; retry deployment.")
+        print(f"Staged hosted build context: {len(sources)} files, "
+              f"{sum(source.stat().st_size for source in sources)} bytes.", flush=True)
+        deploy.run_stream(
+            deploy.az("acr", "build", "--registry", registry, "--subscription", subscription,
+                      "--image", f"{IMAGE_REPOSITORY}:{tag}", "--platform", "linux/amd64",
+                      "--file", str(context / DOCKERFILE), "--no-logs", "--timeout", "1200",
+                      "--query", "{runId:runId,status:status}", "--output", "json", str(context)),
+            cwd=root, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        )
+    digest = _registry_digest(deploy, registry, subscription, tag)
+    if digest is None:
+        raise deploy.DeployError(f"The registry has no {IMAGE_REPOSITORY}:{tag} after the build completed.")
+    return tag, digest
+
+
 def ensure_hosted_agent(
     deploy, *, get_agent, endpoint: str, project_id: str, model: str, tenant: str, workspace: str, ontology: str,
     spa_client_id: str, values: dict[str, str], source_digest: str, kusto_origin: str, connections: list[dict],
@@ -240,7 +271,6 @@ def ensure_hosted_agent(
     """Return the active hosted agent after converging it on the current source and deployment target.
 
     ``values`` are the already-verified public deployment values (RAYFIN_PUBLIC_*), unquoted."""
-    root = deploy.REPO_ROOT
     existing = get_agent()
     _kind, _version, _digest, live_environment = hosted_state(existing)
     override = os.environ.get("HYDRO_ACR_NAME", "")
@@ -265,39 +295,12 @@ def ensure_hosted_agent(
         "HYDRO_FABRIC_SOURCE_CONFIG": json.dumps(fabric_source, separators=(",", ":")),
     }
 
-    tag = image_tag(root)
-    digest = _registry_digest(deploy, registry, subscription, tag)
-    reason = needs_publish(existing, image_digest=digest or "", environment=environment) if digest else (
-        f"the image for the current source ({tag}) has not been built"
-    )
+    tag, digest = ensure_hosted_image(deploy, registry=registry, subscription=subscription)
+    reason = needs_publish(existing, image_digest=digest, environment=environment)
     if reason is None:
         print(f"Hosted agent {AGENT_NAME} is current (image {tag}); nothing to publish.", flush=True)
         return existing  # type: ignore[return-value]
     print(f"Publishing Hosted Agent {AGENT_NAME}: {reason}.", flush=True)
-
-    if digest is None:
-        print(f"Building {IMAGE_REPOSITORY}:{tag} in registry {registry} (this takes a few minutes).", flush=True)
-        sources = packaged_sources(root)
-        with tempfile.TemporaryDirectory(prefix="hydro-agent-build-") as directory:
-            context = Path(directory)
-            for source in sources:
-                target = context / source.relative_to(root)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, target)
-            if image_tag(context) != tag:
-                raise deploy.DeployError("Hosted source changed while staging its build context; retry deployment.")
-            print(f"Staged hosted build context: {len(sources)} files, "
-                  f"{sum(source.stat().st_size for source in sources)} bytes.", flush=True)
-            deploy.run_stream(
-                deploy.az("acr", "build", "--registry", registry, "--subscription", subscription,
-                          "--image", f"{IMAGE_REPOSITORY}:{tag}", "--platform", "linux/amd64",
-                          "--file", str(context / DOCKERFILE), "--no-logs", "--timeout", "1200",
-                          "--query", "{runId:runId,status:status}", "--output", "json", str(context)),
-                cwd=root, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-            )
-        digest = _registry_digest(deploy, registry, subscription, tag)
-        if digest is None:
-            raise deploy.DeployError(f"The registry has no {IMAGE_REPOSITORY}:{tag} after the build completed.")
 
     project_dir = azd_project_dir(deploy, endpoint)
     ensure_azd_ready(deploy, tenant)

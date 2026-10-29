@@ -681,6 +681,74 @@ images are reused; runtime/auth checks remain mandatory.
 Elapsed time is shown in the UI; detailed `DEPLOY_TIMINGS` receipts remain in logs.
 Historical measurements: [deployment record](../docs/ontology-test-review.md).
 
+The October 29 Full Deploy baseline took **70m 35.688s**, without creating a new
+managed private endpoint:
+
+| Component | Measured duration | Critical-path audit |
+|---|---:|---|
+| GitHub sync | 11m 17.922s | Git import was about 2m 40s; finishing included the Weather Environment's library publication/build. Reruns now avoid a rebuild only after verifying unchanged published/staged contents. |
+| Core setup pipeline | 23m 01.391s | Root lakehouse setup precedes parallel Core/Weather and Geo_001 branches. Core uses a shared Spark session with concurrency four; agents wait for complete ontology bindings. |
+| Energy finalization | 9m 00.922s | 14.312s prerequisites and 524.110s preparation, including one Geo_002 job, not a second Geo_001 ingestion. |
+| Foundry setup | 15m 32.890s | The fresh Fabric backend gateway took about 8m 03s; hosted image preparation/publication took about 4m 47s. |
+| App deployment | 11m 42.407s | Backend reapplication, repeated connector CLI startup and final authentication readback contributed more than the static upload alone. |
+
+Substep review of that same run:
+
+| Area | Measured substeps | Treatment |
+|---|---|---|
+| Git | Connection discovery 7s; connect 2s; initialize 3s; import 2m 40s; finishing 8m 24s (rounded UI phases) | Retain import, runtime checks, changed/fresh Weather Environment publication/readback and disabled-until-ready schedule. An unrelated Git change no longer automatically forces an unchanged Environment rebuild. |
+| Core dependencies | NB02/NB03/Weather setup can start together; ontology creation/binding and telemetry converge before the complete model; NB09 and NB10 can then run together; the operational SQL extension follows NB09 | Preserve these source/publication dependencies and existing Core/energy parallelism. Individual notebook durations were not present in the recovered workflow receipt; do not infer them from the pipeline total. |
+| Energy notebooks | Geo_001 ingestion is in Core; Geo_002 finalizes serving models and its agent | Consolidate verification reads and redundant actions, not jobs, source-version checks or required publication commands. |
+| Foundry | Identity 8.531s; SPA 9.750s; source/gateway/project/agents/hosted setup 913.781s | Resolve approved project creation before independent image/gateway work. Specialists and hosted publication still wait for verified backend and sources. |
+| App, sections 1–4 | Identity 8.797s; SPA 7.813s; state/readiness 128.500s; login 1.625s | Reuse a single invocation's successful definition read and Foundry token during read-only verification; retain source, connection, toolbox and specialist checks. |
+| App, sections 5–7 | Static build/publication 141.281s; backend/connector synchronization 217.890s; sign-in setup 51.141s | Keep backend runtime/CORS/database reapplication; batch explicit connector generation/application and validate each required receipt. |
+| App, section 8 | Full final verification 144.203s | Keep hosted identity, endpoint contract, real POST/preflight checks, redirect preservation and permissions/consent. The UI's roughly 24s endpoint/CORS slice was not this section's complete duration. |
+
+Implemented reductions:
+
+- A successful Weather Environment is no longer rebuilt merely because Git
+  imported an unrelated change. Compare authoritative published/staged library
+  inventories, full Spark compute settings and external-library YAML exports.
+  Only exact equivalence skips the rebuild. Changed versions, channels or compute,
+  custom/unknown libraries and incomplete paginated inventories require full
+  publication; API read failures propagate. Fresh/unsuccessful Environments still
+  publish normally. This uses Microsoft's documented
+  [published](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/list-libraries)
+  and [staging](https://learn.microsoft.com/en-us/rest/api/fabric/environment/staging/list-libraries)
+  library APIs, [compute readback](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/get-spark-compute)
+  and [external-library export](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/export-external-libraries).
+- On a fresh backend, prepare the immutable hosted source image **concurrently**
+  with Fabric gateway provisioning. No Rayfin configuration or azd environment is
+  written by the image worker. Publication still rereads the registry digest and
+  current source fingerprint after backend/source verification; failures stop
+  publication. Existing-backend deployments do not add a prebuild pass.
+- Run all declared connectors through one supported Rayfin `up connector apply
+  --json` invocation, rather than one per connector. The receipt must prove both
+  generation and application for Lakehouse, operational SQL and enabled energy
+  connectors; missing, skipped, duplicate or failed results stop deployment.
+- Share successful Fabric definition reads only inside one read-only Foundry
+  verification invocation, keyed by workspace/item/collection. Reuse its Foundry
+  token for toolbox and agent verification. Nothing is persisted or reused by a
+  later invocation, after a failed read, or across publication.
+- Energy serving verification uses **one Kusto query instead of three**, retaining
+  every validation and all four publication commands. Geo_002 uses **one preflight
+  instead of two**, retaining both source-version checks. Geo_001's no-manual-links
+  coverage check uses **one Spark count instead of two**; manual-history checks stay.
+- `DEPLOY_SUBSTEP_TIMING=` receipts now separate image preparation, gateway,
+  operational source verification, backend reapplication, connector application,
+  hosted identity, endpoint/CORS and Entra readback. Overlapping image/backend
+  durations are not additive wall-clock time.
+
+Regression tests verify these request/action reductions and synchronized overlap
+without weakening readiness checks. They are **not a new live Full Deploy
+benchmark**. Spark startup, source ingestion, fresh Environment build, Fabric
+provisioning and hosted activation remain service-dependent. Do not subtract
+entire historical phases or promise a new end-to-end duration from these tests.
+Read-only checks against the existing FEATURE target verified Weather equivalence
+in **16.110s** and complete prepared-Foundry configuration in **46.125s**. These
+isolated checks changed no cloud resources and are not directly comparable to an
+entire historical deployment section.
+
 ## Deploying the merged feature branch
 
 Use the pushed branch containing your changes. Branch selection or website
