@@ -388,7 +388,7 @@ is collapsed under **Maintenance and source details** in step 6. It is the expli
 `all` + `force_refresh=true` option and may take tens of minutes.
 All three reuse active runs and report actual pipeline completion, including
 map-chat failures; a browser-stored flag alone does not mark setup complete.
-Notebook startup, projection changes and SQL/MCP readiness still take time:
+Notebook startup, projection changes and SQL synchronization still take time:
 operational mode is lighter, not an instant/live feed.
 Do not overlap Core ingestion and standalone energy refreshes against the same
 GeoContext tables. Parallelism overlaps independent Core/energy branches, not
@@ -600,8 +600,10 @@ the current workspace ID. An empty environment suffix resolves from the bound
 GeoContext, while renamed Lakehouses require the verified item ID. Cross-workspace
 or mismatched bindings stop before writes. The refresh pipeline runs
 `Geo_002_publish_map_agent` only after successful ingestion, so map chat sees the
-new read models. Routine deployment also converges missing/stale map-agent
-publication independently, without rerunning ingestion or resetting core data.
+new read models. **Refresh energy sources** owns map-agent preparation and publication.
+Routine **Deploy app** reuses that prepared setup and checks the existing serving data;
+it does not execute either Geo notebook, rebuild the agent projection or republish the
+map agent. Run Energy refresh separately when its sources or agent definition change.
 
 No standalone `Hydro_STID_API` setup or legacy GraphQL source-rebinding is performed.
 Existing standalone items are not automatically modified or deleted. Rayfin's managed

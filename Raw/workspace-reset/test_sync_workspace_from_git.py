@@ -143,29 +143,34 @@ class TargetedNotebookSyncTests(unittest.TestCase):
         )
 
     def test_fabric_markdown_serialization_is_accepted_and_not_uploaded_again(self):
-        name = "Geo_001_ingest_energy_context"
-        source = (Path(__file__).resolve().parents[2] / "Notebooks" / f"{name}.Notebook" /
-                  "notebook-content.py").read_text(encoding="utf-8")
-        original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(
-            (source + "\nold_code = True\n").encode()).decode(), "payloadType": "InlineBase64"}]}
-        bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"}, {})
-        state = copy.deepcopy(original)
-        fab = Mock()
-        fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+        for name in ("Geo_001_ingest_energy_context", "Geo_002_publish_map_agent"):
+            with self.subTest(notebook=name):
+                source = (Path(__file__).resolve().parents[2] / "Notebooks" / f"{name}.Notebook" /
+                          "notebook-content.py").read_text(encoding="utf-8")
+                original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(
+                    (source + "\nold_code = True\n").encode()).decode(), "payloadType": "InlineBase64"}]}
+                bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"},
+                                         {"environmentId": "existing-environment"})
+                state = copy.deepcopy(original)
+                fab = Mock()
+                fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
 
-        def update(method, url, **kwargs):
-            state.clear()
-            state.update(copy.deepcopy(kwargs["json"]["definition"]))
-            submitted = base64.b64decode(state["parts"][0]["payload"]).decode()
-            saved = submitted.replace("#\n# ", "# # ").replace("\n", "\r\n")
-            state["parts"][0]["payload"] = base64.b64encode(saved.encode()).decode()
-            return FakeResponse(200)
+                def update(method, url, **kwargs):
+                    state.clear()
+                    state.update(copy.deepcopy(kwargs["json"]["definition"]))
+                    submitted = base64.b64decode(state["parts"][0]["payload"]).decode()
+                    saved = submitted.replace("#\n# ", "# # ").replace("\n", "\r\n")
+                    state["parts"][0]["payload"] = base64.b64encode(saved.encode()).decode()
+                    return FakeResponse(200)
 
-        fab.request.side_effect = update
-        with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
-            update_notebooks_from_checkout(fab, "workspace", [name])
-            update_notebooks_from_checkout(fab, "workspace", [name])
-        self.assertEqual(fab.request.call_count, 1)
+                fab.request.side_effect = update
+                with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
+                    update_notebooks_from_checkout(fab, "workspace", [name])
+                    update_notebooks_from_checkout(fab, "workspace", [name])
+                self.assertEqual(fab.request.call_count, 1)
+                saved = base64.b64decode(state["parts"][0]["payload"]).decode()
+                self.assertIn("existing-lakehouse", saved)
+                self.assertIn("existing-environment", saved)
 
     def test_readback_rejects_changed_code_and_bindings(self):
         name = "Geo_002_publish_map_agent"

@@ -1404,7 +1404,7 @@ def publish_map_agent(api, models):
 
 # ## Execute in the existing authorized Fabric notebook context
 # Reruns reuse only verified owned artifacts. Source imports and operational data
-# are never written. The final exit value is emitted only after the grounding canary.
+# are never written. The final exit value follows publication/readback, not an MCP query.
 # The dedicated map agent belongs in the matching root RTI_DEMO folder. Reruns
 # repair misplaced owned agents without recreating them and verify folder readback.
 

@@ -678,10 +678,6 @@ class FeatureWorkspace:
         lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
         self._publish_energy_read_models(lakehouse["id"], publish=False)
 
-    def prepare_map_chat(self) -> None:
-        lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
-        self._publish_map_agent(lakehouse["id"])
-
     def publish_energy(self) -> None:
         """Finish Core's parallel import without starting another ingestion job."""
         lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")

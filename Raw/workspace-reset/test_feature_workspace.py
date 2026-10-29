@@ -226,21 +226,11 @@ class FeatureWorkspaceTests(unittest.TestCase):
             )
             with patch.object(workspace, "_item", return_value={"id": "lakehouse"}), \
                     patch.object(workspace, "_publish_energy_read_models") as publish, \
+                    patch.object(workspace, "_publish_map_agent") as agent, \
                     patch.object(workspace, "_run") as run:
                 workspace.verify_energy()
             publish.assert_called_once_with("lakehouse", publish=False)
-            run.assert_not_called()
-
-    def test_map_chat_preparation_is_separate_from_read_only_energy_verification(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
-            workspace = feature.FeatureWorkspace(
-                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "PROD_42"), ROOT,
-            )
-            with patch.object(workspace, "_item", return_value={"id": "current-geo"}), \
-                    patch.object(workspace, "_publish_map_agent") as publish, \
-                    patch.object(workspace, "_run") as run:
-                workspace.prepare_map_chat()
-            publish.assert_called_once_with("current-geo")
+            agent.assert_not_called()
             run.assert_not_called()
 
     def test_geocontext_discovery_uses_workspace_ownership_not_a_stale_display_name(self):

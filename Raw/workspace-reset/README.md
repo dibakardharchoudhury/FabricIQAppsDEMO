@@ -833,6 +833,11 @@ Flags: `--tenant --workspace --yes --dry-run`.
 The **Deploy app** tab runs the complete Rayfin application deployment against the
 tenant and workspace selected in the sidebar:
 
+Energy ingestion and map-agent publication belong to **Refresh energy sources**.
+The app-publication phase checks existing serving data without running `Geo_001` or
+`Geo_002`, rebuilding their projections or republishing the map agent. The combined
+CLI flow still prepares Energy once when explicitly enabled, before app publication.
+
 1. Reuse the validated locked npm dependencies under Node 24 (restoring them only when missing or
   invalid), validate the active Azure CLI tenant, and resolve the exact workspace GUID/name. If the
   selected identity is missing from the Azure CLI token cache or its token is stale, deployment opens

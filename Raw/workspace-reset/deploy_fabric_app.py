@@ -2532,7 +2532,8 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         try:
             energy = energy_workspace(tenant_id, workspace_id)
             energy.verify_energy()
-            energy.prepare_map_chat()
+            print("Energy: reusing prepared setup; app publication does not run Geo notebooks or republish the map agent.",
+                  flush=True)
         except FeatureWorkspaceError as exc:
             raise DeployError(f"Energy prerequisites failed; run the local energy setup module first: {exc}") from exc
 

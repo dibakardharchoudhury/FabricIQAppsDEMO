@@ -189,6 +189,46 @@ class FoundryBackendGatewayTests(unittest.TestCase):
                 self.assertIn("no website published; agent execution is separate", output.getvalue())
 
 
+class AppEnergySeparationTests(unittest.TestCase):
+    def test_app_and_combined_deployment_do_not_repeat_map_agent_preparation(self):
+        for stage, setting in (("app", "keep"), ("all", "keep"), ("all", "enabled")):
+            with (
+                self.subTest(stage=stage, setting=setting),
+                patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": ""}),
+                patch.object(DEPLOY, "prefer_tenant_scoped_azure_cli_config"),
+                patch.object(DEPLOY, "ensure_azure_tenant", return_value="tenant"),
+                patch.object(DEPLOY, "resolve_workspace", return_value=("workspace", "Demo", "capacity")),
+                patch.object(DEPLOY, "resolve_spa", return_value="11111111-1111-1111-1111-111111111111"),
+                patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
+                patch.object(DEPLOY, "write_rayfin_redirects"),
+                patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                    {"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true"}, None,
+                )),
+                patch.object(DEPLOY, "configure_geo_connector"),
+                patch.object(DEPLOY, "ensure_deploy_dependencies"),
+                patch.object(DEPLOY, "node24_script", return_value=["validate-command"]),
+                patch.object(DEPLOY, "run_stream"),
+                patch.object(DEPLOY, "provision_foundry_agents"),
+                patch.object(DEPLOY, "verify_foundry_agents"),
+                patch.object(DEPLOY, "energy_workspace") as energy,
+                patch.object(DEPLOY, "ensure_rayfin_login", side_effect=RuntimeError("stop before publication")),
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "stop before publication"):
+                    DEPLOY._deploy(argparse.Namespace(
+                        push_config=False, tenant="tenant", workspace="workspace", stage=stage,
+                        client_id=None, energy_map=setting,
+                    ), Mock())
+                energy.return_value.verify_energy.assert_called_once_with()
+                energy.return_value.prepare_map_chat.assert_not_called()
+                energy.return_value.publish_energy.assert_not_called()
+                if stage == "all" and setting == "enabled":
+                    energy.return_value.prepare_energy.assert_called_once_with()
+                else:
+                    energy.return_value.prepare_energy.assert_not_called()
+
+
 class FoundryOntologyPrerequisiteTests(unittest.TestCase):
     def test_core_energy_finalize_does_not_start_a_second_ingestion(self):
         for publish_only in (True, False):
