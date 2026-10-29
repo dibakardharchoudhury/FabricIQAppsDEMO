@@ -741,12 +741,12 @@ class FeatureWorkspace:
                 "db": database,
                 "csl": "union "
                        "(external_table('HydroGeoStatus')"
-                       " | project kind='status', data=pack_array(layer_id, state, row_count)),"
+                       " | project verification_kind='status', data=pack_array(layer_id, state, row_count)),"
                        "(external_table('HydroGeoReservoirAreas') | extend p=parse_json(properties_json)"
-                       " | project kind='areas', data=pack_array(tostring(p.area_code), tostring(p.country_code),"
+                       " | project verification_kind='areas', data=pack_array(tostring(p.area_code), tostring(p.country_code),"
                        " tobool(p.has_reservoir_data), todouble(p.filling_fraction))),"
                        "(external_table('HydroGeoMarketAssetLinks') | summarize link_count=count()"
-                       " | project kind='links', data=pack_array(link_count))",
+                       " | project verification_kind='links', data=pack_array(link_count))",
             }, timeout=90, allow_redirects=False)
         check_response(response, "Verify energy map read models", {200})
         payload = response.json()

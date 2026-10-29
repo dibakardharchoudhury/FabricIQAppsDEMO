@@ -748,6 +748,13 @@ Read-only checks against the existing FEATURE target verified Weather equivalenc
 in **16.110s** and complete prepared-Foundry configuration in **46.125s**. These
 isolated checks changed no cloud resources and are not directly comparable to an
 entire historical deployment section.
+The consolidated energy verifier was also executed against live serving data:
+**one query POST, 1.289s**; all validation took **7.713s**, or **11.460s** including
+discovery. It verified 12 ready layers, nine reservoir areas, 79 links, foreign-value
+restrictions and four owned-Lakehouse Delta locations. That check exposed and
+corrected a reserved KQL output alias before final validation. It did not run
+notebooks, ingestion, publication or control commands, and does not measure a new
+Geo notebook run.
 
 ## Deploying the merged feature branch
 

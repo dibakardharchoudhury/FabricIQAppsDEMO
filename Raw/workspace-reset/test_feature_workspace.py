@@ -573,6 +573,8 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         query_calls = [call for call in post.call_args_list if call.args[0].endswith("/query")]
                         self.assertEqual(len(query_calls), 1)
                         query = query_calls[0].kwargs["json"]["csl"]
+                        self.assertEqual(query.count("project verification_kind="), 3)
+                        self.assertNotIn("project kind=", query)
                         for name in ("HydroGeoStatus", "HydroGeoReservoirAreas", "HydroGeoMarketAssetLinks"):
                             self.assertEqual(query.count(f"external_table('{name}')"), 1)
                         self.assertNotIn("isfuzzy", query)
