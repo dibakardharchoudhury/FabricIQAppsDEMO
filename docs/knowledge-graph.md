@@ -1,8 +1,20 @@
 # Hydro Operations Knowledge Graph
 
-## Operational graph and separate Ontology schema view
+## Direct Ontology model by default
 
-The default **Operational graph** uses only the explicitly bound, materialized native
+The default **Ontology model** reads the live numeric generation-2 definition.
+Its nodes are entity types, not asset instances; edges are exactly the declared
+relationship types, resolved by endpoint identity rather than inferred names or
+foreign keys. No GraphModel query, materialization, source-row execution or
+topology fallback is involved. Counts explicitly describe entity/relationship
+types. The inspector retains property definitions, declared keys, direction and
+cardinality; JSON export is labelled `ontology-schema`.
+
+Opening the Knowledge Graph therefore does not require materialization. The separate
+native operational view is opt-in; its prerequisites do not block the default Ontology
+diagram. Restoring this default does not implement a source-backed asset-instance graph.
+
+The separate **Operational graph** uses only the explicitly bound, materialized native
 generation-2 Ontology graph. Selecting a turbine in the asset tree shows its actual
 connected instruments and context in selected-asset scope. Icons remain inside nodes;
 native weather instances retain their declared Weather presentation. Eventhouse enriches
@@ -19,14 +31,6 @@ facilities; missing readings are not presented as healthy. The graph shows sourc
 and its matched-signal count, with a manual refresh control. Failed telemetry reads clear
 previous values without removing otherwise available native topology or independent SQL
 operational state. The inspector retains the joined values, quality and timestamps.
-
-The separate **Ontology model** reads the live numeric generation-2 definition.
-Its nodes are entity types, not asset instances; edges are exactly the declared
-relationship types, resolved by endpoint identity rather than inferred names or
-foreign keys. No GraphModel query, materialization, source-row execution or
-topology fallback is involved. Counts explicitly describe entity/relationship
-types. The inspector retains property definitions, declared keys, direction and
-cardinality; JSON export is labelled `ontology-schema`.
 
 Each real component is laid out and packed separately. Types without declared
 relationships form a compact grid instead of a long row. All labels remain

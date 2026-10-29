@@ -171,10 +171,11 @@ test('ontology layout packs real components and isolates without altering endpoi
   }
 })
 
-test('default operational graph remains distinct from ontology schema execution', () => {
+test('default Ontology view renders without native graph queries or materialization', () => {
   const page = readFileSync(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
   const model = readFileSync(new URL('../src/ui-shared/pages/OntologyModelView.tsx', import.meta.url), 'utf8')
-  assert.match(page, /useState<'ontology' \| 'native'>\('native'\)/)
+  assert.match(page, /useState<'ontology' \| 'native'>\('ontology'\)/)
+  assert.match(page, /view === 'ontology' \? <OntologyModelView \/> : <NativeKnowledgeGraphPage \/>/)
   assert.match(model, /queryOntologyContract\(force\)/)
   assert.doesNotMatch(model, /\b(?:queryOntologyGraph|queryOntologySourceGraph|GraphModel|graphModelId)\b/)
   assert.match(model, /Schema only - not individual turbines/)

@@ -46,11 +46,11 @@ function navigateTo(tab: string) {
 }
 
 export function KnowledgeGraphPage() {
-  const [view, setView] = useState<'ontology' | 'native'>('native')
+  const [view, setView] = useState<'ontology' | 'native'>('ontology')
   return <div>
     <div className="kg-view-choice" role="group" aria-label="Knowledge Graph view">
-      <button type="button" aria-pressed={view === 'native'} onClick={() => setView('native')} title="Live asset health on the explicitly bound, materialized native graph">Operational graph · native instances</button>
       <button type="button" aria-pressed={view === 'ontology'} onClick={() => setView('ontology')}>Ontology model · schema & weather types</button>
+      <button type="button" aria-pressed={view === 'native'} onClick={() => setView('native')} title="Live asset health on the explicitly bound, materialized native graph">Operational graph · native instances</button>
     </div>
     {view === 'ontology' ? <OntologyModelView /> : <NativeKnowledgeGraphPage />}
   </div>
