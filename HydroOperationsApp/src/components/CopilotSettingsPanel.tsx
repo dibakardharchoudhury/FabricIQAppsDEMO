@@ -25,7 +25,7 @@ export function CopilotSettingsPanel() {
       <span><Bot size={17} /></span>
       <div>
         <h2>Agent runtime settings</h2>
-        <p>Deployment-owned Agent Framework configuration and optional agent comparison.</p>
+        <p>Deployment-owned Agent Framework configuration.</p>
       </div>
     </summary>
     <div className="copilot-settings-body">

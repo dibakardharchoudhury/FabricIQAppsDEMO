@@ -10,14 +10,17 @@ test('default weather sample uses UKMet rather than assuming optional Aurora cov
   assert.doesNotMatch(source, /Compare Aurora and UKMet rainfall forecasts/)
 })
 
-test('Battle of the Agents is disabled by default', () => {
-  assert.equal(defaultCopilotSettings().battleEnabled, false)
-  assert.equal(mergeCopilotSettings(undefined).battleEnabled, false)
-})
-
-test('Battle of the Agents is enabled only by an explicit true setting', () => {
-  assert.equal(mergeCopilotSettings({ battleEnabled: true }).battleEnabled, true)
-  assert.equal(mergeCopilotSettings({ battleEnabled: false }).battleEnabled, false)
+test('retired Battle preferences are discarded without changing supported settings', () => {
+  const legacy = {
+    battleEnabled: true,
+    projectEndpoint: 'https://test.services.ai.azure.com/api/projects/hydro',
+    promptExtra: 'Preserve operator instructions.',
+  }
+  for (const settings of [defaultCopilotSettings(), mergeCopilotSettings(undefined), mergeCopilotSettings(legacy)]) {
+    assert.equal(Object.hasOwn(settings, 'battleEnabled'), false)
+  }
+  assert.equal(mergeCopilotSettings(legacy).projectEndpoint, legacy.projectEndpoint)
+  assert.equal(mergeCopilotSettings(legacy).promptExtra, legacy.promptExtra)
 })
 
 test('previous shipped prompt upgrades while operator customization remains intact', () => {

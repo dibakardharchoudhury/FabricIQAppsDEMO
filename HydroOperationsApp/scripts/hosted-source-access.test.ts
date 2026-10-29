@@ -91,11 +91,9 @@ test('a completed popup is not proof of usable source authorization', async () =
   })
 })
 
-test('chat and comparison have no separate access setup button or connected banner', () => {
-  for (const component of ['CopilotExperience', 'AgentBattleExperience']) {
-    const source = readFileSync(new URL(`../src/components/${component}.tsx`, import.meta.url), 'utf8')
-    assert.doesNotMatch(source, /AgentAccessControl|Connect agent access|Agent access is connected/)
-  }
+test('chat has no separate access setup button or connected banner', () => {
+  const source = readFileSync(new URL('../src/components/CopilotExperience.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /AgentAccessControl|Connect agent access|Agent access is connected/)
 })
 
 test('hosted source admission uses the deployment-verified endpoint before optional workspace discovery', () => {

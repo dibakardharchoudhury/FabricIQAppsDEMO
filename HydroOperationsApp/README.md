@@ -268,7 +268,7 @@ therefore keeps visual semantics in the agent instructions and requires no more 
 200 plot rows so external clients can reconstruct the chart without adding source-routing or join
 instructions to the user question.
 The regular chat hides Data Agent internal progress and uses the Signal Sprint thinking animation.
-Battle exposes the trace for comparison. Fabric can batch lifecycle notifications near completion
+Fabric can batch lifecycle notifications near completion
 and exposes internal tool names/statuses, not generated SQL, arguments, intermediate rows, or
 execution duration. Those steps say **status received**, including in copied transcripts; notification
 counts are not query counts. Repeated/out-of-order notifications cannot turn a duration into an
@@ -286,18 +286,9 @@ heuristic or generation-only check bypasses source verification. Reading the pub
 requires appropriate Data Agent read permissions; read failures remain errors. The app does not
 invoke or certify an Operations Agent playbook.
 
-Administration can optionally enable **Battle of the Agents** for the current browser. It is disabled
-and absent from Hydro Intelligence by default, does not initialize either runtime during app startup,
-and is lazy-loaded only after selection. Battle sends the same trimmed standalone prompt to the
-existing published Data Agent MCP and Foundry paths; it does not add routing, join, or semantic
-instructions. Results retain each engine's existing charts, artifacts, progress/tool trace, and error
-handling. Capacity-safe sequential execution is the default so comparison traffic does not contend
-for shared Fabric capacity; an explicit parallel mode is available when simultaneous wall-clock
-behavior is the measurement goal. The UI labels only the objectively faster successful response and
-does not infer which answer is more correct or higher quality.
-Each pane has a live elapsed timer that starts when that engine actually begins (not while queued)
-and freezes on completion or failure. The 250 ms timer is isolated from response/chart rendering
-and is removed on unmount. Categorical chart axes display actual asset labels, not row indices.
+Battle of the Agents has been removed, including its Administration option, comparison page,
+runner and styles. Old browser settings cannot enable it. Hydro Intelligence is the single
+Supervisor-led chat experience. Categorical chart axes display actual asset labels, not row indices.
 
 NB09 owns the Data Agent's published count/join instructions, including explicit transfer of actual
 SQL count tuples into an isolated Lakehouse analyzer request. Open orders exclude `Completed` and
@@ -328,8 +319,7 @@ The trace records real Foundry response IDs and agent identities; it does not ex
 
 Hydro Intelligence in both layouts now starts with the Supervisor, regardless of an old saved
 engine preference. There is no separate Data Agent selector in ordinary chat; explicit Data Agent
-requests route through the Fabric IQ specialist. The compatibility comparison component
-is not an entry point on the Hydro Intelligence page. Missing Foundry configuration
+requests route through the Fabric IQ specialist. Missing Foundry configuration
 fails explicitly instead of silently changing engines.
 
 The animated crew reuses the existing yellow Signal Sprint helpers. Real parent/call IDs drive
@@ -341,18 +331,17 @@ events. Pause and reduced-motion controls preserve all textual status and diagno
 Authentication reuses the signed-in user's delegated identity and silent token cache. The current
 Foundry Agent Service audience replaces the obsolete Cognitive Services inference audience in
 deployment requirements. Fabric IQ source-definition verification requests ordinary Fabric read
-scopes, not Data Agent execution consent. Direct Data Agent execution in Battle still requests
+scopes, not Data Agent execution consent. Native Data Agent execution requests
 `DataAgent.Execute.All`. Setup bundles the required scopes in one idempotent provisioning step;
 tenant policy may require an administrator to consent. Existing grants are not automatically revoked,
 and consent does not replace resource access/RBAC or MFA.
 
-Work-order requests from either engine use the Foundry approval flow. A structured draft appears
+Work-order requests use the Foundry approval flow. A structured draft appears
 in an editable card with Yes/No buttons. Equipment and signal identity cannot be changed through
 the card; request a new draft for a different target. Approval revalidates target identity and
 checks duplicate open titles before the SQL write. Drafts expire after 30 minutes and reset clears
 them. A failed write response is marked uncertain and is not retried automatically. A successful
-write displays the returned work-order number and refreshes the operational views. Battle runs
-mutation requests sequentially and labels this as the shared approval flow, not independent Q&A.
+write displays the returned work-order number and refreshes the operational views.
 
 Draft cards appear first; duplicate prose is collapsed under **Supporting findings and
 sources**. Short answers, material limitations and requested results take precedence over
@@ -362,7 +351,7 @@ desktop side panel (bounded-height on mobile), rather than taking over the answe
 These latest source changes require the hosted acceptance gate documented in
 [AGENT-ACCEPTANCE.md](AGENT-ACCEPTANCE.md).
 
-All chat and Battle surfaces share the same presentation contract and evidence dashboard. Charts
+Chat uses the shared presentation contract and evidence dashboard. Charts
 are derived from the same returned table/CSV rows, without a top-16 UI cap or treating empty values
 as zero. Different measures get separate charts. This is presentation consistency, not a guarantee
 that two independent query planners return identical facts; live quality acceptance must compare
@@ -378,7 +367,7 @@ source-truth checks, benchmark boundaries, and remaining browser/quality accepta
 Reference: [Microsoft Ontology (new) definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition).
 Regression coverage: `npm run test:knowledge-graph` (real-shaped TMDL, legacy rejection, caches,
 and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.test.mjs`,
-`scripts/agent-battle.test.ts`, and `scripts/copilot-settings.test.ts`
+`scripts/supervisor-entrypoint.test.mjs`, and `scripts/copilot-settings.test.ts`
 (published source verification and honest setup readiness), plus
 `scripts/copilot-orchestration.test.ts` and `scripts/answer-presentation.test.ts`
 (query semantics, persisted agent definitions, full datasets and approval safety).

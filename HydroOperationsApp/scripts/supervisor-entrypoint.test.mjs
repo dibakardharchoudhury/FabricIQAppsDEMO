@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import ts from 'typescript'
 
@@ -65,5 +65,10 @@ test('legacy comparison settings cannot restore a direct-agent entry on Hydro In
   const page = readFileSync(new URL('../src/ui-shared/pages/CopilotPage.tsx', import.meta.url), 'utf8')
   const settings = readFileSync(new URL('../src/components/CopilotSettingsPanel.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(page, /AgentBattleExperience|isAgentBattleEnabled|copilotEngine|onEngineChange/)
-  assert.doesNotMatch(settings, /draft\.battleEnabled|Battle of the Agents|Agent comparison/)
+  assert.doesNotMatch(settings, /battleEnabled|Battle of the Agents|agent comparison/i)
+  for (const path of ['components/AgentBattleExperience.tsx', 'services/copilot/agentBattle.ts']) {
+    assert.equal(existsSync(new URL(`../src/${path}`, import.meta.url)), false)
+  }
+  const styles = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
+  assert.doesNotMatch(styles, /agent-battle-/)
 })
