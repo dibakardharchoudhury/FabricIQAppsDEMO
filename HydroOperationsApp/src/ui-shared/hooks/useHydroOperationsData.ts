@@ -60,7 +60,7 @@ export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boole
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
-  'data-agent': { role: 'agent', text: 'Your question goes directly to the published Fabric Data Agent, unchanged. Its original answer is returned without a planning, Sparky wrapper, or summarization model. This mode is read-only. Select Foundry orchestration for specialist analysis or review-only work-order drafts.' },
+  'data-agent': { role: 'agent', text: 'Read-only questions go directly to the published Fabric Data Agent, unchanged, without planning, Sparky-wrapper or summarization models. Explicit work-order draft requests use guarded specialist drafting to prepare editable review cards while preserving the original Fabric answer. No work order is saved without your approval. Select Foundry orchestration for other specialist analysis.' },
   foundry: { role: 'agent', text: 'Ask me about facilities, equipment, telemetry, weather, or maintenance work. The Supervisor selects only the capabilities your question needs. Fabric IQ uses the ontology-backed Fabric Data Agent for cross-source business questions and preserves its original answer; Q&A handles precise direct reads and independent checks. Weather interprets forecasts, RCA investigates potential faults, and Work Order prepares review-only drafts. Telemetry-quality investigation drafts do not require a mechanical RCA. No work order is saved without your review and approval.' },
 }
 

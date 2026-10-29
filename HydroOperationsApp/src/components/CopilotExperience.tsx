@@ -6,7 +6,7 @@ import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
 import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
-import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
+import { WorkOrderDraftPager } from './WorkOrderDraftPager'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
 import { answerSections, draftAnswerParts, draftDetailParts, operatorNarrative } from '../services/copilot/answerPresentation'
@@ -47,7 +47,7 @@ type CopilotExperienceProps = {
 }
 
 const ENGINE_LABELS: Record<CopilotEngine, { name: string; source: string }> = {
-  'data-agent': { name: 'Direct Data Agent', source: 'Fabric Data Agent · Original question and answer · Read-only' },
+  'data-agent': { name: 'Direct Data Agent', source: 'Fabric Data Agent · Original answers · Drafts require approval' },
   foundry: { name: 'Foundry orchestration', source: 'Azure AI Foundry · Specialist analysis and approval flow' },
 }
 
@@ -168,7 +168,7 @@ export const CopilotResponse = memo(function CopilotResponse({ message, streamin
 
 function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
   const receiptPrefix = useId()
-  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
+  const hasBody = Boolean(message.text || message.proposals?.length || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
   // A running tool already shows its own progress, so only flag the gap where the model itself
@@ -194,7 +194,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     : <details className="v2-answer-support"><summary>Supporting findings and sources</summary><AnswerText text={draftParts.details} streaming={false} /></details>)
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
-    {draftReady && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
+    {draftReady && message.proposals && <WorkOrderDraftPager proposals={message.proposals} />}
     {streaming ? <CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} />
       : steps.length > 0 && <details className="v2-answer-support"><summary>Execution audit — tool calls and receipts</summary><CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} /></details>}
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">

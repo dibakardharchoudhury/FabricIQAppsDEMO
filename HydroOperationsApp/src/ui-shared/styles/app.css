@@ -2775,6 +2775,11 @@ button.v2-signal-row:hover,
 }
 .v2-work-order-approval, .v2-answer-dashboard { margin: 1rem 0; padding: 1rem; border: 1px solid var(--cp-border, #ccd5df); border-radius: 8px; }
 .v2-work-order-approval fieldset { border: 0; padding: 0; }
+.v2-work-order-drafts > h3 { margin: 1rem 0 .4rem; font-size: 1rem; }
+.v2-work-order-pages { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-bottom: 1rem; }
+.v2-work-order-pages button { padding: .45rem .7rem; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface); color: var(--cp-text); font: inherit; cursor: pointer; }
+.v2-work-order-pages button[aria-current="page"] { border-color: var(--cp-accent); background: var(--cp-accent-soft); font-weight: 700; }
+.v2-work-order-pages button:disabled { opacity: .5; cursor: default; }
 .v2-work-order-approval label { display: grid; gap: .3rem; margin-bottom: .7rem; }
 .v2-work-order-approval input, .v2-work-order-approval textarea, .v2-work-order-approval select { width: 100%; padding: .5rem; font: inherit; }
 .v2-work-order-approval button { margin-right: .6rem; padding: .5rem .8rem; }

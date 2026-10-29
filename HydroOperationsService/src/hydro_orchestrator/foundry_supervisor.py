@@ -1257,8 +1257,9 @@ Use the smallest complete plan:
   Listing work, recalling a draft and explicit no-new-draft instructions never authorize proposal preparation.
   Read-only/no-save can permit an editable draft but never a production write. Actual writes always need a
   separate human approval. Fault-contingent repairs require a preceding RCA step and requiresVerifiedIssue.
-  Diagnostic/data-quality investigation drafts do not require a prior RCA unless the operator also requests
-  fault analysis; set requiresVerifiedIssue=false for those drafts. That flag means a checked fault/repair
+  Diagnostic/data-quality investigation drafts use requiresVerifiedIssue=false even when the operator also
+  requests RCA. That RCA can investigate the quality issue without gating its diagnostic drafts on a
+  confirmed mechanical fault. requiresVerifiedIssue means a checked fault/repair
   assessment from RCA, not merely a verified quality observation or a gap in work coverage.
   They must not assert a mechanical diagnosis, repair, severity or spare-part need without
   supporting evidence. Do not fetch inspections, inventory or weather just to make a quality investigation
@@ -4518,7 +4519,8 @@ class FoundrySupervisor:
             if committed is not None:
                 return ChatAnswer.model_validate(committed)
             if (self.semantic_planning and request.native_sources == ("data-agent",)
-                    and not request.required_specialists and not request.required_evidence_kinds):
+                    and not request.required_specialists and not request.required_evidence_kinds
+                    and not requests_new_work_order_proposal(request.question)):
                 versions = await self.versions(journal, roles=frozenset({"fabric-iq"}))
                 event_id = f"{request.run_id}:native"
                 version = versions["fabric-iq"]
@@ -4816,10 +4818,19 @@ class FoundrySupervisor:
                                 if isinstance(value, str) and value
                             )
                         break
+                    # Native prose need not contain canonical IDs; Fixer resolves them through guarded tools.
+                    resolve_native_draft_identity = (
+                        delegation.specialist == "work-order"
+                        and owner.proposal_requested(request)
+                        and request.equipment_selection is None
+                        and not delegation.requires_verified_issue
+                        and any(item.tool == "fabriciq-data-agent" for item in owner.evidence.values())
+                    )
                     missing_selection = (
                         delegation.requires_selection
                         and delegation.specialist != "qa"
                         and not selected
+                        and not resolve_native_draft_identity
                     )
                     missing_verified_issue = (
                         delegation.requires_verified_issue
@@ -4906,7 +4917,8 @@ class FoundrySupervisor:
                                 for later in plan.steps[self.index + 1:]
                             )
                         )
-                        if (delegation.specialist == "fabric-iq" and len(plan.steps) == 1
+                        if (delegation.specialist == "fabric-iq"
+                                and sum(step.specialist == "fabric-iq" for step in plan.steps) == 1
                                 and request.historical_context is None):
                             delegation = delegation.model_copy(update={"question": request.question})
                         await owner.handoff(

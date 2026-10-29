@@ -19,12 +19,14 @@ Item creation and agent/configuration readback are not end-to-end execution test
 ## Native answer fidelity
 
 The default **Direct Data Agent** chat mode explicitly selects the native
-read-only path. It bypasses the semantic planning model, local tool catalog,
+read-only path for questions that do not request new work-order drafts. It bypasses the semantic planning model, local tool catalog,
 Fabric IQ wrapper model and answer writer. The exact question is forwarded once,
 and the original answer is returned unchanged. Result files are not downloaded
 as a prerequisite for this text-only response; their citation annotations remain
-in the native audit. **Foundry orchestration** remains a separate operator choice
-for specialist analysis and approval-only maintenance drafts. It retains its
+in the native audit. Explicit draft requests enter guarded semantic planning and
+the Work Order specialist even from Direct Data Agent mode; otherwise that mode
+would return prose without creating approval cards. **Foundry orchestration**
+remains a separate operator choice for other specialist analysis. It retains its
 semantic planner, evidence checks and result artifacts.
 
 Native transport timeouts retain HTTP 504 (`native_timeout`), rather than being
@@ -44,7 +46,14 @@ provider response, usage and a SHA-256 digest of the original answer. Multiple
 source text blocks are concatenated in provider order without inserting characters.
 
 Mixed retrieval and work-order workflows also display that original Markdown
-unchanged and fully expanded beside the editable approval cards. Native result-file
+unchanged and fully expanded after the editable approval cards. The cards alone
+are paginated, with one numbered draft visible at a time; edits, decisions and
+in-flight reconciliation state survive navigation. Native prose without structured
+canonical IDs can reach Fixer for guarded identity resolution and a fresh complete
+open-work check, but cannot itself authorize a proposal. Explicit ranking/selection
+and verified-fault repair gates remain enforced. Quality-investigation drafts do
+not require proof of a mechanical fault merely because RCA was also requested.
+Native result-file
 projections remain available to evidence checks and the audit, but are not rendered
 as a second, sparse table. No additional briefing model is invoked or replayed when
 an original native answer exists, including mixed draft workflows.

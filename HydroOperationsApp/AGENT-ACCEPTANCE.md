@@ -1,5 +1,44 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
+## October 28 structured work-order drafts and pagination
+
+Two regressions were reproduced before correction: Direct Data Agent mode returned
+before the drafting workflow, and a native prose answer without structured
+canonical equipment IDs caused a conditional Work Order handoff to be skipped.
+Explicit new-draft requests now reach guarded planning, and Fixer can resolve
+canonical identities through the existing tools before fresh open-work checks
+and in-memory proposal staging. Native prose is not parsed into approvable cards.
+Explicit ranking/selection and verified-fault repair gates are retained.
+Diagnostic drafts do not require a proven mechanical fault when RCA is also
+requested. The single native factual step receives the original operator prompt
+unchanged; its original answer remains immutable.
+
+Only the visual approval cards paginate: one visible card, numbered "Draft N of M",
+previous/next and numbered page controls. Summary/results remain afterward.
+Proposal-only responses no longer render an endless thinking indicator.
+An isolated browser fixture used the real approval-card component and verified
+edits, rejection and in-flight simulated approval surviving navigation, exactly
+one visible card, disabled boundary controls and no decisions on page changes.
+The fixture made no production writes; it is not authenticated hosted acceptance.
+
+Focused validation passed: 214 backend tests (one optional live-planning skip),
+67 frontend tests, frontend typecheck/scoped lint and production build. A further
+native/multi-card fidelity run passed after preserving the original compound prompt.
+The real-source multi-agent check initially stopped at SQL discovery with HTTP 404;
+the same SQL item was present and its Fabric capacity was confirmed Paused.
+After resuming that existing capacity and verifying Active, the exact operator
+question passed live semantic planning, native execution (67.699 seconds) and
+RCA (10.460 seconds). The run then failed explicitly at Fixer's Rayfin SQL
+exchange with `AUTH_FAILED` (155.863 seconds total); no proposal or SQL write
+was accepted. A bounded CLI-token comparison failed for both already-authorized
+Fabric and Power BI token scopes. No authentication bypass or empty-work
+fallback was added. This CLI diagnostic does not establish signed-browser SQL
+authorization; authenticated hosted multi-card acceptance remains unverified.
+
+The multi-card regression stages five proposals in separate successive model
+rounds, not just one parallel batch, and verifies all five backend digests and
+the unchanged native answer.
+
 ## October 28 unusable-content response correction
 
 The exact provider template "There's content here I can't work with. Try asking
@@ -23,7 +62,8 @@ SQL/telemetry values, or constitute authenticated browser acceptance.
 ## October 28 direct-query latency correction
 
 Direct Data Agent is now an explicit read-only default; Foundry orchestration
-remains selectable for specialist reasoning and approval-only drafts. The direct
+remains selectable for specialist reasoning. Explicit draft requests now use the
+guarded drafting exception described above. The ordinary read-only direct
 path makes zero planning, specialist-wrapper or answer-writer model calls.
 Questions and native answer text remain unchanged. Artifact downloads and local
 identity-resolution queries are not prerequisites for this read-only answer.

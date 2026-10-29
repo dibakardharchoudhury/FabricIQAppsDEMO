@@ -266,6 +266,77 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_direct_mode_draft_request_reaches_guarded_planning_before_native_execution(self):
+        request = self.request.model_copy(update={
+            "question": (
+                "Which turbines had BAD telemetry quality today, and what work is already open for these? "
+                "Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts."
+            ),
+            "native_sources": ("data-agent",),
+        })
+        owner = self.make_owner(semantic_planning=True, analysis_model="test-model")
+        owner.tools.catalog = AsyncMock(return_value=await self.tools.catalog(request))
+        owner.plan_semantically = AsyncMock(side_effect=RuntimeError("guarded draft planning reached"))
+        owner.invoke_data_agent = AsyncMock(side_effect=AssertionError("Draft planning was bypassed."))
+        with self.assertRaisesRegex(RuntimeError, "guarded draft planning reached"):
+            await owner.run(request)
+        owner.plan_semantically.assert_awaited_once()
+        owner.invoke_data_agent.assert_not_awaited()
+
+    async def test_native_prose_handoff_can_resolve_identity_and_stage_multiple_real_cards(self):
+        from test_semantic_planning import decision
+        self.mode = "multiple_proposals"
+        self.multiple_proposal_ids = ("TEST_T004", "TEST_T005", "TEST_T007", "TEST_T009", "TEST_T014")
+        self.tools.stage = True
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Find turbines with BAD quality and prepare diagnostic work-order drafts for uncovered gaps.",
+        })
+        self.versions["fabric-iq"] = AgentVersion(
+            name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=(),
+        )
+        self.seed(request)
+        raw = decision("fabric-iq", "native_claims", reader=False)
+        raw["proposal_requested"] = True
+        raw["plan"]["steps"][0]["question"] = "Which turbines have BAD quality?"
+        raw["plan"]["steps"].append({
+            "specialist": "work-order", "question": request.question,
+            "reason": "Resolve canonical identities and check open work before staging editable diagnostic drafts.",
+            "nativeSource": None, "requiresSelection": True, "requiresVerifiedIssue": False,
+            "execution": "agent", "reads": [],
+        })
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("semantic_decision", {"decision": raw, "response_id": "resp_draft_plan", "duration_ms": 1})
+        original_execute = self.tools.execute
+
+        async def execute(name, arguments, current):
+            receipt = await original_execute(name, arguments, current)
+            return receipt.model_copy(update={"id": f"proposal-{arguments['equipment_id']}"}) \
+                if name == "propose_work_order" else receipt
+
+        self.tools.execute = execute
+        text = "T004, T005, T007, T009 and T014 have BAD quality. Investigate quality; no physical fault is established."
+        native_call = NativeDataAgentCall("native-draft-source", {"input": request.question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
+        owner = self.make_owner(
+            semantic_planning=True, analysis_model="test-model",
+            native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                         toolbox="hydro-fabric-iq-tools"),
+        )
+        owner.analysis_for = AsyncMock(return_value=None)
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=native_call) as native:
+            answer = await owner.run(request)
+        self.assertEqual(native.call_args.args[3], request.question)
+        self.assertEqual([draft.equipment_id for draft in answer.proposals], list(self.multiple_proposal_ids))
+        self.assertEqual(len(answer.proposal_digests), 5)
+        self.assertEqual(answer.native_answers[0].text, text)
+        self.assertFalse(answer.production_write_executed)
+        self.assertEqual([item.role for item in answer.specialists], ["fabric-iq", "work-order"])
+
     async def test_explicit_native_mode_skips_planner_catalog_and_all_wrapper_models(self):
         request = self.request.model_copy(update={
             "question": "Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?",
@@ -2145,6 +2216,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 output = [self.function("hydro_query", {"tool_name": "propose_work_order", "arguments": {
                     "equipment_id": "TEST_T005", "title": "Inspect BAD signal",
                     "description": "Inspect signal quality; no physical diagnosis is established.",
+                }})]
+            if self.mode == "multiple_proposals" and round_number < len(self.multiple_proposal_ids):
+                equipment_id = self.multiple_proposal_ids[round_number]
+                output = [self.function("hydro_query", {"tool_name": "propose_work_order", "arguments": {
+                    "equipment_id": equipment_id, "title": f"Investigate {equipment_id} signal quality",
+                    "description": "Investigate the observed BAD quality; no physical diagnosis is established.",
                 }})]
             if self.mode == "repair_review" and round_number == 0:
                 output = [self.function("complete_work_order_review", {
