@@ -488,6 +488,15 @@ was verified. A separate NB09 follow-up persisted a complete 4,784-byte JSON rec
 expected/returned facility rows, below the SQL endpoint's 8,000-byte string readback limit. These
 results do not certify SQL/telemetry joins, native traversal or agent delivery.
 
+A later October 29 fresh setup received `[]` with `isError=false` from the published MCP endpoint,
+although the independent live Lakehouse reference contained three facilities. The same published
+probe later returned the exact three records without changing sources or bindings. NB09 therefore
+retries this narrow empty-result case once, after 10 seconds, using a fresh MCP session and the
+unchanged question. It rereads the live reference and retains the initial failure in the receipt.
+Repeated emptiness still fails setup; wrong records, malformed output, semantic errors and
+authorization/transport failures are not retried or downgraded. This does not establish why the
+Fabric runtime initially returned no rows or certify capabilities beyond the bounded smoke.
+
 The selected ontology's **Manage graph** page also reported all five entity types as
 **Ineligible**, with **Unsupported Datasource** details. Its displayed completed materialization
 contained zero projected node/edge types; this is not a usable native graph. Bounded

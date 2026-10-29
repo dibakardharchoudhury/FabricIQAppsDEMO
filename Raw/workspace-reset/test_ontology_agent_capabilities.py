@@ -2474,9 +2474,10 @@ class CapabilityTests(unittest.TestCase):
             }]}),
             response(3, result),
         ]
-        request = SimpleNamespace(post=Mock(side_effect=replies), RequestException=ConnectionError)
+        request = SimpleNamespace(post=Mock(side_effect=replies * 2), RequestException=ConnectionError)
         ns = functions(
             "009", "mcp_response_result", "mcp_semantic_error", "probe_data_agent_ontology",
+            "probe_data_agent_ontology_once",
             "published_agent_sources", "normalized_facility_rows", "facility_rows_from_mcp",
             "validate_agent_ontology_sources", "require_v2_ontology",
             re=re, time=time, uuid=uuid, requests=request,
@@ -2492,6 +2493,77 @@ class CapabilityTests(unittest.TestCase):
             notebookutils=SimpleNamespace(credentials=SimpleNamespace(getToken=Mock(return_value=token))),
         )
         return ns, replies
+
+    def test_runtime_probe_retries_one_empty_answer_with_a_fresh_session(self):
+        ns, replies = self.runtime_namespace({
+            "isError": False, "content": [{"type": "text", "text": "[]"}],
+        })
+        successful = copy.deepcopy(replies[-1])
+        expected = ns["facility_probe_reference"].return_value
+        successful.json.return_value["result"] = {"structuredContent": {"facilities": expected}}
+        ns["requests"].post.side_effect = replies + replies[:3] + [successful]
+        with patch.object(time, "sleep") as sleep:
+            outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "verified")
+        self.assertEqual(outcome["evidence"]["attempt"], 2)
+        self.assertEqual(outcome["evidence"]["returned_facilities"], expected)
+        prior = outcome["evidence"]["prior_attempts"]
+        self.assertEqual(len(prior), 1)
+        self.assertEqual(prior[0]["status"], "inconclusive")
+        self.assertIn('"text": "[]"', prior[0]["response"])
+        self.assertNotEqual(prior[0]["activity_id"], outcome["evidence"]["activity_id"])
+        sleep.assert_called_once_with(10)
+        calls = ns["requests"].post.call_args_list
+        self.assertEqual([call.kwargs["json"]["method"] for call in calls],
+                         ["initialize", "notifications/initialized", "tools/list", "tools/call"] * 2)
+        self.assertEqual(calls[3].kwargs["json"]["params"], calls[7].kwargs["json"]["params"])
+        self.assertLess(len(json.dumps(outcome["evidence"]).encode("utf-8")), 8000)
+
+    def test_runtime_probe_repeated_empty_results_remain_inconclusive(self):
+        for result in (
+            {"content": [{"type": "text", "text": "[]"}]},
+            {"structuredContent": {"facilities": []}},
+            {"content": [{"type": "resource", "resource": {
+                "mimeType": "text/csv", "text": "facility_id,facility_name\n",
+            }}]},
+        ):
+            with self.subTest(result=result), patch.object(time, "sleep") as sleep:
+                ns, _ = self.runtime_namespace(result)
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertEqual(outcome["status"], "inconclusive")
+                self.assertEqual(outcome["evidence"]["attempt"], 2)
+                self.assertEqual(outcome["evidence"]["returned_facilities"], [])
+                self.assertEqual(ns["requests"].post.call_count, 8)
+                sleep.assert_called_once_with(10)
+
+    def test_runtime_probe_does_not_retry_wrong_rows_or_semantic_errors(self):
+        for result in (
+            {"structuredContent": {"facilities": [
+                {"facility_id": "wrong", "facility_name": "Wrong facility"},
+            ]}},
+            {"content": [{"type": "text", "text": '{"error":"Access denied"}'}]},
+            {"structuredContent": {"count": 3}},
+        ):
+            with self.subTest(result=result), patch.object(time, "sleep") as sleep:
+                ns, _ = self.runtime_namespace(result)
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertNotEqual(outcome["status"], "verified")
+                self.assertEqual(outcome["evidence"]["attempt"], 1)
+                self.assertEqual(ns["requests"].post.call_count, 4)
+                sleep.assert_not_called()
+
+    def test_runtime_probe_retry_propagates_authorization_failure(self):
+        ns, replies = self.runtime_namespace({"content": [{"type": "text", "text": "[]"}]})
+        denied = copy.deepcopy(replies[0])
+        denied.raise_for_status.side_effect = ConnectionError("HTTP 403 access denied")
+        ns["requests"].post.side_effect = replies + [denied]
+        with patch.object(time, "sleep") as sleep:
+            outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertIn("HTTP 403", outcome["reason"])
+        self.assertEqual(outcome["evidence"]["prior_attempts"][0]["status"], "inconclusive")
+        self.assertEqual(ns["requests"].post.call_count, 5)
+        sleep.assert_called_once_with(10)
 
     def test_runtime_probe_rejects_actual_semantic_error_with_iserror_false(self):
         error = ("Ontology source unavailable: The analyze_ontology tool call failed with "
@@ -2614,11 +2686,12 @@ class CapabilityTests(unittest.TestCase):
             ("facility_id,facility_name\none,two\n",
              [{"facility_id": "different", "facility_name": "Other"}]),
         ):
-            ns, _ = self.runtime_namespace({
-                "structuredContent": structured,
-                "content": [{"type": "resource", "resource": {"mimeType": "text/csv", "text": attachment}}],
-            })
-            self.assertNotEqual(ns["probe_data_agent_ontology"]("agent-id", "ontology")["status"], "verified")
+            with patch.object(time, "sleep"):
+                ns, _ = self.runtime_namespace({
+                    "structuredContent": structured,
+                    "content": [{"type": "resource", "resource": {"mimeType": "text/csv", "text": attachment}}],
+                })
+                self.assertNotEqual(ns["probe_data_agent_ontology"]("agent-id", "ontology")["status"], "verified")
 
     def test_healthy_multi_source_rerun_needs_no_cached_proof_and_still_rejects_semantic_errors(self):
         ns, replies = self.runtime_namespace({})

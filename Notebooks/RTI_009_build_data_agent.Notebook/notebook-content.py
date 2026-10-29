@@ -36,6 +36,9 @@
 # > "This API version is not supported for the specified Ontology item" is reported as
 # > a known product limitation. Other publication, source, runtime and readback failures
 # > propagate. Successful publication alone does not verify cross-source answers.
+# > A genuinely empty facility result is retried once after 10 seconds in a fresh
+# > MCP session, only when independent live reference rows are nonempty. The retry
+# > must return the exact reference records; repeated emptiness still fails setup.
 #
 # Configuration and verification details: [deployment guide](../../Raw/workspace-reset/README.md#prerequisites).
 
@@ -802,12 +805,14 @@ def facility_rows_from_mcp(result: dict) -> list:
         if (not rows or rows[0] != ["facility_id", "facility_name"]
                 or any(len(row) != 2 for row in rows[1:])):
             raise ValueError("Facility CSV must contain only facility_id and facility_name columns.")
-        actual = normalized_facility_rows([
+        records = [
             {"facility_id": row[0], "facility_name": row[1]} for row in rows[1:]
-        ])
+        ]
+        actual = normalized_facility_rows(records) if records else []
         if payload is not None:
             structured = payload["facilities"] if isinstance(payload, dict) and set(payload) == {"facilities"} else payload
-            if normalized_facility_rows(structured) != actual:
+            structured_rows = [] if structured == [] else normalized_facility_rows(structured)
+            if structured_rows != actual:
                 raise ValueError("Structured facility rows disagree with the attached query result.")
         return actual
     if payload is None:
@@ -821,7 +826,7 @@ def facility_rows_from_mcp(result: dict) -> list:
         payload = json.loads(text)
     if isinstance(payload, dict) and set(payload) == {"facilities"}:
         payload = payload["facilities"]
-    return normalized_facility_rows(payload)
+    return [] if payload == [] else normalized_facility_rows(payload)
 
 
 def mcp_response_result(response, request_id):
@@ -897,6 +902,32 @@ def mcp_semantic_error(value):
 
 
 def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=None) -> dict:
+    """Retry one transient empty answer, never substitute rows or suppress real failures."""
+    outcome = probe_data_agent_ontology_once(agent_id, ontology_id, published_parts)
+    evidence = outcome["evidence"]
+    evidence["attempt"] = 1
+    empty_answer = (
+        outcome["status"] == "inconclusive"
+        and evidence.get("returned_facilities") == []
+        and bool(evidence.get("expected_facilities"))
+    )
+    if not empty_answer:
+        return outcome
+    prior = {
+        "activity_id": evidence["activity_id"], "checked_at_utc": evidence["checked_at_utc"],
+        "status": outcome["status"], "reason": outcome["reason"],
+        "requests": evidence["requests"], "response": evidence["response"][:500],
+        "response_truncated": evidence["response_truncated"] or len(evidence["response"]) > 500,
+    }
+    print("⚠️ Data Agent returned no facilities despite a nonempty live reference; "
+          "retrying once in 10 seconds with a fresh MCP session.")
+    time.sleep(10)
+    outcome = probe_data_agent_ontology_once(agent_id, ontology_id, published_parts)
+    outcome["evidence"].update({"attempt": 2, "prior_attempts": [prior]})
+    return outcome
+
+
+def probe_data_agent_ontology_once(agent_id: str, ontology_id: str, published_parts=None) -> dict:
     """Compare ontology-context facilities with independent live Lakehouse rows."""
     endpoint = f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}/dataagents/{agent_id}/agent"
     activity_id = str(uuid.uuid4())
@@ -1010,6 +1041,9 @@ def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=N
         except ValueError as exc:
             return {"status": "inconclusive", "reason": str(exc), "evidence": evidence}
         evidence["returned_facilities"] = actual
+        if not actual:
+            return {"status": "inconclusive", "reason": "Data Agent returned an empty facility result "
+                    "despite nonempty live Lakehouse reference rows.", "evidence": evidence}
         if actual != expected:
             return {"status": "failed", "reason": "Ontology facility IDs/names do not match the live Lakehouse "
                     "reference rows.", "evidence": evidence}
