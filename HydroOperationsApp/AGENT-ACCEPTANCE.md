@@ -39,6 +39,20 @@ The multi-card regression stages five proposals in separate successive model
 rounds, not just one parallel batch, and verifies all five backend digests and
 the unchanged native answer.
 
+Source fix `6d474cb` was committed and pushed to `main`. Canonical Foundry setup
+completed in 513.875 seconds: Fixer is v2, hosted coordinator v6 is Active on
+`src-274e437625a7f106`, and the selected model allocation remains 75,000 TPM.
+Other specialist definitions and the native toolbox were reused.
+
+The canonical app stage **did not publish the website**. It stopped before
+deployment after 136 seconds with the required prerequisite:
+`Cannot resolve the energy Delta table geo_reservoir_areas`.
+No energy flag was disabled and no alternate deployment path was used.
+The previously hosted app remains v1.0.1215; the tested pagination is committed
+but not yet hosted. Run the existing local energy setup module successfully
+before retrying the canonical app stage. This is separate from the CLI
+`AUTH_FAILED` acceptance blocker above.
+
 ## October 28 unusable-content response correction
 
 The exact provider template "There's content here I can't work with. Try asking
