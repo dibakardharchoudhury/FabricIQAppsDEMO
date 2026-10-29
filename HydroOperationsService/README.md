@@ -1,5 +1,29 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Multi-agent responsibilities and selective execution
+
+The chat represents the **Supervisor-led multi-agent team**, not just Sparky.
+Its **Team** menu lists available capabilities; the execution flow lists only
+participants selected for actual work. It does not imply every specialist runs.
+
+| Capability | Distinct responsibility | Execution cost |
+| --- | --- | --- |
+| Supervisor | Plan, coordinate dependencies, validate evidence and approvals | Semantic planner plus deterministic workflow |
+| Gauge / Q&A | Exact source queries, analytics and independent verification | Known queries use governed readers without a specialist model; adaptive queries can use Gauge |
+| Sparky / Fabric IQ | Ontology-grounded business questions and cross-source relationships | Native Fabric Data Agent call; no extra prompt-wrapper or answer-rewriting model |
+| Gale / Weather | Scoped forecast/observation queries with provider, time and units | Known queries use readers; adaptive queries can use Gale |
+| Sleuth / RCA | Competing explanations, cited evidence and missing-evidence assessment | Scoped specialist when an investigation is requested |
+| Fixer / Work orders | Fresh coverage checks and requested editable drafts | Scoped specialist; saving always requires separate authenticated approval |
+
+Fabric IQ does not replace independent verification, RCA, or the application's
+approval workflow. Conversely, QA is not a mandatory second pass over every
+native answer. Simple facts do not need the whole team. Native execution still
+has its own service/model costs; avoiding a wrapper does not make it model-free.
+The chat memoizes trace inputs and the trace component so composer edits do not
+recompute an unchanged execution flow. Team descriptions add no model calls.
+The facility-list starter no longer forces Sparky: simple governed retrieval can
+use Gauge's reader path, while the explicit Fabric Data Agent starter remains.
+
 ## Model throughput and runtime failures
 
 Model throughput is shared across every internal call and concurrent conversation,

@@ -4,6 +4,14 @@ export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq'
 export const AGENT_DISPLAY_NAMES: Record<AgentRole, string> = {
   supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky', weather: 'Gale',
 }
+export const AGENT_CAPABILITIES: ReadonlyArray<{ role: AgentRole; specialty: string; description: string }> = [
+  { role: 'supervisor', specialty: 'Coordination', description: 'Plans only the capabilities needed, coordinates dependencies and checks evidence and approval contracts.' },
+  { role: 'qa', specialty: 'Q&A and verification', description: 'Exact governed source queries, analytics and independent checks. Fully specified reads run without a specialist model call.' },
+  { role: 'fabric-iq', specialty: 'Fabric IQ', description: 'Ontology-grounded business questions through the Fabric Data Agent. Preserves its original answer without an extra rewriting model.' },
+  { role: 'weather', specialty: 'Weather', description: 'Scoped forecasts and observations with provider, location, time and units. Known queries use model-free source readers; adaptive queries can use the specialist.' },
+  { role: 'rca', specialty: 'Root-cause investigation', description: 'Assesses competing explanations against source evidence and identifies missing evidence. BAD telemetry alone does not establish a mechanical fault.' },
+  { role: 'work-order', specialty: 'Maintenance and work orders', description: 'Reviews current work coverage and prepares requested editable drafts. Saving requires your separate review and approval.' },
+]
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
 
 export type AgentTraceEntry = {

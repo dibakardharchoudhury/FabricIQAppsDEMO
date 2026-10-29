@@ -6,7 +6,9 @@ import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import * as answerPresentation from '../src/services/copilot/answerPresentation.ts'
-import { isWorkOrderRequest } from '../src/services/copilot/orchestration.ts'
+import * as orchestration from '../src/services/copilot/orchestration.ts'
+import * as suggestions from '../src/services/copilot/suggestions.ts'
+const { isWorkOrderRequest } = orchestration
 
 const require = createRequire(import.meta.url)
 const Empty = () => null
@@ -28,8 +30,8 @@ function loadComponent(file, symbol) {
     if (specifier === './CopilotThinking') return { CopilotThinking: () => createElement('p', null, 'Thinking'), CopilotStreamCursor: Empty }
     if (specifier === '../ui-shared/hooks/useExpandedView') return { useExpandedView: () => ({ expanded: false, toggleExpanded: Empty }) }
     if (specifier === '../services/copilot/answerPresentation') return answerPresentation
-    if (specifier === '../services/copilot/orchestration') return { isWorkOrderRequest }
-    if (specifier === '../services/copilot/suggestions') return {}
+    if (specifier === '../services/copilot/orchestration') return orchestration
+    if (specifier === '../services/copilot/suggestions') return suggestions
     if (specifier === 'react-markdown') return { __esModule: true, default: ({ children }) => createElement('div', null, children) }
     if (specifier === 'remark-gfm') return { __esModule: true, default: Empty }
     return require(specifier)
@@ -51,9 +53,35 @@ test('Hydro Intelligence renders one Supervisor-led experience with no direct-ag
     messages: [], busy: false, onSend: Empty, onReset: Empty,
   }))
   assert.equal((html.match(/<h1>Hydro Intelligence<\/h1>/g) ?? []).length, 1)
-  assert.match(html, /Supervisor.*Sparky \/ Fabric IQ/)
+  assert.match(html, /Supervisor-led multi-agent team/)
+  assert.doesNotMatch(html, /Supervisor · Sparky \/ Fabric IQ · Specialist collaboration/)
   assert.doesNotMatch(html, /Direct Data Agent|Foundry orchestration|Copilot options|Battle|v2-engine-toggle/)
   assert.match(html, /Ask about connected Fabric data/)
+})
+
+test('team capabilities include all roles without pretending unused specialists executed', () => {
+  const html = renderToStaticMarkup(createElement(CopilotExperience, {
+    messages: [], busy: false, onSend: Empty, onReset: Empty,
+  }))
+  assert.match(html, /<summary[^>]*aria-label="Team capabilities"/)
+  assert.match(html, /Available capabilities, not a list of agents running on every request/)
+  for (const member of orchestration.AGENT_CAPABILITIES) {
+    assert.ok(html.includes(orchestration.AGENT_DISPLAY_NAMES[member.role]))
+    assert.ok(html.includes(member.specialty.replaceAll('&', '&amp;')))
+  }
+  assert.equal(new Set(orchestration.AGENT_CAPABILITIES.map(member => member.role)).size, 6)
+  assert.match(html, /without a specialist model call/)
+  assert.match(html, /Saving requires your separate review and approval/)
+  assert.doesNotMatch(html, /Conversation agent flow|On the job|Finished/)
+})
+
+test('simple factual starter does not force a native model call', () => {
+  const html = renderToStaticMarkup(createElement(CopilotExperience, {
+    messages: [{ role: 'agent', text: 'Ready.' }], busy: false, onSend: Empty, onReset: Empty,
+  }))
+  assert.match(html, /<button[^>]*>List every facility with its identifier and name\.<\/button>/)
+  assert.doesNotMatch(html, /Ask Sparky \(Fabric IQ\) to list every facility/)
+  assert.match(html, /Use the Fabric Data Agent for the facts/)
 })
 
 test('no drafts render no pager; one draft needs no page controls', () => {

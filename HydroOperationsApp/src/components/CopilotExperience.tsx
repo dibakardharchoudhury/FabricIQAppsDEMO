@@ -1,11 +1,11 @@
 import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
+import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Users, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
-import { isWorkOrderRequest, type OrchestrationEvent, type WorkOrderProposal } from '../services/copilot/orchestration'
+import { AGENT_CAPABILITIES, AGENT_DISPLAY_NAMES, isWorkOrderRequest, type OrchestrationEvent, type WorkOrderProposal } from '../services/copilot/orchestration'
 import { WorkOrderDraftPager } from './WorkOrderDraftPager'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
@@ -40,9 +40,9 @@ type CopilotExperienceProps = {
   onReset: () => void
 }
 
-const SOURCE_LABEL = 'Supervisor · Sparky / Fabric IQ · Specialist collaboration'
+const TEAM_LABEL = 'Supervisor-led multi-agent team'
 const PROMPTS = [
-    'Ask Sparky (Fabric IQ) to list every facility with its identifier and name in the answer.',
+    'List every facility with its identifier and name.',
     'Investigate turbine telemetry-quality issues in the last 6 hours. Compare competing explanations and state the missing evidence; do not assume a mechanical fault.',
     'Independently verify the open-work backlog by facility using governed source reads and show a ranked chart.',
     'Compare the latest UKMet forecasts with observations for the same facilities. Keep vendors, forecast issues, valid times and units separate.',
@@ -57,9 +57,9 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
   const chatView = useExpandedView()
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const conversationEvents = messages.flatMap(message => message.orchestrationEvents ?? [])
-  const conversationProposals = messages.flatMap(message => message.proposals ?? [])
-  const currentEventIds = messages[messages.length - 1]?.orchestrationEvents?.map(event => event.id) ?? []
+  const conversationEvents = useMemo(() => messages.flatMap(message => message.orchestrationEvents ?? []), [messages])
+  const conversationProposals = useMemo(() => messages.flatMap(message => message.proposals ?? []), [messages])
+  const currentEventIds = useMemo(() => messages[messages.length - 1]?.orchestrationEvents?.map(event => event.id) ?? [], [messages])
   // Follow new content only while the user is already at the bottom; scrolling up opts out.
   const stickToBottom = useRef(true)
 
@@ -86,10 +86,22 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
   }
 
   return <div className="v2-domain-page v2-copilot-page">
-    <section className="v2-page-head"><div><span className="v2-eyebrow">{SOURCE_LABEL}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
+    <section className="v2-page-head"><div><span className="v2-eyebrow">{TEAM_LABEL}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
     <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
-      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{SOURCE_LABEL}</small></span>
+      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{TEAM_LABEL}</small></span>
       <span className="v2-copilot-actions">
+        <details className="v2-copilot-team" onKeyDown={event => { if (event.key === 'Escape') event.currentTarget.open = false }}>
+          <summary aria-label="Team capabilities" title="Team capabilities"><Users size={15} />Team</summary>
+          <div className="v2-copilot-team-card">
+            <h2>Multi-agent team capabilities</h2>
+            <p>Available capabilities, not a list of agents running on every request. The execution flow shows only the participants actually selected.</p>
+            <ul>{AGENT_CAPABILITIES.map(member => <li key={member.role}>
+              <strong>{AGENT_DISPLAY_NAMES[member.role]} <span>{member.specialty}</span></strong>
+              <p>{member.description}</p>
+            </li>)}</ul>
+            <p>Simple questions do not need the whole team. Source readers are application code, not additional model calls.</p>
+          </div>
+        </details>
         <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>

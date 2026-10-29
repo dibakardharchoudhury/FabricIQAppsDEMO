@@ -58,7 +58,7 @@ export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; 
 export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
-const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about facilities, equipment, telemetry, weather, or maintenance work. The Supervisor coordinates the specialists your question needs. Sparky (Fabric IQ) calls the ontology-backed Fabric Data Agent with your original question and preserves its answer unchanged, without an extra rewriting model. Gauge handles precise direct reads and independent checks; Gale handles weather; Sleuth investigates competing explanations; Fixer reviews maintenance coverage and prepares explicitly requested approval-only drafts. No work order is saved without your review and approval.' }
+const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'The Supervisor coordinates Gauge (Q&A), Sparky (Fabric IQ), Gale (Weather), Sleuth (RCA) and Fixer (Work orders), using only the capabilities your question needs. Open Team for their responsibilities. Work-order drafts require your review and approval before saving.' }
 
 function readPersistedSetup(): PersistedSetup {
   try { return JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || '{}') as PersistedSetup }

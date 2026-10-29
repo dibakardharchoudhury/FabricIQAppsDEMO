@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { memo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { Activity, Check, ClipboardCheck, CloudSun, ExternalLink, GitBranch, Search, Telescope, Workflow } from 'lucide-react'
 import type { AgentRole, OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
 import { AGENT_DISPLAY_NAMES } from '../services/copilot/orchestration'
@@ -33,7 +33,7 @@ function CommunicationPacket({ path, timestamp, reverse = false, failed = false 
     style={{ offsetPath: `path("${path}")`, animationDelay: `${-age}ms` }} />
 }
 
-export function AgentCrewTrace({ events, proposals = [], currentEventIds, pending = false, expanded, onExpandedChange }: { events?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; currentEventIds?: string[]; pending?: boolean; expanded?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
+export const AgentCrewTrace = memo(function AgentCrewTrace({ events, proposals = [], currentEventIds, pending = false, expanded, onExpandedChange }: { events?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; currentEventIds?: string[]; pending?: boolean; expanded?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
   const [selected, setSelected] = useState<AgentRole>()
   const [paused, setPaused] = useState(false)
   const [localExpanded, setLocalExpanded] = useState(false)
@@ -152,4 +152,4 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
       </li>)}</ol> : <p>No execution events recorded for this agent.</p>}
     </details>}
   </section>
-}
+})
