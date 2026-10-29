@@ -25,7 +25,7 @@ function loadComponent(file, symbol) {
     if (specifier === './AnswerDashboard') return { AnswerDashboard: Empty }
     if (specifier === './AgentVisualizationView') return { AgentVisualizationView: Empty }
     if (specifier === './CopilotThinking') return { CopilotThinking: () => createElement('p', null, 'Thinking'), CopilotStreamCursor: Empty }
-    if (specifier === '../ui-shared/hooks/useExpandedView') return { useExpandedView: Empty }
+    if (specifier === '../ui-shared/hooks/useExpandedView') return { useExpandedView: () => ({ expanded: false, toggleExpanded: Empty }) }
     if (specifier === '../services/copilot/answerPresentation') return answerPresentation
     if (specifier === '../services/copilot/suggestions') return {}
     if (specifier === 'react-markdown') return { __esModule: true, default: ({ children }) => createElement('div', null, children) }
@@ -37,11 +37,22 @@ function loadComponent(file, symbol) {
 }
 const WorkOrderDraftPager = loadComponent('WorkOrderDraftPager', 'WorkOrderDraftPager')
 const AgentMessage = loadComponent('CopilotExperience', 'AgentMessage')
+const CopilotExperience = loadComponent('CopilotExperience', 'CopilotExperience')
 const drafts = count => Array.from({ length: count }, (_, index) => ({
   id: `draft-${index + 1}`, equipmentId: `EQUIP_T00${index + 1}`,
   title: `Diagnostic draft ${index + 1}`, description: 'Investigate observed quality.',
   priority: 'Medium', createdAt: 0,
 }))
+
+test('Hydro Intelligence renders one Supervisor-led experience with no direct-agent or comparison selector', () => {
+  const html = renderToStaticMarkup(createElement(CopilotExperience, {
+    messages: [], busy: false, onSend: Empty, onReset: Empty,
+  }))
+  assert.equal((html.match(/<h1>Hydro Intelligence<\/h1>/g) ?? []).length, 1)
+  assert.match(html, /Supervisor.*Sparky \/ Fabric IQ/)
+  assert.doesNotMatch(html, /Direct Data Agent|Foundry orchestration|Copilot options|Battle|v2-engine-toggle/)
+  assert.match(html, /Ask about connected Fabric data/)
+})
 
 test('no drafts render no pager; one draft needs no page controls', () => {
   assert.equal(renderToStaticMarkup(createElement(WorkOrderDraftPager, { proposals: [] })), '')

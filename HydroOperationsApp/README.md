@@ -1,12 +1,15 @@
 # Hydro Operations Fabric App
 
-Hydro Intelligence now opens in **Direct Data Agent** mode: the question is
-forwarded unchanged to the published Fabric Data Agent and its original answer
-is displayed unchanged, without planning, Sparky-wrapper or answer-writing LLM
-calls. This is read-only. Select **Foundry orchestration** for specialist analysis
-and review-only maintenance drafts. The hosted Responses transport reads completion
-events incrementally rather than waiting for the streaming connection to close.
-The legacy MCP implementation described below is not this hosted default path. Fabric App
+Hydro Intelligence is one **Supervisor-led multi-agent experience**, with no
+Direct Data Agent tab, engine selector or comparison entry. The Supervisor routes
+Fabric business questions through **Sparky / Fabric IQ** to the published Fabric
+Data Agent. Sparky forwards the original question once and returns the original
+answer unchanged, without another LLM wrapper or answer writer. Other specialists
+participate only when needed; work-order drafts still require explicit review
+and approval. The hosted Responses transport consumes completion events
+incrementally rather than waiting for the streaming connection to close.
+The legacy MCP/browser-coordination implementation described below is not this
+hosted execution path.
 
 A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
@@ -325,8 +328,9 @@ The trace records real Foundry response IDs and agent identities; it does not ex
 
 Hydro Intelligence in both layouts now starts with the Supervisor, regardless of an old saved
 engine preference. There is no separate Data Agent selector in ordinary chat; explicit Data Agent
-requests route through the Fabric IQ specialist. Direct Data Agent access remains in the optional
-Battle comparison. Missing Foundry configuration fails explicitly instead of silently changing engines.
+requests route through the Fabric IQ specialist. The compatibility comparison component
+is not an entry point on the Hydro Intelligence page. Missing Foundry configuration
+fails explicitly instead of silently changing engines.
 
 The animated crew reuses the existing yellow Signal Sprint helpers. Real parent/call IDs drive
 Supervisor-to-specialist request packets and matching return/failure packets, with distinct working

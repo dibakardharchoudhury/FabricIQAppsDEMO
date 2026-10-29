@@ -55,14 +55,10 @@ type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream' | 'weather' | 'map'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
-export type CopilotEngine = 'data-agent' | 'foundry'
 export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
-const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
-  'data-agent': { role: 'agent', text: 'Read-only questions go directly to the published Fabric Data Agent, unchanged, without planning, Sparky-wrapper or summarization models. Explicit work-order draft requests use guarded specialist drafting to prepare editable review cards while preserving the original Fabric answer. No work order is saved without your approval. Select Foundry orchestration for other specialist analysis.' },
-  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, telemetry, weather, or maintenance work. The Supervisor selects only the capabilities your question needs. Fabric IQ uses the ontology-backed Fabric Data Agent for cross-source business questions and preserves its original answer; Q&A handles precise direct reads and independent checks. Weather interprets forecasts, RCA investigates potential faults, and Work Order prepares review-only drafts. Telemetry-quality investigation drafts do not require a mechanical RCA. No work order is saved without your review and approval.' },
-}
+const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about facilities, equipment, telemetry, weather, or maintenance work. The Supervisor coordinates the specialists your question needs. Sparky (Fabric IQ) calls the ontology-backed Fabric Data Agent with your original question and preserves its answer unchanged, without an extra rewriting model. Gauge handles precise direct reads and independent checks; Gale handles weather; Sleuth investigates competing explanations; Fixer reviews maintenance coverage and prepares explicitly requested approval-only drafts. No work order is saved without your review and approval.' }
 
 function readPersistedSetup(): PersistedSetup {
   try { return JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || '{}') as PersistedSetup }
@@ -130,8 +126,7 @@ function useHydroOperationsDataController() {
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [telemetrySelections, setTelemetrySelections] = useState<Record<string, TelemetryExplorerSelection>>({})
-  const [copilotEngine, setCopilotEngine] = useState<CopilotEngine>('data-agent')
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES['data-agent']])
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGE])
   const [copilotBusy, setCopilotBusy] = useState(false)
   const [mutationKey, setMutationKey] = useState<string>()
 
@@ -817,7 +812,6 @@ function useHydroOperationsDataController() {
     const startedAt = Date.now()
     setCopilotBusy(true)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
-    // Foundry owns its local tool trace. Data Agent MCP internals stay hidden while its answer is pending.
     let liveText = ''
     let liveSteps: AgentStep[] | undefined
     let liveEvents: OrchestrationEvent[] | undefined
@@ -831,7 +825,6 @@ function useHydroOperationsDataController() {
     })
     try {
       const answer: FoundryAnswer = await askCopilot(
-          copilotEngine,
           text,
           partial => { liveText = partial; paint() },
           steps => { liveSteps = steps; paint() },
@@ -852,22 +845,14 @@ function useHydroOperationsDataController() {
       liveEvents = failedExecutionEvents(liveEvents, detail)
       paint({ elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
-  }, [copilotBusy, copilotEngine])
+  }, [copilotBusy])
 
   const resetCopilot = useCallback(() => {
     if (copilotBusy) return
     resetDataAgentConversation()
     resetFoundryConversation()
-    setMessages([INITIAL_MESSAGES[copilotEngine]])
-  }, [copilotBusy, copilotEngine])
-
-  const changeCopilotEngine = useCallback((engine: CopilotEngine) => {
-    if (copilotBusy || engine === copilotEngine) return
-    resetDataAgentConversation()
-    resetFoundryConversation()
-    setCopilotEngine(engine)
-    setMessages([INITIAL_MESSAGES[engine]])
-  }, [copilotBusy, copilotEngine])
+    setMessages([INITIAL_MESSAGE])
+  }, [copilotBusy])
 
   return {
     user,
@@ -915,7 +900,6 @@ function useHydroOperationsDataController() {
     facilityHealth,
     messages,
     copilotBusy,
-    copilotEngine,
     foundryAvailable: isFoundryConfigured(),
     mutationKey,
     counts: {
@@ -943,7 +927,6 @@ function useHydroOperationsDataController() {
       removeWorkOrder,
       sendCopilotQuestion,
       resetCopilot,
-      changeCopilotEngine,
       refreshDiscovery: clearWorkspaceConfigCache,
     },
   }

@@ -41,19 +41,6 @@ export function CopilotSettingsPanel() {
       </p> : null}
 
       <div className="copilot-settings-group">
-        <h4>Agent comparison</h4>
-        <p>Enable the hidden Battle mode inside Hydro Intelligence for this browser. It remains off by default and does not initialize either agent during app startup.</p>
-        <ul><li><label>
-          <input
-            type="checkbox"
-            checked={draft.battleEnabled}
-            onChange={event => setDraft(current => ({ ...current, battleEnabled: event.target.checked }))}
-          />
-          <span><strong>Battle of the Agents</strong><small>Send the same prompt through the hosted runtime to Fabric Data Agent and Foundry specialists, then compare their answers, traces, visuals, and latency side by side.</small></span>
-        </label></li></ul>
-      </div>
-
-      <div className="copilot-settings-group">
         <h4>Foundry Agent Service
           <button type="button" className="copilot-settings-inline" disabled={draft.projectEndpoint === defaults.projectEndpoint} onClick={() => setDraft(current => ({ ...current, projectEndpoint: FOUNDRY_ENV_DEFAULTS.projectEndpoint }))}>Restore deployed project</button>
         </h4>

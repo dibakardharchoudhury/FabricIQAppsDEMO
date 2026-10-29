@@ -18,16 +18,15 @@ Item creation and agent/configuration readback are not end-to-end execution test
 
 ## Native answer fidelity
 
-The default **Direct Data Agent** chat mode explicitly selects the native
-read-only path for questions that do not request new work-order drafts. It bypasses the semantic planning model, local tool catalog,
-Fabric IQ wrapper model and answer writer. The exact question is forwarded once,
-and the original answer is returned unchanged. Result files are not downloaded
-as a prerequisite for this text-only response; their citation annotations remain
-in the native audit. Explicit draft requests enter guarded semantic planning and
-the Work Order specialist even from Direct Data Agent mode; otherwise that mode
-would return prose without creating approval cards. **Foundry orchestration**
-remains a separate operator choice for other specialist analysis. It retains its
-semantic planner, evidence checks and result artifacts.
+Hydro Intelligence has one **Supervisor-led multi-agent** entry point, not
+separate Direct Data Agent and Foundry modes. The browser does not force the
+legacy native-only bypass. The Supervisor selects Sparky / Fabric IQ for native
+business questions; that capability forwards the exact original question once
+to the published Fabric Data Agent and returns its answer unchanged.
+There is no intervening Sparky prompt-wrapper or answer-writing model. The same
+workflow retains its semantic planner, evidence checks, source artifacts and
+other scoped specialists. Explicit draft requests remain guarded and cannot
+write without a separate authenticated approval.
 
 Native transport timeouts retain HTTP 504 (`native_timeout`), rather than being
 masked as generic HTTP 500 failures. Other native HTTP transport errors retain

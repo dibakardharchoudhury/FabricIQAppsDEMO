@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs'
 import { defaultCopilotSettings, DEFAULT_SYSTEM_PROMPT, mergeCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from '../src/services/copilot/settings.ts'
 import { ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 
-test('default weather sample asks only for the available UKMet forecasts', () => {
+test('default weather sample uses UKMet rather than assuming optional Aurora coverage', () => {
   const source = readFileSync(new URL('../src/components/CopilotExperience.tsx', import.meta.url), 'utf8')
-  assert.ok(source.includes("'Show UKMet rainfall forecasts for each station over the next 24 hours.'"))
+  assert.ok(source.includes("'Compare the latest UKMet forecasts with observations for the same facilities. Keep vendors, forecast issues, valid times and units separate.'"))
   assert.doesNotMatch(source, /Compare Aurora and UKMet rainfall forecasts/)
 })
 

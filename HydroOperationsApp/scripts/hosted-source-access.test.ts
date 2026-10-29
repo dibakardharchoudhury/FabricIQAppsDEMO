@@ -97,3 +97,8 @@ test('chat and comparison have no separate access setup button or connected bann
     assert.doesNotMatch(source, /AgentAccessControl|Connect agent access|Agent access is connected/)
   }
 })
+
+test('hosted source admission uses the deployment-verified endpoint before optional workspace discovery', () => {
+  const source = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
+  assert.match(source, /const cluster = configuredEventhouseQueryUri \?\? \(await ensureConfig\(false\)\)\?\.eventhouseQueryUri/)
+})

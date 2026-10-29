@@ -1,5 +1,29 @@
 # Foundry and multi-agent implementation record
 
+## October 29 single Hydro Intelligence entry point
+
+The separate Direct Data Agent mode was a UI design mistake and has been
+removed. Both layouts render the same single Supervisor-led experience.
+There is no engine selector or comparison entry on the page, and no engine
+preference/state can bypass the Supervisor. The normal chat request carries
+the original question, not a forced `native_sources` selection.
+
+For native business questions the execution chain is **Supervisor -> Sparky
+(Fabric IQ capability) -> published Fabric Data Agent**. The Supervisor performs
+bounded semantic selection; Sparky invokes the native transport once using the
+unchanged operator question. It does not add another prompt-agent reasoning
+round or rewrite the answer. Native text fidelity, pinned source identity,
+separate checked specialist assessments and approval-only drafts are preserved.
+QA, Weather, RCA and Work Order remain available for their assigned roles.
+
+Source admission also uses the deployment-verified Eventhouse endpoint directly
+when configured, rather than awaiting unrelated workspace/Ontology discovery
+before requesting the delegated token leases. Missing endpoint configuration
+still follows discovery and fails explicitly if unresolved.
+
+The preceding two-mode acceptance record below is historical; it does not
+describe the current Hydro Intelligence navigation.
+
 ## October 29 role-boundary and presentation correction
 
 Current architecture and enterprise limitations are described in the

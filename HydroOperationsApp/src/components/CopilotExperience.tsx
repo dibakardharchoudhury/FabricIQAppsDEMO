@@ -10,7 +10,6 @@ import { WorkOrderDraftPager } from './WorkOrderDraftPager'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
 import { answerSections, draftAnswerParts, draftDetailParts, operatorNarrative } from '../services/copilot/answerPresentation'
-import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
@@ -37,42 +36,25 @@ export type CopilotMessage = {
 type CopilotExperienceProps = {
   messages: CopilotMessage[]
   busy: boolean
-  engine: CopilotEngine
-  foundryAvailable: boolean
-  battleEnabled?: boolean
   onSend: (question: string) => void
   onReset: () => void
-  onEngineChange?: (engine: CopilotEngine) => void
-  onBattle?: () => void
 }
 
-const ENGINE_LABELS: Record<CopilotEngine, { name: string; source: string }> = {
-  'data-agent': { name: 'Direct Data Agent', source: 'Fabric Data Agent · Original answers · Drafts require approval' },
-  foundry: { name: 'Foundry orchestration', source: 'Azure AI Foundry · Specialist analysis and approval flow' },
-}
-
-const PROMPTS: Record<CopilotEngine, string[]> = {
-  'data-agent': [
-    'Show all open work orders as a table with the affected asset, priority, and status.',
-    'List all equipment with manufacturer, model, and criticality.',
-    'Which assets have the most open work orders? Give a ranked table and chart.',
-    'Summarize the facilities with their type, country, and number of assets.',
-  ],
-  foundry: [
+const SOURCE_LABEL = 'Supervisor · Sparky / Fabric IQ · Specialist collaboration'
+const PROMPTS = [
+    'Ask Sparky (Fabric IQ) to list every facility with its identifier and name in the answer.',
     'Investigate turbine telemetry-quality issues in the last 6 hours. Compare competing explanations and state the missing evidence; do not assume a mechanical fault.',
     'Independently verify the open-work backlog by facility using governed source reads and show a ranked chart.',
     'Compare the latest UKMet forecasts with observations for the same facilities. Keep vendors, forecast issues, valid times and units separate.',
     'Review existing work coverage for turbine T005 and prepare an editable diagnostic draft only for a verified uncovered gap. Do not save or approve work.',
     'Use the Fabric Data Agent for the facts, then investigate telemetry-quality gaps and review maintenance coverage separately. Preserve the Fabric answer unchanged; do not prepare or save work orders.',
-  ],
-}
+]
 
-export function CopilotExperience({ messages, busy, engine, foundryAvailable, battleEnabled, onSend, onReset, onEngineChange, onBattle }: CopilotExperienceProps) {
+export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
   const [flowExpanded, setFlowExpanded] = useState(false)
   const [flowWidth, setFlowWidth] = useState(320)
   const chatView = useExpandedView()
-  const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const conversationEvents = messages.flatMap(message => message.orchestrationEvents ?? [])
@@ -104,26 +86,10 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
   }
 
   return <div className="v2-domain-page v2-copilot-page">
-    <section className="v2-page-head"><div><span className="v2-eyebrow">{ENGINE_LABELS[engine].source}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
+    <section className="v2-page-head"><div><span className="v2-eyebrow">{SOURCE_LABEL}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
     <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
-      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
+      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{SOURCE_LABEL}</small></span>
       <span className="v2-copilot-actions">
-        {foundryAvailable && (onEngineChange || battleEnabled) && <span className="v2-engine-toggle" role="group" aria-label="Copilot options">
-          {onEngineChange && (['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
-            key={option}
-            type="button"
-            className={option === engine ? 'on' : ''}
-            aria-pressed={option === engine}
-            disabled={busy}
-            onClick={() => onEngineChange(option)}
-          >{ENGINE_LABELS[option].name}</button>)}
-          {battleEnabled && <button
-            type="button"
-            title="Compare Fabric Data Agent and Foundry with the same prompt"
-            disabled={busy}
-            onClick={onBattle}
-          >Battle</button>}
-        </span>}
         <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>
@@ -141,7 +107,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
             {message.role === 'agent' && last && !busy && !message.failed && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
           </div>
         })}
-        {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
+        {messages.length === 1 && <div className="v2-suggestions">{PROMPTS.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
       </div>
       <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
         <button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>

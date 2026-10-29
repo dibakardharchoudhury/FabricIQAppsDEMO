@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Gauge, Maximize2, Minimize2, RotateCcw, Send, Swords } from 'lucide-react'
 import { resetDataAgentConversation, type AgentAnswer } from '../services/fabric'
-import { askCopilot } from '../services/copilot/askCopilot'
 import { failedExecutionEvents, isWorkOrderRequest, uncertifiedFailureMessage } from '../services/copilot/orchestration'
-import { askFoundryCopilot, isHostedFoundryConfigured, resetFoundryConversation, type FoundryAnswer } from '../services/copilot/foundry'
+import { askFoundryCopilot, askHostedCopilot, isHostedFoundryConfigured, resetFoundryConversation, type FoundryAnswer } from '../services/copilot/foundry'
 import { runAgentBattle, type AgentBattleEngine } from '../services/copilot/agentBattle'
 import { CopilotResponse, type CopilotMessage } from './CopilotExperience'
 import { AgentElapsedTime } from './AgentElapsedTime'
@@ -85,11 +84,10 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
     const runners = {
       'data-agent': async (question: string) => {
         updateSide('data-agent', { status: 'running', startedAt: Date.now() })
-        return askCopilot(
+        return askHostedCopilot(
           'data-agent',
           question,
           text => updateMessage('data-agent', { text }),
-          steps => updateMessage('data-agent', { steps }),
           orchestrationEvents => updateMessage('data-agent', { orchestrationEvents }),
         )
       },

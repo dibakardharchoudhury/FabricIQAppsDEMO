@@ -281,8 +281,7 @@ export async function foundryAgentToken(interactive: boolean): Promise<string | 
 }
 
 async function hostedSourceAccess() {
-  const config = await ensureConfig(false)
-  const cluster = configuredEventhouseQueryUri ?? config?.eventhouseQueryUri
+  const cluster = configuredEventhouseQueryUri ?? (await ensureConfig(false))?.eventhouseQueryUri
   if (!cluster) throw new Error('The hosted source requires the authoritative Eventhouse endpoint.')
   return createHostedSourceAccess([
     { kind: 'fabric', label: 'Fabric', scopes: [...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])] },
