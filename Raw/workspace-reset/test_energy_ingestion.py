@@ -557,6 +557,27 @@ class UMMTests(HelpersTest):
 
 
 class HTTPAndArcGISTests(HelpersTest):
+    def test_arcgis_http_200_service_not_started_retries_with_existing_budget(self):
+        error = {"error": {"code": 500, "details": [], "message": "Error handling service request :Service not started."}}
+        responses = [FakeResponse(error), FakeResponse({"name": "Budomraade"})]
+        spool = types.SimpleNamespace(record=Mock())
+        session = Mock(request=Mock(side_effect=responses))
+        result = self.ns["PublicHTTP"](session, spool).get_json(self.ns["PRICE_AREA_URL"])
+        self.assertEqual(result, {"name": "Budomraade"})
+        self.assertEqual(session.request.call_count, 2)
+        self.assertEqual(spool.record.call_count, 2)
+        self.assertTrue(all(response.closed for response in responses))
+        self.ns["time"].sleep.assert_called_once_with(1.0)
+
+    def test_arcgis_error_envelope_exhaustion_preserves_provider_reason(self):
+        response = FakeResponse({"error": {"code": 500, "message": "Service not started."}})
+        session = Mock(request=Mock(return_value=response))
+        spool = types.SimpleNamespace(record=Mock())
+        with self.assertRaisesRegex(self.error, "Service not started"):
+            self.ns["PublicHTTP"](session, spool, attempts=3).get_json(self.ns["PRICE_AREA_URL"])
+        self.assertEqual(session.request.call_count, 3)
+        self.assertEqual(spool.record.call_count, 3)
+
     def test_bounded_backoff_archives_responses_and_uses_read_only_post(self):
         spool = types.SimpleNamespace(record=Mock())
         responses = [FakeResponse({}, 429, {"Retry-After": "999999"}), FakeResponse({}, 503), FakeResponse({"count": 2})]

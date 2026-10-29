@@ -493,10 +493,11 @@ and application authorization; it does not claim managed MCP execution-policy en
 Original source text and resource receipts are retained; downstream analysis and
 approval drafts are separate, never replacements for the source answer.
 
-The ontology supplies the associated Lakehouse and Eventhouse execution sources;
-standalone duplicates of those sources are removed. The explicit operational SQL
-adapter remains necessary while the ontology's SQL association supplies context
-but not an independent SQL execution tool. Only the five operational tables are
+The ontology supplies semantic context; explicit Lakehouse and Eventhouse adapters
+provide source-native query tools. NB09 restores missing adapters using live source
+identity/schema and retains existing selections. NB11 preserves them when adding the
+operational SQL adapter; ontology associations alone do not guarantee query tools.
+Only the five operational SQL tables are
 selected; visible but unselected SQL control tables are not extra query sources.
 Native JSON result files and their typed tables are retained without rewriting the
 answer. Quality/work evidence must match successful native source-query and combine

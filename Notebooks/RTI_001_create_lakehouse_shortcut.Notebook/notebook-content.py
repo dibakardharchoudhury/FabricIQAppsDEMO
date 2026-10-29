@@ -1083,66 +1083,6 @@ def ontology_source_bindings(parts, workspace_id):
     return bindings
 
 
-def prune_ontology_duplicate_sources(parts, ontology_parts, workspace_id, ontology_id):
-    selected = selected_ontology_entities(parts, workspace_id, ontology_id)
-    if not selected:
-        return parts, []
-    bindings = ontology_source_bindings(ontology_parts, workspace_id)
-    stage_path = "Files/Config/draft/stage_config.json"
-    stages = [part for part in parts if part["path"] == stage_path]
-    if len(stages) != 1:
-        raise RuntimeError("Ontology source cleanup requires one draft configuration.")
-    stage = json.loads(base64.b64decode(stages[0]["payload"], validate=True))
-    instructions = stage.get("aiInstructions", "")
-    removed = []
-    # SQLDatabase association currently supplies context, but no independent SQL tool.
-    kinds = {"lakehouse_tables": "Lakehouse", "kusto": "KQLDatabase"}
-    for part in parts:
-        if not part["path"].startswith("Files/Config/draft/") or not part["path"].endswith("/datasource.json"):
-            continue
-        source = json.loads(base64.b64decode(part["payload"], validate=True))
-        if source.get("workspaceId") != workspace_id or source.get("type") not in kinds:
-            continue
-        if source.get("metadata") or set(source) - {
-            "$schema", "artifactId", "workspaceId", "displayName", "type", "metadata",
-            "dataSourceInstructions", "userDescription", "elements",
-        }:
-            continue
-        covered = bindings.get((kinds[source["type"]], source.get("artifactId")), {})
-        tables = set()
-        notes = [source.get("dataSourceInstructions") or "", source.get("userDescription") or ""]
-        nodes = list(source.get("elements", []))
-        while nodes:
-            node = nodes.pop()
-            nodes.extend(node.get("children", []))
-            if node.get("is_selected") is True and str(node.get("type", "")).endswith(".table"):
-                tables.add(node["display_name"])
-            if node.get("description"):
-                notes.append(f"{node.get('display_name', '')}: {node['description']}")
-        if not tables or any(not (selected & covered.get(table, set())) for table in tables):
-            continue
-        marker = f"### Ontology source guidance: {kinds[source['type']]} {source['artifactId']}"
-        block = marker + "\n" + "\n".join(note for note in notes if note)
-        if block not in instructions:
-            if marker in instructions:
-                raise RuntimeError("Conflicting retained Ontology source guidance.")
-            instructions = instructions.rstrip() + "\n\n" + block
-        removed.append(part["path"])
-    if not removed:
-        return parts, []
-    if len(instructions) > 15000:
-        raise RuntimeError("Cannot remove duplicate sources without exceeding the instruction limit; retain their guidance.")
-    stage["aiInstructions"] = instructions
-    result = []
-    for part in parts:
-        if part["path"] in removed:
-            continue
-        if part["path"] == stage_path:
-            part = {**part, "payload": base64.b64encode(json.dumps(stage).encode()).decode()}
-        result.append(part)
-    return result, removed
-
-
 def operational_store_name(env_suffix):
     if not isinstance(env_suffix, str) or not re.fullmatch(r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*", env_suffix):
         raise RuntimeError("Operational SQL requires the explicit setup environment suffix.")
@@ -1171,23 +1111,24 @@ def active_operational_items(items):
     return active
 
 
-def operational_source_path(parts, workspace_id, item_id, preferred_path):
+def operational_source_path(parts, workspace_id, item_id, preferred_path, source_type="sql_database"):
     sources = {
         part["path"]: json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
         for part in parts
         if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json")
     }
     matching = [path for path, source in sources.items()
-                if source.get("type") == "sql_database" and source.get("artifactId") == item_id]
+                if source.get("type") == source_type and source.get("artifactId") == item_id]
+    label = "operational SQL" if source_type == "sql_database" else source_type
     if len(matching) > 1:
-        raise RuntimeError("Multiple Data Agent SQL sources reference the same operational item.")
+        raise RuntimeError(f"Multiple Data Agent {label} sources reference the same item.")
     if matching:
         path = matching[0]
         if sources[path].get("workspaceId") != workspace_id:
-            raise RuntimeError("Existing operational SQL source has a conflicting workspace identity.")
+            raise RuntimeError(f"Existing {label} source has a conflicting workspace identity.")
         return path
     if preferred_path in sources:
-        raise RuntimeError("The preferred operational SQL source path belongs to another source.")
+        raise RuntimeError(f"The preferred {label} source path belongs to another source.")
     return preferred_path
 
 OPERATIONAL_COLUMNS = {

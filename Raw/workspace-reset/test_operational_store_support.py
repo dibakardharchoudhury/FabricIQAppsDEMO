@@ -51,22 +51,18 @@ class OntologySourceTopologyTests(unittest.TestCase):
         ]
         return agent, ontology
 
-    def test_removes_only_covered_sources_and_preserves_guidance_idempotently(self):
+    def test_matching_execution_sources_reuse_existing_paths_without_mutation(self):
         agent, ontology = self.fixtures()
         unrelated = part("Files/Config/draft/custom/datasource.json", json.dumps({
             "type": "sql_database", "artifactId": "other", "workspaceId": "ws", "custom": True,
         }))
         agent.append(unrelated)
         before = copy.deepcopy(agent)
-        result, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
-        self.assertEqual(removed, ["Files/Config/draft/lakehouse-source/datasource.json"])
+        path = support.operational_source_path(
+            agent, "ws", "lakehouse", "Files/Config/draft/new/datasource.json", "lakehouse_tables")
+        self.assertEqual(path, "Files/Config/draft/lakehouse-source/datasource.json")
         self.assertEqual(agent, before)
-        self.assertEqual(result[-1], unrelated)
-        instructions = json.loads(base64.b64decode(result[0]["payload"]))["aiInstructions"]
-        self.assertIn("Existing guidance.", instructions)
-        self.assertIn("Keep operator guidance.", instructions)
-        self.assertEqual(support.prune_ontology_duplicate_sources(result, ontology, "ws", "ont"), (result, []))
-        self.assertEqual(support.selected_ontology_entities(result, "ws", "ont"), {"facilities", "equipment"})
+        self.assertEqual(support.selected_ontology_entities(agent, "ws", "ont"), {"facilities", "equipment"})
 
     def test_keeps_sources_with_unbound_tables_or_unselected_entities(self):
         for mode in ("extra-table", "unselected", "custom-metadata", "wrong-item"):
@@ -84,17 +80,19 @@ class OntologySourceTopologyTests(unittest.TestCase):
                     source["artifactId"] = "other"
                 agent[1] = part(agent[1]["path"], json.dumps(context))
                 agent[2] = part(agent[2]["path"], json.dumps(source))
-                self.assertEqual(support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont"), (agent, []))
+                before = copy.deepcopy(agent)
+                preferred = "Files/Config/draft/new/datasource.json"
+                expected = preferred if mode == "wrong-item" else agent[2]["path"]
+                self.assertEqual(support.operational_source_path(
+                    agent, "ws", "lakehouse", preferred, "lakehouse_tables"), expected)
+                self.assertEqual(agent, before)
 
-    def test_fresh_verified_v2_source_is_pruned_before_context_promotion(self):
+    def test_fresh_verified_v2_source_selection_before_context_promotion(self):
         agent, ontology = self.fixtures()
         context = json.loads(base64.b64decode(agent[1]["payload"]))
         context["type"] = "ontology"
         agent[1] = part("Files/Config/draft/ontology-source/datasource.json", json.dumps(context))
-        result, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
-        self.assertEqual(removed, ["Files/Config/draft/lakehouse-source/datasource.json"])
-        self.assertIn(agent[1], result)
-        self.assertEqual(support.selected_ontology_entities(result, "ws", "ont"), {"facilities", "equipment"})
+        self.assertEqual(support.selected_ontology_entities(agent, "ws", "ont"), {"facilities", "equipment"})
         context["type"] = "lakehouse_tables"
         agent[1] = part(agent[1]["path"], json.dumps(context))
         self.assertEqual(support.selected_ontology_entities(agent, "ws", "ont"), set())
@@ -112,20 +110,19 @@ class OntologySourceTopologyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "another workspace"):
             support.selected_ontology_entities(agent, "ws", "ont")
 
-    def test_rejects_mismatched_physical_source_and_instruction_overflow(self):
+    def test_rejects_mismatched_physical_source(self):
         agent, ontology = self.fixtures()
         stale = copy.deepcopy(ontology)
         text = base64.b64decode(stale[0]["payload"]).decode().replace("/ws/lakehouse", "/ws/other")
         stale[0] = part(stale[0]["path"], text)
         with self.assertRaisesRegex(RuntimeError, "physical binding"):
-            support.prune_ontology_duplicate_sources(agent, stale, "ws", "ont")
-        agent[0] = part(agent[0]["path"], json.dumps({"aiInstructions": "x" * 15000}))
-        with self.assertRaisesRegex(RuntimeError, "instruction limit"):
-            support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
+            support.ontology_source_bindings(stale, "ws")
 
     def test_sql_context_association_does_not_remove_its_required_execution_adapter(self):
         agent, ontology = self.fixtures("SQLDatabase")
-        self.assertEqual(support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont"), (agent, []))
+        self.assertEqual(support.operational_source_path(
+            agent, "ws", "sql", "Files/Config/draft/new/datasource.json"),
+            "Files/Config/draft/sql-source/datasource.json")
         bindings = support.ontology_source_bindings(ontology, "ws")
         self.assertEqual(set(bindings[("SQLDatabase", "sql")]), set(support.SQL_PROJECT_ENTITIES.values()))
 
@@ -146,12 +143,11 @@ class OntologySourceTopologyTests(unittest.TestCase):
                  "\t\tannotation ONT_WorkspaceId = ws\n\t\tannotation ONT_ItemId = kql\n"
                  "\t\tannotation ONT_ItemKind = KQLDatabase\n\t\tannotation ONT_ItemName = Telemetry\n"),
         ]
-        _, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
-        self.assertIn("Files/Config/draft/kusto/datasource.json", removed)
+        bindings = support.ontology_source_bindings(ontology, "ws")
+        self.assertEqual(bindings[("KQLDatabase", "kql")]["OPCUAEvents"], {"signal_master"})
         ontology[-1] = part(ontology[-1]["path"], base64.b64decode(ontology[-1]["payload"]).decode().replace(
             "\t\tannotation ONT_ItemId = kql\n", ""))
-        _, removed = support.prune_ontology_duplicate_sources(agent, ontology, "ws", "ont")
-        self.assertNotIn("Files/Config/draft/kusto/datasource.json", removed)
+        self.assertNotIn(("KQLDatabase", "kql"), support.ontology_source_bindings(ontology, "ws"))
 
 
 class OperationalItemLifecycleTests(unittest.TestCase):

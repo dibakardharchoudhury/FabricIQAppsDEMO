@@ -433,6 +433,14 @@ This verifies retirement and dependency preservation, not monitoring or Teams/em
 
 ### Compact Data Agent instructions and automatic sources (October 23, 2026)
 
+**Historical evidence, not the current provisioning policy:** a later fresh setup
+failed because the context-only agent had no Lakehouse SQL query tool. NB09 now restores
+missing explicit Lakehouse/Eventhouse execution adapters from live identities and schemas,
+including ontology-bound weather tables. Existing profiles/selections are preserved and
+NB11 retains them during SQL publication. Ontology association alone is not treated as
+proof that execution tools are available. The observations below remain specific to
+the earlier sessions; they do not justify removing adapters from other workspaces.
+
 NB09 now generates 694 words / 5,287 characters of general guidance, replacing the
 legacy instructions that discouraged ontology use. Ontology v2 provides semantic context;
 source-native queries against its associated Lakehouse/Eventhouse are normal execution,

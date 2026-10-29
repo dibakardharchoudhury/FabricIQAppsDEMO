@@ -309,15 +309,22 @@ draft selections, and publishing can promote those unrelated draft changes.
 
 For an existing context-backed agent, NB09 recognizes
 `Files/Config/<stage>/ontologies/<name>/ontology.json`, verifies its matching live v2
-identity, and preserves it without adding separate Lakehouse/Eventhouse profiles or
-rewriting NB11's SQL source guidance. The Foundry connection validator recognizes this
-published shape too. Fully deselected direct profiles for the same underlying items can
-suppress automatic attachment: native traces showed `attachedCount=0`, `skippedCount=2`
-and no Lakehouse/KQL tools. A guarded removal of just those unused profiles restored
-`attachedCount=2`, `skippedCount=0`. Fresh draft and published queries then joined
-telemetry, ontology reference data and operational SQL successfully. This is not a reason
-to remove selected/custom sources indiscriminately or claim the federation planner itself
-was repaired. See the [bounded live evidence](../../docs/foundry-deployment-and-multi-agent-setup.md#compact-data-agent-instructions-and-automatic-sources-october-23-2026).
+identity, and preserves it without rewriting NB11's SQL source guidance. The Foundry
+connection validator recognizes this published shape too. NB09 restores missing
+Lakehouse/Eventhouse execution adapters, reusing existing same-item profiles and
+preserving custom selections. New Lakehouse adapters use live schemas for core and
+ontology-bound tables, including weather. NB11 no longer removes these profiles:
+the later fresh setup exposed no Lakehouse SQL query tool despite valid ontology bindings.
+Earlier automatic attachment succeeded in a bounded context-only session; that evidence
+does not establish a general requirement to remove execution profiles.
+
+Geo001 applies its existing bounded retry budget to transient ArcGIS error envelopes
+as well as HTTP errors. In the reported reservoir failure, NVE returned HTTP 200 with
+ArcGIS code 500, `Service not started`; this is not a boundary-validation failure.
+Persistent provider failures still fail setup, with the provider reason and attempt
+archive path included in the pipeline error. NB08 similarly retries transient read-only
+Kusto queries, including HTTP 520; invalid queries, permission failures and management
+writes are not replayed.
 
 Lakehouse datasource elements must use native `lakehouse_tables.schema` roots
 containing `lakehouse_tables.table` nodes and their columns. Do not serialize

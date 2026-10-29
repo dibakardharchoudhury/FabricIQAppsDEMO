@@ -678,7 +678,12 @@ class PublicHTTP:
                 except ValueError as exc:
                     raise SourceError(f"non-JSON response: {url}; response retained in bronze") from exc
                 if isinstance(result, dict) and result.get("error"):
-                    raise SourceError(f"source returned an error envelope: {url}")
+                    error = result["error"]
+                    code = error.get("code") if isinstance(error, dict) else None
+                    if (code == 429 or isinstance(code, int) and 500 <= code < 600) and attempt + 1 < self.attempts:
+                        time.sleep(retry_seconds(response.headers.get("Retry-After"), attempt, datetime.now(timezone.utc)))
+                        continue
+                    raise SourceError(f"source returned an error envelope: {url}: {json_text(error)}")
                 return result
             finally:
                 response.close()
@@ -2198,7 +2203,8 @@ def run_auxiliary_outputs(store, fs, root, run_id, session, mode, force, clock,
         result = run_auxiliary_output(config, store, fs, root, run_id, session, mode, force, clock, failure_types)
         results.append(result)
         print(json_text(result))
-    failures = [result["table"] for result in results if result["state"] == "error"]
+    failures = [f"{result['message']}; archive={result['bronze_uri']}/attempt.json"
+                for result in results if result["state"] == "error"]
     if failures:
         raise SourceError("Required auxiliary publication failed: " + ", ".join(failures) + "; see archived attempt logs")
     return results

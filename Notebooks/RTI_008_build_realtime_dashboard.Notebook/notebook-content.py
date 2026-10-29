@@ -236,11 +236,25 @@ KUSTO_TOKEN = token_for("kusto", f"{cluster_query_uri}/.default")
 
 
 def kusto(csl, endpoint="mgmt"):
-    resp = requests.post(
-        f"{cluster_query_uri}/v1/rest/{endpoint}",
-        headers={"Authorization": f"Bearer {KUSTO_TOKEN}", "Content-Type": "application/json"},
-        json={"db": kql_db_name, "csl": csl},
-    )
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                f"{cluster_query_uri}/v1/rest/{endpoint}",
+                headers={"Authorization": f"Bearer {KUSTO_TOKEN}", "Content-Type": "application/json"},
+                json={"db": kql_db_name, "csl": csl}, timeout=60,
+            )
+        except (requests.Timeout, requests.ConnectionError):
+            if endpoint != "query" or attempt == 2:
+                raise
+            print(f"Kusto query interrupted; retrying in {2 ** attempt}s.")
+            time.sleep(2 ** attempt)
+            continue
+        if endpoint == "query" and (resp.status_code == 429 or 500 <= resp.status_code < 600) and attempt < 2:
+            print(f"Kusto query returned HTTP {resp.status_code}; retrying in {2 ** attempt}s.")
+            resp.close()
+            time.sleep(2 ** attempt)
+            continue
+        break
     if resp.status_code != 200:
         raise RuntimeError(f"Kusto {endpoint} failed ({resp.status_code}): {resp.text[:800]}")
     tables = resp.json()["Tables"]

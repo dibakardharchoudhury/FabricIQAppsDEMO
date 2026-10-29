@@ -117,13 +117,12 @@ by the selected live v2 workspace/item identity, not the old path alone. It requ
 entity selections, descriptions and custom content; only the known schema/type conversion,
 omitted empty defaults and generated authored-description markers are accepted. Missing,
 ambiguous or lossy source readback still fails setup before any runtime readiness claim.
-NB09 never creates a separate Lakehouse source for a new v2 agent: the selected Ontology
-already owns its Lakehouse bindings. NB09 reruns and NB11 SQL publication prune previously
-attached Lakehouse/Eventhouse sources only when the selected ontology entities' authoritative
-physical bindings cover every selected table. NB11 checks this again after project source
-metadata is available and verifies removal in both draft and published definitions.
-Source guidance is retained in the agent instructions; operational SQL execution sources,
-uncovered custom tables and custom source metadata remain intact.
+NB09 retains or creates explicit execution adapters for the selected ontology's Lakehouse
+and Eventhouse. Ontology association supplies semantic bindings but does not reliably expose
+SQL/KQL query tools in every session. New Lakehouse adapters include the authoritative
+ontology-bound tables, including weather, alongside the core reference tables.
+NB11 retains these adapters when publishing the operational SQL source. Existing source
+identities, selections, custom metadata and source-specific guidance remain intact.
 
 The setup/runtime split is intentional for this synthetic-data demo, not a missing dependency:
 NB09's bounded MCP smoke checks facilities before NB11 publishes the final SQL adapter.

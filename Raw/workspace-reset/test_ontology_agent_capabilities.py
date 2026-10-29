@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = {
+    "008": "RTI_008_build_realtime_dashboard",
     "009": "RTI_009_build_data_agent",
     "010": "RTI_010_build_operations_agent",
     "011": "RTI_011_seed_sql_wire_graphql_agent",
@@ -41,8 +42,8 @@ def functions(number, *names, **overrides):
         "definition_parts", "is_ontology_context_path", "operational_source_path",
         "ontology_context_matches_source",
         "normalize_lakehouse_elements",
-        "selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources",
-        "prune_agent_ontology_sources",
+        "selected_ontology_entities", "ontology_source_bindings", "ensure_execution_sources",
+        "refresh_agent_ontology_sources",
         "ontology_context_elements", "refresh_ontology_context_parts",
     }
     if "persist_sql_extension_status" in included:
@@ -62,6 +63,43 @@ def assign_to(node, name):
 
 class NotebookExit(Exception):
     pass
+
+
+class DashboardQueryRetryTests(unittest.TestCase):
+    def namespace(self, responses):
+        requests = SimpleNamespace(
+            post=Mock(side_effect=responses), Timeout=TimeoutError, ConnectionError=ConnectionError)
+        return functions("008", "kusto", requests=requests, time=Mock(),
+                         cluster_query_uri="https://cluster", KUSTO_TOKEN="token", kql_db_name="db")
+
+    def response(self, status):
+        return Mock(status_code=status, text="Internal service error",
+                    json=Mock(return_value={"Tables": [{
+                        "TableName": "Table_0", "Columns": [{"ColumnName": "value"}], "Rows": [[1]],
+                    }]}))
+
+    def test_transient_520_and_transport_interruption_retry_read_only_query(self):
+        for first in (self.response(520), TimeoutError("interrupted")):
+            with self.subTest(first=first):
+                ns = self.namespace([first, self.response(200)])
+                self.assertEqual(ns["kusto"]("print value=1", endpoint="query"), (["value"], [[1]]))
+                self.assertEqual(ns["requests"].post.call_count, 2)
+                ns["time"].sleep.assert_called_once_with(1)
+
+    def test_persistent_520_remains_a_failure_after_three_attempts(self):
+        ns = self.namespace([self.response(520) for _ in range(3)])
+        with self.assertRaisesRegex(RuntimeError, "520"):
+            ns["kusto"]("print value=1", endpoint="query")
+        self.assertEqual(ns["requests"].post.call_count, 3)
+
+    def test_invalid_queries_authorization_and_management_writes_are_not_retried(self):
+        for status, endpoint in ((400, "query"), (403, "query"), (520, "mgmt")):
+            with self.subTest(status=status, endpoint=endpoint):
+                ns = self.namespace([self.response(status)])
+                with self.assertRaisesRegex(RuntimeError, str(status)):
+                    ns["kusto"]("request", endpoint=endpoint)
+                ns["requests"].post.assert_called_once()
+                ns["time"].sleep.assert_not_called()
 
 
 def ontology_part(stage="draft", ontology_id="ontology", workspace="ws"):
@@ -1551,7 +1589,7 @@ class CapabilityTests(unittest.TestCase):
             with self.subTest(elements=malformed), self.assertRaisesRegex(RuntimeError, "malformed"):
                 normalize(malformed)
 
-    def test_fresh_nb09_and_following_sql_extension_do_not_publish_duplicate_sources(self):
+    def test_fresh_nb09_and_following_sql_extension_retain_execution_sources(self):
         state = {"parts": []}
         texts = {
             "expressions.tmdl": (
@@ -1572,6 +1610,11 @@ class CapabilityTests(unittest.TestCase):
                 '\t\t\tAzureDataExplorer.Contents("https://cluster.kusto.fabric.microsoft.com", "Eventhouse", "OPCUAEvents")\n'
                 "\tannotation ONT_WorkspaceId = ws\n\tannotation ONT_ItemId = kusto-db\n"
                 "\tannotation ONT_ItemKind = KQLDatabase\n\tannotation ONT_ItemName = Eventhouse\n"
+            ),
+            "entities/weather_sites.tmdl": "entity weather_sites\n\tbackingTable: weather_sites\n",
+            "tables/weather_sites.tmdl": (
+                "table weather_sites\n\tpartition weather_sites = entity\n\t\tsource\n"
+                "\t\t\tentityName: weather_sites\n\t\t\texpressionSource: Assets\n"
             ),
         }
         ontology_parts = [{"path": path, "payloadType": "InlineBase64",
@@ -1610,7 +1653,9 @@ class CapabilityTests(unittest.TestCase):
             )}}),
             build_stage_obj=lambda existing: {**existing, "aiInstructions": existing.get("aiInstructions", "Original")},
             update_operational_source_guidance=lambda parts: parts,
-            lakehouse_schema_map=Mock(return_value={"silver_facilities": [("facility_id", "string")]}),
+            lakehouse_schema_map=Mock(return_value={
+                "silver_facilities": [("facility_id", "string")], "weather_sites": [("facility_id", "string")],
+            }),
             update_item_definition=Mock(side_effect=update), publish_data_agent=Mock(side_effect=publish),
             enable_preview_runtime=Mock(), persist_agent_status=Mock(),
             is_known_ontology_v2_product_limitation=lambda reason: False,
@@ -1623,14 +1668,18 @@ class CapabilityTests(unittest.TestCase):
             for stage in ("draft", "published"):
                 paths = {part["path"] for part in state["parts"]}
                 self.assertIn(f"Files/Config/{stage}/ontology-source/datasource.json", paths)
-                self.assertNotIn(f"Files/Config/{stage}/lakehouse-source/datasource.json", paths)
-                self.assertNotIn(f"Files/Config/{stage}/kusto-source/datasource.json", paths)
-                instructions = ns["decode_payload"](next(
-                    part["payload"] for part in state["parts"]
-                    if part["path"] == f"Files/Config/{stage}/stage_config.json"
-                ))["aiInstructions"]
-                self.assertEqual(instructions.count("Retain telemetry guidance"), 1)
-            ns["lakehouse_schema_map"].assert_not_called()
+                self.assertIn(f"Files/Config/{stage}/lakehouse-source/datasource.json", paths)
+                self.assertIn(f"Files/Config/{stage}/kusto-source/datasource.json", paths)
+            ns["lakehouse_schema_map"].assert_called_once_with(["silver_facilities", "weather_sites"])
+        context = json_part("Files/Config/draft/ontologies/selected/ontology.json",
+                            {"artifactId": "ontology", "workspaceId": "ws"})
+        repaired = ns["ensure_execution_sources"]([context], "ontology")
+        self.assertIn(context, repaired)
+        lakehouse = next(ns["decode_payload"](part["payload"]) for part in repaired
+                         if part["path"] == ns["LAKEHOUSE_DATASOURCE_PATH"])
+        self.assertEqual({table["display_name"] for table in lakehouse["elements"][0]["children"]},
+                         {"silver_facilities", "weather_sites"})
+        self.assertEqual(ns["ensure_execution_sources"](repaired, "ontology"), repaired)
         sql, extended = self.sql_extension_namespace(state["parts"])
         sql["extend_data_agent_sql_source"]("agent")
         for stage in ("draft", "published"):
@@ -1638,7 +1687,8 @@ class CapabilityTests(unittest.TestCase):
                        for part in extended["definition"]["parts"]
                        if part["path"].startswith(f"Files/Config/{stage}/")
                        and part["path"].endswith("/datasource.json")]
-            self.assertEqual({source["type"] for source in sources}, {"ontology", "sql_database"})
+            self.assertEqual({source["type"] for source in sources},
+                             {"ontology", "lakehouse_tables", "kusto", "sql_database"})
 
     def test_nb09_failed_runtime_rerun_preserves_sql_and_custom_capabilities(self):
         sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
@@ -2098,7 +2148,7 @@ class CapabilityTests(unittest.TestCase):
                      "payload": base64.b64encode(text.encode()).decode()} for path, text in texts.items()]
         return [context, duplicate], {"definition": {"parts": ontology}}
 
-    def test_sql_publication_removes_legacy_ontology_duplicate_and_preserves_custom_content(self):
+    def test_sql_publication_retains_lakehouse_execution_source_and_custom_content(self):
         baseline, ontology = self.ontology_duplicate_fixture()
         custom = json_part("Files/Config/draft/custom.json", {"operator": "retain"})
         baseline += [custom, {**baseline[1], "path": baseline[1]["path"].replace("/draft/", "/published/")}]
@@ -2112,17 +2162,15 @@ class CapabilityTests(unittest.TestCase):
             ns["extend_data_agent_sql_source"]("agent")
             parts = {part["path"]: part for part in state["definition"]["parts"]}
             for stage in ("draft", "published"):
-                self.assertNotIn(f"Files/Config/{stage}/lakehouse/datasource.json", parts)
+                path = f"Files/Config/{stage}/lakehouse/datasource.json"
+                self.assertEqual(parts[path]["payload"], baseline[1]["payload"])
                 self.assertIn(ns["SQL_DATASOURCE_PATH"].replace("/draft/", f"/{stage}/"), parts)
                 self.assertEqual(parts[custom["path"].replace("/draft/", f"/{stage}/")]["payload"], custom["payload"])
                 self.assertEqual(parts[baseline[0]["path"].replace("/draft/", f"/{stage}/")]["payload"],
                                  baseline[0]["payload"])
-                instructions = ns["decode_payload"](
-                    parts[f"Files/Config/{stage}/stage_config.json"]["payload"])["aiInstructions"]
-                self.assertEqual(instructions.count("Retain asset source guidance."), 1)
         self.assertEqual(ontology, before_ontology)
 
-    def test_sql_duplicate_cleanup_requires_exact_live_generation_two_identity(self):
+    def test_sql_context_refresh_requires_exact_live_generation_two_identity(self):
         baseline, ontology = self.ontology_duplicate_fixture()
         for item, generation in (("ontology", 1), ("ontology", "2"), ("ontology", True), ("other", 2)):
             with self.subTest(item=item, generation=generation):
@@ -2136,19 +2184,18 @@ class CapabilityTests(unittest.TestCase):
                 ns["update_item_definition"].assert_not_called()
                 ns["publish_data_agent"].assert_not_called()
 
-    def test_sql_duplicate_removal_must_survive_draft_and_published_readback(self):
+    def test_sql_source_readback_preserves_lakehouse_execution_adapter(self):
         baseline, _ = self.ontology_duplicate_fixture()
         ns, state = self.sql_extension_namespace(baseline)
         submitted = ns["build_sql_datasource_obj"]({}, "sql-id", {})
         state["definition"]["parts"].append(json_part(ns["SQL_DATASOURCE_PATH"], submitted))
-        removed = baseline[1]["path"]
+        retained = {baseline[1]["path"]: ns["decode_payload"](baseline[1]["payload"])}
         for published in (False, True):
             if published:
                 ns["publish_data_agent"]("agent", "test")
-            with self.assertRaisesRegex(RuntimeError, "Duplicate Ontology-covered source remains"):
-                ns["verify_agent_source_readback"](
-                    "agent", submitted, published=published, removed_sources=[removed],
-                )
+            ns["verify_agent_source_readback"](
+                "agent", submitted, published=published, retained_sources=retained,
+            )
 
     def test_sql_extension_publishes_without_ontology_or_nb09_evidence(self):
         for baseline in (

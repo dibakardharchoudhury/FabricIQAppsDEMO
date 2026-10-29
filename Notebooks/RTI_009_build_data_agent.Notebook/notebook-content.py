@@ -28,9 +28,9 @@
 # Uses `rti_demo_settings` to configure and publish a Fabric **Data Agent** with the
 # selected Ontology v2, then verifies it with a sample query. Ontology context guides
 # queries against its associated Lakehouse/Eventhouse; operational SQL guidance stays
-# owned by NB11. Only verified redundant Lakehouse/Eventhouse mounts are removed;
-# custom sources and guidance are retained. The separate SQL execution adapter stays:
-# Ontology association alone did not expose a SQL query tool in live validation.
+# owned by NB11. Explicit Lakehouse/Eventhouse execution adapters expose source-native
+# query tools; ontology association alone is not sufficient in every runtime session.
+# Existing execution sources, custom selections and SQL guidance are retained.
 #
 # > **Known Fabric response:** After verified v2 publication, only the exact response
 # > "This API version is not supported for the specified Ontology item" is reported as
@@ -291,64 +291,25 @@ def ontology_source_bindings(parts, workspace_id):
             bindings.setdefault((kind, item_id), {}).setdefault(physical_name, set()).add(entity_name)
     return bindings
 
-def prune_ontology_duplicate_sources(parts, ontology_parts, workspace_id, ontology_id):
-    selected = selected_ontology_entities(parts, workspace_id, ontology_id)
-    if not selected:
-        return parts, []
-    bindings = ontology_source_bindings(ontology_parts, workspace_id)
-    stage_path = "Files/Config/draft/stage_config.json"
-    stages = [part for part in parts if part["path"] == stage_path]
-    if len(stages) != 1:
-        raise RuntimeError("Ontology source cleanup requires one draft configuration.")
-    stage = json.loads(base64.b64decode(stages[0]["payload"], validate=True))
-    instructions = stage.get("aiInstructions", "")
-    removed = []
-    # SQLDatabase association currently supplies context, but no independent SQL tool.
-    kinds = {"lakehouse_tables": "Lakehouse", "kusto": "KQLDatabase"}
-    for part in parts:
-        if not part["path"].startswith("Files/Config/draft/") or not part["path"].endswith("/datasource.json"):
-            continue
-        source = json.loads(base64.b64decode(part["payload"], validate=True))
-        if source.get("workspaceId") != workspace_id or source.get("type") not in kinds:
-            continue
-        if source.get("metadata") or set(source) - {
-            "$schema", "artifactId", "workspaceId", "displayName", "type", "metadata",
-            "dataSourceInstructions", "userDescription", "elements",
-        }:
-            continue
-        covered = bindings.get((kinds[source["type"]], source.get("artifactId")), {})
-        tables = set()
-        notes = [source.get("dataSourceInstructions") or "", source.get("userDescription") or ""]
-        nodes = list(source.get("elements", []))
-        while nodes:
-            node = nodes.pop()
-            nodes.extend(node.get("children", []))
-            if node.get("is_selected") is True and str(node.get("type", "")).endswith(".table"):
-                tables.add(node["display_name"])
-            if node.get("description"):
-                notes.append(f"{node.get('display_name', '')}: {node['description']}")
-        if not tables or any(not (selected & covered.get(table, set())) for table in tables):
-            continue
-        marker = f"### Ontology source guidance: {kinds[source['type']]} {source['artifactId']}"
-        block = marker + "\n" + "\n".join(note for note in notes if note)
-        if block not in instructions:
-            if marker in instructions:
-                raise RuntimeError("Conflicting retained Ontology source guidance.")
-            instructions = instructions.rstrip() + "\n\n" + block
-        removed.append(part["path"])
-    if not removed:
-        return parts, []
-    if len(instructions) > 15000:
-        raise RuntimeError("Cannot remove duplicate sources without exceeding the instruction limit; retain their guidance.")
-    stage["aiInstructions"] = instructions
-    result = []
-    for part in parts:
-        if part["path"] in removed:
-            continue
-        if part["path"] == stage_path:
-            part = {**part, "payload": base64.b64encode(json.dumps(stage).encode()).decode()}
-        result.append(part)
-    return result, removed
+def operational_source_path(parts, workspace_id, item_id, preferred_path, source_type="sql_database"):
+    sources = {
+        part["path"]: json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
+        for part in parts
+        if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json")
+    }
+    matching = [path for path, source in sources.items()
+                if source.get("type") == source_type and source.get("artifactId") == item_id]
+    label = "operational SQL" if source_type == "sql_database" else source_type
+    if len(matching) > 1:
+        raise RuntimeError(f"Multiple Data Agent {label} sources reference the same item.")
+    if matching:
+        path = matching[0]
+        if sources[path].get("workspaceId") != workspace_id:
+            raise RuntimeError(f"Existing {label} source has a conflicting workspace identity.")
+        return path
+    if preferred_path in sources:
+        raise RuntimeError(f"The preferred {label} source path belongs to another source.")
+    return preferred_path
 # END ONTOLOGY SOURCE TOPOLOGY SUPPORT
 
 FABRIC_API_BASE = "https://api.fabric.microsoft.com"
@@ -1423,7 +1384,7 @@ ASSET_RESOLUTION_INSTRUCTIONS = """### Asset & Facility Resolution (Must Follow)
 Resolve tags, facilities, exact opcua_node_id values, equipment identifiers and units through ontology-associated reference data. Turbine 5 suggests tag T005, not an invented equipment_id. Use actual bindings and canonical keys, not display-name guesses or schema samples."""
 MULTISOURCE_INSTRUCTIONS = """### Ontology context and source execution
 
-Use ontology context and its associated Lakehouse for static entities/relationships, and its associated Eventhouse for telemetry. Source-native SQL/KQL on these associated sources is normal ontology-backed execution, not a bypass; do not require duplicate separately attached tables or an ontology traversal endpoint. "Use the ontology" permits this execution unless the user explicitly restricts it.
+Use ontology context and the attached Lakehouse execution source for static entities/relationships, and the attached Eventhouse execution source for telemetry. These adapters expose the ontology-associated SQL/KQL query tools; they are not duplicate business models or ontology traversal endpoints. "Use the ontology" permits this execution unless the user explicitly restricts it.
 Use the existing SQL database for work orders, maintenance notifications, inspections, spare parts and 3D models. Follow its source-specific instructions; do not answer operational-record questions from telemetry."""
 
 CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
@@ -1608,13 +1569,13 @@ def merge_source_elements(existing: list, desired: list) -> list:
     return merged
 
 
-def lakehouse_schema_map() -> dict:
+def lakehouse_schema_map(table_names=None) -> dict:
     context = notebookutils.runtime.context
     if (context.get("defaultLakehouseId") != lakehouse_id
             or context.get("defaultLakehouseWorkspaceId") != workspace_id):
         raise RuntimeError("Data Agent Lakehouse schema discovery must use the configured Lakehouse.")
     schema_map = {}
-    for table_name, _description in LAKEHOUSE_TABLES:
+    for table_name in table_names if table_names is not None else [name for name, _ in LAKEHOUSE_TABLES]:
         if not re.fullmatch(r"(?:dbo\.)?[A-Za-z_][A-Za-z0-9_]*", table_name):
             raise RuntimeError(f"Unsupported Lakehouse table name {table_name!r}.")
         try:
@@ -1654,13 +1615,14 @@ def build_lakehouse_datasource_obj(existing: dict, schema_map: dict) -> dict:
     ds.setdefault("userDescription", "Curated RTI asset and signal master tables.")
     ds.setdefault("metadata", {})
     table_nodes = []
-    for table_name, description in LAKEHOUSE_TABLES:
+    for table_name, fields in schema_map.items():
+        description = dict(LAKEHOUSE_TABLES).get(table_name, "Ontology-associated reference data.")
         columns = [
             _ds_element(
                 "lakehouse_tables.column", column_name, True, [],
                 data_type=data_type,
             )
-            for column_name, data_type in schema_map[table_name]
+            for column_name, data_type in fields
         ]
         table_nodes.append(_ds_element(
             "lakehouse_tables.table", table_name, True, columns,
@@ -1696,6 +1658,26 @@ def build_kusto_datasource_obj(existing: dict) -> dict:
     desired = [_ds_element("table_grouping", "Tables", False, [table])]
     ds["elements"] = merge_source_elements(existing.get("elements", []), desired)
     return ds
+
+
+def ensure_execution_sources(parts: list, ontology_id: str) -> list:
+    for source_type, item_id, preferred in (
+        (LAKEHOUSE_DATASOURCE_TYPE, lakehouse_id, LAKEHOUSE_DATASOURCE_PATH),
+        (KUSTO_DATASOURCE_TYPE, kql_db_id, KUSTO_DATASOURCE_PATH),
+    ):
+        path = operational_source_path(parts, workspace_id, item_id, preferred, source_type)
+        if any(part["path"] == path for part in parts):
+            continue
+        if source_type == LAKEHOUSE_DATASOURCE_TYPE:
+            bindings = ontology_source_bindings(
+                definition_parts(get_item_definition(ontology_id)), workspace_id)
+            tables = sorted({name for name, _ in LAKEHOUSE_TABLES}
+                            | set(bindings.get(("Lakehouse", lakehouse_id), {})))
+            source = build_lakehouse_datasource_obj({}, lakehouse_schema_map(tables))
+        else:
+            source = build_kusto_datasource_obj({})
+        parts = upsert_part(parts, path, source)
+    return parts
 
 
 def upsert_instruction_section(instructions: str, marker: str, desired: str) -> str:
@@ -1830,20 +1812,8 @@ try:
             {},
         )
         parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
-
-        existing_kusto_ds = next(
-            (
-                decode_payload(p.get("payload", ""))
-                for p in parts if p.get("path") == KUSTO_DATASOURCE_PATH
-            ),
-            {},
-        )
-        submitted_kusto_source = build_kusto_datasource_obj(existing_kusto_ds)
-        parts = upsert_part(parts, KUSTO_DATASOURCE_PATH, submitted_kusto_source)
-        submitted_direct_sources = {
-            KUSTO_DATASOURCE_PATH: submitted_kusto_source,
-        }
         parts = update_operational_source_guidance(parts)
+    parts = ensure_execution_sources(parts, ontology_id)
     for part in parts:
         if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json"):
             ds = decode_payload(part["payload"])
@@ -1856,12 +1826,6 @@ try:
             if context_paths or ds.get("type") == "sql_database":
                 submitted_direct_sources[part["path"]] = ds
     parts = refresh_ontology_context(parts, ontology_id)
-    removed_sources = []
-    if selected_ontology_entities(parts, workspace_id, ontology_id):
-        ontology_parts = definition_parts(get_item_definition(ontology_id))
-        parts, removed_sources = prune_ontology_duplicate_sources(
-            parts, ontology_parts, workspace_id, ontology_id,
-        )
     submitted_direct_sources = {}
     for part in parts:
         if part["path"].startswith("Files/Config/draft/") and (
@@ -1879,14 +1843,12 @@ try:
     else:
         print("   • ontology data source  ->", DATASOURCE_PATH)
         print("       Entity metadata refreshed from the live ontology; custom selections preserved.")
-    print(f"       Removed {len(removed_sources)} redundant Ontology-covered source profile(s).")
+    print("       Retained Lakehouse/Eventhouse execution adapters and compatible custom sources.")
 
     update_item_definition(data_agent_item_id, {"parts": parts})
-    draft_parts = verify_agent_source_readback(
+    verify_agent_source_readback(
         data_agent_item_id, ontology_id, submitted_direct_sources,
     )
-    if removed_sources and any(part["path"] in removed_sources for part in draft_parts):
-        raise RuntimeError("Duplicate source cleanup was not retained in the draft.")
     print(f"✅ Data Agent '{data_agent_name}' configured (id={data_agent_item_id}).")
 
     # 4) PUBLISH — promote staging; verify published identity, not runtime readiness.
@@ -1895,9 +1857,6 @@ try:
     published_parts = verify_agent_source_readback(
         data_agent_item_id, ontology_id, submitted_direct_sources, published=True,
     )
-    if removed_sources and any(part["path"] in {path.replace("/draft/", "/published/", 1) for path in removed_sources}
-           for part in published_parts):
-        raise RuntimeError("Duplicate sources remain in the published Data Agent.")
     persist_agent_status(
         "published",
         "REST publish and selected live generation 2 source identity verified; runtime probe pending.",
