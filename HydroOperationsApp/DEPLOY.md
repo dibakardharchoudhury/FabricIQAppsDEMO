@@ -191,6 +191,11 @@ Deploy form. Unknown destination values stay blank rather than being guessed.
 The same vault must contain `ukmet-global-spot-api-key` and
 `ukmet-land-observations-api-key` for the required initial weather refresh. Aurora is optional.
 Disabling the future Weather schedule does not skip initial ingestion or ontology validation.
+Stage 1 also binds the **parent** `RTI_Orchestrator_Setup` notebook to the published Weather
+Environment. Binding only Weather child notebooks is insufficient: `runMultiple` uses the
+parent Spark session. A missing `numcodecs`, `pyproj` or `shapely` now fails before the DAG
+starts, with binding-repair guidance. Sync the corrected notebook source and rerun Core
+setup (including Stage 1), rather than installing packages locally or retrying Stage 2 alone.
 Standalone app/SQL bootstrap does not refresh weather or require current provider forecasts;
 it validates existing keys and explicitly does not certify weather readiness. Ontology SQL
 bindings do not themselves prove executable SQL capability, so retain the SQL execution adapter.

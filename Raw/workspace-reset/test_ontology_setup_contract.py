@@ -6,7 +6,7 @@ import re
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -115,6 +115,12 @@ class OntologySetupContractTests(unittest.TestCase):
                             for call in calls))
 
     def test_stage_two_inherits_the_published_weather_environment(self):
+        chain = next(
+            node for node in ast.parse(source(SETUP_NAMES[0])).body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "chain_notebooks" for target in node.targets)
+        )
+        self.assertIn(ORCHESTRATOR, ast.literal_eval(chain.value))
         notebook = Mock()
         notebook.getDefinition.return_value = json.dumps({"metadata": {}, "cells": []})
         notebook.updateDefinition.return_value = True
@@ -131,6 +137,25 @@ class OntologySetupContractTests(unittest.TestCase):
             "environmentId": "weather-environment", "workspaceId": "workspace",
         })
         self.assertEqual(dependencies["lakehouse"]["default_lakehouse"], "current")
+
+    def test_missing_weather_dependency_fails_before_the_shared_dag_starts(self):
+        require = load_function(ORCHESTRATOR, "require_weather_dependencies", {})
+        with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'numcodecs'")) as load:
+            with self.assertRaisesRegex(RuntimeError, "Stage 2 root Spark session.*numcodecs") as error:
+                require()
+            self.assertIsInstance(error.exception.__cause__, ModuleNotFoundError)
+            load.assert_called_once_with("numcodecs")
+        with patch("importlib.import_module") as load:
+            require()
+            self.assertEqual([call.args[0] for call in load.call_args_list], ["numcodecs", "pyproj", "shapely"])
+        nodes = ast.parse(source(ORCHESTRATOR)).body
+        check = next(index for index, node in enumerate(nodes)
+                     if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                     and isinstance(node.value.func, ast.Name) and node.value.func.id == "require_weather_dependencies")
+        dag = next(index for index, node in enumerate(nodes)
+                   if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "setup_dag" for target in node.targets))
+        self.assertLess(check, dag)
 
     def test_rebinding_replaces_all_foreign_lakehouse_references(self):
         for name in SETUP_NAMES:

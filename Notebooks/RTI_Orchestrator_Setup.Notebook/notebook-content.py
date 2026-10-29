@@ -107,6 +107,23 @@ import notebookutils
 from notebookutils.mssparkutils.handlers.notebookHandler import RunMultipleFailedException
 from urllib.parse import quote
 
+
+def require_weather_dependencies():
+    from importlib import import_module
+
+    for module in ("numcodecs", "pyproj", "shapely"):
+        try:
+            import_module(module)
+        except ImportError as exc:
+            raise RuntimeError(
+                f"Stage 2 root Spark session cannot import Weather dependency {module!r}: {exc}. "
+                "Rerun Stage 1 to bind RTI_Orchestrator_Setup to the published Weather Environment, "
+                "then start a new setup run. Child notebook Environment bindings do not supply "
+                "libraries to the shared parent Spark session."
+            ) from exc
+
+
+require_weather_dependencies()
 spark.conf.set("spark.sql.session.timeZone", "UTC")
 
 # NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).

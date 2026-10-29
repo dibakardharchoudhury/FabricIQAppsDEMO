@@ -3923,6 +3923,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Notebooks in this demo chain that should point at the new lakehouse.
 # (Adjust this list if you add or rename notebooks.)
 chain_notebooks = [
+    "RTI_Orchestrator_Setup",
     "RTI_002_Setup_Eventhouse_Only",
     "RTI_003_ingest_transform_medallion_SelfContained",
     "RTI_004_build_ontology_mapping_rti_structured",
