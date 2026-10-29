@@ -767,6 +767,27 @@ class ProjectContractValidationTests(unittest.TestCase):
         self.assertEqual(receipt["required_relationship_count"], 21)
         self.assertEqual(receipt["scope"], "definition_readback_only")
 
+    def test_fabric_crlf_and_mixed_line_endings_preserve_complete_binding_validation(self):
+        expected = self.verify(self.fixture())
+        for mixed in (False, True):
+            with self.subTest(mixed=mixed):
+                parts = self.fixture()
+                for index, item in enumerate(parts):
+                    if not mixed or index % 2:
+                        text = base64.b64decode(item["payload"]).decode().replace("\r\n", "\n")
+                        item["payload"] = base64.b64encode(text.replace("\n", "\r\n").encode()).decode()
+                before = copy.deepcopy(parts)
+                self.assertEqual(self.verify(parts), expected)
+                self.assertEqual(parts, before)
+
+    def test_settings_trim_fabric_whitespace_without_accepting_missing_or_duplicate_bindings(self):
+        self.assertEqual(support._project_contract_setting(
+            "entity facilities\r\n\tbackingTable:  'facilities' \t\r\n", "backingTable"), "facilities")
+        for text in ("entity facilities\r\n", "entity facilities\r\n"
+                     "\tbackingTable: facilities\r\n\tbackingTable: other\r\n"):
+            with self.subTest(text=text), self.assertRaisesRegex(RuntimeError, "one backingTable binding"):
+                support._project_contract_setting(text, "backingTable")
+
     def test_missing_entity_binding_property_and_edge_fail(self):
         for path, old, new in (
             ("entities/WorkOrder.tmdl", None, None),

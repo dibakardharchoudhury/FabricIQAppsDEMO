@@ -107,6 +107,9 @@ class CompleteOntologyPublicationTests(unittest.TestCase):
         from test_operational_store_support import complete_project_ontology_fixture
 
         parts = complete_project_ontology_fixture()
+        crlf_parts = [{**part, "payload": base64.b64encode(base64.b64decode(
+            part["payload"]).decode().replace("\r\n", "\n").replace("\n", "\r\n").encode()).decode()}
+            for part in parts]
         for number in ("009", "010"):
             text = source(number)
             namespace = {"json": json, "base64": base64, "re": re}
@@ -119,6 +122,8 @@ class CompleteOntologyPublicationTests(unittest.TestCase):
             exec(compile(contract, "project-contract", "exec"), namespace)
             receipt = namespace["verify_project_ontology_contract"](parts, "workspace", "lakehouse", "sql")
             self.assertEqual(receipt["status"], "verified")
+            self.assertEqual(namespace["verify_project_ontology_contract"](
+                crlf_parts, "workspace", "lakehouse", "sql"), receipt)
 
     def test_both_agents_require_successful_same_model_and_verify_live_parts(self):
         for number in ("009", "010"):

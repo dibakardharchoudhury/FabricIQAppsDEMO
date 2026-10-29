@@ -1174,17 +1174,19 @@ def _project_contract_objects(text, kind):
     return result
 
 def _project_contract_setting(text, key):
+    text = text.replace("\r\n", "\n")
     values = re.findall(r"(?m)^[ \t]+" + re.escape(key) + r":[ \t]*(.+?)[ \t]*$", text)
     if len(values) != 1:
         raise RuntimeError(f"Project contract requires one {key} binding.")
-    return values[0].strip("'").replace("''", "'")
+    return values[0].strip().strip("'").replace("''", "'")
 
 def verify_project_ontology_contract(parts, workspace_id, lakehouse_id, sql_db_item_id):
     """Pure definition readback gate; live numeric generation must be checked by the caller."""
     if not all(isinstance(value, str) and value.strip()
                for value in (workspace_id, lakehouse_id, sql_db_item_id)) or lakehouse_id == sql_db_item_id:
         raise RuntimeError("Project contract requires authoritative distinct source identities.")
-    texts = {p["path"]: base64.b64decode(p["payload"], validate=True).decode("utf-8") for p in parts}
+    texts = {p["path"]: base64.b64decode(p["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+             for p in parts}
     if len(texts) != len(parts):
         raise RuntimeError("Duplicate project definition paths.")
     if not {"database.tmdl", "model.tmdl", "namespaces/default.tmdl"}.issubset(texts):

@@ -25,6 +25,11 @@ Operations website.
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a step fails, fix the reported prerequisite and retry that module.
 
+If `NB11_model` reports `Project contract requires one entityName binding` with
+valid core tables, update the checkout and import the latest notebook definitions
+before retrying Setup pipeline. An older validator mishandled Fabric's CRLF line
+endings; do not recreate the ontology or change its source bindings for this error.
+
 ### What you need to enter
 
 | Input | Default |
