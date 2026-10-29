@@ -389,6 +389,8 @@ serving = (
         "rainfall_volume_m3", "cumulative_rainfall_volume_m3",
         *SERVING_VARIABLES, "calculated_at_utc",
     )
+    .withColumn("location_id", F.when(F.col("target_kind") == "location", F.col("target_id")))
+    .withColumn("area_id", F.when(F.col("target_kind") == "area", F.col("target_id")))
     .withColumn("ontology_key", F.sha2(F.to_json(F.struct(
         "source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc",
     ), {

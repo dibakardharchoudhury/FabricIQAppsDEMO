@@ -6,6 +6,7 @@ import cytoscape from 'cytoscape'
 import type { KnowledgeEdge, KnowledgeNode } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { summarizeKnowledgeGraph } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { KNOWLEDGE_EDGE_INTERACTION_STYLE, knowledgeEdgeRoutes, knowledgeFaultPulse, knowledgeFocusElementIds, knowledgeHaloPadding, knowledgeTelemetryState, layoutOntologyModel, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
+import { ontologyNeighborhoodIds, ontologyNodePresentation, ontologyPropertyPresentation } from '../src/ui-shared/components/knowledgeGraph/ontologyModelPresentation.ts'
 
 const NOW = Date.parse('2026-10-27T01:00:00Z')
 const node = (id: string, type: KnowledgeNode['type'], reading = false): KnowledgeNode => ({
@@ -18,6 +19,131 @@ const node = (id: string, type: KnowledgeNode['type'], reading = false): Knowled
   properties: {},
   provenance: 'test',
   reading: reading ? { opcuaNodeId: id, eventTime: new Date(NOW - 5_000).toISOString(), value: 42, quality: 'Good' } : undefined,
+})
+
+test('schema presentation restores sized business categories without mutating schema identity or inventing health', () => {
+  const examples = [
+    ['Hydro.Facility', 'facility'], ['Systems', 'system'], ['equipment', 'equipment'],
+    ['Instruments', 'instrument'], ['signal_master', 'signal'], ['WorkOrder', 'work-order'],
+    ['Inspection', 'inspection'], ['MaintenanceNotification', 'notification'],
+    ['Asset3DModel', 'model'], ['WeatherForecast', 'weather'], ['engineering_documents', 'document'],
+    ['Organization', 'organization'], ['UnknownCustomType', 'ontology'],
+    ['EquipmentType', 'equipment-type'], ['SparePart', 'part'], ['WeatherLocation', 'weather'], ['WeatherArea', 'weather'],
+    ['WeatherSource', 'weather'], ['WeatherLatestObservation', 'weather'], ['WeatherLatestForecast', 'weather'],
+  ] as const
+  const colors = new Set<string>()
+  for (const [name, category] of examples) {
+    const schemaNode = { ...node('opaque-id', 'ontology'), status: 'nodata' as const, label: name, properties: { 'Entity type': name } }
+    const before = structuredClone(schemaNode)
+    const presentation = ontologyNodePresentation(schemaNode)
+    assert.equal(presentation.category, category)
+    assert.ok(presentation.size >= 58, `${name}: entity-type nodes must not use tiny signal-instance sizes`)
+    assert.ok(/^#[a-f0-9]{6}$/i.test(presentation.color))
+    colors.add(presentation.color)
+    assert.deepEqual(schemaNode, before)
+    assert.equal(schemaNode.status, 'nodata')
+    assert.equal(schemaNode.reading, undefined)
+  }
+  assert.ok(colors.size >= 10)
+  assert.equal(ontologyNodePresentation({ ...node('id', 'ontology'), label: 'equipment_owned_by_facility' }).category, 'ontology',
+    'unknown names must not acquire inferred business ownership from substrings')
+  assert.equal(ontologyNodePresentation({ ...node('id', 'ontology'), label: 'WeatherUnknownCustomType' }).category, 'ontology')
+})
+
+test('schema property inspector displays declared datatypes, with lineage available only as technical metadata', () => {
+  const entity = {
+    id: 'opaque-type', name: 'facilities', entityIdParts: ['lineage-id'],
+    properties: { facility_id: 'lineage-id', lat: 'lineage-lat', stream: 'lineage-stream', custom: 'untyped-id' },
+    propertyMetadata: {
+      facility_id: { id: 'lineage-id', dataType: 'string' },
+      lat: { id: 'lineage-lat', dataType: 'double' },
+      stream: { id: 'lineage-stream', dataType: 'TimeSeries<double>' },
+    },
+  }
+  const before = structuredClone(entity)
+  assert.deepEqual(ontologyPropertyPresentation(entity), [
+    { name: 'facility_id', dataType: 'string', lineageId: 'lineage-id' },
+    { name: 'lat', dataType: 'double', lineageId: 'lineage-lat' },
+    { name: 'stream', dataType: 'TimeSeries<double>', lineageId: 'lineage-stream' },
+    { name: 'custom', dataType: 'Not declared', lineageId: undefined },
+  ])
+  assert.deepEqual(entity, before)
+})
+
+test('schema semantic layout compacts a connected long-chain definition and separates labeled nodes without changing edges', () => {
+  const graph = cytoscape({
+    headless: true, styleEnabled: true,
+    elements: [
+      ...Array.from({ length: 16 }, (_, index) => ({ data: { id: `type-${index}`, label: `Business entity ${index}` } })),
+      ...Array.from({ length: 15 }, (_, index) => ({ data: { id: `edge-${index}`, source: `type-${index}`, target: `type-${index + 1}` } })),
+      ...Array.from({ length: 6 }, (_, index) => ({ data: { id: `context-${index}`, source: `type-${index}`, target: `type-${index + 3}` } })),
+    ],
+    style: [{ selector: 'node', style: { width: 68, height: 68, label: 'data(label)', 'font-size': 20, 'text-valign': 'bottom', 'text-margin-y': 11 } }],
+  })
+  try {
+    const before = graph.edges().map(edge => [edge.id(), edge.source().id(), edge.target().id()])
+    layoutOntologyModel(graph, 'cose')
+    const bounds = graph.nodes().boundingBox({ includeLabels: true, includeOverlays: false })
+    assert.ok(bounds.w < 1500 && bounds.h < 1300, `${bounds.w} × ${bounds.h}`)
+    const nodes = graph.nodes().toArray()
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i].boundingBox({ includeLabels: true, includeOverlays: false })
+      const b = nodes[j].boundingBox({ includeLabels: true, includeOverlays: false })
+      assert.ok(a.x2 <= b.x1 || b.x2 <= a.x1 || a.y2 <= b.y1 || b.y2 <= a.y1, `${nodes[i].id()} overlaps ${nodes[j].id()}`)
+    }
+    assert.deepEqual(graph.edges().map(edge => [edge.id(), edge.source().id(), edge.target().id()]), before)
+  } finally {
+    graph.destroy()
+  }
+})
+
+test('schema neighborhoods follow only explicit endpoint identities, including parallel and self declarations', () => {
+  const edges: KnowledgeEdge[] = [
+    { id: 'a', source: 'opaque-a', target: 'opaque-b', type: 'contains', label: 'misleading name' },
+    { id: 'b', source: 'opaque-b', target: 'opaque-a', type: 'contains', label: 'another declaration' },
+    { id: 'c', source: 'opaque-b', target: 'opaque-c', type: 'contains', label: 'facility' },
+    { id: 'self', source: 'opaque-a', target: 'opaque-a', type: 'contains', label: 'self' },
+  ]
+  const before = structuredClone(edges)
+  assert.deepEqual([...ontologyNeighborhoodIds(edges, 'opaque-a')].sort(), ['opaque-a', 'opaque-b'])
+  assert.deepEqual([...ontologyNeighborhoodIds(edges, 'isolated')], ['isolated'])
+  assert.deepEqual(edges, before)
+})
+
+test('schema controls restore prior graph navigation with no instance health controls or runtime certification', () => {
+  const page = readFileSync(new URL('../src/ui-shared/pages/OntologyModelView.tsx', import.meta.url), 'utf8')
+  const canvas = readFileSync(new URL('../src/ui-shared/components/knowledgeGraph/KnowledgeGraphCanvas.tsx', import.meta.url), 'utf8')
+  for (const label of ['Zoom out Ontology model', 'Zoom in Ontology model', 'Fit Ontology model', 'Focus selected entity type', 'Ontology model layout', 'Ontology model scope']) {
+    assert.ok(page.includes(`aria-label="${label}"`), label)
+  }
+  assert.match(page, /Business categories/)
+  assert.match(page, /Relationship labels/)
+  assert.match(page, /Declared neighborhood/)
+  assert.match(page, /Definition lineage/)
+  assert.match(page, /No telemetry or health is assigned/)
+  assert.doesNotMatch(page, /Operational health|Critical pulse|Fresh telemetry path/)
+  assert.match(page, /does not certify native graph materialization or agent execution/)
+  assert.match(canvas, /font-size': modelView \? 20 : 10\.5/)
+  assert.match(canvas, /font-size': modelView \? 16 : 7\.5/)
+  assert.match(canvas, /'target-arrow-shape': 'triangle'/)
+  assert.match(canvas, /ring: modelView \? ontologyNodePresentation\(node\)\.color : KNOWLEDGE_STATUS_COLOR/)
+  assert.match(canvas, /!containerRef\.current \|\| modelView\) return/, 'schema canvas never starts the operational telemetry animation loop')
+})
+
+test('many unrelated schema types are packed in a balanced grid rather than a tall unreadable column', () => {
+  const graph = cytoscape({
+    headless: true,
+    elements: Array.from({ length: 36 }, (_, index) => ({ data: { id: `type-${index}`, label: `Entity ${index}` } })),
+  })
+  try {
+    layoutOntologyModel(graph, 'breadthfirst')
+    const xs = new Set(graph.nodes().map(item => item.position('x')))
+    const ys = new Set(graph.nodes().map(item => item.position('y')))
+    assert.ok(xs.size >= 5 && ys.size <= 8, `${xs.size} columns × ${ys.size} rows`)
+    assert.equal(graph.edges().length, 0)
+  } finally {
+    graph.destroy()
+  }
 })
 
 test('ontology layout packs real components and isolates without altering endpoints or direction', () => {

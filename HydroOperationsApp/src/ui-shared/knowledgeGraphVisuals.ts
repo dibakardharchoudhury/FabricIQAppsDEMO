@@ -1,6 +1,27 @@
 import type { KnowledgeEdge, KnowledgeNode } from './knowledgeGraphModel'
 import type { Core, Css } from 'cytoscape'
 
+function separateOntologyLabels(nodes: ReturnType<Core['nodes']>) {
+  for (let pass = 0; pass < 80; pass++) {
+    let overlaps = 0
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i]
+      const b = nodes[j]
+      const first = a.boundingBox({ includeLabels: true, includeOverlays: false })
+      const second = b.boundingBox({ includeLabels: true, includeOverlays: false })
+      const x = Math.min(first.x2, second.x2) - Math.max(first.x1, second.x1) + 16
+      const y = Math.min(first.y2, second.y2) - Math.max(first.y1, second.y1) + 16
+      if (x <= 0 || y <= 0) continue
+      overlaps++
+      const axis = x < y * 1.25 ? 'x' : 'y'
+      const shift = ((axis === 'x' ? x : y) / 2 + 1) * (a.position(axis) <= b.position(axis) ? -1 : 1)
+      a.position(axis, a.position(axis) + shift)
+      b.position(axis, b.position(axis) - shift)
+    }
+    if (!overlaps) break
+  }
+}
+
 export function layoutOntologyModel(graph: Core, layout: 'breadthfirst' | 'cose' | 'concentric') {
   if (graph.nodes().empty()) return
   const components = graph.elements().components().sort((a, b) =>
@@ -9,17 +30,33 @@ export function layoutOntologyModel(graph: Core, layout: 'breadthfirst' | 'cose'
   const isolates = components.filter(component => component.edges().empty()).flatMap(component => component.nodes().toArray())
   const boxes = connected.map(component => {
     const roots = ['facility', 'system', 'equipment', 'instrument', 'signal']
-      .map(type => component.nodes().filter(node => node.data('type') === type).map(node => node.id()))
+      .map(type => component.nodes().filter(node => (node.data('presentationCategory') ?? node.data('type')) === type).map(node => node.id()))
       .find(ids => ids.length)
       ?? [component.nodes().sort((a, b) => b.degree() - a.degree() || a.id().localeCompare(b.id()))[0].id()]
     const options = { name: layout, fit: false, animate: false, nodeDimensionsIncludeLabels: true, padding: 32 }
     if (layout === 'breadthfirst') component.layout({ ...options, name: 'breadthfirst', roots, directed: false, spacingFactor: 1.35 }).run()
     else if (layout === 'concentric') component.layout({ ...options, name: 'concentric', minNodeSpacing: 65 }).run()
-    else component.layout({ ...options, name: 'cose', idealEdgeLength: 180, nodeRepulsion: () => 9000 }).run()
+    else {
+      const nodes = component.nodes()
+      const radius = Math.max(140, Math.sqrt(nodes.length) * 75)
+      const aspect = Math.max(.8, Math.min(1.2, graph.width() / Math.max(1, graph.height())))
+      nodes.forEach((node, index) => {
+        node.position({
+          x: radius * Math.cos(index * 2 * Math.PI / nodes.length),
+          y: radius * Math.sin(index * 2 * Math.PI / nodes.length) / aspect,
+        })
+      })
+      component.layout({
+        ...options, name: 'cose', randomize: false, nodeDimensionsIncludeLabels: false,
+        idealEdgeLength: 90, nodeRepulsion: () => 5000, gravity: 15, numIter: 1200,
+      }).run()
+      separateOntologyLabels(nodes)
+    }
     return { component, bounds: component.nodes().boundingBox({ includeLabels: true, includeOverlays: false }) }
   })
   const area = boxes.reduce((sum, { bounds }) => sum + (bounds.w + 100) * (bounds.h + 100), 0)
-  const aspect = Math.max(1, graph.width() / Math.max(1, graph.height()))
+    + isolates.length * 210 * 180
+  const aspect = Math.max(.75, Math.min(1.7, graph.width() / Math.max(1, graph.height())))
   const pairWidth = boxes.length === 2 && graph.width() >= graph.height()
     ? boxes.reduce((sum, { bounds }) => sum + bounds.w, 110) : 0
   const width = Math.max(380, ...boxes.map(({ bounds }) => bounds.w), Math.sqrt(area * aspect), pairWidth)
@@ -32,10 +69,10 @@ export function layoutOntologyModel(graph: Core, layout: 'breadthfirst' | 'cose'
     x += bounds.w + 110
     rowHeight = Math.max(rowHeight, bounds.h)
   }
-  const columns = Math.max(1, Math.min(Math.floor(width / 190), isolates.length))
+  const columns = Math.max(1, Math.min(Math.floor(width / 210), isolates.length))
   isolates.forEach((node, index) => node.position({
-    x: (index % columns) * 190 + 60,
-    y: y + rowHeight + (boxes.length ? 140 : 60) + Math.floor(index / columns) * 150,
+    x: (index % columns) * 210 + 80,
+    y: y + rowHeight + (boxes.length ? 150 : 60) + Math.floor(index / columns) * 180,
   }))
   graph.fit(undefined, 56)
 }

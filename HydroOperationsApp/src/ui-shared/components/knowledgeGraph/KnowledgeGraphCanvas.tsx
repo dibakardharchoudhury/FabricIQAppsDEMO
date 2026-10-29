@@ -15,10 +15,11 @@ import {
   telemetryFlowEdgeIds,
 } from '../../knowledgeGraphVisuals'
 import type { AppTheme } from '../../hooks/useTheme'
+import { ontologyNodePresentation } from './ontologyModelPresentation'
 
 export type GraphLayout = 'breadthfirst' | 'cose' | 'concentric'
 
-const iconPath: Record<KnowledgeNode['type'], string> = {
+const iconPath = {
   facility: '<path d="M4 20V7l8-4 8 4v13M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/>',
   system: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.3 10.8 7.4-3.6M8.3 13.2l7.4 3.6"/>',
   equipment: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="4"/>',
@@ -29,11 +30,19 @@ const iconPath: Record<KnowledgeNode['type'], string> = {
   'work-order': '<path d="M14.7 6.3a4 4 0 0 0-5 5L4 17v3h3l5.7-5.7a4 4 0 0 0 5-5l-2.4 2.4-3-3 2.4-2.4Z"/>',
   inspection: '<path d="M9 5H6a2 2 0 0 0-2 2v12h16V7a2 2 0 0 0-2-2h-3M9 3h6v4H9zM8 13l2.5 2.5L16 10"/>',
   notification: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+  weather: '<path d="M7 16a4 4 0 1 1 1-7 5 5 0 0 1 9 2 3 3 0 1 1 1 6H7M8 20h.01M12 20h.01M16 20h.01"/>',
+  document: '<path d="M14 3H5v18h14V8l-5-5v5h5M8 12h8M8 16h6"/>',
+  organization: '<circle cx="9" cy="7" r="3"/><path d="M3 21v-4a6 6 0 0 1 12 0v4M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5v2"/>',
+  'equipment-type': '<path d="M3 3h7l11 11-7 7L3 10V3Z"/><circle cx="7" cy="7" r="1"/>',
+  part: '<path d="m12 3 9 5-9 5-9-5 9-5ZM3 8v9l9 5 9-5V8M12 13v9M7 5.8l9 5"/>',
 }
 
 const nodeIcons = Object.fromEntries(Object.entries(iconPath).map(([type, path]) => [type,
   `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`)}`,
-])) as Record<KnowledgeNode['type'], string>
+])) as Record<keyof typeof iconPath, string>
+const modelNodeIcons = Object.fromEntries(Object.entries(iconPath).map(([type, path]) => [type,
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#172033" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`)}`,
+])) as Record<keyof typeof iconPath, string>
 
 function applyGraphFocus(graph: Core, nodes: KnowledgeNode[], edges: KnowledgeEdge[], selectedId?: string, modelView = false) {
   graph.elements().removeClass('focus-dimmed focus-neighbor focus-selected')
@@ -43,7 +52,9 @@ function applyGraphFocus(graph: Core, nodes: KnowledgeNode[], edges: KnowledgeEd
   if (selected.empty()) return
   selected.select()
   if (modelView) {
-    selected.closedNeighborhood().addClass('focus-neighbor')
+    graph.elements().addClass('focus-dimmed')
+    selected.closedNeighborhood().removeClass('focus-dimmed').addClass('focus-neighbor')
+    selected.removeClass('focus-neighbor')
     selected.addClass('focus-selected')
     return
   }
@@ -65,7 +76,7 @@ function layoutOptions(layout: GraphLayout, graph: Core): LayoutOptions {
   return { name: 'cose', idealEdgeLength: 145, nodeRepulsion: () => 7800, padding: 64, animate, animationDuration: 620 }
 }
 
-export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, onSelect, controllerRef, modelView = false }: {
+export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, onSelect, controllerRef, modelView = false, showRelationshipLabels = true }: {
   nodes: KnowledgeNode[]
   edges: KnowledgeEdge[]
   selectedId?: string
@@ -74,6 +85,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
   onSelect: (nodeId: string) => void
   controllerRef: React.MutableRefObject<Core | null>
   modelView?: boolean
+  showRelationshipLabels?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const positionCacheRef = useRef(new Map<string, { x: number; y: number }>())
@@ -99,8 +111,8 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             'background-blacken': -0.04, 'background-image': 'data(icon)', 'background-fit': 'none',
             'background-width': '44%', 'background-height': '44%',
             'border-color': 'data(ring)', 'border-width': 3, label: 'data(label)', color: color('--cp-text'),
-            'font-family': modelView ? 'Segoe UI, Aptos, Calibri, sans-serif' : 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': modelView ? 12 : 10.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 7,
-            'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': '118px',
+            'font-family': modelView ? 'Segoe UI, Aptos, Calibri, sans-serif' : 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': modelView ? 20 : 10.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 7,
+            'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': modelView ? '210px' : '118px',
             'text-overflow-wrap': 'anywhere',
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '4px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
@@ -118,16 +130,19 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         {
           selector: 'edge',
           style: {
-            width: 1.9, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
+            width: modelView ? 2.4 : 1.9, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
             'curve-style': 'unbundled-bezier', 'control-point-distances': 'data(curveDistance)', 'control-point-weights': 0.5,
             label: 'data(label)', color: color('--cp-text-muted'), 'text-margin-y': edge => Number(edge.data('labelOffset')),
-            'font-size': 7.5, 'font-weight': 600, 'min-zoomed-font-size': 6, opacity: 0.58, 'text-opacity': 0.15,
+            'font-size': modelView ? 16 : 7.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 6,
+            opacity: modelView ? .85 : .58, 'text-opacity': modelView ? 1 : .15,
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '3px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
-            'text-rotation': 'autorotate', 'arrow-scale': 0.9,
+            'text-rotation': modelView ? 'none' : 'autorotate', 'arrow-scale': modelView ? 1.3 : .9,
+            'text-wrap': modelView ? 'wrap' : 'none', 'text-max-width': '150px',
             'transition-property': 'opacity, width, text-opacity', 'transition-duration': 220,
           },
         },
+        ...(modelView ? [{ selector: '.focus-dimmed', style: { opacity: .72, 'text-opacity': 1 } }] : []),
         { selector: 'edge.focus-neighbor, edge:selected', style: { width: 2.8, opacity: 0.94, 'text-opacity': 1, 'z-index': 10 } },
         { selector: 'edge:active, edge:selected', style: KNOWLEDGE_EDGE_INTERACTION_STYLE },
         {
@@ -137,6 +152,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             'line-style': 'dashed', 'line-dash-pattern': [10, 12], 'arrow-scale': 1.05, 'z-index': 8,
           },
         },
+        { selector: 'edge.model-labels-hidden', style: { 'text-opacity': 0 } },
       ],
     })
     graph.on('tap', 'node', event => handleNodeSelect(event.target.id()))
@@ -152,25 +168,25 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
-    const flowingEdges = telemetryFlowEdgeIds(nodes, edges)
+    const flowingEdges = modelView ? new Set<string>() : telemetryFlowEdgeIds(nodes, edges)
     const nodesById = new Map(nodes.map(node => [node.id, node]))
-    const css = getComputedStyle(document.documentElement)
     const routes = knowledgeEdgeRoutes(edges)
     const elements: ElementDefinition[] = [
       ...nodes.map(node => ({
         data: {
           ...node,
-          color: modelView ? css.getPropertyValue('--cp-accent').trim() : KNOWLEDGE_TYPE_COLOR[node.type],
-          size: KNOWLEDGE_NODE_SIZE[node.type],
-          ring: modelView ? css.getPropertyValue('--cp-border-strong').trim() : KNOWLEDGE_STATUS_COLOR[node.status],
-          icon: nodeIcons[node.type],
+          presentationCategory: modelView ? ontologyNodePresentation(node).category : node.type,
+          color: modelView ? ontologyNodePresentation(node).color : KNOWLEDGE_TYPE_COLOR[node.type],
+          size: modelView ? ontologyNodePresentation(node).size : KNOWLEDGE_NODE_SIZE[node.type],
+          ring: modelView ? ontologyNodePresentation(node).color : KNOWLEDGE_STATUS_COLOR[node.status],
+          icon: modelView ? modelNodeIcons[ontologyNodePresentation(node).category] : nodeIcons[node.type],
           haloPadding: knowledgeHaloPadding(13, graph.zoom()),
         },
       })),
       ...edges.map(item => ({
         data: {
           ...item,
-          color: modelView ? css.getPropertyValue('--cp-link').trim() : KNOWLEDGE_EDGE_COLOR[item.type],
+          color: modelView ? ontologyNodePresentation(nodesById.get(item.source)!).color : KNOWLEDGE_EDGE_COLOR[item.type],
           flow: flowingEdges.has(item.id) ? 1 : 0,
           flowColor: KNOWLEDGE_STATUS_COLOR[nodesById.get(item.source)?.status ?? 'nodata'],
           curveDistance: routes.get(item.id)?.distance ?? 0,
@@ -228,7 +244,24 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
 
   useEffect(() => {
     const graph = controllerRef.current
-    if (!graph || !containerRef.current) return
+    if (!graph || !modelView) return
+    graph.edges().toggleClass('model-labels-hidden', !showRelationshipLabels)
+  }, [controllerRef, edges, modelView, showRelationshipLabels, theme])
+
+  useEffect(() => {
+    const graph = controllerRef.current
+    if (!graph || !modelView || !containerRef.current || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      graph.resize()
+      if (graph.nodes().nonempty()) graph.fit(undefined, 72)
+    })
+    observer.observe(containerRef.current)
+    return () => observer.disconnect()
+  }, [controllerRef, modelView, theme])
+
+  useEffect(() => {
+    const graph = controllerRef.current
+    if (!graph || !containerRef.current || modelView) return
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
     const critical = graph.nodes('[status = "crit"]')
     const warning = graph.nodes('[status = "warn"]')
@@ -308,7 +341,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         graph.edges().removeStyle('line-dash-offset')
       }
     }
-  }, [controllerRef, edges, nodes, selectedId, theme])
+  }, [controllerRef, edges, modelView, nodes, selectedId, theme])
 
-  return <div ref={containerRef} className="kg-canvas" role="application" aria-label="Interactive operational knowledge graph" />
+  return <div ref={containerRef} className="kg-canvas" role="application" aria-label={modelView ? 'Interactive Ontology entity types and declared relationships' : 'Interactive operational knowledge graph'} />
 }

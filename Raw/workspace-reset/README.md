@@ -28,6 +28,23 @@ structural settings. Rules ground consumers but do not enforce database constrai
 agent execution. NB06 now only discovers graph ownership: it does not rewrite a portal-selected
 graph, force the five-type projection, or run refresh/GQL jobs as part of ontology binding.
 
+The app's **Ontology model** view reads the live v2 type/relationship definitions; it does not
+require materialization and does not pretend those types are individual physical assets.
+NB11 declares weather-location to facility identity explicitly, using the weather producer's
+`location_id = facility_id` mapping. Weather-area `location_id` comes from its persisted metadata;
+forecast `location_id` and `area_id` are separate nullable keys derived from `target_kind`, never
+unqualified joins on polymorphic `target_id`. Preparation verifies source identities and existing
+values before binding these columns. Weather refreshes retain these keys.
+
+Equipment and spare-parts inventory connect through an authoritative **EquipmentType** dimension.
+This means inventory eligibility by category, not installed parts, reservations or verified fit for
+a particular model. Work orders, inspections, notifications and 3D attachments retain their explicit
+equipment/signal bindings. Variable catalogs, ingestion-run logs and aggregated instrument
+classifications are no longer standalone business entity types; their physical tables remain.
+Only marked, source-matching project definitions are retired. Custom annotations, added properties
+or custom relationships stop curation for an explicit migration. Unknown definition parts and
+compatible custom content on retained entities remain intact.
+
 Two ways to run everything:
 
 Both NB01 Lakehouse setup variants provision `RTI_Demo_SQLDatabase_<env_suffix>` as an

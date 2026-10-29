@@ -15,6 +15,13 @@ relationships form a compact grid instead of a long row. All labels remain
 visible at overview zoom. Selecting a type highlights its neighborhood without
 dimming the rest of the model into unreadability. Search filters only the type
 list, preserving the complete diagram and every declared edge.
+Business categories supply readable icons, sizes and colors; canonical Weather source,
+location, area, latest-observation and latest-forecast types share the Weather category.
+Unknown types stay neutral. This presentation classification never creates relationships.
+The semantic layout starts from a deterministic compact seed and separates labeled nodes
+after force placement; native-instance layouts are unchanged. Zoom, fit, selected-neighborhood
+focus, relationship-label controls and expanded view remain available. Inspector property
+values show declared datatypes; lineage identifiers are optional collapsed technical details.
 
 The separate **Native asset instances** view still uses **only the explicitly
 bound, materialized native Ontology graph**. Lakehouse/SQL connector joins cannot
@@ -22,13 +29,30 @@ substitute for native instance topology. SQL and Eventhouse may enrich actual
 native entities. Its counts describe returned instances and links; selecting an
 asset in the tree switches to its selected-asset scope.
 
-A fresh live definition read verified **18 entity types / 17 relationship
-types**, comprising five components. **SparePart**, **WeatherVariable** and
-**WeatherArea** have no declared relationships. Their isolation is real metadata,
-not missing renderer edges. The model displays and identifies them instead of
-inventing associations from equipment descriptions, polymorphic forecast target
-IDs or weather-property names. The bounded read took about 11 seconds including
-Azure CLI token acquisition, with zero GraphModel or source-row requests.
+The October 29 repaired live generation-2 definition readback verified **16 business
+entity types / 21 declared relationships / one connected component / zero isolates**.
+The preceding 18-type/17-relationship/five-component read was historical pre-repair
+evidence, not the current definition. Weather-to-facility, area/location and forecast
+relationships now use real persisted source projections, including target-kind-guarded
+forecast location/area keys. Equipment and SparePart connect through the meaningful
+**EquipmentType** dimension; part-category eligibility does **not** assert installation
+or verified fit. Existing operational relationship endpoints and bindings remain retained.
+The managed **WeatherVariable**, **WeatherIngestionRun** and **InstrumentClassification**
+catalog/audit/aggregate types were retired from the business ontology; their physical
+source data was not deleted. Original bindings and unknown definition parts were preserved.
+
+Data Agent draft and published ontology context were both refreshed and read back with
+16 types while preserving SQL/custom content. This verifies configuration, not agent
+execution or SQL/combined-source runtime. Native graph materialization remains a separate
+prerequisite. These source and definition results do not claim a new hosted UI deployment.
+
+Local browser acceptance against the exact saved repaired definition at 1536×1000
+retained all 16 types and 21 links. Default semantic-layout Fit improved from 34% to
+69%: rendered node labels measured 13.8 px, relationship labels 11.0 px and node diameters
+40–54 px, with zero overlapping labeled-node bounds. All five canonical Weather types
+received the Weather presentation; `Asset3DModel` displayed as **Asset 3D model**, and
+property datatypes appeared before optional lineage details. This is saved-readback
+presentation evidence, not an authenticated live UI or native-query certification.
 
 On October 28, the live V14 Ontology passed the numeric generation-2 check, but
 its explicitly bound GraphModel returned **204 No Content** for queryable schema.
@@ -55,7 +79,7 @@ The dated source-backed acceptance records below are historical evidence only;
 they do not describe the current production execution contract or prove native
 materialization.
 
-Validation: 125 focused graph tests pass. Tests cover exact schema endpoints,
+Validation: focused graph and saved-preview tests cover exact schema endpoints,
 parallel declarations, dangling/duplicate identity rejection, immutable input,
 component packing and compact isolate grids in all three layouts, and separation
 from native/source-instance execution. Native maintenance endpoints, rejection

@@ -4,6 +4,7 @@ import contextlib
 import copy
 import io
 import json
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -405,6 +406,49 @@ class OperationalItemLifecycleTests(unittest.TestCase):
         namespace["seed_sql_database"].assert_called_once_with("server", "physical-database")
 
 
+class RelationshipSourceProjectionTests(unittest.TestCase):
+    def setUp(self):
+        self.spark = Mock()
+        self.spark.sql.return_value.limit.return_value.count.return_value = 0
+        self.spark.sql.return_value.collect.return_value = [
+            ("hydro.businessProjection", "equipment-types-v1")]
+        self.spark.table.return_value.schema.fields = []
+
+    def test_explicit_foreign_keys_are_persisted_without_changing_fact_identity(self):
+        support.prepare_project_relationship_sources(self.spark)
+        statements = [call.args[0] for call in self.spark.sql.call_args_list]
+        text = "\n".join(statements)
+        self.assertIn("get_json_object(metadata_json, '$.location_id')", text)
+        self.assertIn("CASE WHEN target_kind='location' THEN target_id END", text)
+        self.assertIn("CASE WHEN target_kind='area' THEN target_id END", text)
+        self.assertIn("MERGE INTO ontology_equipment_types", text)
+        self.assertIn("LEFT ANTI JOIN silver_facilities", text)
+        self.assertNotIn("ontology_key =", text)
+        self.assertNotIn("DROP ", text)
+
+    def test_unowned_type_projection_is_not_adopted(self):
+        self.spark.sql.return_value.collect.return_value = []
+        with self.assertRaisesRegex(RuntimeError, "not the managed"):
+            support.prepare_project_relationship_sources(self.spark)
+        self.assertFalse(any("MERGE" in call.args[0] for call in self.spark.sql.call_args_list))
+
+    def test_conflicting_existing_relationship_column_type_fails(self):
+        field = Mock()
+        field.name = "location_id"
+        field.dataType.simpleString.return_value = "int"
+        self.spark.table.return_value.schema.fields = [field]
+        with self.assertRaisesRegex(RuntimeError, "not a string"):
+            support.prepare_project_relationship_sources(self.spark)
+        self.assertFalse(any(call.args[0].startswith("UPDATE ")
+                             for call in self.spark.sql.call_args_list))
+
+    def test_ambiguous_source_type_identity_fails_before_any_write(self):
+        self.spark.sql.return_value.limit.return_value.count.return_value = 1
+        with self.assertRaisesRegex(RuntimeError, "one authoritative type name"):
+            support.prepare_project_relationship_sources(self.spark)
+        self.assertEqual(len(self.spark.sql.call_args_list), 1)
+
+
 class ProjectExtensionTests(unittest.TestCase):
     def setUp(self):
         self.parts = [part("database.tmdl", "database\n"), part("model.tmdl", "model Model\n"),
@@ -422,6 +466,9 @@ class ProjectExtensionTests(unittest.TestCase):
         for table, keys in support.WEATHER_PROJECT_ENTITIES.values():
             if len(keys) > 1:
                 self.weather[table]["ontology_key"] = "string"
+        self.weather["weather_areas"]["location_id"] = "string"
+        self.weather["weather_latest_forecasts"].update(location_id="string", area_id="string")
+        self.weather["ontology_equipment_types"]["equipment_type_name"] = "string"
         self.sql = {table: dict.fromkeys(columns, "string") for table, columns in support.OPERATIONAL_COLUMNS.items()}
 
     def extend(self, parts=None):
@@ -451,6 +498,67 @@ class ProjectExtensionTests(unittest.TestCase):
         self.assertNotIn("WeatherLatestForecast.target_id", physical)
         edges = base64.b64decode(indexed["entityRelationships.tmdl"]["payload"]).decode()
         self.assertEqual(edges.count("entityRelationship "), edges.count("backingConfiguration"))
+
+    def test_business_relationships_use_explicit_discriminated_source_keys(self):
+        indexed = {p["path"]: p for p in self.extend()}
+        text = base64.b64decode(indexed["relationships.tmdl"]["payload"]).decode()
+        for binding in (
+            "HydroProject_WeatherLocation.location_id\n\ttoColumn: facilities.facility_id",
+            "HydroProject_WeatherArea.location_id\n\ttoColumn: HydroProject_WeatherLocation.location_id",
+            "HydroProject_WeatherLatestForecast.location_id\n\ttoColumn: HydroProject_WeatherLocation.location_id",
+            "HydroProject_WeatherLatestForecast.area_id\n\ttoColumn: HydroProject_WeatherArea.area_id",
+            "equipment.equipment_type_code\n\ttoColumn: HydroProject_EquipmentType.equipment_type_code",
+            "HydroProject_SparePart.equipmentType\n\ttoColumn: HydroProject_EquipmentType.equipment_type_code",
+        ):
+            self.assertIn(binding, text)
+        for retired in support.PROJECT_CATALOG_ENTITIES:
+            self.assertNotIn(f"entities/{retired}.tmdl", indexed)
+        self.assertNotIn("SparePart.equipmentId", text)
+        self.assertNotIn("WeatherLatestForecast.target_id", text)
+
+    def test_missing_derived_key_is_not_replaced_by_a_polymorphic_target_join(self):
+        del self.weather["weather_latest_forecasts"]["location_id"]
+        with self.assertRaisesRegex(RuntimeError, "requires verified source column"):
+            self.extend()
+
+    def test_verified_relationship_keys_extend_bound_parts_without_overwriting_custom_content(self):
+        result = self.extend()
+        for original in result:
+            if original["path"] in ("entities/WeatherArea.tmdl", "tables/HydroProject_WeatherArea.tmdl"):
+                text = base64.b64decode(original["payload"]).decode()
+                kind = "property" if original["path"].startswith("entities/") else "column"
+                text = re.sub(r"(?ms)^\t" + kind + r" location_id\n.*?(?=^\t\S|^\S|\Z)", "", text)
+                original["payload"] = base64.b64encode(
+                    (text + "\tannotation CustomSetting = preserve\n").encode()).decode()
+        restored = self.extend(result)
+        for path in ("entities/WeatherArea.tmdl", "tables/HydroProject_WeatherArea.tmdl"):
+            text = base64.b64decode(next(p for p in restored if p["path"] == path)["payload"]).decode()
+            self.assertIn("annotation CustomSetting = preserve", text)
+            self.assertIn("location_id", text)
+        self.assertEqual(restored, self.extend(restored))
+
+    def test_catalog_retirement_does_not_remove_physical_data_or_unknown_parts(self):
+        old = copy.deepcopy(self.parts)
+        model = next(p for p in old if p["path"] == "model.tmdl")
+        text = base64.b64decode(model["payload"]).decode()
+        for name, physical in support.PROJECT_CATALOG_ENTITIES.items():
+            old.extend((
+                part(f"entities/{name}.tmdl", f"entity {name}\n\tbackingTable: HydroProject_{name}\n"
+                     "\tannotation HydroProjectExtension = 1\n"),
+                part(f"tables/HydroProject_{name}.tmdl", f"table HydroProject_{name}\n"
+                     f"\tpartition HydroProject_{name} = entity\n\t\tsource\n"
+                     f"\t\t\tentityName: {physical}\n\tannotation HydroProjectExtension = 1\n"),
+            ))
+            text += f"ref entity {name}\nref table HydroProject_{name}\n"
+        model["payload"] = base64.b64encode(text.encode()).decode()
+        curated = support.curate_project_catalog_entities(old)
+        self.assertEqual(support.curate_project_catalog_entities(curated), curated)
+        indexed = {p["path"]: p for p in curated}
+        self.assertIn("unknown.json", indexed)
+        self.assertEqual({p["path"] for p in curated}, {p["path"] for p in self.parts})
+        old[-1]["payload"] = base64.b64encode(b"table Custom\n").decode()
+        with self.assertRaisesRegex(RuntimeError, "unowned catalog"):
+            support.curate_project_catalog_entities(old)
 
     def test_preserves_readback_lineage_and_added_compatible_content(self):
         result = self.extend()

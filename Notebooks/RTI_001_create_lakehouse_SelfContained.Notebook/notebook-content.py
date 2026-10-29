@@ -665,6 +665,94 @@ OPERATIONAL_DEMO_COUNTS = {
 }
 
 
+def ontology_context_elements(parts):
+    """Derive context only from actual entity declarations in the selected ontology."""
+    elements = []
+    seen = set()
+    for part in parts:
+        if not part["path"].startswith("entities/") or not part["path"].endswith(".tmdl"):
+            continue
+        text = base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+        matches = list(re.finditer(
+            r"(?m)^entity (?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z_0-9]*))[ \t]*$", text))
+        if len(matches) != 1:
+            raise RuntimeError(f"Expected one live entity in {part['path']!r}.")
+        match = matches[0]
+        name = (match[1] or match[2]).replace("''", "'")
+        if name in seen:
+            raise RuntimeError(f"Duplicate live ontology entity {name!r}.")
+        seen.add(name)
+        lines = text[:match.start()].splitlines()
+        description = []
+        while lines and lines[-1].startswith("///"):
+            description.append(lines.pop()[3:].strip())
+        elements.append({
+            "id": name, "is_selected": True, "display_name": name,
+            "type": "ontology.entity", "description": " ".join(reversed(description)) or None,
+            "children": [],
+        })
+    if not elements:
+        raise RuntimeError("The live ontology definition contains no entity metadata; refusing stale context.")
+    return elements
+
+
+def refresh_ontology_context_parts(parts, live_elements, workspace_id, ontology_id, legacy_descriptions=()):
+    """Keep live selections/custom metadata, removing references to genuinely retired types."""
+    live_names = {element["display_name"] for element in live_elements}
+    if not live_names:
+        raise RuntimeError("Cannot refresh ontology context without verified live entity metadata.")
+    legacy = dict(legacy_descriptions)
+    result = []
+    for original in parts:
+        path = original["path"]
+        if not path.startswith("Files/Config/draft/") or not (
+                path.endswith("/ontology.json") or path.endswith("/datasource.json")):
+            result.append(original)
+            continue
+        context = json.loads(base64.b64decode(original["payload"], validate=True))
+        if not path.endswith("/ontology.json") and context.get("type") != "ontology":
+            result.append(original)
+            continue
+        if context.get("artifactId") != ontology_id or context.get("workspaceId") != workspace_id:
+            raise RuntimeError("Cannot refresh context for a different ontology or workspace.")
+        existing = context.get("elements", [])
+        if not isinstance(existing, list) or any(not isinstance(node, dict) for node in existing):
+            raise RuntimeError("Existing ontology elements are malformed; refusing to replace custom selections.")
+        authored = context.get("entitiesWithUserAuthoredDescriptions")
+        if authored is not None and (
+                not isinstance(authored, list) or any(not isinstance(name, str) for name in authored)):
+            raise RuntimeError("User-authored ontology description metadata is malformed.")
+        elements = [
+            node for node in existing if node.get("type") != "ontology.entity"
+            or node.get("id") in live_names or node.get("display_name") in live_names
+        ]
+        refreshed = set()
+        for desired in live_elements:
+            name = desired["display_name"]
+            indices = [index for index, old in enumerate(elements)
+                       if old.get("type") == "ontology.entity"
+                       and (old.get("id") == name or old.get("display_name") == name)]
+            if len(indices) > 1:
+                raise RuntimeError(f"Duplicate saved ontology entity {name!r}; inspect its selections.")
+            if not indices:
+                elements.append(dict(desired))
+                continue
+            index = indices[0]
+            old = elements[index]
+            description = old.get("description")
+            if desired.get("description") and (
+                    description is None or description == "" or description == legacy.get(name)
+                    or isinstance(authored, list) and name not in authored):
+                elements[index] = {**old, "description": desired["description"]}
+                refreshed.add(name)
+        context["elements"] = elements
+        if authored is not None:
+            context["entitiesWithUserAuthoredDescriptions"] = [
+                name for name in authored if name in live_names and name not in refreshed]
+        result.append({**original, "payload": base64.b64encode(json.dumps(context).encode()).decode()})
+    return result
+
+
 def selected_ontology_entities(parts, workspace_id, ontology_id, stage="draft"):
     contexts = []
     for part in parts:
@@ -894,20 +982,165 @@ OPERATIONAL_COLUMNS = {
 
 WEATHER_PROJECT_ENTITIES = {
     "WeatherSource": ("weather_sources", ("source_id",)),
-    "WeatherVariable": ("weather_variables", ("variable_id",)),
     "WeatherLocation": ("weather_locations", ("location_id",)),
     "WeatherArea": ("weather_areas", ("area_id",)),
     "WeatherLatestObservation": ("weather_latest_observations", ("source_id", "location_id", "observed_at_utc")),
     "WeatherLatestForecast": ("weather_latest_forecasts",
                               ("source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc")),
-    "WeatherIngestionRun": ("weather_ingestion_runs", ("run_id",)),
-    "InstrumentClassification": ("gold_instrument_classification", ("system_id", "signal_type")),
+    "EquipmentType": ("ontology_equipment_types", ("equipment_type_code",)),
+}
+
+PROJECT_CATALOG_ENTITIES = {
+    "WeatherVariable": "weather_variables",
+    "WeatherIngestionRun": "weather_ingestion_runs",
+    "InstrumentClassification": "gold_instrument_classification",
 }
 
 SQL_PROJECT_ENTITIES = {
     "WorkOrder": "WorkOrders", "Inspection": "Inspections", "SparePart": "SpareParts",
     "Asset3DModel": "Asset3DModels", "MaintenanceNotification": "MaintenanceNotifications",
 }
+
+
+def prepare_project_relationship_sources(spark, equipment_table="silver_equipment"):
+    """Persist explicit relationship keys from the producers' verified identities."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", equipment_table):
+        raise RuntimeError("Equipment relationship source requires an explicit safe table identity.")
+    def reject(query, message):
+        if spark.sql(query).limit(1).count():
+            raise RuntimeError(message)
+    reject(
+        f"SELECT equipment_type_code FROM `{equipment_table}` "
+        "GROUP BY equipment_type_code HAVING equipment_type_code IS NULL "
+        "OR COUNT(DISTINCT equipment_type_name) <> 1 OR COUNT(*) <> COUNT(equipment_type_name)",
+        "Equipment types require a nonnull code with one authoritative type name.")
+    spark.sql(
+        "CREATE TABLE IF NOT EXISTS ontology_equipment_types "
+        "(equipment_type_code STRING, equipment_type_name STRING) USING DELTA "
+        "TBLPROPERTIES ('hydro.businessProjection' = 'equipment-types-v1')")
+    properties = dict(spark.sql("SHOW TBLPROPERTIES ontology_equipment_types").collect())
+    if properties.get("hydro.businessProjection") != "equipment-types-v1":
+        raise RuntimeError("Existing ontology_equipment_types is not the managed equipment-type projection.")
+    reject(
+        "SELECT equipment_type_code FROM ontology_equipment_types "
+        "GROUP BY equipment_type_code HAVING equipment_type_code IS NULL OR COUNT(*) <> 1",
+        "Equipment-type projection has invalid or duplicate identities.")
+    spark.sql(
+        "MERGE INTO ontology_equipment_types t USING "
+        f"(SELECT DISTINCT equipment_type_code,equipment_type_name FROM `{equipment_table}`) s "
+        "ON t.equipment_type_code=s.equipment_type_code "
+        "WHEN MATCHED THEN UPDATE SET t.equipment_type_name=s.equipment_type_name "
+        "WHEN NOT MATCHED THEN INSERT *")
+    projections = {
+        "weather_areas": {"location_id": "get_json_object(metadata_json, '$.location_id')"},
+        "weather_latest_forecasts": {
+            "location_id": "CASE WHEN target_kind='location' THEN target_id END",
+            "area_id": "CASE WHEN target_kind='area' THEN target_id END",
+        },
+    }
+    reject("SELECT 1 FROM weather_latest_forecasts WHERE target_kind IS NULL "
+           "OR target_kind NOT IN ('location','area') OR target_id IS NULL",
+           "Weather forecast target identity is missing or unsupported.")
+    for table, columns in projections.items():
+        existing = {field.name: field.dataType.simpleString() for field in spark.table(table).schema.fields}
+        for column, expression in columns.items():
+            if column not in existing:
+                spark.sql(f"ALTER TABLE `{table}` ADD COLUMNS (`{column}` STRING)")
+            elif existing[column] != "string":
+                raise RuntimeError(f"Existing relationship key {table}.{column} is not a string.")
+            reject(
+                f"SELECT 1 FROM `{table}` WHERE `{column}` IS NOT NULL "
+                f"AND NOT (`{column}` <=> ({expression}))",
+                f"Existing relationship key {table}.{column} conflicts with its source identity.")
+            spark.sql(f"UPDATE `{table}` SET `{column}` = {expression} "
+                      f"WHERE NOT (`{column}` <=> ({expression}))")
+            reject(f"SELECT 1 FROM `{table}` WHERE NOT (`{column}` <=> ({expression}))",
+                   f"Relationship-key readback failed for {table}.{column}.")
+    for query, message in (
+        ("SELECT 1 FROM weather_locations w LEFT ANTI JOIN silver_facilities f "
+         "ON w.location_id=f.facility_id", "Weather location has no authoritative facility identity."),
+        ("SELECT 1 FROM weather_areas a LEFT ANTI JOIN weather_locations l "
+         "ON a.location_id=l.location_id", "Weather area has no registered representative location."),
+        ("SELECT 1 FROM weather_latest_forecasts f LEFT ANTI JOIN weather_locations l "
+         "ON f.location_id=l.location_id WHERE f.target_kind='location'",
+         "Location forecast has no registered location."),
+        ("SELECT 1 FROM weather_latest_forecasts f LEFT ANTI JOIN weather_areas a "
+         "ON f.area_id=a.area_id WHERE f.target_kind='area'",
+         "Area forecast has no registered weather area."),
+    ):
+        reject(query, message)
+
+
+def curate_project_catalog_entities(parts):
+    """Retire only managed catalog/ingestion types, never their physical data."""
+    indexed = {part["path"]: part for part in parts}
+    if len(indexed) != len(parts):
+        raise RuntimeError("Catalog curation requires unambiguous definition paths.")
+    decode = lambda part: base64.b64decode(part["payload"]).decode("utf-8")
+    texts = {path: decode(part) for path, part in indexed.items()}
+    retired_edges = {
+        "WeatherIngestionRun_from_source": ("WeatherIngestionRun", "WeatherSource"),
+        "InstrumentClassification_for_system": ("InstrumentClassification", "systems"),
+    }
+    removed = set()
+    removed_entities = set()
+    catalog = _project_semantics()
+    for entity, physical in PROJECT_CATALOG_ENTITIES.items():
+        paths = (f"entities/{entity}.tmdl", f"tables/HydroProject_{entity}.tmdl")
+        if not any(path in texts for path in paths):
+            continue
+        if not all(path in texts for path in paths):
+            raise RuntimeError(f"Cannot retire incomplete managed catalog {entity}.")
+        for path in paths:
+            if not re.search(r"(?m)^\tannotation HydroProjectExtension = 1\s*$", texts[path]):
+                raise RuntimeError(f"Cannot retire unowned catalog definition {path}.")
+            annotations = set(re.findall(r"(?m)^\s+annotation (\w+) =", texts[path]))
+            if annotations - {"HydroProjectExtension", "domain", "modelRole", "preferredUsage",
+                              "queryHint", "agentGuide"}:
+                raise RuntimeError(f"Custom annotations in {path} require an explicit migration.")
+            properties = set(re.findall(r"(?m)^\t(?:property|column) (\w+)\s*$", texts[path]))
+            if properties - set(catalog[entity]["properties"]):
+                raise RuntimeError(f"Custom properties in {path} require an explicit migration.")
+        if not re.search(r"(?m)^\tbackingTable: HydroProject_" + entity + r"\s*$", texts[paths[0]]):
+            raise RuntimeError(f"Cannot retire rebound catalog {entity}.")
+        if not re.search(r"(?m)^\s+entityName: " + physical + r"\s*$", texts[paths[1]]):
+            raise RuntimeError(f"Cannot retire catalog {entity} with a different physical source.")
+        for path, text in texts.items():
+            if path in paths or path == "model.tmdl":
+                continue
+            for block in re.split(r"(?m)(?=^(?:entityRelationship|rule) )", text):
+                if re.search(r"(?m)^\s*(?:fromEntity|toEntity|ruleReferencedEntity):? " + entity + r"\s*$", block):
+                    name = block.splitlines()[0].split(" ", 1)[-1]
+                    if path != "entityRelationships.tmdl" or name not in retired_edges:
+                        raise RuntimeError(f"Custom reference to catalog {entity} requires an explicit migration.")
+        removed.update(paths)
+        removed_entities.add(entity)
+        texts["model.tmdl"] = re.sub(
+            r"(?m)^ref (?:entity " + entity + r"|table HydroProject_" + entity + r")[ \t]*\r?\n?",
+            "", texts["model.tmdl"])
+    owned_edges = {name for name, pair in retired_edges.items() if pair[0] in removed_entities}
+    for name in owned_edges:
+        block = re.search(
+            r"(?ms)^entityRelationship " + name + r"[ \t]*\r?\n.*?(?=^\S|\Z)",
+            texts.get("entityRelationships.tmdl", ""))
+        if block and any(not re.search(r"(?m)^\t" + field + ": " + entity + r"\s*$", block[0])
+                         for field, entity in zip(("fromEntity", "toEntity"), retired_edges[name])):
+            raise RuntimeError(f"Catalog relationship {name} has custom endpoints; explicit migration required.")
+    for path, prefix, names in (
+        ("entityRelationships.tmdl", "entityRelationship", owned_edges),
+        ("relationships.tmdl", "relationship", {"HydroProject_" + name for name in owned_edges}),
+    ):
+        if path in texts:
+            for name in names:
+                texts[path] = re.sub(
+                    r"(?ms)^" + prefix + " " + re.escape(name) + r"[ \t]*\r?\n.*?(?=^\S|\Z)",
+                    "", texts[path])
+    return [
+        original if texts[path] == decode(original) else {
+            **original, "payload": base64.b64encode(texts[path].encode()).decode()}
+        for path, original in indexed.items() if path not in removed
+    ]
+
 
 def project_identity_expression(keys):
     """Encode every natural-key member, including UTC timestamps, before hashing."""
@@ -1019,6 +1252,7 @@ def project_ontology_source_metadata(parts, workspace, lakehouse, database):
 
 def project_ontology_extension(parts, workspace, lakehouse, database, weather_columns, sql_columns, verify_existing=None):
     """Add verified source-backed domains without changing existing core definitions."""
+    parts = curate_project_catalog_entities(parts)
     by_path = {part["path"]: dict(part) for part in parts}
     if len(by_path) != len(parts) or "database.tmdl" not in by_path or "model.tmdl" not in by_path:
         raise RuntimeError("Project extension requires one unambiguous generation-2 TMDL contract.")
@@ -1034,6 +1268,7 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
     additions = {}
     entities = []
     tables = []
+    source_columns = {}
     def add_entity(name, physical, columns, keys, expression):
         if not set(keys).issubset(columns):
             raise RuntimeError(f"Project ontology {name} is missing source key columns {set(keys) - set(columns)}.")
@@ -1060,6 +1295,7 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
         additions[f"tables/{alias}.tmdl"] = "\n".join(table) + "\n"
         entities.append(name)
         tables.append(alias)
+        source_columns[name] = set(columns)
         return alias
     aliases = {}
     for name, physical in SQL_PROJECT_ENTITIES.items():
@@ -1069,7 +1305,10 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
     relationships = []
     semantic = []
     def edge(name, source, target, source_key, target_key):
-        source_table = aliases[source]
+        for entity, column in ((source, source_key), (target, target_key)):
+            if entity in source_columns and column not in source_columns[entity]:
+                raise RuntimeError(f"Relationship {name} requires verified source column {entity}.{column}.")
+        source_table = aliases.get(source, core_tables.get(source))
         target_table = aliases.get(target, core_tables.get(target))
         physical_name = "HydroProject_" + name
         relationships.append(
@@ -1086,10 +1325,27 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
     edge("WeatherLatestObservation_at_location", "WeatherLatestObservation", "WeatherLocation", "location_id", "location_id")
     edge("WeatherLatestObservation_from_source", "WeatherLatestObservation", "WeatherSource", "source_id", "source_id")
     edge("WeatherLatestForecast_from_source", "WeatherLatestForecast", "WeatherSource", "source_id", "source_id")
-    edge("WeatherIngestionRun_from_source", "WeatherIngestionRun", "WeatherSource", "source_id", "source_id")
-    edge("InstrumentClassification_for_system", "InstrumentClassification", "systems", "system_id", "system_id")
+    edge("WeatherLocation_for_facility", "WeatherLocation", "facilities", "location_id", "facility_id")
+    edge("WeatherArea_at_location", "WeatherArea", "WeatherLocation", "location_id", "location_id")
+    edge("WeatherLatestForecast_at_location", "WeatherLatestForecast", "WeatherLocation", "location_id", "location_id")
+    edge("WeatherLatestForecast_for_area", "WeatherLatestForecast", "WeatherArea", "area_id", "area_id")
+    edge("equipment_of_type", "equipment", "EquipmentType", "equipment_type_code", "equipment_type_code")
+    edge("SparePart_for_equipment_type", "SparePart", "EquipmentType", "equipmentType", "equipment_type_code")
     for path, wanted in additions.items():
         if path in texts and texts[path] != wanted:
+            # Only explicit, source-verified columns may extend an already bound managed entity/table.
+            if path in {
+                "entities/WeatherArea.tmdl", "tables/HydroProject_WeatherArea.tmdl",
+                "entities/WeatherLatestForecast.tmdl", "tables/HydroProject_WeatherLatestForecast.tmdl",
+            }:
+                kind = "property" if path.startswith("entities/") else "column"
+                existing_names = set(re.findall(r"(?m)^\t" + kind + r" (\w+)\s*$", texts[path]))
+                blocks = re.findall(r"(?ms)^\t" + kind + r" \w+\n.*?(?=^\t\S|^\S|\Z)", wanted)
+                for block in blocks:
+                    name = block.splitlines()[0].split()[-1]
+                    if name not in existing_names and name in ("location_id", "area_id"):
+                        texts[path] = texts[path].rstrip() + "\n\n" + block.rstrip() + "\n"
+                by_path[path] = {**by_path[path], "payload": base64.b64encode(texts[path].encode()).decode()}
             if verify_existing:
                 verify_existing([{"path": path, "payload": base64.b64encode(wanted.encode()).decode()}], [by_path[path]])
                 continue
@@ -1614,6 +1870,18 @@ def _project_semantics():
                                               'Notification',
                                               'Maintenance Notice',
                                               'Maintenance Alert Record']},
+     'EquipmentType': {
+         'description': 'Authoritative equipment category derived from the equipment registry. '
+                        'Connects inventory eligibility by equipment-type code, not installed parts or verified fit.',
+         'annotations': {'domain': 'asset', 'modelRole': 'dimension',
+                         'preferredUsage': 'equipment categories and spare-parts inventory by category',
+                         'queryHint': 'SparePart_for_equipment_type means category eligibility only. '
+                                      'It does not prove a part fits a specific model, is installed, or is reserved.'},
+         'synonyms': ['Equipment Category', 'Asset Type'],
+         'properties': {
+             'equipment_type_code': {'description': 'Canonical equipment-type code from the asset registry.'},
+             'equipment_type_name': {'description': 'Authoritative display name of the equipment type.'},
+         }},
      'SparePart': {'annotations': {'domain': 'maintenance',
                                    'modelRole': 'inventory',
                                    'preferredUsage': 'stock availability, replenishment, and part compatibility',

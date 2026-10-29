@@ -130,10 +130,16 @@ class WeatherSourceContractTests(unittest.TestCase):
         rows = []
 
         class Frame:
+            columns = ["location_id"]
+
             def createOrReplaceTempView(self, name):
                 self.name = name
 
         class Spark:
+            @staticmethod
+            def table(name):
+                return Frame()
+
             @staticmethod
             def createDataFrame(values):
                 rows.extend(values)
@@ -150,11 +156,18 @@ class WeatherSourceContractTests(unittest.TestCase):
                 "radius_km": 20.0, "geometry": object(), "geometry_json": "{}"}
         context["persist_station_areas"]([area], datetime(2026, 10, 27), ["F001"])
         self.assertEqual(rows[0]["area_id"], area["area_id"])
+        self.assertEqual(rows[0]["location_id"], area["location_id"])
         self.assertEqual(json.loads(rows[0]["metadata_json"])["geodesic_area_m2"], 123.0)
         self.assertEqual(len(queries), 1)
         self.assertIn("MERGE INTO weather_areas", queries[0])
         context["persist_station_areas"]([area], datetime(2026, 10, 27), [])
         self.assertIn("DELETE FROM weather_areas WHERE area_id NOT IN", queries[1])
+        Frame.columns = []
+        queries.clear()
+        context["persist_station_areas"]([area], datetime(2026, 10, 27), ["F001"])
+        self.assertEqual(len(queries), 2)
+        self.assertIn("ALTER TABLE weather_areas ADD COLUMNS (location_id STRING)", queries[0])
+        self.assertIn("MERGE INTO weather_areas", queries[1])
 
     def test_project_identity_producers_preserve_the_complete_natural_grain(self):
         expected = {

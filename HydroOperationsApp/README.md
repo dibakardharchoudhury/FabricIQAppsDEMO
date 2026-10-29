@@ -115,6 +115,29 @@ assets. Relationship endpoint identities and directions are preserved. Component
 separately, genuinely unrelated types remain visible in a compact group, and search filters the
 type list rather than cutting connections out of the diagram. The inspector shows property
 definitions, declared keys and relationship cardinalities. Schema export uses JSON.
+The model reuses the rich graph canvas: sized, icon/color-coded business types, visible
+relationship labels and direction, network/hierarchy/concentric layouts, zoom, fit, selected-neighborhood
+focus and an expanded view (Escape restores it). The category legend describes presentation only,
+not inferred relationships or operational health. **Neighborhood** shows only declarations incident
+to the selected type; **All types** restores the full definition. Schema nodes have no telemetry,
+health rings or animated operational flows. Equipment-type and spare-part categories do not imply
+installed parts or verified compatibility.
+
+For a browser-only presentation check without Fabric access, run
+`node scripts\knowledge-graph-preview.mjs` from `HydroOperationsApp` and open
+`http://127.0.0.1:5189/ontology-preview`. This development-only server mounts the real model page
+with explicitly declared synthetic schema inputs and a conspicuous fixture banner; it is not
+part of the application bundle or a live-read certification. The page links exercise light/dark
+themes, unrelated types and a failed read. Stop it with Ctrl+C after checking.
+To inspect an exact saved readback instead, run
+`node scripts\knowledge-graph-preview.mjs --definition "C:\path\readback.json"`.
+Add `--port 5193` to select another localhost port (default `5189`; occupied ports fail rather
+than silently switching).
+The envelope must contain `metadata` (item GUID, display name, numeric
+`properties.generation: 2`) and `definition.parts`. The preview uses the application’s actual
+TMDL parser and topology validation, rejects conflicting identities, and does not copy the file
+into the repository. Saved mode disables the synthetic isolates override. This remains an
+offline preview, not independent verification of live generation, materialization or agent runtime.
 
 The separate **Native asset instances** view visualizes operational composition as a scoped property graph. Its performant
 Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a

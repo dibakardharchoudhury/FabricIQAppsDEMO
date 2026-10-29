@@ -74,7 +74,7 @@ ddl_statements = [
       elevation_m DOUBLE, metadata_json STRING, updated_at_utc TIMESTAMP
     ) USING DELTA""",
     f"""CREATE TABLE IF NOT EXISTS {TABLES['areas']} (
-      area_id STRING, area_name STRING, geometry_geojson STRING, crs STRING,
+      area_id STRING, area_name STRING, geometry_geojson STRING, crs STRING, location_id STRING,
       metadata_json STRING, updated_at_utc TIMESTAMP
     ) USING DELTA""",
     f"""CREATE TABLE IF NOT EXISTS {TABLES['ingestion_runs']} (
@@ -108,7 +108,7 @@ ddl_statements = [
       calculated_at_utc TIMESTAMP
     ) USING DELTA""",
     f"""CREATE TABLE IF NOT EXISTS {TABLES['latest_forecasts']} (
-      source_id STRING, target_kind STRING, target_id STRING,
+      source_id STRING, target_kind STRING, target_id STRING, location_id STRING, area_id STRING,
       reference_time_utc TIMESTAMP, valid_time_utc TIMESTAMP, lead_hours INT,
       precipitation_interval_hours INT, cumulative_precipitation DOUBLE,
       rainfall_volume_m3 DOUBLE, cumulative_rainfall_volume_m3 DOUBLE,

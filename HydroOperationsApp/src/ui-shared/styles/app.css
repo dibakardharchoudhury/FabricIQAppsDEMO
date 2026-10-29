@@ -235,9 +235,6 @@
 .kg-ontology-model .kg-property-list > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 8px; }
 .kg-ontology-model .kg-property-list dt { color: var(--cp-text-muted); overflow-wrap: anywhere; }
 .kg-ontology-model .kg-property-list dd { margin: 0; color: var(--cp-text); overflow-wrap: anywhere; }
-.kg-ontology-model .kg-stage { background: var(--cp-bg); }
-.kg-ontology-model .kg-stage::after { box-shadow: none; }
-.kg-ontology-model .kg-sidebar { background: var(--cp-surface); backdrop-filter: none; }
 .kg-ontology-model .kg-workspace { border-radius: 16px; box-shadow: var(--cp-shadow); }
 .kg-ontology-model { font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
 .kg-source-coverage > .kg-execution-control { margin-top: 12px; }
@@ -382,6 +379,56 @@
 }
 @media (max-width: 1100px) { .kg-workspace { grid-template-columns: 210px minmax(430px, 1fr) 270px; } .kg-legend { display: none; } }
 @media (max-width: 800px) { .kg-page { width: 100%; transform: none; margin-left: 0; } .kg-header { align-items: flex-start; flex-direction: column; } .kg-workspace { height: auto; min-height: 0; grid-template-columns: 1fr; overflow: visible; } .kg-filters, .kg-inspector { border: 0; } .kg-stage { height: 68vh; min-height: 480px; border-block: 1px solid var(--cp-border); } .kg-toolbar { gap: 6px; } .kg-layout-control { display: none; } .kg-graph-actions select { display: none; } .kg-asset-tree .v2-tree-panel { max-height: 280px; overflow: auto; } }
+.kg-ontology-model .kg-workspace { grid-template-columns: 220px minmax(0, 1fr) 292px; }
+.kg-ontology-model .kg-segmented { grid-template-columns: repeat(2, 1fr); }
+.kg-ontology-model .kg-model-entities button { display: flex; align-items: center; gap: 10px; padding: 9px; }
+.kg-model-entities button > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.kg-model-entities strong { display: block; font-size: 12px; font-weight: 650; }
+.kg-model-entities small { display: block; margin-top: 3px; color: var(--cp-text-muted); font-size: 10px; }
+.kg-model-entity-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 10px; color: #172033; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.kg-model-category-legend { display: grid; gap: 9px; font-size: 12px; }
+.kg-model-category-legend > span { display: flex; align-items: center; gap: 8px; }
+.kg-model-category-legend small { margin-left: auto; color: var(--cp-text-muted); }
+.kg-model-selected-heading { display: flex; align-items: center; gap: 12px; }
+.kg-model-selected-heading .kg-model-entity-icon { width: 46px; height: 46px; border-radius: 14px; }
+.kg-model-selected-heading h2 { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 19px; }
+.kg-model-selected-heading + p { overflow-wrap: anywhere; font-size: 12px; }
+.kg-model-definition-badge { display: flex; align-items: center; gap: 6px; color: var(--cp-link); font-size: 11px; }
+.kg-model-neighborhood-counts { display: flex; gap: 8px; }
+.kg-model-neighborhood-counts span { flex: 1; padding: 10px; border: 1px solid var(--cp-border); border-radius: 9px; color: var(--cp-text-muted); font-size: 11px; background: var(--cp-surface-soft); }
+.kg-model-neighborhood-counts strong { display: block; color: var(--cp-text); font-size: 20px; }
+.kg-model-relationship:hover { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
+.kg-model-relationship-direction { display: flex; align-items: center; gap: 6px; }
+.kg-ontology-model .kg-legend { display: flex; bottom: 14px; max-width: calc(100% - 32px); flex-wrap: wrap; justify-content: center; white-space: normal; border-radius: 12px; font-size: 10px; text-align: center; gap: 6px 12px; }
+.kg-ontology-model .kg-legend > span:last-child { flex-basis: 100%; justify-content: center; }
+.kg-model-zoom { display: grid; align-items: center; min-width: 42px; color: var(--cp-text-muted); text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
+.kg-model-canvas-info { position: absolute; z-index: 3; top: 62px; left: 16px; right: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; pointer-events: none; font-size: 11px; color: var(--cp-text-muted); }
+.kg-model-canvas-info > * { display: flex; align-items: center; gap: 6px; background: var(--kg-glass); padding: 4px 6px; border-radius: 6px; }
+.kg-model-canvas-info label { pointer-events: auto; cursor: pointer; }
+.kg-ontology-model .kg-graph-actions button:focus-visible, .kg-ontology-model .kg-sidebar button:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
+@media (max-width: 1200px) {
+  .kg-ontology-model .kg-workspace { grid-template-columns: 190px minmax(0, 1fr) 248px; }
+  .kg-ontology-model .kg-toolbar { flex-wrap: wrap; gap: 8px; }
+  .kg-ontology-model .kg-layout-control { width: 156px; }
+  .kg-ontology-model .kg-model-canvas-info { top: 106px; }
+}
+@media (max-width: 900px) {
+  .kg-ontology-model .kg-workspace { grid-template-columns: 170px minmax(0, 1fr); height: auto; }
+  .kg-ontology-model .kg-inspector { grid-column: 1 / -1; max-height: 420px; border-top: 1px solid var(--cp-border); border-left: 0; }
+  .kg-ontology-model .kg-stage { min-height: 620px; }
+  .kg-ontology-model .kg-filters { max-height: 620px; }
+  .kg-ontology-model .kg-workspace-maximized { height: auto; grid-template-rows: minmax(0, 1fr) minmax(180px, 30%); }
+  .kg-ontology-model .kg-workspace-maximized .kg-stage { min-height: 0; height: auto; }
+}
+@media (max-width: 600px) {
+  .kg-ontology-model .kg-workspace { grid-template-columns: minmax(0, 1fr); }
+  .kg-ontology-model .kg-filters { max-height: 260px; }
+  .kg-ontology-model .kg-layout-control { display: flex; }
+  .kg-ontology-model .kg-toolbar { justify-content: flex-start; }
+  .kg-ontology-model .kg-stage { min-height: 540px; }
+  .kg-ontology-model .kg-workspace-maximized { overflow: auto; display: block; }
+  .kg-ontology-model .kg-workspace-maximized .kg-stage { height: 70vh; min-height: 440px; }
+}
 
 .v2-placeholder-card {
   min-height: 260px;

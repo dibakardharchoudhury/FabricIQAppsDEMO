@@ -499,6 +499,7 @@ def persist_station_areas(areas, updated_at, selected_facility_ids):
         area_rows.append({
             "area_id": area["area_id"],
             "area_name": area["area_name"],
+            "location_id": area["location_id"],
             "geometry_geojson": area["geometry_json"],
             "crs": "EPSG:4326",
             "metadata_json": json.dumps({
@@ -510,6 +511,8 @@ def persist_station_areas(areas, updated_at, selected_facility_ids):
             "updated_at_utc": updated_at,
         })
     areas_df = spark.createDataFrame(area_rows)
+    if "location_id" not in spark.table(TABLES["areas"]).columns:
+        spark.sql(f"ALTER TABLE {TABLES['areas']} ADD COLUMNS (location_id STRING)")
     areas_df.createOrReplaceTempView("incoming_weather_areas")
     if not selected_facility_ids:
         active_area_ids = [area["area_id"] for area in areas]

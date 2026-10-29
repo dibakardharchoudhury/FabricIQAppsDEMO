@@ -42,6 +42,7 @@ def functions(number, *names, **overrides):
         "normalize_lakehouse_elements",
         "selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources",
         "prune_agent_ontology_sources",
+        "ontology_context_elements", "refresh_ontology_context_parts",
     }
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)
@@ -180,13 +181,15 @@ class DataAgentInstructionTests(unittest.TestCase):
         context = {
             "artifactId": "ontology", "workspaceId": "ws",
             "dataSourceInstructions": "Keep operator instructions.",
-            "entitiesWithUserAuthoredDescriptions": ["facilities", "equipment"],
+            "entitiesWithUserAuthoredDescriptions": ["facilities", "equipment", "WeatherVariable"],
             "elements": [
                 {"id": "facility-ui-id", "type": "ontology.entity", "display_name": "facilities",
                  "is_selected": False, "description": "facility_id,facility_name",
                  "children": [], "custom": "keep"},
                 {"id": "equipment", "type": "ontology.entity", "display_name": "equipment",
                  "is_selected": True, "description": "Operator's custom description.", "children": []},
+                {"id": "WeatherVariable", "type": "ontology.entity", "display_name": "WeatherVariable",
+                 "is_selected": True, "description": "Retired catalog entity.", "children": []},
             ],
         }
         live = {"definition": {"parts": [
@@ -204,6 +207,7 @@ class DataAgentInstructionTests(unittest.TestCase):
             "009", "refresh_ontology_context", "ontology_elements_from_definition",
             "decode_payload", "encode_payload", "upsert_part",
             get_live_ontology_elements=Mock(),
+            workspace_id="ws",
             ONTOLOGY_ELEMENTS=[("facilities", "facility_id,facility_name")],
         )
         ns["get_live_ontology_elements"].return_value = ns["ontology_elements_from_definition"](live)

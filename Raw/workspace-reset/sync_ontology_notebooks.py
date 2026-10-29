@@ -77,7 +77,7 @@ def synchronize(root=ROOT, check=False):
 def synchronize_operational_support(root=ROOT, check=False):
     support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8").strip()
     support = support.replace(
-        "from ontology_notebook_support import _fabric_operation_url, _fabric_result_url\n", "")
+        "from ontology_notebook_support import _fabric_operation_url, _fabric_result_url, _project_semantics\n", "")
     ontology_support = (root / "Raw/workspace-reset/ontology_notebook_support.py").read_text(encoding="utf-8")
     shared_names = {"_normal_text", "_decode_part", "_encode_part", "_parts_by_path", "_identifier_parts",
                     "_local_name", "_quote_name", "_object_spans", "_append_model_ref",
@@ -97,7 +97,7 @@ def synchronize_operational_support(root=ROOT, check=False):
                          "RTI_011_seed_sql_wire_graphql_agent")
     for name in (*support_notebooks, "RTI_003_ingest_transform_medallion",
                  "RTI_003_ingest_transform_medallion_SelfContained", "Weather_020_area_calculations",
-                 "RTI_Orchestrator_Setup", "Weather_002_fetch_area_weather",
+                 "RTI_Orchestrator_Setup", "Weather_001_create_lakehouse", "Weather_002_fetch_area_weather",
                  "Weather_003_fetch_ukmet", "Weather_Orchestrator"):
         canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
         raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
@@ -158,7 +158,8 @@ def synchronize_data_agent(root=ROOT, check=False):
     raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
     content = canonical.read_text(encoding="utf-8")
     support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8")
-    names = {"selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources"}
+    names = {"selected_ontology_entities", "ontology_source_bindings", "prune_ontology_duplicate_sources",
+             "ontology_context_elements", "refresh_ontology_context_parts"}
     helpers = [ast.get_source_segment(support, node) for node in ast.parse(support).body
                if isinstance(node, ast.FunctionDef) and node.name in names]
     if len(helpers) != len(names):

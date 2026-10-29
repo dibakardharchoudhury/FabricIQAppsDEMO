@@ -8,6 +8,21 @@ import { createOntologyCache } from '../src/services/ontologyCache.ts'
 
 const part = (path: string, text: string) => ({ path, payload: Buffer.from(text).toString('base64'), payloadType: 'InlineBase64' })
 
+test('schema Asset3DModel label is readable without changing source identity or declared topology', () => {
+  const contract = structuredClone(ontology)
+  const entity = contract.entityTypes[0]
+  entity.name = 'Asset3DModel'
+  entity.localName = 'Asset3DModel'
+  const before = structuredClone(contract)
+  const graph = buildOntologyModel(contract)
+  const model = graph.nodes.find(node => node.ontologyEntityTypeId === entity.id)!
+  assert.equal(model.label, 'Asset 3D model')
+  assert.equal(model.id, `ontology-type:${entity.id}`)
+  assert.equal(model.entityId, entity.id)
+  assert.deepEqual(contract, before)
+  assert.equal(graph.edges.length, contract.relationshipTypes.length)
+})
+
 test('ontology model renders every declared type and relationship without native or source instances', () => {
   const before = JSON.stringify(ontology)
   const graph = buildOntologyModel(ontology)

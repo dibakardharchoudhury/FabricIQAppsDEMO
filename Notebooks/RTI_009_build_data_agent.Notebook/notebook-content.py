@@ -126,6 +126,92 @@ import requests
 import notebookutils  # Fabric notebook utility
 
 # BEGIN ONTOLOGY SOURCE TOPOLOGY SUPPORT
+def ontology_context_elements(parts):
+    """Derive context only from actual entity declarations in the selected ontology."""
+    elements = []
+    seen = set()
+    for part in parts:
+        if not part["path"].startswith("entities/") or not part["path"].endswith(".tmdl"):
+            continue
+        text = base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+        matches = list(re.finditer(
+            r"(?m)^entity (?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z_0-9]*))[ \t]*$", text))
+        if len(matches) != 1:
+            raise RuntimeError(f"Expected one live entity in {part['path']!r}.")
+        match = matches[0]
+        name = (match[1] or match[2]).replace("''", "'")
+        if name in seen:
+            raise RuntimeError(f"Duplicate live ontology entity {name!r}.")
+        seen.add(name)
+        lines = text[:match.start()].splitlines()
+        description = []
+        while lines and lines[-1].startswith("///"):
+            description.append(lines.pop()[3:].strip())
+        elements.append({
+            "id": name, "is_selected": True, "display_name": name,
+            "type": "ontology.entity", "description": " ".join(reversed(description)) or None,
+            "children": [],
+        })
+    if not elements:
+        raise RuntimeError("The live ontology definition contains no entity metadata; refusing stale context.")
+    return elements
+
+def refresh_ontology_context_parts(parts, live_elements, workspace_id, ontology_id, legacy_descriptions=()):
+    """Keep live selections/custom metadata, removing references to genuinely retired types."""
+    live_names = {element["display_name"] for element in live_elements}
+    if not live_names:
+        raise RuntimeError("Cannot refresh ontology context without verified live entity metadata.")
+    legacy = dict(legacy_descriptions)
+    result = []
+    for original in parts:
+        path = original["path"]
+        if not path.startswith("Files/Config/draft/") or not (
+                path.endswith("/ontology.json") or path.endswith("/datasource.json")):
+            result.append(original)
+            continue
+        context = json.loads(base64.b64decode(original["payload"], validate=True))
+        if not path.endswith("/ontology.json") and context.get("type") != "ontology":
+            result.append(original)
+            continue
+        if context.get("artifactId") != ontology_id or context.get("workspaceId") != workspace_id:
+            raise RuntimeError("Cannot refresh context for a different ontology or workspace.")
+        existing = context.get("elements", [])
+        if not isinstance(existing, list) or any(not isinstance(node, dict) for node in existing):
+            raise RuntimeError("Existing ontology elements are malformed; refusing to replace custom selections.")
+        authored = context.get("entitiesWithUserAuthoredDescriptions")
+        if authored is not None and (
+                not isinstance(authored, list) or any(not isinstance(name, str) for name in authored)):
+            raise RuntimeError("User-authored ontology description metadata is malformed.")
+        elements = [
+            node for node in existing if node.get("type") != "ontology.entity"
+            or node.get("id") in live_names or node.get("display_name") in live_names
+        ]
+        refreshed = set()
+        for desired in live_elements:
+            name = desired["display_name"]
+            indices = [index for index, old in enumerate(elements)
+                       if old.get("type") == "ontology.entity"
+                       and (old.get("id") == name or old.get("display_name") == name)]
+            if len(indices) > 1:
+                raise RuntimeError(f"Duplicate saved ontology entity {name!r}; inspect its selections.")
+            if not indices:
+                elements.append(dict(desired))
+                continue
+            index = indices[0]
+            old = elements[index]
+            description = old.get("description")
+            if desired.get("description") and (
+                    description is None or description == "" or description == legacy.get(name)
+                    or isinstance(authored, list) and name not in authored):
+                elements[index] = {**old, "description": desired["description"]}
+                refreshed.add(name)
+        context["elements"] = elements
+        if authored is not None:
+            context["entitiesWithUserAuthoredDescriptions"] = [
+                name for name in authored if name in live_names and name not in refreshed]
+        result.append({**original, "payload": base64.b64encode(json.dumps(context).encode()).decode()})
+    return result
+
 def selected_ontology_entities(parts, workspace_id, ontology_id, stage="draft"):
     contexts = []
     for part in parts:
@@ -1173,32 +1259,7 @@ ONTOLOGY_ELEMENTS = [
 
 def ontology_elements_from_definition(envelope: dict) -> list:
     """Read entity names and descriptions from the selected live ontology, never a schema sample."""
-    elements = []
-    seen = set()
-    for part in definition_parts(envelope):
-        if not part["path"].startswith("entities/") or not part["path"].endswith(".tmdl"):
-            continue
-        text = base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
-        matches = list(re.finditer(r"(?m)^entity (?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z_0-9]*))[ \t]*$", text))
-        if len(matches) != 1:
-            raise RuntimeError(f"Expected one live entity in {part['path']!r}.")
-        match = matches[0]
-        name = (match[1] or match[2]).replace("''", "'")
-        if name in seen:
-            raise RuntimeError(f"Duplicate live ontology entity {name!r}.")
-        seen.add(name)
-        lines = text[:match.start()].splitlines()
-        description = []
-        while lines and lines[-1].startswith("///"):
-            description.append(lines.pop()[3:].strip())
-        elements.append({
-            "id": name, "is_selected": True, "display_name": name,
-            "type": "ontology.entity", "description": " ".join(reversed(description)) or None,
-            "children": [],
-        })
-    if not elements:
-        raise RuntimeError("The live ontology definition contains no entity metadata; refusing stale context.")
-    return elements
+    return ontology_context_elements(definition_parts(envelope))
 
 
 def get_live_ontology_elements(ontology_id: str) -> list:
@@ -1218,54 +1279,8 @@ def get_live_ontology_elements(ontology_id: str) -> list:
 
 def refresh_ontology_context(parts: list, ontology_id: str) -> list:
     """Refresh generated entity metadata without replacing selections, bindings or source profiles."""
-    live_elements = get_live_ontology_elements(ontology_id)
-    legacy = dict(ONTOLOGY_ELEMENTS)
-    result = list(parts)
-    for part in parts:
-        path = part["path"]
-        if not path.startswith("Files/Config/draft/") or not (
-            is_ontology_context_path(path) or path.endswith("/datasource.json")
-        ):
-            continue
-        context = decode_payload(part["payload"])
-        if not is_ontology_context_path(path) and context.get("type") != "ontology":
-            continue
-        if context.get("artifactId") != ontology_id:
-            raise RuntimeError("Cannot refresh a context for a different ontology.")
-        existing = context.get("elements", [])
-        if not isinstance(existing, list) or any(not isinstance(node, dict) for node in existing):
-            raise RuntimeError("Existing ontology elements are malformed; refusing to replace custom selections.")
-        authored = context.get("entitiesWithUserAuthoredDescriptions")
-        if authored is not None and (
-            not isinstance(authored, list) or any(not isinstance(name, str) for name in authored)
-        ):
-            raise RuntimeError("User-authored ontology description metadata is malformed.")
-        elements = list(existing)
-        refreshed_names = set()
-        for desired in live_elements:
-            name = desired["display_name"]
-            indices = [index for index, old in enumerate(elements)
-                       if old.get("type") == "ontology.entity"
-                       and (old.get("id") == name or old.get("display_name") == name)]
-            if len(indices) > 1:
-                raise RuntimeError(f"Duplicate saved ontology entity {name!r}; inspect its selections.")
-            if not indices:
-                elements.append(dict(desired))
-                continue
-            index = indices[0]
-            old = elements[index]
-            description = old.get("description")
-            if (description is None or description == "" or description == legacy.get(name)
-                    or isinstance(authored, list) and name not in authored):
-                elements[index] = {**old, "description": desired["description"]}
-                refreshed_names.add(name)
-        context["elements"] = elements
-        if authored is not None:
-            context["entitiesWithUserAuthoredDescriptions"] = [
-                name for name in authored if name not in refreshed_names
-            ]
-        result = upsert_part(result, path, context)
-    return result
+    return refresh_ontology_context_parts(
+        parts, get_live_ontology_elements(ontology_id), workspace_id, ontology_id, ONTOLOGY_ELEMENTS)
 
 LAKEHOUSE_TABLES = [
     (first_setting("silver_facilities_table", required=True),

@@ -425,6 +425,18 @@ def _project_semantics():
                                               'Notification',
                                               'Maintenance Notice',
                                               'Maintenance Alert Record']},
+     'EquipmentType': {
+         'description': 'Authoritative equipment category derived from the equipment registry. '
+                        'Connects inventory eligibility by equipment-type code, not installed parts or verified fit.',
+         'annotations': {'domain': 'asset', 'modelRole': 'dimension',
+                         'preferredUsage': 'equipment categories and spare-parts inventory by category',
+                         'queryHint': 'SparePart_for_equipment_type means category eligibility only. '
+                                      'It does not prove a part fits a specific model, is installed, or is reserved.'},
+         'synonyms': ['Equipment Category', 'Asset Type'],
+         'properties': {
+             'equipment_type_code': {'description': 'Canonical equipment-type code from the asset registry.'},
+             'equipment_type_name': {'description': 'Authoritative display name of the equipment type.'},
+         }},
      'SparePart': {'annotations': {'domain': 'maintenance',
                                    'modelRole': 'inventory',
                                    'preferredUsage': 'stock availability, replenishment, and part compatibility',

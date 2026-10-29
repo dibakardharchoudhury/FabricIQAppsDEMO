@@ -144,7 +144,8 @@ export function buildOntologyModel(ontology: OntologyContract | null): Knowledge
     entityId: entity.id,
     ontologyEntityTypeId: entity.id,
     type: roles[entity.localName ?? entity.name]?.type ?? 'ontology',
-    label: (entity.localName ?? entity.name).replaceAll('_', ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2'),
+    label: (entity.localName ?? entity.name) === 'Asset3DModel' ? 'Asset 3D model'
+      : (entity.localName ?? entity.name).replaceAll('_', ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2'),
     subtitle: 'Entity type',
     status: 'nodata',
     properties: {
