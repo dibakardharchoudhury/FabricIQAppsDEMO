@@ -45,6 +45,10 @@ def functions(number, *names, **overrides):
         "prune_agent_ontology_sources",
         "ontology_context_elements", "refresh_ontology_context_parts",
     }
+    if "persist_sql_extension_status" in included:
+        included.add("persist_operational_settings")
+    if "persist_operational_settings" in included:
+        included.add("merge_settings_with_retry")
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)
     return namespace
@@ -2028,7 +2032,9 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(ns["api_request"].call_count, 2)
 
     def sql_extension_namespace(self, baseline=None):
-        state = {"definition": {"parts": copy.deepcopy(baseline or [])}}
+        if baseline is None:
+            baseline = [json_part("Files/Config/draft/stage_config.json", {})]
+        state = {"definition": {"parts": copy.deepcopy(baseline)}}
         ns = functions(
             "011", "extend_data_agent_sql_source", "verify_agent_source_readback",
             "decode_payload", "encode_payload", "upsert_part", "_ds_element",
@@ -2145,7 +2151,10 @@ class CapabilityTests(unittest.TestCase):
                 )
 
     def test_sql_extension_publishes_without_ontology_or_nb09_evidence(self):
-        for baseline in ([], [json_part("Files/Config/draft/custom.json", {"custom": True})]):
+        for baseline in (
+            [json_part("Files/Config/draft/stage_config.json", {})],
+            [json_part("Files/Config/draft/custom.json", {"custom": True})],
+        ):
             with self.subTest(baseline=baseline):
                 ns, state = self.sql_extension_namespace(baseline)
                 result = ns["extend_data_agent_sql_source"]("agent")
@@ -2267,6 +2276,7 @@ class CapabilityTests(unittest.TestCase):
 
     def test_sql_extension_rejects_unreadable_baselines_before_writes(self):
         for envelope in (None, {}, {"definition": {}}, {"definition": {"parts": None}},
+                         {"definition": {"parts": []}},
                          {"definition": {"parts": [{"path": "custom", "payload": "bad",
                                                   "payloadType": "InlineBase64"}]}}):
             with self.subTest(envelope=envelope):
@@ -2277,6 +2287,27 @@ class CapabilityTests(unittest.TestCase):
                     ns["extend_data_agent_sql_source"]("agent")
                 ns["update_item_definition"].assert_not_called()
                 ns["publish_data_agent"].assert_not_called()
+
+    def test_sql_instruction_limit_preserves_exact_boundary_and_never_truncates(self):
+        ns, _ = self.sql_extension_namespace()
+        required = ns["OPERATIONAL_INSTRUCTIONS"] + ns["ASSET_RESOLUTION_INSTRUCTIONS"]
+        stage = {"aiInstructions": "x" * (15000 - len(required)), "custom": {"keep": True}}
+        original = copy.deepcopy(stage)
+        result = ns["build_stage_obj"](stage)
+        self.assertEqual(len(result["aiInstructions"]), 15000)
+        self.assertEqual(result["aiInstructions"], stage["aiInstructions"] + required)
+        self.assertEqual(stage, original)
+        self.assertEqual(ns["build_stage_obj"](result), result)
+        for instructions in (stage["aiInstructions"] + "x", {"invalid": True}, False):
+            with self.subTest(instructions_type=type(instructions)):
+                baseline = [json_part(ns["DRAFT_STAGE_CONFIG_PATH"], {"aiInstructions": instructions})]
+                failed, state = self.sql_extension_namespace(baseline)
+                before = copy.deepcopy(state)
+                with self.assertRaisesRegex(RuntimeError, "15,000|not a string"):
+                    failed["extend_data_agent_sql_source"]("agent")
+                self.assertEqual(state, before)
+                failed["update_item_definition"].assert_not_called()
+                failed["publish_data_agent"].assert_not_called()
 
     def test_sql_extension_requires_exact_draft_and_published_sql_readback(self):
         for phase in ("draft", "published"):
@@ -2568,7 +2599,7 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(json.loads(saved["data_agent_runtime_evidence"]), {"ontology_id": "ontology"})
 
     def test_agent_settings_merges_retry_only_delta_concurrency_conflicts(self):
-        for number, expected_delay in (("009", 1.0), ("010", 1.5)):
+        for number, expected_delay in (("009", 1.0), ("010", 1.5), ("011", 1.0)):
             with self.subTest(number=number):
                 execute = Mock(side_effect=[
                     RuntimeError("[DELTA_CONCURRENT_APPEND] ConcurrentAppendException"),
@@ -2623,6 +2654,19 @@ class CapabilityTests(unittest.TestCase):
                 ):
                     ns["merge_settings_with_retry"](source)
                 sleep.assert_not_called()
+
+                execute.reset_mock(side_effect=True)
+                execute.side_effect = RuntimeError("[DELTA_CONCURRENT_APPEND] ConcurrentAppendException")
+                with (
+                    patch.dict(
+                        "sys.modules",
+                        {"delta": SimpleNamespace(tables=delta), "delta.tables": delta},
+                    ),
+                    self.assertRaisesRegex(RuntimeError, "DELTA_CONCURRENT_APPEND"),
+                ):
+                    ns["merge_settings_with_retry"](source)
+                self.assertEqual(execute.call_count, 6)
+                self.assertEqual(sleep.call_count, 5)
 
     def runtime_namespace(self, result, delegated=True):
         def response(request_id, value, status=200, headers=None):

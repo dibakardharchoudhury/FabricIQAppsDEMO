@@ -50,6 +50,9 @@
 # SQL seed runs independently of Data Agent availability. The SQL source step
 # always extends the provisioned Data Agent with the SQL source. Real failures are surfaced after saving the per-step results.
 # Exact SQL draft/published readback confirms publication, not runtime verification.
+# Empty existing agent definitions are never replaced with SQL-only content. Required guidance
+# must fit alongside existing instructions without truncation. Shared settings writes retry
+# bounded Delta concurrency conflicts, not authentication, schema or other failures.
 # 
 # Settings are read from / written back to `rti_demo_settings`.
 # 
@@ -3860,25 +3863,39 @@ def extend_selected_project_ontology():
             "added_entity_count": len(WEATHER_PROJECT_ENTITIES) + len(OPERATIONAL_COLUMNS)}
 
 
-def persist_operational_settings(values):
+def merge_settings_with_retry(source, attempts: int = 6) -> None:
     from delta.tables import DeltaTable
 
+    for attempt in range(attempts):
+        try:
+            (DeltaTable.forName(spark, settings_table_name).alias("target")
+             .merge(source.alias("source"), "target.setting_name = source.setting_name")
+             .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+            return
+        except Exception as exc:
+            text = f"{type(exc).__name__}: {exc}"
+            concurrent = any(marker in text for marker in (
+                "ConcurrentAppendException", "ConcurrentWriteException",
+                "MetadataChangedException", "ProtocolChangedException",
+                "DELTA_CONCURRENT_",
+            ))
+            if not concurrent or attempt == attempts - 1:
+                raise
+            delay = 1.0 * (2 ** attempt)
+            print(f"Settings update conflicted with another notebook; retrying in {delay:.0f}s.")
+            time.sleep(delay)
+            spark.catalog.clearCache()
+            spark.sql(f"REFRESH TABLE {settings_table_name}")
+
+
+def persist_operational_settings(values):
     if not values:
         return
     source = (
         spark.createDataFrame([{"setting_name": key, "setting_value": str(value)} for key, value in values.items()])
         .withColumn("updated_utc", F.current_timestamp())
     )
-    (
-        DeltaTable.forName(spark, settings_table_name).alias("target")
-        .merge(source.alias("source"), "target.setting_name = source.setting_name")
-        .whenMatchedUpdate(set={"setting_value": "source.setting_value", "updated_utc": "source.updated_utc"})
-        .whenNotMatchedInsert(values={
-            "setting_name": "source.setting_name", "setting_value": "source.setting_value",
-            "updated_utc": "source.updated_utc",
-        })
-        .execute()
-    )
+    merge_settings_with_retry(source)
 
 
 step_results = {}
@@ -4147,7 +4164,11 @@ def build_stage_obj(existing: dict) -> dict:
     """Preserve existing aiInstructions and append required guidance once."""
     stage = dict(existing)
     stage["$schema"] = STAGE_CONFIG_SCHEMA_URL
-    instructions = stage.get("aiInstructions") or ""
+    instructions = stage.get("aiInstructions")
+    if instructions is None:
+        instructions = ""
+    if not isinstance(instructions, str):
+        raise RuntimeError("Existing Data Agent instructions are not a string; refusing to replace custom content.")
     instructions = instructions.replace(
         OPERATIONAL_INSTRUCTIONS.replace(sql_db_item_name, OPERATIONAL_STORE_NAME),
         OPERATIONAL_INSTRUCTIONS,
@@ -4156,14 +4177,19 @@ def build_stage_obj(existing: dict) -> dict:
         instructions += OPERATIONAL_INSTRUCTIONS
     if ASSET_RESOLUTION_INSTRUCTIONS_MARKER not in instructions:
         instructions += ASSET_RESOLUTION_INSTRUCTIONS
-    stage["aiInstructions"] = instructions[:15000]
+    if len(instructions) > 15000:
+        raise RuntimeError(
+            "Data Agent instructions exceed the 15,000-character limit after adding operational guidance. "
+            "Shorten custom instructions before retrying; existing instructions were not truncated."
+        )
+    stage["aiInstructions"] = instructions
     return stage
 
 
 def extend_data_agent_sql_source(agent_id: str) -> dict:
     global sql_db_item_id, sql_server, sql_database, SQL_DATASOURCE_PATH
     definition = get_item_definition(agent_id)
-    parts = definition_parts(definition, allow_empty=True)
+    parts = definition_parts(definition)
     if not sql_db_item_id:
         # Resolve id even if seeding failed, so the source can still be wired.
         sql_db_item_id = (find_item_by_name(sql_db_item_name, item_type="SQLDatabase") or {}).get("id")
@@ -4259,18 +4285,11 @@ def extend_data_agent_sql_source(agent_id: str) -> dict:
 
 
 def persist_sql_extension_status(result: dict) -> None:
-    from delta.tables import DeltaTable
-
     values = {
         "data_agent_sql_source_status": result["status"],
         "data_agent_sql_source_reason": result["reason"],
     }
-    source = spark.createDataFrame(
-        [{"setting_name": k, "setting_value": v} for k, v in values.items()]
-    ).withColumn("updated_utc", F.current_timestamp())
-    (DeltaTable.forName(spark, settings_table_name).alias("target")
-     .merge(source.alias("source"), "target.setting_name = source.setting_name")
-     .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+    persist_operational_settings(values)
 
 
 print("\n=== STEP B — Data Agent SQL source ===")

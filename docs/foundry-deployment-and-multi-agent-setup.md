@@ -254,8 +254,23 @@ rerun it after any change, to any part of the stack.
   `Hosted agent hydro-orchestrator is current` (when nothing changed).
 - **Administration → Agent runtime settings** shows the project endpoint, Invocations URL, runtime version, image
   digest and source digest.
-- Test one direct-source question, one multi-step question (Gauge → Sleuth → Fixer) and one Fabric IQ question.
-  Hosting, agent execution, graph materialization and Teams/email delivery are **separate gates**.
+
+**Optional demo walkthrough, not additional setup gates:** try a direct-source question,
+a multi-step question (Gauge → Sleuth → Fixer), and a Fabric IQ question through Sparky.
+Exercise Teams/email only when demonstrating those actions; provisioning does not send test alerts.
+Native graph materialization is needed only for the optional native instance-graph view.
+
+NB09 intentionally uses a bounded MCP facilities smoke before NB11's final SQL-source
+publication. The app uses Supervisor → Sparky → Fabric Responses afterward. Different
+transports and validation scopes are not themselves a defect; this synthetic-data demo does
+not require an automatic SQL/KQL/combined-source runtime matrix or delivery certification
+during setup. Source-identity and publication readback checks still protect the intended bindings.
+
+NB11 preserves existing agent content: empty definitions cannot become SQL-only replacements,
+and instructions are never silently truncated. Guidance that exceeds the existing
+15,000-character service limit is reported before agent updates. All NB11 settings writes
+use the existing bounded Delta-conflict retry pattern so its agent phase can coexist with NB10;
+non-concurrency failures remain errors.
 
 **Rollback.** Keep existing versions and deployment state. Use the last known-good source in a separate checkout and
 run the same canonical command against the intended target; it reuses/builds that source's image and verifies the

@@ -56,6 +56,14 @@ asset/signal/instrument keys and weather coverage, and builds/reads back the com
 is preserved. Both agents require a successful selected-model receipt and recheck the live
 complete definition. NB11's subsequent mandatory `agent` phase only verifies the same model
 and publishes the SQL execution adapter after NB09; it never reseeds or rewrites the ontology.
+The extension requires readable, nonempty existing agent content and preserves complete custom
+instructions rather than silently truncating them to the service's 15,000-character limit.
+Overflow stops before agent updates. Operational settings and SQL-publication status share
+bounded retries for Delta concurrency conflicts with other setup branches; other failures propagate.
+
+NB09's earlier MCP facilities smoke is intentional and remains lightweight. The app's later
+Supervisor → Sparky → Fabric Responses route and NB10's Teams/email actions are exercised
+interactively as needed, not added as exhaustive setup checks for this synthetic-data demo.
 Standalone app/deployer calls retain `setup_phase="all"`. Neither creation
 nor seeding depends on an app-owned database. Existing marked `HydroOperationalStore`
 items are moved without changing identity; child SQL endpoints move with them.

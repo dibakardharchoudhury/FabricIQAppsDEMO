@@ -125,6 +125,14 @@ metadata is available and verifies removal in both draft and published definitio
 Source guidance is retained in the agent instructions; operational SQL execution sources,
 uncovered custom tables and custom source metadata remain intact.
 
+The setup/runtime split is intentional for this synthetic-data demo, not a missing dependency:
+NB09's bounded MCP smoke checks facilities before NB11 publishes the final SQL adapter.
+The app later invokes the Data Agent through Supervisor → Sparky → Fabric Responses.
+These transports do not need to be unified, and setup does not run an exhaustive SQL/KQL/
+combined-source answer matrix. NB10 configures the Operations Agent and its delivery actions
+without sending Teams/email notifications as part of provisioning; delivery is exercised when
+demonstrating those actions, not made another setup gate.
+
 The Data Agent smoke check uses the selected ontology as semantic context and permits source-native
 SQL on its associated Lakehouse static binding. It compares the first five facility IDs/names with
 independently read configured Lakehouse rows. Expected values are not supplied in the prompt;

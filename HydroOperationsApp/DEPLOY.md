@@ -204,6 +204,17 @@ setup (including Stage 1), rather than installing packages locally or retrying S
 Standalone app/SQL bootstrap does not refresh weather or require current provider forecasts;
 it validates existing keys and explicitly does not certify weather readiness. Ontology SQL
 bindings do not themselves prove executable SQL capability, so retain the SQL execution adapter.
+NB11 extends a nonempty existing Data Agent definition; it does not reconstruct an unreadable
+agent as SQL-only. Existing/custom instructions are preserved without silent truncation.
+If the existing 15,000-character service limit would be exceeded, publication stops before
+changing the agent and identifies the instructions to shorten. Both NB11 settings writers
+share the bounded Delta-conflict retry used by the parallel agent setup branches; unrelated
+errors still propagate.
+
+The bounded NB09 MCP facilities smoke is deliberately a setup sanity check, not an app
+acceptance suite. NB11 publishes the final SQL adapter afterward, and interactive app requests
+use Supervisor → Sparky → Fabric Responses. That sequence is expected; no extra SQL/KQL/
+combined-source runtime or Teams/email delivery checks are required to complete setup.
 Expand **Key Vault secret names and notebook settings** only when defaults differ:
 
 | Field | Default | Meaning |
