@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
-import { AGENT_CAPABILITIES, AGENT_DISPLAY_NAMES, isWorkOrderRequest, type OrchestrationEvent, type WorkOrderProposal } from '../services/copilot/orchestration'
+import { AGENT_CAPABILITIES, AGENT_DISPLAY_NAMES, isWorkOrderRequest, type OrchestrationEvent, type WorkOrderProposal, type WorkOrderReview } from '../services/copilot/orchestration'
 import { WorkOrderDraftPager } from './WorkOrderDraftPager'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
@@ -29,6 +29,7 @@ export type CopilotMessage = {
   steps?: AgentStep[]
   orchestrationEvents?: OrchestrationEvent[]
   proposals?: WorkOrderProposal[]
+  workOrderReview?: WorkOrderReview
   backendOwned?: boolean
   meta?: { elapsedMs: number; tokens?: number }
 }
@@ -175,8 +176,11 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
     {draftReady && message.proposals && <WorkOrderDraftPager proposals={message.proposals} />}
     {draftOutcome && <section className="v2-work-order-approval" aria-label="Work-order draft outcome">
-      <h3>No approval-ready work-order drafts returned</h3>
-      <p>Review the findings below for existing work, evidence gaps or clarification needed. Recommendations in the answer are not editable drafts. No work order was created.</p>
+      <h3>{message.workOrderReview?.decision === 'needs_clarification' ? 'Drafts need more information'
+        : message.workOrderReview?.decision === 'no_draft' ? 'No additional work-order draft justified'
+        : 'No approval-ready work-order drafts returned'}</h3>
+      <p>{message.workOrderReview?.reason ?? 'No editable drafts were returned. Check Fixer’s maintenance review below for its decision.'}</p>
+      <p>Fixer finishing a review does not mean a draft was staged. No work order was created.</p>
     </section>}
     {streaming ? <CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} />
       : steps.length > 0 && <details className="v2-answer-support"><summary>Execution audit — tool calls and receipts</summary><CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} /></details>}

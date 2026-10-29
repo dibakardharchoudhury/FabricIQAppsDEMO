@@ -1,7 +1,7 @@
 import type { AgentAnswer } from '../assistantStream.ts'
 import type { Asset3DModelRecord } from '../rayfin.ts'
 import type { AgentStep } from '../agentSteps.ts'
-import type { OrchestrationEvent, WorkOrderProposal } from './orchestration.ts'
+import type { OrchestrationEvent, WorkOrderProposal, WorkOrderReview } from './orchestration.ts'
 import { loadCopilotSettings } from './settings.ts'
 import { HostedTransport, type HostedSource } from './hostedTransport.ts'
 
@@ -10,6 +10,7 @@ export type FoundryAnswer = AgentAnswer & {
   models?: Asset3DModelRecord[]
   orchestrationEvents?: OrchestrationEvent[]
   proposals?: WorkOrderProposal[]
+  workOrderReview?: WorkOrderReview
   backendOwned?: boolean
 }
 
@@ -78,7 +79,8 @@ export async function askHostedCopilot(
   }, onEvents)
   onProgress?.(answer.text)
   return { text: answer.text, visualizations: answer.visualizations,
-    proposals: answer.proposals, orchestrationEvents: answer.executionEvents, backendOwned: true }
+    proposals: answer.proposals, workOrderReview: answer.workOrderReview,
+    orchestrationEvents: answer.executionEvents, backendOwned: true }
 }
 
 export async function askFoundryCopilot(

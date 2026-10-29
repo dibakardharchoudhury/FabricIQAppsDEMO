@@ -447,6 +447,39 @@ test('transport rejects foreign invocation targets before acquiring source crede
   }
 })
 
+test('validated maintenance outcomes survive transport without interpreting native prose', async () => {
+  for (const decision of ['no_draft', 'needs_clarification'] as const) {
+    const review = { decision, reason: 'Existing WO-42 covers this diagnostic purpose.' }
+    const body = { ...reply(), presentation: { ...reply().presentation, work_order_review: review } }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+    const answer = await client.run({ question: 'Prepare diagnostic drafts.' })
+    assert.deepEqual(answer.workOrderReview, review)
+    assert.equal(answer.text, reply().presentation.text)
+    assert.deepEqual(answer.proposals, [])
+  }
+  for (const review of [undefined, null]) {
+    const body = { ...reply(), presentation: { ...reply().presentation, work_order_review: review } }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+    assert.equal((await client.run({ question: 'Read.' })).workOrderReview, undefined)
+  }
+})
+
+test('malformed supplied maintenance outcomes fail explicitly and release credentials', async () => {
+  for (const review of [
+    { decision: 'approved', reason: 'Not a valid review.' },
+    { decision: 'no_draft', reason: ' ' },
+    { decision: 'needs_clarification', reason: 'x'.repeat(1001) },
+    { decision: 'no_draft', reason: 'Valid text.', extra: true },
+    'No draft.',
+  ]) {
+    const lease = tokens()
+    const body = { ...reply(), presentation: { ...reply().presentation, work_order_review: review } }
+    const client = new HostedTransport(project, endpoint, source, async () => lease, async () => response(body))
+    await assert.rejects(client.run({ question: 'Prepare drafts.' }), /maintenance review|not an object/)
+    assert.ok(Object.values(lease).every(value => value === ''))
+  }
+})
+
 test('failed or ambiguous decisions are not automatically submitted again', async () => {
   let calls = 0
   const lease = tokens()

@@ -300,13 +300,23 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner.invoke_data_agent.assert_not_awaited()
 
     async def test_native_prose_handoff_can_resolve_identity_and_stage_multiple_real_cards(self):
+        await self.assert_native_quality_drafts(with_rca=False)
+
+    async def test_native_historical_quality_with_unsupported_rca_repair_gate_stages_diagnostic_cards(self):
+        await self.assert_native_quality_drafts(with_rca=True)
+
+    async def assert_native_quality_drafts(self, *, with_rca):
         from test_semantic_planning import decision
         self.mode = "multiple_proposals"
         self.multiple_proposal_ids = ("TEST_T004", "TEST_T005", "TEST_T007", "TEST_T009", "TEST_T014")
         self.tools.stage = True
         request = self.request.model_copy(update={
             "run_id": uuid4(),
-            "question": "Find turbines with BAD quality and prepare diagnostic work-order drafts for uncovered gaps.",
+            "question": (
+                "Which turbines had BAD telemetry quality today, and what work is already open for these? "
+                "Based on this data, " + ("do a RCA and " if with_rca else "")
+                + "tell me which WOs need to be created and help me with the drafts."
+            ),
         })
         self.versions["fabric-iq"] = AgentVersion(
             name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=(),
@@ -315,6 +325,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         raw = decision("fabric-iq", "native_claims", reader=False)
         raw["proposal_requested"] = True
         raw["plan"]["steps"][0]["question"] = "Which turbines have BAD quality?"
+        if with_rca:
+            raw["plan"]["steps"].append({
+                "specialist": "rca", "question": "Investigate the historical BAD quality without inferring a fault.",
+                "reason": "The user explicitly requested RCA.",
+                "nativeSource": None, "requiresSelection": False, "requiresVerifiedIssue": False,
+                "execution": "agent", "reads": [],
+            })
         raw["plan"]["steps"].append({
             "specialist": "work-order", "question": request.question,
             "reason": "Resolve canonical identities and check open work before staging editable diagnostic drafts.",
@@ -331,7 +348,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 if name == "propose_work_order" else receipt
 
         self.tools.execute = execute
-        text = "T004, T005, T007, T009 and T014 have BAD quality. Investigate quality; no physical fault is established."
+        text = (
+            "These turbines had BAD quality today; current quality was not retrieved. "
+            "No physical fault is established.\n\n| equipment_id | historical_quality |\n|---|---|\n"
+            + "\n".join(f"| {equipment} | BAD |" for equipment in self.multiple_proposal_ids)
+        )
         native_call = NativeDataAgentCall("native-draft-source", {"input": request.question}, {
             "output": [{"type": "message", "role": "assistant", "content": [
                 {"type": "output_text", "text": text},
@@ -351,7 +372,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(answer.proposal_digests), 5)
         self.assertEqual(answer.native_answers[0].text, text)
         self.assertFalse(answer.production_write_executed)
-        self.assertEqual([item.role for item in answer.specialists], ["fabric-iq", "work-order"])
+        self.assertEqual([item.role for item in answer.specialists],
+                         ["fabric-iq", *(["rca"] if with_rca else []), "work-order"])
+        work_payload = next(payload for payload in self.payloads
+                            if payload.get("agent_reference", {}).get("name") == "hydro-work-order-agent")
+        context = json.loads(work_payload["input"][0]["content"][0]["text"])
+        self.assertFalse(context["conditional_maintenance_gate_requested"])
+        self.assertNotIn("conditional_maintenance_gate", context)
+        self.assertIn("Historical BAD can justify investigating data quality", context["work_order_execution"])
+        if with_rca:
+            rca = next(item for item in answer.specialists if item.role == "rca")
+            self.assertEqual(rca.report["maintenance_follow_up"]["decision"], "not_supported")
 
     async def test_explicit_native_mode_skips_planner_catalog_and_all_wrapper_models(self):
         request = self.request.model_copy(update={
@@ -2168,6 +2199,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 output = [self.message("The captured source read is complete; no physical fault is established.")]
         elif name == "hydro-rca-agent":
             ref = {"evidence_id": "reading-1", "path": "/rows/0"}
+            if self.mode == "multiple_proposals":
+                context = json.loads(payload["input"][0]["content"][0]["text"])
+                native = next(item for item in context["evidence"] if item["tool"] == "fabriciq-data-agent")
+                ref = {"evidence_id": native["id"], "path": "/response"}
             if self.mode == "rca_duplicated_evidence_suffix":
                 ref["evidence_id"] = "reading-1ing-1"
             if self.mode == "rca_missing_optional_field":
@@ -3613,6 +3648,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         review = next(item for item in result.specialists if item.role == "work-order")
         self.assertEqual(review.report["decision"], "needs_clarification")
         self.assertFalse(self.owner.failures)
+
+    async def test_no_draft_requires_work_coverage_for_entire_verified_selection(self):
+        self.mode = "premature_no_draft"
+        self.owner.selected_equipment_ids = {"TEST_T005", "TEST_T007"}
+        self.owner.evidence["partial-work"] = ToolEvidence(
+            id="partial-work", source=SOURCE, tool="query_operations",
+            arguments={"entity": "work_orders"}, completed_at=utc_now(), result={"rows": [], "truncated": False},
+            work_coverage_equipment_ids=("TEST_T005",),
+        )
+        journal = RunJournal(self.root / "partial-work-coverage")
+        journal.save("tool_catalog", await self.tools.catalog(self.request))
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+            _, report, _ = await self.owner.invoke(
+                "work-order", "Review both selected turbines and prepare justified drafts.",
+                self.request, journal, self.versions,
+            )
+        self.assertEqual(report["decision"], "needs_clarification")
+        self.assertEqual(self.calls["hydro-work-order-agent"], 2)
 
     async def test_deterministic_plan_preserves_final_verification_handoff(self):
         self.mode = "skip_verify"

@@ -55,10 +55,10 @@ type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream' | 'weather' | 'map'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
-export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; workOrderReview?: FoundryAnswer['workOrderReview']; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
-const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'The Supervisor coordinates Gauge (Q&A), Sparky (Fabric IQ), Gale (Weather), Sleuth (RCA) and Fixer (Work orders), using only the capabilities your question needs. Open Team for their responsibilities. Work-order drafts require your review and approval before saving.' }
+const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Hi! Ask about your assets, live data or maintenance. I can help investigate issues and prepare work-order drafts for your review.' }
 
 function readPersistedSetup(): PersistedSetup {
   try { return JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || '{}') as PersistedSetup }
@@ -816,11 +816,12 @@ function useHydroOperationsDataController() {
     let liveSteps: AgentStep[] | undefined
     let liveEvents: OrchestrationEvent[] | undefined
     let proposals: WorkOrderProposal[] | undefined
+    let workOrderReview: FoundryAnswer['workOrderReview']
     let backendOwned: boolean | undefined
     let failed = false
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, failed, steps: liveSteps, orchestrationEvents: liveEvents, proposals, backendOwned, artifacts, visualizations, models, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, failed, steps: liveSteps, orchestrationEvents: liveEvents, proposals, workOrderReview, backendOwned, artifacts, visualizations, models, meta }
       return next
     })
     try {
@@ -833,6 +834,7 @@ function useHydroOperationsDataController() {
       liveText = answer.text
       backendOwned = answer.backendOwned
       proposals = answer.proposals
+      workOrderReview = answer.workOrderReview
       liveSteps = answer.steps ?? liveSteps
       liveEvents = answer.orchestrationEvents ?? liveEvents
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)

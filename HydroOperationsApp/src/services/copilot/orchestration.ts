@@ -13,6 +13,7 @@ export const AGENT_CAPABILITIES: ReadonlyArray<{ role: AgentRole; specialty: str
   { role: 'work-order', specialty: 'Maintenance and work orders', description: 'Reviews current work coverage and prepares requested editable drafts. Saving requires your separate review and approval.' },
 ]
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
+export type WorkOrderReview = { decision: 'no_draft' | 'needs_clarification'; reason: string }
 
 export type AgentTraceEntry = {
   id: string

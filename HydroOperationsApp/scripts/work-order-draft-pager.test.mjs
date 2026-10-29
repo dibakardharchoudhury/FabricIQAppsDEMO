@@ -156,3 +156,33 @@ test('facts, failed responses and in-flight requests do not display a completed 
     assert.doesNotMatch(html, /Work-order draft outcome/)
   }
 })
+
+for (const withRca of [false, true]) {
+  const question = 'Which turbines had BAD telemetry quality today, and what work is already open for these? '
+    + `Based on this data, ${withRca ? 'do a RCA and ' : ''}`
+    + 'tell me which WOs need to be created and help me with the drafts.'
+  test(`historical quality ${withRca ? 'with' : 'without'} RCA renders returned draft cards`, () => {
+    const html = renderToStaticMarkup(createElement(AgentMessage, {
+      question, message: { role: 'agent', text: 'Original historical quality answer.', proposals: drafts(2) },
+      streaming: false, showCrew: false,
+    }))
+    assert.equal((html.match(/Review backend work-order draft/g) ?? []).length, 2)
+    assert.doesNotMatch(html, /Work-order draft outcome|No approval-ready/)
+  })
+  test(`historical quality ${withRca ? 'with' : 'without'} RCA shows the precise review blocker first`, () => {
+    for (const decision of ['no_draft', 'needs_clarification']) {
+      const reason = decision === 'no_draft'
+        ? 'WO-42 already covers the telemetry-quality investigation.'
+        : 'The work-order source is unavailable; complete open-work coverage cannot be verified.'
+      const text = '## Original native answer\n\nFull historical BAD telemetry answer.'
+      const html = renderToStaticMarkup(createElement(AgentMessage, {
+        question, message: { role: 'agent', text, workOrderReview: { decision, reason }, proposals: [] },
+        streaming: false, showCrew: false,
+      }))
+      assert.ok(html.includes(reason))
+      assert.ok(html.indexOf(reason) < html.indexOf(text))
+      assert.doesNotMatch(html, /No approval-ready work-order drafts returned|Review backend work-order draft/)
+      assert.match(html, /No work order was created/)
+    }
+  })
+}

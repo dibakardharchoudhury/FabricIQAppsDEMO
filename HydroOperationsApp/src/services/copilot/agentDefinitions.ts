@@ -38,7 +38,7 @@ export const WORK_REVIEW_TOOL = {
   description: 'Record why no approval card is being staged. This is a read-only review outcome, not a SQL write.',
   parameters: {
     type: 'object', properties: {
-      decision: { type: 'string', enum: ['no_draft', 'needs_clarification'], description: 'Use no_draft only with verified complete work coverage. Use needs_clarification when condition evidence, current telemetry or canonical affected equipment is unavailable.' },
+      decision: { type: 'string', enum: ['no_draft', 'needs_clarification'], description: 'Use no_draft only with complete work coverage for all affected targets. Use needs_clarification for missing identity or evidence required for the assigned purpose. Missing current telemetry or causal proof alone does not block a historical data-quality investigation draft.' },
       reason: { type: 'string', maxLength: 1000, description: 'Concise evidence-backed reason within 1000 characters. State missing-data or identity blockers explicitly; do not infer healthy equipment from absent telemetry.' },
     }, required: ['decision', 'reason'], additionalProperties: false,
   }, strict: true,

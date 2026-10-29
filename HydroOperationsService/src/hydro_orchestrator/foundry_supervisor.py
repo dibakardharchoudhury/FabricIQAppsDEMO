@@ -3270,15 +3270,31 @@ class FoundrySupervisor:
                                      f"Use one of these exact evidence IDs: {allowed_evidence_ids}. "
                                      f"Use exact result-relative ID/path pairs such as: {allowed_references}. "
                                      "Never reference receipt metadata such as /limitations.") from error
-            if role == "work-order" and validated_report.get("decision") == "no_draft" and not any(
-                item.work_coverage_equipment_ids for item in self.evidence.values()
-            ):
-                raise ToolInputError(
-                    "A no-draft decision requires actual complete work-source coverage. "
-                    "If affected equipment or condition evidence cannot be verified, use decision "
-                    "needs_clarification with a concise missing-data reason; do not invent targets or infer healthy "
-                    "operation from absent telemetry. Otherwise read the selected equipment's full open-work inventory."
-                )
+            if role == "work-order" and validated_report.get("decision") == "no_draft":
+                covered = {
+                    equipment for item in self.evidence.values() for equipment in item.work_coverage_equipment_ids
+                }
+                targets = self.selected_equipment_ids or {
+                    equipment for item in self.evidence.values()
+                    if item.tool in ("query_signal_quality_snapshot",
+                                     "query_turbine_temperature_snapshot", "query_telemetry")
+                    for equipment in item.resolved_equipment_ids
+                }
+                if not self.selected_equipment_ids:
+                    for item in self.evidence.values():
+                        affected = item.result.get("affected_signals")
+                        if item.tool == "fabriciq-data-agent" and isinstance(affected, list):
+                            targets.update(
+                                row["equipment_id"] for row in affected if isinstance(row, dict)
+                                and row.get("equipment_id") in item.resolved_equipment_ids
+                            )
+                if not covered or targets.difference(covered):
+                    raise ToolInputError(
+                        "A no-draft decision requires complete work-source coverage for every affected target. "
+                        "Read their full open-work inventory in one equipmentId IN query without a limit. "
+                        "If identity or required evidence is unavailable, use needs_clarification; "
+                        "do not infer healthy operation from missing telemetry."
+                    )
             if role == "work-order" and any(item.tool == "propose_work_order" for item in self.evidence.values()):
                 raise SourceFailure("Fixer cannot both stage a proposal and complete a no-draft review.")
             completed_report = validated_report
@@ -3430,6 +3446,15 @@ class FoundrySupervisor:
                 "in the audit; verify only supplied source rows and structured specialist reports without rereading."
             )
         if role == "work-order":
+            if proposal_authorized and not maintenance_gate_required:
+                context["work_order_execution"] = (
+                    "Requested drafts are not fault-contingent repairs. RCA's not_supported repair gate does not "
+                    "veto diagnostic drafts. Historical BAD can justify investigating data quality; do not require "
+                    "latest BAD, a proven cause, inspections or parts for that purpose. State unknown current "
+                    "condition. Verify canonical targets and fresh complete open work, then call propose_work_order "
+                    "for each relevant uncovered purpose. A real coverage or evidence blocker requires an explicit "
+                    "no-draft review, not prose drafts."
+                )
             verified_gate: dict[str, object] | None = None
             for specialist in reversed(self.specialists):
                 report_value = specialist.report
@@ -3439,7 +3464,7 @@ class FoundrySupervisor:
                 if isinstance(gate_value, dict) and gate_value.get("decision") == "verified_uncovered_issue":
                     verified_gate = gate_value
                     break
-            if verified_gate is not None:
+            if verified_gate is not None and maintenance_gate_required:
                 context["conditional_maintenance_gate"] = verified_gate
                 context["work_order_execution"] = (
                     "The backend has already validated this source-referenced uncovered-issue gate and complete "
@@ -5115,6 +5140,7 @@ class FoundrySupervisor:
                                 later.specialist == "work-order" and later.requires_verified_issue
                                 for later in plan.steps[self.index + 1:]
                             )
+                            or delegation.specialist == "work-order" and delegation.requires_verified_issue
                         )
                         if (delegation.specialist == "fabric-iq"
                                 and sum(step.specialist == "fabric-iq" for step in plan.steps) == 1

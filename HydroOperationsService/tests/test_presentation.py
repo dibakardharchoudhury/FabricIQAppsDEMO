@@ -47,7 +47,11 @@ class PresentationTests(unittest.TestCase):
             native_answers=(NativeAnswer(evidence_id="native", text=original,
                                         content_sha256=sha256(original.encode()).hexdigest()),),
         )
-        text = client_presentation(answer).text
+        presentation = client_presentation(answer)
+        text = presentation.text
+        self.assertEqual(presentation.work_order_review.model_dump(), {
+            "decision": "needs_clarification", "reason": "No current complete work coverage.",
+        })
         self.assertEqual(text.count(original), 1)
         self.assertIn("## Sleuth - Evidence-backed investigation", text)
         self.assertIn("Cause remains undetermined", text)
@@ -76,6 +80,7 @@ class PresentationTests(unittest.TestCase):
             cell_sources=(), specialists=(), audit_url="/invocations",
         )
         plain = client_presentation(answer)
+        self.assertIsNone(plain.work_order_review)
         self.assertEqual(plain.visualizations, ())
         self.assertIn("A\\|\\[B\\]\\n\\<C\\>", plain.text)
         self.assertIn("75.123456789", plain.text)

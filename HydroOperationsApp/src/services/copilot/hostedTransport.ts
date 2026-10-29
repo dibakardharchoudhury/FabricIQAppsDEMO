@@ -1,5 +1,5 @@
 import type { AgentVisualization } from '../assistantStream.ts'
-import type { AgentTraceEntry, OrchestrationEvent, WorkOrderProposal } from './orchestration.ts'
+import type { AgentTraceEntry, OrchestrationEvent, WorkOrderProposal, WorkOrderReview } from './orchestration.ts'
 
 export type HostedSource = {
   tenant_id: string
@@ -30,6 +30,7 @@ export type HostedAnswer = {
   visualizations: AgentVisualization[]
   receipt: Record<string, unknown>
   proposals: WorkOrderProposal[]
+  workOrderReview?: WorkOrderReview
   executionEvents: OrchestrationEvent[]
 }
 
@@ -387,6 +388,16 @@ export class HostedTransport {
         throw new Error('Hosted answer has no supported backend-owned presentation.')
       }
       const runId = reply.run_id
+      let workOrderReview: WorkOrderReview | undefined
+      if (presentation.work_order_review != null) {
+        const review = record(presentation.work_order_review)
+        if ((review.decision !== 'no_draft' && review.decision !== 'needs_clarification')
+          || typeof review.reason !== 'string' || !review.reason.trim() || review.reason.length > 1000
+          || Object.keys(review).some(key => key !== 'decision' && key !== 'reason')) {
+          throw new Error('Hosted maintenance review has no valid decision and reason.')
+        }
+        workOrderReview = { decision: review.decision, reason: review.reason }
+      }
       if (!Array.isArray(reply.proposals)) throw new Error('Hosted answer has no typed approval-card collection.')
       const digests = record(reply.proposal_digests)
       const cardIds = new Set<string>()
@@ -438,7 +449,7 @@ export class HostedTransport {
       const executionEvents = [...mergedEvents.values()]
       this.previousRunId = runId
       this.interruptedRunId = undefined
-      return { runId, text: presentation.text, proposals, visualizations, executionEvents, receipt: reply }
+      return { runId, text: presentation.text, proposals, workOrderReview, visualizations, executionEvents, receipt: reply }
     } catch (error) {
       // A failed turn must not erase the conversation. Only an unusable earlier run (the backend answers 404/409
       // for it) is dropped, so the next question does not keep failing on it.

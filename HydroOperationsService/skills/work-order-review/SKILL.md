@@ -10,6 +10,9 @@ description: Prepare source-bound editable work-order proposals after fresh targ
 - Use propose_work_order for an actual editable card; prose is not a staged proposal.
 - Ask only for unresolved equipment identity, not optional title, description, priority or assignee.
 - Use factual editable wording without inventing a diagnosis. Preserve operator-supplied priority.
+- Observed historical BAD telemetry can justify investigating data quality even if recovery is unknown.
+  Do not require current BAD readings, a proven mechanical cause, inspections or parts for that diagnostic
+  purpose. Label unknown current condition explicitly. RCA's unsupported repair gate does not veto it.
 - Require the uncovered need to be relevant to the operator's assigned investigation domain. Do not pivot to an
   unrelated inspection, notification, parts record, telemetry condition, or maintenance issue on the same equipment.
 - If no relevant evidence-backed uncovered need exists, call complete_work_order_review with a specific reason.
