@@ -834,29 +834,32 @@ class MCPAndOrchestrationTests(HelpersTest):
         api, models = Mock(), Mock()
         api.discover.side_effect = self.error("unowned dedicated agent")
         with self.assertRaises(self.error):
-            self.call("publish_map_agent", api, models, Mock())
+            self.call("publish_map_agent", api, models)
         models.preflight.assert_not_called()
         models.build.assert_not_called()
         api.ensure_agent.assert_not_called()
 
-    def test_end_to_end_summary_only_after_readback_and_canary(self):
-        api, models, mcp = Mock(), Mock(), Mock()
+    def test_publication_requires_readback_but_never_invokes_runtime_canary(self):
+        api, models = Mock(), Mock()
         api.binding = self.binding
         api.ensure_agent.return_value = self.agent()
         api.get_definition.return_value = self.minimal_parts()
         models.build.return_value = {"read_model_run_id": RUN_ID}
-        mcp.verify_grounding.return_value = {"ai_readiness": "grounding_canary_passed"}
-        result = self.call("publish_map_agent", api, models, lambda item_id: mcp)
+        self.ns["MapAgentMCP"] = Mock(side_effect=AssertionError("Setup must not query the agent"))
+        result = self.call("publish_map_agent", api, models)
         self.assertEqual(result["agent_name"], "Hydro_Map_Agent_V6")
-        self.assertEqual(result["state"], "ready")
+        self.assertEqual(result["state"], "published")
+        self.assertEqual(result["publication_status"], "published")
+        self.assertEqual(result["runtime_status"], "not_checked")
+        self.assertEqual(result["ai_readiness"], "not_checked")
         self.assertEqual(set(result["timings_seconds"]), {
-            "discovery_and_source_preflight", "read_models", "configure_and_publish", "grounding_canary",
+            "discovery_and_source_preflight", "read_models", "configure_and_publish",
         })
-        mcp.verify_grounding.assert_called_once_with(RUN_ID)
+        self.ns["MapAgentMCP"].assert_not_called()
         api.configure_and_publish.assert_called_once()
-        mcp.verify_grounding.side_effect = self.error("AI tenant prerequisite missing")
-        with self.assertRaisesRegex(self.error, "prerequisite"):
-            self.call("publish_map_agent", api, models, lambda item_id: mcp)
+        api.configure_and_publish.side_effect = self.error("Publication readback failed")
+        with self.assertRaisesRegex(self.error, "readback"):
+            self.call("publish_map_agent", api, models)
 
 
 class NotebookArtifactTests(HelpersTest):

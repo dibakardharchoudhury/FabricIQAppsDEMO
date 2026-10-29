@@ -27,6 +27,8 @@ Runs on 127.0.0.1 only (loopback). Auth relies on your `az login` session.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -192,7 +194,7 @@ def enforce_local_request():
 
 
 class Job:
-    """In-memory record of one running/finished script invocation."""
+    """Live job record; Full Deploy checkpoints persist separately."""
 
     def __init__(self, phases: list[str], exclusive: bool = False) -> None:
         self.id = uuid.uuid4().hex
@@ -215,6 +217,12 @@ class Job:
         ]
         self.phase_timings[0].update(status="running", started=self.started)
         self.component_timings: dict[str, dict] = {}
+        self.workflow_key: str | None = None
+        self.workflow_steps: list[str] = []
+        self.completed_steps: list[str] = []
+        self.resumed_by: str | None = None
+        self.source_keys: dict[str, str] = {}
+        self.pending_notebook_sync: list[str] = []
 
     def advance_phase(self, index: int) -> None:
         """Called under job.lock; omitted log markers have no invented duration."""
@@ -267,6 +275,136 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+
+
+def _write_local_settings(value: dict) -> None:
+    PIPELINE_DEFAULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = PIPELINE_DEFAULTS_FILE.with_name("." + PIPELINE_DEFAULTS_FILE.name + ".writing")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(value, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(PIPELINE_DEFAULTS_FILE)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _save_workflow_checkpoints(*jobs: Job) -> None:
+    records = {}
+    for job in jobs:
+        if job.workflow_key is None:
+            continue
+        with job.lock:
+            records[job.id] = {
+                "version": 1, "key": job.workflow_key, "steps": job.workflow_steps,
+                "completed": job.completed_steps, "sources": job.source_keys,
+                "status": job.status, "returncode": job.returncode,
+                "failedComponent": job.failed_component, "resumedBy": job.resumed_by,
+                "pendingNotebookSync": job.pending_notebook_sync,
+                **job.timing_snapshot(),
+            }
+    if not records:
+        return
+    with _pipeline_defaults_lock:
+        settings = json.loads(PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8")) if PIPELINE_DEFAULTS_FILE.exists() else {
+            "version": 2, "targets": [],
+        }
+        settings.setdefault("workflowCheckpoints", {}).update(records)
+        _write_local_settings(settings)
+
+
+def _restore_workflow(job_id: str) -> Job | None:
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        return None
+    with JOBS_LOCK:
+        if job_id in JOBS:
+            return JOBS[job_id]
+        with _pipeline_defaults_lock:
+            if not PIPELINE_DEFAULTS_FILE.exists():
+                return None
+            settings = json.loads(PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+            record = settings.get("workflowCheckpoints", {}).get(job_id)
+        if not record:
+            return None
+        names = ["GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy"]
+        completed = record.get("completed")
+        if (record.get("version") != 1 or record.get("steps") != names or not isinstance(completed, list)
+                or completed != names[:len(completed)]
+                or not re.fullmatch(r"[a-f0-9]{64}", str(record.get("key", "")))
+                or not set(completed).issubset({timing["name"] for timing in record.get("componentTimings", [])})):
+            raise ValueError("Invalid local Full Deploy checkpoint.")
+        job = Job(WORKFLOW_PHASES, exclusive=True)
+        job.id = job_id
+        job.workflow_key = record["key"]
+        job.workflow_steps = names
+        job.completed_steps = completed
+        job.source_keys = record.get("sources", {})
+        job.pending_notebook_sync = record.get("pendingNotebookSync", [])
+        if (not isinstance(job.pending_notebook_sync, list)
+                or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name)
+                       for name in job.pending_notebook_sync)):
+            raise ValueError("Invalid pending notebook synchronization checkpoint.")
+        job.status = record["status"] if record["status"] in {"failed", "cancelled", "succeeded"} else "interrupted"
+        job.returncode = record.get("returncode")
+        job.failed_component = record.get("failedComponent")
+        job.resumed_by = record.get("resumedBy")
+        job.finish_timing(job.status)
+        assert job.ended is not None
+        restored_at = job.ended
+        job.started = restored_at - float(record.get("elapsedSeconds", 0))
+        # Monotonic timestamps cannot survive a restart; retain measured durations.
+        def restore_timing(timing):
+            elapsed = timing.get("elapsedSeconds")
+            return {
+                "name": timing["name"], "status": timing["status"],
+                "started": None if elapsed is None else restored_at - float(elapsed),
+                "ended": restored_at,
+            }
+        if len(record.get("phaseTimings", [])) == len(job.phases):
+            job.phase_timings = [restore_timing(timing) for timing in record["phaseTimings"]]
+        job.component_timings = {
+            timing["name"]: restore_timing(timing) for timing in record.get("componentTimings", [])
+        }
+        job.phase_index = next((index for index, timing in enumerate(job.phase_timings)
+                                if timing["status"] in {"failed", "cancelled", "running"}), 0)
+        job.lines.append("[workflow] Restored local checkpoint; previous live output is not persisted.")
+        JOBS[job_id] = job
+        return job
+
+
+def _workflow_source_keys() -> dict[str, str]:
+    core, energy = [], []
+    definitions = {}
+    for folder in ("Notebooks", "Environments", "Orchestrator_Pipelines"):
+        for path in (REPO_ROOT / folder).rglob("*"):
+            if path.is_file():
+                relative = path.relative_to(REPO_ROOT)
+                (energy if any(part.startswith("Geo_") for part in relative.parts) else core).append(path)
+                definitions["file:" + relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    core.append(PIPELINE_SCRIPT)
+    energy.extend((DEPLOY_SCRIPT, SCRIPT_DIR / "feature_workspace.py"))
+    foundry = [DEPLOY_SCRIPT, SCRIPT_DIR / "provision_foundry_agents.py",
+               SCRIPT_DIR / "deploy_foundry_project.py", SCRIPT_DIR / "deploy_hosted_agent.py"]
+    if (REPO_ROOT / "HydroOperationsService" / "Dockerfile").exists():
+        spec = importlib.util.spec_from_file_location(
+            "workflow_hosted_sources", Path(__file__).resolve().parent.parent / "deploy_hosted_agent.py")
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Cannot load the Hosted Agent source manifest.")
+        hosted = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hosted)
+        foundry.extend(hosted.packaged_sources(REPO_ROOT))
+    groups = {
+        "Setup pipeline": core, "Energy setup": energy,
+        "Foundry multi-agent setup": foundry,
+    }
+    return definitions | {
+        name: hashlib.sha256(b"".join(
+            str(path.relative_to(REPO_ROOT)).encode() + b"\0" + path.read_bytes()
+            for path in sorted(paths) if path.is_file()
+        )).hexdigest()
+        for name, paths in groups.items()
+    }
 
 # The server can run without a console (detached launch / after Restart); on
 # Windows a child process would then pop its own window, so suppress it. Output
@@ -457,6 +595,24 @@ def _run_workflow_step(
 
 
 def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
+    try:
+        _workflow_worker_steps(job, steps)
+    except Exception as exc:
+        with job.lock:
+            job.status = "failed"
+            job.returncode = -1
+            job.finish_timing(job.status)
+            job.lines.append(f"[workflow stopped] {type(exc).__name__}: {exc}")
+    finally:
+        try:
+            _save_workflow_checkpoints(job)
+        except (OSError, ValueError, TypeError) as exc:
+            with job.lock:
+                job.lines.append(f"[checkpoint unavailable] {exc}; verify Fabric before retrying.")
+
+
+def _workflow_worker_steps(job: Job, steps: list[dict[str, object]]) -> None:
+    steps = steps[len(job.completed_steps):]
     for step_index, step in enumerate(steps):
         if job.cancel_requested:
             break
@@ -468,6 +624,25 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
                 "name": name, "status": "running", "started": time.monotonic(), "ended": None,
             }
         try:
+            if job.pending_notebook_sync:
+                argv = [str(SYNC_SCRIPT), "--tenant", str(step["tenant"]), "--workspace", str(step["workspace"]), "--yes"]
+                for notebook in job.pending_notebook_sync:
+                    argv.extend(("--update-notebook", notebook))
+                returncode = _run_workflow_step(
+                    job, "Changed notebook sync", argv, None, SYNC_TIMEOUT_S, [], first,
+                )
+                if returncode != 0 or job.cancel_requested:
+                    with job.lock:
+                        job.failed_component = name
+                        job.status = "cancelled" if job.cancel_requested else "failed"
+                        job.returncode = returncode
+                        job.finish_component(name, job.status, first, last)
+                        job.finish_timing(job.status)
+                        job.lines.append("[workflow stopped] Changed notebook sync did not complete; no setup step was retried.")
+                    return
+                with job.lock:
+                    job.pending_notebook_sync = []
+                _save_workflow_checkpoints(job)
             returncode = _run_workflow_step(
                 job,
                 name,
@@ -508,7 +683,11 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
                 job.finish_timing(job.status)
             return
         with job.lock:
+            if job.cancel_requested:
+                break
+            job.completed_steps.append(name)
             job.lines.append(f"[workflow] {name} completed successfully.")
+        _save_workflow_checkpoints(job)
 
     with job.lock:
         if job.cancel_requested:
@@ -523,13 +702,44 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
         job.finish_timing(job.status)
 
 
-def _start_workflow(steps: list[dict[str, object]], *, phases: list[str] | None = None) -> str | None:
+def _start_workflow(
+    steps: list[dict[str, object]], *, phases: list[str] | None = None,
+    workflow_key: str | None = None, resume_from: Job | None = None,
+    source_keys: dict[str, str] | None = None, restart_at: int | None = None,
+    pending_notebook_sync: list[str] | None = None,
+) -> str | None:
     job = Job(WORKFLOW_PHASES if phases is None else phases, exclusive=True)
+    job.workflow_key = workflow_key
+    job.workflow_steps = [str(step["name"]) for step in steps]
+    job.source_keys = source_keys or {}
+    job.pending_notebook_sync = pending_notebook_sync or []
     with JOBS_LOCK:
         running = [existing for existing in JOBS.values() if existing.status == "running"]
         if running:
             return None
+        if resume_from is not None:
+            with resume_from.lock:
+                if resume_from.resumed_by is not None:
+                    return None
+                resume_from.resumed_by = job.id
+                job.completed_steps = list(resume_from.completed_steps[:restart_at])
+                first = int(steps[len(job.completed_steps)]["phase_offset"])
+                for index in range(1, first):
+                    job.phase_timings[index] = dict(resume_from.phase_timings[index])
+                for name in job.completed_steps:
+                    job.component_timings[name] = dict(resume_from.component_timings[name])
+                job.lines.append(
+                    f"[workflow] Resuming {resume_from.id} at {steps[len(job.completed_steps)]['name']}; "
+                    "retaining completed steps: " + (", ".join(job.completed_steps) or "none") + "."
+                )
         JOBS[job.id] = job
+        try:
+            _save_workflow_checkpoints(*([resume_from] if resume_from else []), job)
+        except (OSError, ValueError, TypeError):
+            JOBS.pop(job.id)
+            if resume_from:
+                resume_from.resumed_by = None
+            raise
     threading.Thread(target=_workflow_worker, args=(job, steps), daemon=True).start()
     return job.id
 
@@ -555,7 +765,7 @@ def job_response(job_id: str | None):
     return jsonify(jobId=job_id)
 
 
-def _sync_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
+def _sync_invocation(data: dict, *, require_credentials: bool = True) -> tuple[list[str], dict[str, str]]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
     raw_repository = (data.get("repository") or "").strip()
@@ -568,7 +778,7 @@ def _sync_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
     repository = clean_repo(raw_repository)
     if not repository:
         raise ValueError("repository must be 'owner/repo' or a GitHub repo URL.")
-    if not connection_id and not pat:
+    if require_credentials and not connection_id and not pat:
         raise ValueError("a PAT is required unless a connection id is reused.")
     owner, repo = (part.strip() for part in repository.split("/", 1))
     argv = [
@@ -858,7 +1068,11 @@ def api_save_pipeline_params():
                     prefix=".pipeline-defaults-", suffix=".tmp", delete=False,
                 ) as stream:
                     temporary = Path(stream.name)
-                    json.dump({"version": 2, "targets": retained}, stream, indent=2)
+                    existing = json.loads(PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8")) if PIPELINE_DEFAULTS_FILE.exists() else {}
+                    json.dump({
+                        "version": 2, "targets": retained,
+                        "workflowCheckpoints": existing.get("workflowCheckpoints", {}),
+                    }, stream, indent=2)
                     stream.write("\n")
                     stream.flush()
                     os.fsync(stream.fileno())
@@ -1128,8 +1342,30 @@ def _deploy_invocation(data: dict, *, stage: str = "app") -> list[str]:
 @app.post("/api/full-workflow")
 def api_full_workflow():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(error="workflow input must be an object."), 400
+    resume_from = None
+    resume_id = data.get("resumeJobId")
+    if resume_id is not None:
+        if not isinstance(resume_id, str):
+            return jsonify(error="resumeJobId must be a job ID."), 400
+        try:
+            resume_from = JOBS.get(resume_id) or _restore_workflow(resume_id)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return jsonify(error=f"Could not read local resume checkpoint: {exc}. No steps were started."), 409
+        if resume_from is None:
+            return jsonify(error="Resume checkpoint is unavailable. "
+                           "No steps were started; check Fabric before explicitly starting a new Full Deploy."), 409
+        with resume_from.lock:
+            if (resume_from.workflow_key is None or resume_from.status not in {"failed", "cancelled"}
+                    or resume_from.resumed_by is not None
+                    or len(resume_from.completed_steps) >= len(resume_from.workflow_steps)):
+                return jsonify(error="This job has no available failed/cancelled Full Deploy checkpoint. "
+                               "No steps were started."), 409
     try:
-        sync_argv, sync_env = _sync_invocation(data)
+        sync_argv, sync_env = _sync_invocation(
+            data, require_credentials=not (resume_from and "GitHub sync" in resume_from.completed_steps),
+        )
         core_steps = _core_setup_steps(data, phase_offset=len(SYNC_PHASES) - 1)
         deploy_argv = _deploy_invocation({**data, "energyMap": "keep"})
         deploy_env = _deploy_environment(data)
@@ -1159,13 +1395,81 @@ def api_full_workflow():
             "phase_offset": deploy_offset,
         },
     ]
-    job_id = _start_workflow(steps, phases=WORKFLOW_PHASES)
+    # Hash effective invocations, never the PAT. Credentials may be supplied again
+    # for a failed sync; successful sync needs no credentials on retry.
+    checkpoint = [
+        {"name": step["name"], "argv": step["argv"],
+         "env": {key: value for key, value in (step.get("env") or {}).items() if key != "FABRIC_GIT_PAT"}}
+        for step in steps
+    ]
+    inherited = {
+        key: value for key, value in os.environ.items()
+        if key.startswith(("HYDRO_", "RAYFIN_PUBLIC_"))
+        and not any(secret in key for secret in ("TOKEN", "PASSWORD", "SECRET", "PAT"))
+    }
+    workflow_key = hashlib.sha256(json.dumps([checkpoint, inherited], sort_keys=True).encode()).hexdigest()
+    if resume_from is not None and resume_from.workflow_key != workflow_key:
+        return jsonify(error="Full Deploy inputs changed (target, Git source, setup or app/Foundry settings). "
+                       "Restore the original inputs to resume, or explicitly start a new Full Deploy. "
+                       "No steps were started."), 409
+    try:
+        sources = _workflow_source_keys()
+        restart_at = None
+        pending_notebooks = list(resume_from.pending_notebook_sync) if resume_from else []
+        if resume_from:
+            changed = [name for name in set(sources) | set(resume_from.source_keys)
+                       if sources.get(name) != resume_from.source_keys.get(name)]
+            changed_files = [name[5:] for name in changed if name.startswith("file:")]
+            notebook_files = [
+                path for path in changed_files if path.startswith("Notebooks/") and path.endswith(".Notebook/notebook-content.py")
+                and "file:" + path in sources
+            ]
+            other_definitions = set(changed_files) - set(notebook_files)
+            checkout_differs = False
+            if notebook_files and not other_definitions:
+                checkout = app_version().get_json()
+                checkout_differs = (
+                    checkout.get("repository") != clean_repo(str(data.get("repository", "")))
+                    or checkout.get("branch") != str(data.get("branch") or "main").strip()
+                )
+            if changed_files and "GitHub sync" in resume_from.completed_steps:
+                if data.get("syncLatest") is not True:
+                    return jsonify(
+                        error="Fabric definitions changed. Sync updated definitions before retrying. No steps were started.",
+                        requiresSync=True, fullSyncRequired=bool(other_definitions) or checkout_differs,
+                        changedNotebooks=[Path(path).parent.name.removesuffix(".Notebook") for path in sorted(notebook_files)],
+                    ), 409
+                if other_definitions or checkout_differs:
+                    # Changed environments, pipelines, deletions and item metadata need Git integration.
+                    _sync_invocation(data)
+                    restart_at = 0
+                    pending_notebooks = []
+                else:
+                    pending_notebooks = sorted(set(pending_notebooks) | {
+                        Path(path).parent.name.removesuffix(".Notebook") for path in notebook_files
+                    })
+            if restart_at is None:
+                affected = [resume_from.workflow_steps.index(name) for name in changed
+                            if name in resume_from.completed_steps]
+                restart_at = min(affected) if affected else None
+        for step in steps:
+            step.update(tenant=str(data.get("tenant", "")).strip(), workspace=str(data.get("workspace", "")).strip())
+        job_id = _start_workflow(
+            steps, phases=WORKFLOW_PHASES, workflow_key=workflow_key, resume_from=resume_from,
+            source_keys=sources, restart_at=restart_at,
+            pending_notebook_sync=pending_notebooks,
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        return jsonify(error=f"Could not prepare durable workflow checkpoint: {exc}. No steps were started."), 400
     return job_response(job_id)
 
 
 @app.get("/api/jobs/<job_id>")
 def api_job(job_id: str):
-    job = JOBS.get(job_id)
+    try:
+        job = JOBS.get(job_id) or _restore_workflow(job_id)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        return jsonify(error=f"Could not read local workflow checkpoint: {exc}"), 409
     if job is None:
         return jsonify(error="unknown jobId."), 404
     try:
@@ -1182,6 +1486,10 @@ def api_job(job_id: str):
         component = job.component
         failed_component = job.failed_component
         timings = job.timing_snapshot()
+        completed_steps = list(job.completed_steps)
+        can_resume = (job.workflow_key is not None and status in {"failed", "cancelled"}
+                      and job.resumed_by is None and len(completed_steps) < len(job.workflow_steps))
+        resume_component = job.workflow_steps[len(completed_steps)] if can_resume else None
     return jsonify(
         status=status,
         returncode=returncode,
@@ -1191,6 +1499,14 @@ def api_job(job_id: str):
         phase=phases[phase_index],
         component=component,
         failedComponent=failed_component,
+        completedSteps=completed_steps,
+        canResume=can_resume,
+        resumeComponent=resume_component,
+        resumeBlockedReason=(
+            "The local server stopped while this run was active. Verify remote Fabric jobs before "
+            "explicitly starting another run; automatic resume could duplicate active work."
+            if status == "interrupted" else None
+        ),
         lines=new_lines,
         nextSince=total,
         **timings,

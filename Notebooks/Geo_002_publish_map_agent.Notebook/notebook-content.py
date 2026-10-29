@@ -44,9 +44,8 @@
 # **Publication:** uses the repository's create -> getDefinition -> patch draft ->
 # updateDefinition -> staging/publish pattern, with the current public Data Agent
 # definition schema's `lakehouse_tables.schema/table/column` element types.
-# It verifies the published definition, then performs a bounded MCP handshake and
-# a read-only grounding canary against a random run ID in the state table. A
-# configured/published item alone is NOT reported as an AI-ready deployment.
+# It verifies the published definition without querying the agent immediately.
+# Publication is not runtime verification; test map chat interactively when needed.
 #
 # **Prerequisites (no automatic grants):** a paid F2+ / supported P1+ capacity,
 # applicable Copilot/AI tenant and geographic-processing/storage settings, an
@@ -57,8 +56,8 @@
 # context, or have the coordinator arrange an approved full-scope automation path.
 # No secret or token is a notebook parameter, persisted value, or printed value.
 #
-# The Lakehouse SQL endpoint must have synchronized the read models. Discovery or
-# canary failures are fatal and actionable; no SDK/private-endpoint fallback is
+# Allow the Lakehouse SQL endpoint to synchronize before testing map chat interactively.
+# Discovery/publication failures are fatal and actionable; no SDK/private-endpoint fallback is
 # guessed. No SDK installation, Azure OpenAI key, or Foundry deployment is required.
 #
 # References:
@@ -1220,11 +1219,9 @@ class MapReadModels:
 
 # MARKDOWN ********************
 
-# ## Published MCP readiness, not a fabricated endpoint
-# The canary asks for a random state-table run ID without supplying its value to
-# the model. It reads no operational records and offers no navigation action.
-# An item can remain published after a failed canary; that is reported as a
-# failure requiring diagnosis, never as an AI-ready deployment.
+# ## Optional MCP diagnostics
+# The helpers below remain available for explicit diagnostics. Setup does not
+# invoke them or gate publication on an immediate language-model answer.
 
 # CELL ********************
 
@@ -1370,7 +1367,7 @@ class MapAgentMCP:
             time.sleep(30)
 
 
-def publish_map_agent(api, models, mcp_factory):
+def publish_map_agent(api, models):
     started = time.monotonic()
     print(compact_json({"phase": "discovery_and_source_preflight"}), flush=True)
     api.discover()
@@ -1386,16 +1383,14 @@ def publish_map_agent(api, models, mcp_factory):
     started = time.monotonic()
     api.configure_and_publish()
     timings["configure_and_publish"] = round(time.monotonic() - started, 3)
-    print(compact_json({"phase": "grounding_canary", "timings_seconds": timings}), flush=True)
-    started = time.monotonic()
-    readiness = mcp_factory(item["id"]).verify_grounding(projection["read_model_run_id"])
-    timings["grounding_canary"] = round(time.monotonic() - started, 3)
     return {
-        "owner": OWNER_MARKER, "state": "ready",
+        "owner": OWNER_MARKER, "state": "published",
+        "publication_status": "published", "runtime_status": "not_checked", "ai_readiness": "not_checked",
         "agent_name": api.binding["agent_name"], "agent_id": item["id"],
         "workspace_id": api.binding["workspace_id"], "lakehouse_id": api.binding["lakehouse_id"],
         "source_kind": "lakehouse", "selected_tables": list(SELECTED_SCHEMAS),
-        **projection, **readiness, "timings_seconds": timings,
+        "mcp_endpoint": f"{FABRIC_BASE}/v1/mcp/workspaces/{api.binding['workspace_id']}/dataagents/{item['id']}/agent",
+        **projection, "timings_seconds": timings,
     }
 
 # METADATA ********************
@@ -1430,9 +1425,7 @@ with requests.Session() as session:
     session.trust_env = False
     api = FabricMapAgentAPI(session, binding, current_fabric_token)
     models = MapReadModels(spark, binding)
-    result = publish_map_agent(
-        api, models, lambda agent_id: MapAgentMCP(session, binding, agent_id, current_fabric_token),
-    )
+    result = publish_map_agent(api, models)
 print(compact_json(result))
 notebookutils.notebook.exit(compact_json(result))
 

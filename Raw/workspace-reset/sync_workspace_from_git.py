@@ -74,6 +74,7 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -467,6 +468,56 @@ def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dic
             f"Failed to read notebook definition: HTTP {response.status_code} {response.text}"
         )
     return response.json()["definition"]
+
+
+def update_notebooks_from_checkout(fab: Fabric, workspace_id: str, names: list[str]) -> None:
+    """Refresh existing notebook code only, preserving live bindings and unknown parts."""
+    root = Path(__file__).resolve().parents[2] / "Notebooks"
+    items = fab.list_workspace_items(workspace_id)
+    header = re.compile(r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)")
+    for name in dict.fromkeys(names):
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            raise ValueError(f"Invalid notebook source name: {name!r}.")
+        directory = root / f"{name}.Notebook"
+        platform = json.loads((directory / ".platform").read_text(encoding="utf-8"))
+        if platform["metadata"]["displayName"] != name or platform["metadata"]["type"] != "Notebook":
+            raise ValueError(f"Notebook source identity differs from {name!r}.")
+        matches = [item for item in items if item.get("type") == "Notebook" and item.get("displayName") == name]
+        if len(matches) != 1:
+            raise ValueError(f"Expected one existing notebook {name!r}; targeted sync creates/deletes no items.")
+        item_id = matches[0]["id"]
+        definition = notebook_definition(fab, workspace_id, item_id)
+        parts = [part for part in definition["parts"] if part["path"] == "notebook-content.py"]
+        if len(parts) != 1:
+            raise ValueError(f"{name}: expected one native notebook source part.")
+        part = parts[0]
+        before = base64.b64decode(part["payload"]).decode("utf-8-sig").replace("\r\n", "\n")
+        candidate = (directory / "notebook-content.py").read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+        live_header, local_header = header.search(before), header.search(candidate)
+        if not live_header or not local_header:
+            raise ValueError(f"{name}: notebook dependency metadata is missing.")
+        candidate = candidate[:local_header.start(1)] + live_header[1] + candidate[local_header.end(1):]
+        if before == candidate:
+            print(f"  {name}: source already current; bindings retained.", flush=True)
+            continue
+        part["payload"] = base64.b64encode(candidate.encode("utf-8")).decode("ascii")
+        part["payloadType"] = "InlineBase64"
+        definition["format"] = "fabricGitSource"
+        response = fab.request(
+            "POST", f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item_id}/updateDefinition",
+            json={"definition": definition},
+        )
+        if response.status_code not in (200, 202):
+            raise RuntimeError(f"{name}: targeted definition update failed: HTTP {response.status_code}.")
+        if response.status_code == 202:
+            fab.poll_lro(response)
+        actual = notebook_definition(fab, workspace_id, item_id)
+        actual_parts = {part["path"]: part for part in actual["parts"]}
+        for expected in definition["parts"]:
+            saved = actual_parts.get(expected["path"])
+            if saved is None or base64.b64decode(saved["payload"]) != base64.b64decode(expected["payload"]):
+                raise RuntimeError(f"{name}: targeted source/binding retention readback failed at {expected['path']}.")
+        print(f"  {name}: updated code; live bindings and other definition parts retained.", flush=True)
 
 
 def bind_notebook_definition(definition: dict[str, Any], lakehouse: dict[str, Any],
@@ -879,6 +930,8 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
     parser.add_argument("--keep-connected", action="store_true", help="Do not disconnect after syncing.")
     parser.add_argument("--test-connection", action="store_true", help="Only verify GitHub connectivity (connect+initialize+disconnect), import nothing, then report SUCCESS/FAILED.")
+    parser.add_argument("--update-notebook", action="append", default=[],
+                        help="Update only this existing notebook from the local checkout, preserving live bindings; repeat for multiple notebooks. No Git reconnect/import.")
     args = parser.parse_args()
 
     # Resolution order for every value: CLI flag > environment variable > prompt.
@@ -901,6 +954,11 @@ def main() -> int:
         print("Fabric workspace <- GitHub sync. Provide the following (press Enter to accept a [default]):")
     args.tenant = prompt_required("Tenant id or domain", args.tenant)
     args.workspace = prompt_required("Workspace GUID or name", args.workspace)
+    if args.update_notebook:
+        fab = Fabric(args.tenant)
+        workspace_id, _ = fab.resolve_workspace_id(args.workspace)
+        update_notebooks_from_checkout(fab, workspace_id, args.update_notebook)
+        return 0
     # Accept either "owner/repo" in one field or a bare repo name; only ask for
     # the owner separately when it can't be derived from the repository value.
     args.repository = prompt_required("GitHub repository (owner/repo, repo, or URL)", args.repository)

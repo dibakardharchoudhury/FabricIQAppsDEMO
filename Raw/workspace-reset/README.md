@@ -707,6 +707,49 @@ records that later steps were not started. The progress display exposes detailed
 Sync, Pipeline, and Deploy subphases, and **Cancel running jobs** terminates the
 currently active child process.
 
+After a failed or cancelled **Full Deploy**, use **Retry from … and continue**.
+For example, an **Energy setup** failure retains successful GitHub sync and
+`01_Pipe_Setup`, retries Energy setup, then runs Foundry setup and app publication.
+Only whole, successfully completed components are retained; a partially completed
+failed/cancelled component runs again through its existing idempotent command.
+Completed component/subphase timings remain visible; the overall timer measures
+the current retry attempt.
+
+Resume requires the original effective tenant, workspace, Git source/connection,
+pipeline parameters, SPA and Foundry/app settings. Changed inputs reject the retry
+without starting anything; restore those inputs or explicitly choose **Run Full
+Deploy** to start over. A PAT is never saved or included in checkpoint identity;
+enter it again only when retrying an incomplete Git sync that needs one.
+The browser remembers only the last Full Deploy job ID and reconnects after page
+reload. Full Deploy checkpoints and measured timings are saved atomically in the
+existing gitignored `webapp/pipeline-defaults.local.json` settings file (or its
+`FABRIC_UI_PIPELINE_DEFAULTS_FILE` override). Only job identity, successful component
+prefix, status, timings and input/source hashes are saved, never PATs, child
+environments or live logs. Failed/cancelled runs can resume after restarting the
+local server. A checkpoint that was still running when the server stopped is
+reported as interrupted, not safe to retry automatically: check Fabric's Monitoring
+hub before starting another run. Older runs have no durable checkpoint. For an older
+Energy failure, use **Refresh energy sources**, then **Set up Foundry agents** and
+**Deploy app**, rather than repeating successful Core setup. Energy setup now compares
+the Git-managed Geo notebooks with this checkout and updates changed code only,
+preserving their live bindings, before retrying. Missing/corrupt checkpoints
+explicitly refuse resume, never silently start a new deployment.
+
+Resume compares component source digests, not the global Git commit: unrelated
+documentation/local-UI changes do not invalidate completed setup. Energy retry
+detects changed `Geo_001`/`Geo_002` source and offers **Sync updated definitions and
+resume**. It updates only changed existing notebooks from the local checkout through
+Fabric definition APIs, retaining their Lakehouse/Environment bindings and unknown parts,
+then verifies readback before retrying Energy. It does not reconnect Git, import the
+workspace again or repeat successful Core setup for a Geo-only fix. A changed core
+notebook instead restarts at Setup pipeline after the targeted update. The checkout must
+match the selected repository/branch. Environment, pipeline, item-metadata changes,
+deletions or a different checkout require explicit full Git sync/setup; push those
+changes to the selected branch first. Local launcher/UI or unrelated documentation
+changes need no Fabric sync. Changes to completed Energy/Foundry component sources
+invalidate that component and later stages. Pending notebook updates survive a failed
+sync/restart and are retried before any setup command, not silently forgotten.
+
 Full Deploy shows a running elapsed timer and final duration for every section
 and its expanded substeps. Core setup also separates the setup-pipeline and
 energy-publication component durations. Timers use the server's monotonic clock,
@@ -715,9 +758,9 @@ cancellation. Section totals sum their actual local component runtimes; substep
 intervals are bounded by observed progress log markers, not individual remote
 Fabric notebook executions. Omitted markers display **Not reported**, and steps
 that have not started display **Not started**. Lost monitoring shows the last
-observed duration rather than claiming the task has stopped. Timings belong to
-the in-memory local job and are discarded when the server restarts; they cannot
-be reconstructed for earlier runs.
+observed duration rather than claiming the task has stopped. Full Deploy stores
+measured timings with its checkpoint; other module timings remain in memory and
+cannot be reconstructed after a server restart.
 
 Before the pipeline starts, the app resolves the Key Vault URI against Azure resources
 visible to the current `az login` identity. If public network access is enabled with a

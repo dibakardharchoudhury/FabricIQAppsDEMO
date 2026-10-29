@@ -401,6 +401,9 @@
         Settings stay on this machine. GitHub PATs are never saved.
       </aside>
       <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Run Full Deploy</button>
+      <button id="workflowResumeBtn" class="ghost" hidden disabled>Retry failed step and continue</button>
+      <button id="workflowSyncResumeBtn" class="ghost" hidden disabled>Sync updated definitions and resume</button>
+      <p id="workflowResumeStatus" class="hint" role="status"></p>
       <div id="workflowPanel"><pre class="output muted">Progress will appear here.</pre></div>
     </div>
   </section>
@@ -817,22 +820,42 @@ function formatElapsed(ms) {
   return hh ? `${hh}:${p(mm)}:${p(ss)}` : `${p(mm)}:${p(ss)}`;
 }
 
-// Starts a job then polls until done, rendering progress into panelEl.
-async function runJob(startUrl, body, panelEl, onDone) {
+let workflowCheckpoint = null;
+let workflowBusy = false;
+const workflowJobStorageKey = "fabric-demo.full-workflow-job.v1";
+
+// Starts a job (or reconnects to an existing one) then polls until done.
+async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
   const job = { status: "running", phases: [], phaseIndex: 0, phase: "", lines: [], returncode: null };
   renderPanel(panelEl, job);
-  const started = await postJson(startUrl, body);
-  if (!started.ok || !started.data.jobId) {
-    job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
-    renderPanel(panelEl, job); if (onDone) onDone(job); return;
+  let jobId = existingJobId;
+  if (!jobId) {
+    const started = await postJson(startUrl, body);
+    if (!started.ok || !started.data.jobId) {
+      job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
+      if (panelEl.id === "workflowPanel" && workflowCheckpoint && started.data.requiresSync) {
+        workflowCheckpoint.requiresSync = true;
+        workflowCheckpoint.fullSyncRequired = !!started.data.fullSyncRequired;
+        workflowCheckpoint.changedNotebooks = started.data.changedNotebooks || [];
+      }
+      renderPanel(panelEl, job); if (onDone) onDone(job); return;
+    }
+    jobId = started.data.jobId;
   }
-  const jobId = started.data.jobId;
+  if (panelEl.id === "workflowPanel") {
+    workflowCheckpoint = { jobId, status: "running" };
+    try { localStorage.setItem(workflowJobStorageKey, jobId); } catch (_) {}
+  }
   let since = 0;
   let misses = 0;
   // A lost job / unreachable server means we stopped watching -- NOT that the task
   // failed. Fabric runs are server-side and keep going; say so instead of "Failed".
   const interrupted = (msg) => {
     job.status = "interrupted"; job.error = msg;
+    if (panelEl.id === "workflowPanel") {
+      workflowCheckpoint = { jobId, status: "interrupted" };
+      $("workflowResumeStatus").textContent = msg + " Resume is unavailable; no steps will be restarted automatically.";
+    }
     renderPanel(panelEl, job); if (onDone) onDone(job);
   };
   const poll = async () => {
@@ -860,6 +883,11 @@ async function runJob(startUrl, body, panelEl, onDone) {
     job.elapsedSeconds = j.elapsedSeconds;
     job.phaseTimings = j.phaseTimings;
     job.componentTimings = j.componentTimings;
+    if (panelEl.id === "workflowPanel") {
+      workflowCheckpoint = { jobId, status: j.status, canResume: j.canResume, resumeComponent: j.resumeComponent };
+      if (j.resumeBlockedReason) $("workflowResumeStatus").textContent = j.resumeBlockedReason;
+      refresh();
+    }
     if (j.lines && j.lines.length) job.lines = job.lines.concat(j.lines);
     renderPanel(panelEl, job);
     if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone(job);
@@ -948,7 +976,23 @@ function refresh() {
   $("deployBtn").disabled = !(deployValid() && spaClientValid("deployClientId"));
   $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy") && spaClientValid("foundryClientId"));
   $("energyBtn").disabled = !deployValid();
-  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
+  $("workflowBtn").disabled = workflowBusy || !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
+  const resumable = !!workflowCheckpoint?.canResume;
+  $("workflowResumeBtn").hidden = !resumable;
+  $("workflowResumeBtn").disabled = workflowBusy || !deployValid() || !!workflowCheckpoint?.requiresSync;
+  $("workflowSyncResumeBtn").hidden = !resumable || !workflowCheckpoint.requiresSync;
+  $("workflowSyncResumeBtn").disabled = workflowBusy || !deployValid()
+    || (!!workflowCheckpoint?.fullSyncRequired && !workflowSyncValid());
+  if (resumable && workflowCheckpoint.requiresSync) {
+    $("workflowResumeStatus").textContent = workflowCheckpoint.fullSyncRequired
+      ? "Changed pipelines/environments/item metadata, or a different checkout, require full Git sync and affected setup again."
+      : `Sync only changed notebooks (${workflowCheckpoint.changedNotebooks.join(", ")}) from this checkout, preserving bindings; retry from the earliest affected step. Unaffected completed steps are retained.`;
+  } else if (resumable) {
+    $("workflowResumeBtn").textContent = `Retry from ${workflowCheckpoint.resumeComponent} and continue`;
+    $("workflowResumeStatus").textContent = "Keeps completed steps and runs all remaining stages. Original target and non-secret settings must match. A partially completed failed step runs again.";
+  } else if (workflowCheckpoint?.status !== "interrupted") {
+    $("workflowResumeStatus").textContent = workflowBusy ? "Full Deploy is running. Reloading this page reconnects to this job." : "";
+  }
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -1097,9 +1141,8 @@ $("energyBtn").addEventListener("click", async () => {
   }, $("energyPanel"), () => refresh());
 });
 
-$("workflowBtn").addEventListener("click", async () => {
-  $("workflowBtn").disabled = true;
-  await runJob("/api/full-workflow", {
+function workflowPayload() {
+  return {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     repository: $("workflowRepository").value,
@@ -1113,8 +1156,45 @@ $("workflowBtn").addEventListener("click", async () => {
     clientId: spaClientValue("workflowDeployClientId"),
     energyMap: "enabled",
     ...foundryPayload("workflow"),
-  }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
-});
+  };
+}
+function workflowDone() {
+  workflowBusy = false;
+  $("workflowPat").value = "";
+  refresh();
+}
+async function startFullWorkflow(resume = false, syncLatest = false) {
+  const body = workflowPayload();
+  if (resume) {
+    if (!workflowCheckpoint?.canResume || workflowBusy) return;
+    body.resumeJobId = workflowCheckpoint.jobId;
+    if (syncLatest) {
+      const message = workflowCheckpoint.fullSyncRequired
+        ? "Changed pipelines/environments/item metadata require full Git sync and setup again. Commit and push to the selected branch first. Continue?"
+        : "Update only the changed notebooks from this local checkout, preserving live bindings, then retry the affected step and continue? No full Git import or unaffected core setup will run.";
+      if (!confirm(message)) return;
+      body.syncLatest = true;
+    }
+  } else if (workflowCheckpoint?.canResume &&
+             !confirm("Start a new Full Deploy and repeat GitHub sync and core setup? Use Retry to retain completed steps.")) {
+    return;
+  }
+  workflowBusy = true;
+  refresh();
+  await runJob("/api/full-workflow", body, $("workflowPanel"), workflowDone);
+}
+$("workflowBtn").addEventListener("click", () => startFullWorkflow());
+$("workflowResumeBtn").addEventListener("click", () => startFullWorkflow(true));
+$("workflowSyncResumeBtn").addEventListener("click", () => startFullWorkflow(true, true));
+
+function restoreWorkflowJob() {
+  let jobId;
+  try { jobId = localStorage.getItem(workflowJobStorageKey); } catch (_) {}
+  if (!jobId) return;
+  workflowBusy = true;
+  refresh();
+  runJob(null, null, $("workflowPanel"), workflowDone, jobId);
+}
 
 $("restartBtn").addEventListener("click", async () => {
   if (!confirm("Restart the local server to pick up code changes?")) return;
@@ -1634,6 +1714,7 @@ restoreTargetSettings();
 loadWhoAmI();
 loadVersion();
 loadPipelineParams();
+restoreWorkflowJob();
 refresh();</script>
 </body>
 </html>

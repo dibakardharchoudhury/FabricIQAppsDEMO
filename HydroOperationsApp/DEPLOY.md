@@ -23,7 +23,16 @@ Operations website.
 | Energy data refresh | **Refresh energy sources** |
 
 **Do not reset, delete items or reimport Git to update an existing website.**
-If a step fails, fix the reported prerequisite and retry that module.
+If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
+continue**. Completed stages are checkpointed locally across reloads/server restarts.
+Changed notebook code requires **Sync updated definitions and resume**: only those notebooks
+are updated from this checkout, retaining live bindings and unrelated workspace items.
+A Geo-only fix resumes Energy setup, then Foundry and app deployment, without repeating
+successful Core setup. A changed core notebook reruns Core and its dependent stages.
+Pipeline/environment/item-metadata changes still require explicit full Git sync/setup.
+Runs made before checkpoint support cannot be recovered automatically. For this older
+Energy failure, use **Refresh energy sources** (it updates changed Geo notebook code
+only), then **Set up Foundry agents** and **Deploy app**. Do not repeat successful Core setup.
 
 If `NB11_model` reports `Project contract requires one entityName binding` with
 valid core tables, update the checkout and import the latest notebook definitions
@@ -387,14 +396,15 @@ multiple writers to one energy snapshot.
 
 ### Map-agent publication and payload checks
 
-Map-agent publication validates the current read-model run through its published
-MCP tool. It retries unsuccessful grounding checks up to three times, 30 seconds
-apart, to allow Lakehouse SQL synchronization; exhausted checks fail with the last
-tool response. Publication alone is not proof of working map chat.
+Map-agent publication verifies the owned read models and published definition.
+It does not query the agent or gate setup on an immediate MCP answer. The output
+reports publication as `published` and runtime/AI readiness as `not_checked`.
+SQL synchronization and interactive answer quality are separate from provisioning;
+publication alone is not proof of working map chat.
 Retries with unchanged source Delta versions reuse the last complete owned
 projection and its run ID, rather than rewriting the tables and restarting SQL
 synchronization. Matching draft and published agent definitions are not republished;
-the grounding canary still runs before map chat is reported ready.
+no automatic grounding canary runs during setup. Explicit diagnostic helpers remain available.
 Definition comparison ignores service-added optional JSON nulls, so an unchanged
 source is not rewritten or republished merely because Fabric hydrated its metadata.
 Projection reuse also checks the projection-contract version and refuses reuse

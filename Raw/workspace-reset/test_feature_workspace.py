@@ -198,6 +198,27 @@ class FeatureWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(feature.FeatureWorkspaceError, "cannot provision the core"):
                 workspace.prepare()
 
+    def test_energy_retry_updates_git_managed_geo_notebooks_before_running_without_core_setup(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V15"), ROOT,
+            )
+            energy_specs = [spec for spec in workspace.specs
+                            if spec["name"] in feature.ENERGY_ITEMS | {feature.MAP_AGENT_NOTEBOOK}]
+            workspace.fabric.list_workspace_items.return_value = [
+                {"id": spec["logical_id"], "displayName": spec["name"], "type": spec["type"],
+                 "description": "Git-managed"}
+                for spec in energy_specs
+            ]
+            with patch.object(feature, "update_notebooks_from_checkout") as sync, \
+                    patch.object(workspace, "_prepare_energy_map") as run, \
+                    patch.object(workspace, "_upsert") as upsert:
+                workspace.prepare_energy()
+            self.assertEqual([call.args[2] for call in sync.call_args_list],
+                             [[feature.ENERGY_NOTEBOOK], [feature.MAP_AGENT_NOTEBOOK]])
+            run.assert_called_once_with()
+            upsert.assert_not_called()
+
     def test_energy_verification_does_not_publish_read_models_or_start_jobs(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             workspace = feature.FeatureWorkspace(

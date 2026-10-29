@@ -2,6 +2,8 @@ import base64
 import contextlib
 import io
 import json
+import copy
+from pathlib import Path
 import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
@@ -11,7 +13,7 @@ import requests
 from sync_workspace_from_git import (
     Fabric, configure_weather_assets, configure_weather_schedule,
     ensure_spark_runtime, verify_environment_runtimes,
-    bind_notebook_definition, notebook_definition,
+    bind_notebook_definition, notebook_definition, update_notebooks_from_checkout,
 )
 
 LAKEHOUSE_ID = "lakehouse-id"
@@ -128,6 +130,54 @@ class FakeFabric:
             200,
             {"properties": {"publishDetails": {"state": self.publish_state}}},
         )
+
+
+class TargetedNotebookSyncTests(unittest.TestCase):
+    def test_only_changed_code_is_written_and_live_bindings_and_other_parts_survive(self):
+        name = "Geo_002_publish_map_agent"
+        source = (Path(__file__).resolve().parents[2] / "Notebooks" / f"{name}.Notebook" /
+                  "notebook-content.py").read_text(encoding="utf-8")
+        original = {"parts": [
+            {"path": "notebook-content.py", "payload": base64.b64encode(source.encode()).decode(),
+             "payloadType": "InlineBase64"},
+            {"path": "custom.json", "payload": base64.b64encode(b'{"keep":true}').decode(),
+             "payloadType": "InlineBase64"},
+        ]}
+        bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"}, {"environmentId": "existing-env"})
+        old_source = base64.b64decode(original["parts"][0]["payload"]).decode().replace(
+            "def publish_map_agent(api, models):", "def publish_map_agent(api, models, old_canary):")
+        original["parts"][0]["payload"] = base64.b64encode(old_source.encode()).decode()
+        state = copy.deepcopy(original)
+        fab = Mock()
+        fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+        def update(method, url, **kwargs):
+            self.assertEqual(method, "POST")
+            self.assertIn("/notebooks/notebook/updateDefinition", url)
+            state.clear()
+            state.update(copy.deepcopy(kwargs["json"]["definition"]))
+            return FakeResponse(200)
+        fab.request.side_effect = update
+        with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
+            update_notebooks_from_checkout(fab, "workspace", [name])
+            self.assertEqual(fab.request.call_count, 1)
+            updated = base64.b64decode(state["parts"][0]["payload"]).decode()
+            self.assertIn("existing-lakehouse", updated)
+            self.assertIn("existing-env", updated)
+            self.assertIn("def publish_map_agent(api, models):", updated)
+            self.assertEqual(state["parts"][1], original["parts"][1])
+            update_notebooks_from_checkout(fab, "workspace", [name])
+        self.assertEqual(fab.request.call_count, 1)
+
+    def test_readback_failure_is_not_reported_as_success(self):
+        fab = Mock()
+        name = "Geo_002_publish_map_agent"
+        fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+        old_source = "# METADATA ********************\n\n# META {}\n\nold = True\n"
+        original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(old_source.encode()).decode()}]}
+        fab.request.return_value = FakeResponse(200)
+        with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(original)):
+            with self.assertRaisesRegex(RuntimeError, "readback failed"):
+                update_notebooks_from_checkout(fab, "workspace", [name])
 
 
 class SparkRuntimeTests(unittest.TestCase):

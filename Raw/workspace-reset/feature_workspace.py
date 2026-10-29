@@ -25,6 +25,7 @@ from sync_workspace_from_git import (
     fabric_operation_url,
     bind_notebook_definition,
     notebook_definition,
+    update_notebooks_from_checkout,
     ensure_spark_runtime,
     verify_environment_runtimes,
 )
@@ -550,7 +551,10 @@ class FeatureWorkspace:
                     raise FeatureWorkspaceError(f"Ambiguous energy artifact {spec['name']}.")
                 if matches and matches[0].get("description") != self.marker:
                     item_id = matches[0]["id"]
-                    print(f"Using Git-managed {spec['name']}; sync Git first to update its source.", flush=True)
+                    if item_type == "Notebook":
+                        update_notebooks_from_checkout(self.fabric, self.config.workspace_id, [spec["name"]])
+                    else:
+                        print(f"Using Git-managed {spec['name']}; sync Git first to update pipeline changes.", flush=True)
                 else:
                     item_id = self._upsert(spec, self._folder(spec["folder"]), notebook_ids, {
                         "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
