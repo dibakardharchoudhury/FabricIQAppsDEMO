@@ -22,7 +22,7 @@ const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
   { type: 'equipment', label: 'Equipment' },
   { type: 'instrument', label: 'Instruments & signals' },
   { type: 'signal', label: 'Time-series signals' },
-  { type: 'ontology', label: 'Other Ontology entities' },
+  { type: 'ontology', label: 'Weather & other Ontology entities' },
   { type: 'model', label: '3D models' },
   { type: 'work-order', label: 'Work orders' },
   { type: 'inspection', label: 'Inspections' },
@@ -46,11 +46,11 @@ function navigateTo(tab: string) {
 }
 
 export function KnowledgeGraphPage() {
-  const [view, setView] = useState<'ontology' | 'native'>('ontology')
+  const [view, setView] = useState<'ontology' | 'native'>('native')
   return <div>
     <div className="kg-view-choice" role="group" aria-label="Knowledge Graph view">
-      <button type="button" aria-pressed={view === 'ontology'} onClick={() => setView('ontology')}>Ontology model</button>
-      <button type="button" aria-pressed={view === 'native'} onClick={() => setView('native')}>Native asset instances</button>
+      <button type="button" aria-pressed={view === 'native'} onClick={() => setView('native')} title="Live asset health on the explicitly bound, materialized native graph">Operational graph · native instances</button>
+      <button type="button" aria-pressed={view === 'ontology'} onClick={() => setView('ontology')}>Ontology model · schema & weather types</button>
     </div>
     {view === 'ontology' ? <OntologyModelView /> : <NativeKnowledgeGraphPage />}
   </div>
@@ -116,6 +116,8 @@ function NativeKnowledgeGraphPage() {
     setGraphLoading(true)
     try {
       await connectOntologyAccess()
+      if (authorizationVersion !== graphRefreshVersion.current) return
+      await data.actions.connectTelemetry()
       if (authorizationVersion !== graphRefreshVersion.current) return
       await loadOntologyGraph(true)
     } catch (error) {
@@ -220,6 +222,7 @@ function NativeKnowledgeGraphPage() {
   const visibleTopology = useMemo(() => summarizeKnowledgeGraph({ nodes: visibleNodes, edges: visibleEdges }), [visibleNodes, visibleEdges])
   const selectedNode = graph.nodes.find(item => item.id === effectiveSelectedId)
   const selectedReadingState = knowledgeTelemetryState(selectedNode?.reading?.eventTime, data.now)
+  const boundSignalCount = useMemo(() => new Set(graph.nodes.flatMap(node => node.reading ? [node.reading.opcuaNodeId] : [])).size, [graph.nodes])
 
   const selectNode = (nodeId: string) => {
     const node = graph.nodes.find(item => item.id === nodeId)
@@ -324,11 +327,16 @@ function NativeKnowledgeGraphPage() {
           <div className="kg-view-controls"><div className="kg-layout-control"><GitBranch size={14} /><select value={layout} title={LAYOUT_DESCRIPTION[layout]} aria-label={`Graph layout. ${LAYOUT_DESCRIPTION[layout]}`} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div></div>
           <div className="kg-graph-actions"><select value={exportFormat} aria-label="Knowledge Graph export format" title="Export the verified native graph schema and instances" onChange={event => setExportFormat(event.target.value as KnowledgeGraphExportFormat)}><option value="owl-turtle">OWL 2 · Turtle</option><option value="rdf-turtle">RDF 1.1 · Turtle</option></select><button type="button" title="Export verified Knowledge Graph" aria-label="Export verified Knowledge Graph" disabled={!hasVerifiedGraph} onClick={exportNativeGraph}><Download size={16} /></button><button type="button" title="Zoom out" aria-label="Zoom out" disabled={!visibleNodes.length} onClick={() => zoomGraph(.8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" disabled={!visibleNodes.length} onClick={() => zoomGraph(1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" disabled={!visibleNodes.length} onClick={fitGraph}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={focusGraph}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
         </div>
+        {hasVerifiedGraph && <div className="kg-telemetry-state" data-state={data.telemetryStatus} role="status">
+          <Radio size={14} /><span>Eventhouse: {data.telemetryStatusLabel}</span>
+          <strong>{boundSignalCount} graph-bound signals</strong><small>30s polling{data.telemetryAgeLabel ? ` · ${data.telemetryAgeLabel}` : ''}</small>
+          <button type="button" disabled={data.telemetryState === 'loading'} onClick={() => void data.actions.connectTelemetry()} aria-label="Refresh bound graph telemetry"><RefreshCw size={13} /></button>
+        </div>}
         {exportError && <div className="kg-no-results" role="alert"><p>{exportError}</p></div>}
         {!hasVerifiedGraph
           ? graphLoading
             ? <div className="kg-no-results"><div className="kg-loading-skeleton" aria-hidden="true"><span /><span /><span /></div><h2>Reading verified graph</h2><p>Checking materialized graph readiness. Entities appear after verification.</p></div>
-            : <div className="kg-no-results" role="alert"><CircleDot size={32} /><h2>Graph unavailable</h2><p>{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then retry.'}</p><button className="kg-retry" type="button" onClick={() => void refreshAll()}>Connect Fabric and retry</button></div>
+            : <div className="kg-no-results" role="alert"><CircleDot size={32} /><h2>Native graph unavailable</h2><p>{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then retry.'}</p><p className="kg-materialization-help">In the selected Fabric Ontology, use Manage graph → select eligible entities and relationships → Continue → Materialize. If entities are ineligible, resolve their source eligibility in Fabric first. The separate Ontology model tab remains available for schema and weather types.</p><button className="kg-retry" type="button" onClick={() => void refreshAll()}>Connect Fabric and retry</button></div>
           : visibleNodes.length
           ? <KnowledgeGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} theme={theme} onSelect={selectNode} controllerRef={controllerRef} />
           : <div className="kg-no-results"><CircleDot size={32} /><h2>No matching entities</h2><p>Broaden the entity, health, facility, or search filters.</p></div>}

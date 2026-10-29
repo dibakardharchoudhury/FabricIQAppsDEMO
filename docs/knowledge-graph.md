@@ -1,8 +1,26 @@
 # Hydro Operations Knowledge Graph
 
-## Direct Ontology model and separate native instance view
+## Operational graph and separate Ontology schema view
 
-The default **Ontology model** reads the live numeric generation-2 definition.
+The default **Operational graph** uses only the explicitly bound, materialized native
+generation-2 Ontology graph. Selecting a turbine in the asset tree shows its actual
+connected instruments and context in selected-asset scope. Icons remain inside nodes;
+native weather instances retain their declared Weather presentation. Eventhouse enriches
+only actual native entities, using declared property-to-source-column bindings to resolve
+OPC UA addresses. A collapsed one-to-one signal retains its value, quality, unit and event
+time on its instrument; distinct OPC UA addresses remain separate. Joined values and
+units appear beneath the native node names as well as in the inspector, without changing
+schema labels or entity identities.
+
+Telemetry refreshes every 30 seconds. Fresh readings animate only real native paths;
+red critical and amber warning halos pulse with theme colors, respecting reduced motion
+and pausing offscreen. Health rolls up through actual connected assets, systems and
+facilities; missing readings are not presented as healthy. The graph shows source freshness
+and its matched-signal count, with a manual refresh control. Failed telemetry reads clear
+previous values without removing otherwise available native topology or independent SQL
+operational state. The inspector retains the joined values, quality and timestamps.
+
+The separate **Ontology model** reads the live numeric generation-2 definition.
 Its nodes are entity types, not asset instances; edges are exactly the declared
 relationship types, resolved by endpoint identity rather than inferred names or
 foreign keys. No GraphModel query, materialization, source-row execution or
@@ -23,7 +41,7 @@ after force placement; native-instance layouts are unchanged. Zoom, fit, selecte
 focus, relationship-label controls and expanded view remain available. Inspector property
 values show declared datatypes; lineage identifiers are optional collapsed technical details.
 
-The separate **Native asset instances** view still uses **only the explicitly
+The **Operational graph** uses **only the explicitly
 bound, materialized native Ontology graph**. Lakehouse/SQL connector joins cannot
 substitute for native instance topology. SQL and Eventhouse may enrich actual
 native entities. Its counts describe returned instances and links; selecting an
@@ -73,6 +91,21 @@ retained all 16 types and 21 links. Default semantic-layout Fit improved from 34
 received the Weather presentation; `Asset3DModel` displayed as **Asset 3D model**, and
 property datatypes appeared before optional lineage details. This is saved-readback
 presentation evidence, not an authenticated live UI or native-query certification.
+
+Operational canvas browser checks used a clearly labelled seven-node/six-edge fixture
+in both application themes. They verified five fresh telemetry paths, distinct pulsing
+red/amber halos, weather icons, visible values/units, selection, and stable positions
+while readings changed. Removing readings cleared visible values and stopped live paths
+without deleting topology; reduced motion kept the halos static. The 138 focused graph
+tests, changed-file lint and production build passed. These checks do not certify live
+native materialization or authenticated operational rendering.
+
+The latest read-only check of V15 also verified numeric generation 2 and the explicitly
+bound GraphModel item, but `getQueryableGraphType?beta=true` returned **204 No Content**.
+No native instances were returned or certified. These UI and telemetry-join changes do
+not materialize the graph; the operational view discloses the prerequisite rather than
+substituting schema nodes or source-derived topology. V15 portal source eligibility was
+not inspected by this check.
 
 On October 28, the live V14 Ontology passed the numeric generation-2 check, but
 its explicitly bound GraphModel returned **204 No Content** for queryable schema.

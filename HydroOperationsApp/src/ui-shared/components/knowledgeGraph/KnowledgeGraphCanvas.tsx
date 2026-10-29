@@ -110,8 +110,8 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             shape: 'ellipse', width: 'data(size)', height: 'data(size)', 'background-color': 'data(color)',
             'background-blacken': -0.04, 'background-image': 'data(icon)', 'background-fit': 'none',
             'background-width': '44%', 'background-height': '44%',
-            'border-color': 'data(ring)', 'border-width': 3, label: 'data(label)', color: color('--cp-text'),
-            'font-family': modelView ? 'Segoe UI, Aptos, Calibri, sans-serif' : 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': modelView ? 20 : 10.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 7,
+            'border-color': 'data(ring)', 'border-width': 3, label: 'data(displayLabel)', color: color('--cp-text'),
+            'font-family': 'Segoe UI, Aptos, Calibri, sans-serif', 'font-size': modelView ? 20 : 10.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 7,
             'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': modelView ? '210px' : '118px',
             'text-overflow-wrap': 'anywhere',
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '4px',
@@ -170,16 +170,25 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
     if (!graph) return
     const flowingEdges = modelView ? new Set<string>() : telemetryFlowEdgeIds(nodes, edges)
     const nodesById = new Map(nodes.map(node => [node.id, node]))
+    const css = getComputedStyle(document.documentElement)
+    const statusColors = {
+      ...KNOWLEDGE_STATUS_COLOR,
+      crit: css.getPropertyValue('--cp-danger').trim(),
+      warn: css.getPropertyValue('--cp-warning').trim(),
+    }
     const routes = knowledgeEdgeRoutes(edges)
     const elements: ElementDefinition[] = [
       ...nodes.map(node => ({
         data: {
           ...node,
-          presentationCategory: modelView ? ontologyNodePresentation(node).category : node.type,
-          color: modelView ? ontologyNodePresentation(node).color : KNOWLEDGE_TYPE_COLOR[node.type],
+          displayLabel: !modelView && node.reading
+            ? `${node.label}\n${node.reading.value.toLocaleString()} ${node.properties.Unit ?? node.properties.unit ?? ''}`.trimEnd()
+            : node.label,
+          presentationCategory: ontologyNodePresentation(node).category,
+          color: modelView || node.type === 'ontology' ? ontologyNodePresentation(node).color : KNOWLEDGE_TYPE_COLOR[node.type],
           size: modelView ? ontologyNodePresentation(node).size : KNOWLEDGE_NODE_SIZE[node.type],
-          ring: modelView ? ontologyNodePresentation(node).color : KNOWLEDGE_STATUS_COLOR[node.status],
-          icon: modelView ? modelNodeIcons[ontologyNodePresentation(node).category] : nodeIcons[node.type],
+          ring: modelView ? ontologyNodePresentation(node).color : statusColors[node.status],
+          icon: modelView ? modelNodeIcons[ontologyNodePresentation(node).category] : nodeIcons[ontologyNodePresentation(node).category],
           haloPadding: knowledgeHaloPadding(13, graph.zoom()),
         },
       })),
@@ -188,7 +197,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
           ...item,
           color: modelView ? ontologyNodePresentation(nodesById.get(item.source)!).color : KNOWLEDGE_EDGE_COLOR[item.type],
           flow: flowingEdges.has(item.id) ? 1 : 0,
-          flowColor: KNOWLEDGE_STATUS_COLOR[nodesById.get(item.source)?.status ?? 'nodata'],
+          flowColor: statusColors[nodesById.get(item.source)?.status ?? 'nodata'],
           curveDistance: routes.get(item.id)?.distance ?? 0,
           labelOffset: routes.get(item.id)?.labelOffset ?? -4,
         },

@@ -48,7 +48,7 @@ const aliases: Partial<Record<string, OntologyPresentationCategory>> = {
 export function ontologyNodePresentation(node: KnowledgeNode) {
   // Exact business-name aliases affect appearance only, never identity or connectivity.
   const key = String(node.properties['Entity type'] ?? node.label).split('.').at(-1)!.replace(/[^a-z0-9]/gi, '').toLowerCase()
-  const category = aliases[key] ?? node.type
+  const category = node.nativeOid && node.type !== 'ontology' ? node.type : aliases[key] ?? node.type
   return { category, ...categories[category] }
 }
 

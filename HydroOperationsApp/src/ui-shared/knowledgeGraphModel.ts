@@ -264,7 +264,11 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     const sourceRole = entity ? Object.keys(roles).find(name => entity.sourceTable === name || entity.sourceTable === `silver_${name}`) : undefined
     const roleNames = entity ? [entity.localName, entity.name, sourceRole] : []
     const role = roleNames.map(name => name ? roles[name] : undefined).find(Boolean)
-    const properties = raw.properties
+    const binding = contract.sourceBindings?.find(projection => projection.entityTypeId === entity?.id)?.binding
+    const properties = { ...raw.properties }
+    for (const [property, column] of Object.entries(binding?.properties ?? {})) {
+      if (Object.hasOwn(raw.properties, property)) properties[column] = raw.properties[property]
+    }
     const keyValues = entity?.entityIdParts.map(key => {
       const name = Object.entries(entity.propertyMetadata ?? {}).find(([, property]) => property.id === key)?.[0] ?? key
       return text(properties[name])
@@ -281,7 +285,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       ?? properties.workOrderNumber ?? properties.modelName ?? properties.inspectionType ?? properties.summary
       ?? Object.entries(properties).find(([key]) => key.endsWith('_name') || key === 'name')?.[1]) ?? entityId ?? raw.oid
     let subtitle = (entity?.localName ?? raw.labels[0] ?? 'Ontology entity').replaceAll('_', ' ')
-    let presentation = properties
+    let presentation: Record<string, unknown> = { ...properties, 'Entity type': entity?.localName ?? entity?.name ?? raw.labels[0] }
     let provenance = `Fabric Ontology · ${provenanceName} · ${type === 'ontology' ? `${entity?.localName ?? raw.labels[0] ?? 'Ontology entity'} ` : ''}materialized graph node`
     if (type === 'facility') {
       label = text(properties.facility_name) ?? entityId ?? raw.oid
@@ -306,7 +310,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     }
     const node: KnowledgeNode = {
       id, entityId: entityId ?? raw.oid, type, label, subtitle,
-      status: type === 'equipment' ? 'nodata' : type === 'instrument' || type === 'signal' ? twinSignalStatus({ id, label, nodeId: opcuaNodeId ?? '', value: reading?.value, quality: reading?.quality }) : 'ok',
+      status: type === 'instrument' || type === 'signal' ? twinSignalStatus({ id, label, nodeId: opcuaNodeId ?? '', value: reading?.value, quality: reading?.quality }) : 'nodata',
       nativeOid: raw.oid, ontologyEntityTypeId: entity?.id,
       facilityId: type === 'facility' ? entityId : undefined,
       equipmentId: type === 'equipment' ? entityId : undefined,
@@ -368,8 +372,24 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   const collapsed = new Set<string>()
   for (const { source, target } of signalBindings) {
     if (sourceCounts.get(source.id) !== 1 || targetCounts.get(target.id) !== 1 || degrees.get(source.id) !== 1) continue
+    const sourceAddress = text(source.properties.opcua_node_id)
+    const targetAddress = text(target.properties['OPC UA node'])
+    if (sourceAddress && targetAddress && sourceAddress !== targetAddress) continue
     collapsed.add(source.id)
     target.properties['Signal entity'] = source.entityId
+    if (!targetAddress && sourceAddress) target.properties['OPC UA node'] = sourceAddress
+    target.properties.Unit ??= source.properties.unit
+    if (!target.reading && source.reading) {
+      target.reading = source.reading
+      target.properties['Latest value'] = source.reading.value
+      target.properties.Quality = source.reading.quality
+      target.properties['Event time'] = source.reading.eventTime
+      target.subtitle = `${source.reading.value.toLocaleString()} ${target.properties.Unit ?? ''}`.trim()
+      target.status = twinSignalStatus({
+        id: target.id, label: target.label, nodeId: source.reading.opcuaNodeId,
+        value: source.reading.value, quality: source.reading.quality,
+      })
+    }
     target.provenance = `Fabric Ontology · ${provenanceName} · combined one-to-one instruments + signal_master node with Eventhouse time-series binding`
   }
   for (let index = nodes.length - 1; index >= 0; index--) if (collapsed.has(nodes[index].id)) nodes.splice(index, 1)
@@ -412,6 +432,10 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       })
     })
     asset.status = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'
+  }
+  for (const parent of nodes.filter(node => node.type === 'system' || node.type === 'facility')) {
+    const statuses = relatedNodes(parent, nodes, edges, 'equipment', ['system'], index).map(asset => asset.status)
+    parent.status = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'
   }
 
   return { nodes, edges }

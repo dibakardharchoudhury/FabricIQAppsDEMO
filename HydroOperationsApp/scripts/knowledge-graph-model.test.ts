@@ -145,6 +145,101 @@ const input = (overrides: Partial<KnowledgeGraphInput> = {}): KnowledgeGraphInpu
   ...overrides,
 })
 
+test('declared source-column mappings bind native renamed properties to live OPC UA readings', () => {
+  const options = input()
+  options.ontology = structuredClone(ontology)
+  const instrument = options.ontology.entityTypes.find(entity => entity.name === 'instruments')!
+  options.ontology.sourceBindings = [{
+    entityTypeId: instrument.id,
+    binding: {
+      entityTypeId: instrument.id, logicalTable: 'instruments', workspaceId: 'workspace',
+      itemId: 'lakehouse', table: 'instruments',
+      properties: { NodeAddress: 'opcua_node_id', Unit: 'unit' },
+      columns: { NodeAddress: 'opcua_node_id', Unit: 'unit' },
+      keyProperty: 'instrument_id', keyColumn: 'instrument_id', omittedProperties: [],
+    },
+  }]
+  const raw = options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!
+  delete raw.properties.opcua_node_id
+  delete raw.properties.unit
+  raw.properties.NodeAddress = 'node-1'
+  raw.properties.Unit = 'C'
+  const before = structuredClone(raw)
+  const graph = buildKnowledgeGraph(options)
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.reading?.value, 96.8)
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.properties.Unit, 'C')
+  assert.deepEqual(raw, before)
+})
+
+test('a collapsed native signal retains its reading on the instrument when the OPC UA key lives only on the signal', () => {
+  const options = input()
+  delete options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.opcua_node_id
+  const graph = buildKnowledgeGraph(options)
+  const instrument = graph.nodes.find(node => node.id === 'instrument:I1')!
+  assert.equal(instrument.reading?.value, 96.8)
+  assert.equal(instrument.subtitle, '96.8 C')
+  assert.equal(instrument.properties['OPC UA node'], 'node-1')
+  assert.equal(instrument.status, 'crit')
+  assert.ok(!graph.nodes.some(node => node.type === 'signal'))
+  for (const id of ['equipment:E1', 'system:S1', 'facility:F1']) {
+    assert.equal(graph.nodes.find(node => node.id === id)?.status, 'crit', id)
+  }
+})
+
+test('different declared OPC UA addresses do not collapse into one instrument or transfer a foreign reading', () => {
+  const options = input()
+  options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.opcua_node_id = 'other-node'
+  const graph = buildKnowledgeGraph(options)
+  assert.ok(graph.nodes.some(node => node.type === 'signal'))
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.reading, undefined)
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.status, 'nodata')
+})
+
+test('telemetry refresh updates native signal values and health without changing topology and clears failed-source values', () => {
+  const options = input({ workOrders: [], notifications: [] })
+  delete options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.opcua_node_id
+  delete options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.unit
+  const initial = buildKnowledgeGraph(options)
+  options.telemetry = [{ opcuaNodeId: 'node-1', eventTime: '2026-09-14T08:00:30Z', value: 72.3, quality: 'Uncertain' }]
+  const updated = buildKnowledgeGraph(options)
+  assert.equal(updated.nodes.find(node => node.id === 'instrument:I1')?.reading?.value, 72.3)
+  assert.equal(updated.nodes.find(node => node.id === 'instrument:I1')?.properties['Event time'], '2026-09-14T08:00:30Z')
+  for (const id of ['instrument:I1', 'equipment:E1', 'system:S1', 'facility:F1']) {
+    assert.equal(updated.nodes.find(node => node.id === id)?.status, 'warn', id)
+  }
+  assert.deepEqual(updated.nodes.map(node => node.id), initial.nodes.map(node => node.id))
+  assert.deepEqual(updated.edges, initial.edges)
+  options.telemetry = []
+  const unavailable = buildKnowledgeGraph(options)
+  const instrument = unavailable.nodes.find(node => node.id === 'instrument:I1')!
+  assert.equal(instrument.reading, undefined)
+  assert.equal(instrument.properties['Latest value'], undefined)
+  assert.equal(instrument.properties.Unit, 'C')
+  for (const id of ['instrument:I1', 'equipment:E1', 'system:S1', 'facility:F1']) {
+    assert.equal(unavailable.nodes.find(node => node.id === id)?.status, 'nodata', id)
+  }
+  assert.deepEqual(unavailable.edges, initial.edges)
+})
+
+test('native weather instances retain their declared type for icon presentation without fabricated health or topology', () => {
+  const options = input()
+  options.ontology = structuredClone(ontology)
+  options.ontology.entityTypes.push({
+    id: 'weather-type', name: 'WeatherLatestForecast', localName: 'WeatherLatestForecast',
+    properties: { Id: 'forecast-id' }, entityIdParts: ['Id'],
+  })
+  options.ontologyGraph!.nodes.push({
+    oid: 'forecast', labels: ['WeatherLatestForecast'], properties: { Id: 'weather-1', temperature: 7 },
+  })
+  const graph = buildKnowledgeGraph(options)
+  const forecast = graph.nodes.find(node => node.nativeOid === 'forecast')!
+  assert.equal(forecast.properties['Entity type'], 'WeatherLatestForecast')
+  assert.equal(forecast.properties.temperature, 7)
+  assert.equal(forecast.status, 'nodata')
+  assert.ok(!graph.edges.some(edge => edge.source === forecast.id || edge.target === forecast.id))
+})
+
 test('preserves main presentation for one-to-one signals and the existing inspector', () => {
   const graph = buildKnowledgeGraph(input())
   assert.equal(graph.error, undefined)

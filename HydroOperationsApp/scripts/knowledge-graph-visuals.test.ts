@@ -126,7 +126,7 @@ test('schema controls restore prior graph navigation with no instance health con
   assert.match(canvas, /font-size': modelView \? 20 : 10\.5/)
   assert.match(canvas, /font-size': modelView \? 16 : 7\.5/)
   assert.match(canvas, /'target-arrow-shape': 'triangle'/)
-  assert.match(canvas, /ring: modelView \? ontologyNodePresentation\(node\)\.color : KNOWLEDGE_STATUS_COLOR/)
+  assert.match(canvas, /ring: modelView \? ontologyNodePresentation\(node\)\.color : statusColors/)
   assert.match(canvas, /!containerRef\.current \|\| modelView\) return/, 'schema canvas never starts the operational telemetry animation loop')
 })
 
@@ -171,14 +171,30 @@ test('ontology layout packs real components and isolates without altering endpoi
   }
 })
 
-test('default ontology model remains distinct from native asset-instance execution', () => {
+test('default operational graph remains distinct from ontology schema execution', () => {
   const page = readFileSync(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
   const model = readFileSync(new URL('../src/ui-shared/pages/OntologyModelView.tsx', import.meta.url), 'utf8')
-  assert.match(page, /useState<'ontology' \| 'native'>\('ontology'\)/)
+  assert.match(page, /useState<'ontology' \| 'native'>\('native'\)/)
   assert.match(model, /queryOntologyContract\(force\)/)
   assert.doesNotMatch(model, /\b(?:queryOntologyGraph|queryOntologySourceGraph|GraphModel|graphModelId)\b/)
   assert.match(model, /Schema only - not individual turbines/)
   assert.match(model, /Search filters this list, not the diagram/)
+})
+
+test('native presentation retains weather icons and visible readings without changing business categories or schema labels', () => {
+  assert.equal(ontologyNodePresentation({
+    ...node('native-weather', 'ontology'), nativeOid: 'weather',
+    properties: { 'Entity type': 'WeatherLatestForecast' },
+  }).category, 'weather')
+  assert.equal(ontologyNodePresentation({
+    ...node('native-instrument', 'instrument'), nativeOid: 'instrument', label: 'Weather',
+  }).category, 'instrument')
+  const canvas = readFileSync(new URL('../src/ui-shared/components/knowledgeGraph/KnowledgeGraphCanvas.tsx', import.meta.url), 'utf8')
+  assert.match(canvas, /nodeIcons\[ontologyNodePresentation\(node\)\.category\]/)
+  assert.match(canvas, /getPropertyValue\('--cp-danger'\)/)
+  assert.match(canvas, /getPropertyValue\('--cp-warning'\)/)
+  assert.match(canvas, /label: 'data\(displayLabel\)'/)
+  assert.match(canvas, /displayLabel: !modelView && node.reading/)
 })
 test('topology diagnostics distinguish disconnected components from isolates without adding links', () => {
   const nodes = [node('facility', 'facility'), node('equipment', 'equipment'), node('weather', 'ontology'), node('isolated', 'ontology')]
