@@ -44,7 +44,15 @@ source data was not deleted. Original bindings and unknown definition parts were
 Data Agent draft and published ontology context were both refreshed and read back with
 16 types while preserving SQL/custom content. This verifies configuration, not agent
 execution or SQL/combined-source runtime. Native graph materialization remains a separate
-prerequisite. These source and definition results do not claim a new hosted UI deployment.
+prerequisite. Canonical app deployment completed **SUCCESS, exit 0** at
+**2026-10-29T01:06:12Z**, from source `a08e13d`, to
+<https://sleek-echo-51b3703235-swedencentral.webapp.fabricapps.net>.
+GraphQL preflight/POST returned 200; token preflight returned 200 and POST 400;
+protected-connector preflight returned 200 and POST 401. All 43 Entra redirects
+were preserved. The hosted integrated browser reached private Fabric sign-in,
+but the popup was blocked (**Please allow pop-ups and try again**), so
+**authenticated hosted graph acceptance was not performed**. Successful deployment
+does not certify native materialization or agent runtime.
 
 Local browser acceptance against the exact saved repaired definition at 1536×1000
 retained all 16 types and 21 links. Default semantic-layout Fit improved from 34% to
