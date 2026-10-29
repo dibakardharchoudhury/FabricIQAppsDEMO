@@ -1827,6 +1827,8 @@ for (const prefix of ["deploy", "workflow"]) {
         self.assertIn('title: "Core Setup: Fabric, Weather and Energy"', html)
         self.assertNotIn('title: "Core Setup: Energy Sources"', html)
         self.assertIn('title: "Fabric App Deployment"', html)
+        self.assertIn("complete ontology before either Fabric agent", html)
+        self.assertIn("Requires both UKMet API keys", html)
         self.assertIn('["workflowPanel", "pipelinePanel"].includes(el.id)', html)
         self.assertIn('state === "active" || state === "failed"', html)
 
@@ -1847,7 +1849,7 @@ for (const index of [1, 2, 3, 4, 5]) {
   assert.ok(!rendered.includes('data-group="energy"'));
   assert.ok(!rendered.includes("Preparing energy sources"));
 }
-assert.ok(render(2).includes("Running Core/Weather + energy notebooks in parallel"));
+assert.ok(render(2).includes("Building the complete ontology before Fabric agents; energy runs in parallel"));
 assert.ok(render(4).includes("Publishing map read models"));
 assert.ok(render(6).includes('data-group="pipeline" data-state="done"'));
 for (const [index, component] of [[2, "Setup pipeline"], [4, "Energy setup"]]) {

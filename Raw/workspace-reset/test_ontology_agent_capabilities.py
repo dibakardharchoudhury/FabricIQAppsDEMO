@@ -32,7 +32,8 @@ def source(number):
 def functions(number, *names, **overrides):
     namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib, "re": re,
                  "provision_shared_store": False, "OPERATIONAL_STORE_NAME": "HydroOperationalStore",
-                 "sql_db_item_name": "sql", "project_ontology_item_id": "",
+                 "sql_db_item_name": "sql", "project_ontology_item_id": "", "setup_phase": "all",
+                 "require_complete_project_ontology": Mock(return_value={"status": "verified"}),
                  "refresh_ontology_context": Mock(side_effect=lambda parts, _ontology: parts)}
     namespace.update(overrides)
     tree = ast.parse(source(number))
@@ -99,6 +100,171 @@ def data_agent_instruction_namespace():
     ]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "009-instructions", "exec"), ns)
     return ns
+
+
+class CompleteOntologyPublicationTests(unittest.TestCase):
+    def test_embedded_agent_validators_execute_the_complete_model_contract(self):
+        from test_operational_store_support import complete_project_ontology_fixture
+
+        parts = complete_project_ontology_fixture()
+        for number in ("009", "010"):
+            text = source(number)
+            namespace = {"json": json, "base64": base64, "re": re}
+            if number == "009":
+                topology = text.split("# BEGIN ONTOLOGY SOURCE TOPOLOGY SUPPORT\n", 1)[1].split(
+                    "# END ONTOLOGY SOURCE TOPOLOGY SUPPORT", 1)[0]
+                exec(compile(topology, "source-topology", "exec"), namespace)
+            contract = text.split("# BEGIN PROJECT ONTOLOGY CONTRACT\n", 1)[1].split(
+                "# END PROJECT ONTOLOGY CONTRACT", 1)[0]
+            exec(compile(contract, "project-contract", "exec"), namespace)
+            receipt = namespace["verify_project_ontology_contract"](parts, "workspace", "lakehouse", "sql")
+            self.assertEqual(receipt["status"], "verified")
+
+    def test_both_agents_require_successful_same_model_and_verify_live_parts(self):
+        for number in ("009", "010"):
+            with self.subTest(notebook=number):
+                settings = {
+                    "project_ontology_status": "verified", "project_ontology_id": "ontology",
+                    "operational_sql_db_id": "sql", "lakehouse_id": "lakehouse",
+                }
+                parts = [{"path": "live-model", "payloadType": "InlineBase64",
+                          "payload": base64.b64encode(b"database Hydro").decode()}]
+                verify = Mock(return_value={"status": "verified"})
+                ns = functions(
+                    number, "require_complete_project_ontology",
+                    workspace_id="workspace", lakehouse_id="lakehouse",
+                    first_setting=lambda name, **_: settings.get(name),
+                    get_item_definition=Mock(return_value={"definition": {"parts": parts}}),
+                    get_definition_parts=Mock(return_value=parts), verify_project_ontology_contract=verify,
+                )
+                ns["require_complete_project_ontology"]("ontology")
+                verify.assert_called_once_with(parts, "workspace", "lakehouse", "sql")
+                for key, value in (("project_ontology_status", "failed"), ("project_ontology_id", "other")):
+                    old = settings[key]
+                    settings[key] = value
+                    with self.assertRaisesRegex(RuntimeError, "complete model preparation"):
+                        ns["require_complete_project_ontology"]("ontology")
+                    settings[key] = old
+                verify.side_effect = RuntimeError("Missing WorkOrder binding")
+                with self.assertRaisesRegex(RuntimeError, "Missing WorkOrder"):
+                    ns["require_complete_project_ontology"]("ontology")
+
+    def test_incomplete_model_blocks_both_agent_capability_checks(self):
+        for number in ("009", "010"):
+            ns = functions(
+                number, "check_agent_capability", "agent_capability_policy",
+                resolve_ontology_id=Mock(return_value="ontology"),
+                get_ontology_generation=Mock(return_value=2), persist_agent_status=Mock(),
+                require_complete_project_ontology=Mock(side_effect=RuntimeError("Missing weather relationship")),
+            )
+            with self.assertRaisesRegex(RuntimeError, "Missing weather relationship"):
+                ns["check_agent_capability"]()
+            ns["persist_agent_status"].assert_called_with("failed", "Missing weather relationship")
+
+    def phase_namespace(self, phase):
+        settings = {"target_folder_id": "folder", "ontology_name": "ontology",
+                    "silver_equipment_table": "silver_equipment"}
+        connection = Mock()
+        return functions(
+            "011", setup_phase=phase, provision_shared_store=True, seed_demo_data=phase == "model",
+            sql_db_item_name="HydroOperationalStore", env_suffix="V1", workspace_id="workspace",
+            FABRIC_API_BASE="https://api.fabric.microsoft.com", legacy_sql_db_item_id="",
+            first_setting=lambda *names, **_: settings.get(names[0]),
+            operational_store_name=Mock(return_value="HydroOperationalStore"),
+            ensure_operational_item=Mock(return_value={"id": "sql", "displayName": "HydroOperationalStore"}),
+            operational_connection=Mock(return_value=connection), get_sql_token=Mock(),
+            initialize_operational_schema=Mock(),
+            resolve_sql_database=Mock(return_value=("sql", "server", "database")),
+            find_item_by_name=Mock(return_value={"id": "ontology"}),
+            seed_sql_database=Mock(return_value={"tables": {"WorkOrders": 12}}),
+            prepare_project_relationship_sources=Mock(),
+            verify_project_relationship_sources=Mock(return_value={"status": "verified", "eligible_facilities": 3}),
+            extend_selected_project_ontology=Mock(return_value={"status": "verified", "ontology_id": "ontology"}),
+            verify_selected_project_ontology=Mock(return_value={"status": "verified", "ontology_id": "ontology"}),
+            persist_operational_settings=Mock(), spark=Mock(),
+            notebookutils=SimpleNamespace(notebook=SimpleNamespace(exit=Mock(side_effect=NotebookExit))),
+            extend_data_agent_sql_source=Mock(),
+        )
+
+    def execute_preparation(self, namespace):
+        nodes = ast.parse(source("011")).body
+        start = next(index for index, node in enumerate(nodes) if assign_to(node, "step_results"))
+        end = next(index for index, node in enumerate(nodes)
+                   if isinstance(node, ast.FunctionDef) and node.name == "resolve_data_agent_id")
+        statements = [node for node in nodes[start:end] if not isinstance(node, ast.FunctionDef)]
+        exec(compile(ast.Module(body=statements, type_ignores=[]), "model-phase", "exec"), namespace)
+
+    def test_model_phase_seeds_and_validates_before_ontology_then_exits_without_agent_changes(self):
+        ns = self.phase_namespace("model")
+        calls = Mock()
+        for name in ("seed_sql_database", "prepare_project_relationship_sources",
+                     "verify_project_relationship_sources", "extend_selected_project_ontology"):
+            calls.attach_mock(ns[name], name)
+        with self.assertRaises(NotebookExit):
+            self.execute_preparation(ns)
+        self.assertEqual([call[0] for call in calls.mock_calls], [
+            "seed_sql_database", "prepare_project_relationship_sources",
+            "verify_project_relationship_sources", "extend_selected_project_ontology",
+        ])
+        ns["extend_data_agent_sql_source"].assert_not_called()
+        self.assertNotIn("data_agent_sql_source", ns["step_results"])
+        persisted = ns["persist_operational_settings"].call_args.args[0]
+        self.assertEqual(persisted["project_ontology_status"], "verified")
+        self.assertEqual(persisted["operational_sql_db_id"], "sql")
+        result = json.loads(ns["notebookutils"].notebook.exit.call_args.args[0])
+        self.assertIs(result["agent_ready"], False)
+        self.assertEqual(result["publication_status"], "pending_agent_phase")
+
+    def test_agent_phase_verifies_existing_model_without_schema_seed_or_ontology_writes(self):
+        ns = self.phase_namespace("agent")
+        self.execute_preparation(ns)
+        for name in ("initialize_operational_schema", "seed_sql_database",
+                     "prepare_project_relationship_sources", "verify_project_relationship_sources",
+                     "extend_selected_project_ontology", "persist_operational_settings"):
+            ns[name].assert_not_called()
+        ns["verify_selected_project_ontology"].assert_called_once_with()
+        ns["notebookutils"].notebook.exit.assert_not_called()
+
+    def test_standalone_sql_bootstrap_does_not_require_current_weather(self):
+        ns = self.phase_namespace("all")
+        self.execute_preparation(ns)
+        ns["verify_project_relationship_sources"].assert_called_once_with(
+            ns["spark"], ns["operational_connection"].return_value, "silver_equipment",
+            require_current_weather=False,
+        )
+        ns["seed_sql_database"].assert_not_called()
+
+    def test_legacy_write_boundary_requires_source_integrity_and_verified_ontology_first(self):
+        ns = self.phase_namespace("all")
+        ns["legacy_sql_db_item_id"] = "11111111-2222-3333-4444-555555555555"
+        ns["operational_item"] = Mock(return_value={"id": ns["legacy_sql_db_item_id"]})
+        ns["copy_operational_records"] = Mock(return_value={"migration": "verified"})
+        calls = Mock()
+        for name in ("verify_project_relationship_sources", "extend_selected_project_ontology",
+                     "copy_operational_records"):
+            calls.attach_mock(ns[name], name)
+        self.execute_preparation(ns)
+        names = [call[0] for call in calls.mock_calls]
+        self.assertEqual(names[:4], [
+            "verify_project_relationship_sources", "verify_project_relationship_sources",
+            "extend_selected_project_ontology", "copy_operational_records",
+        ])
+        ns["verify_project_relationship_sources"].side_effect = RuntimeError("Legacy WorkOrders orphan")
+        ns["copy_operational_records"].reset_mock()
+        with self.assertRaisesRegex(RuntimeError, "Legacy WorkOrders orphan"):
+            self.execute_preparation(ns)
+        ns["copy_operational_records"].assert_not_called()
+
+    def test_orphan_data_prevents_model_publication_and_clears_previous_verified_status(self):
+        ns = self.phase_namespace("model")
+        ns["verify_project_relationship_sources"].side_effect = RuntimeError("WorkOrders equipmentId is orphaned")
+        with self.assertRaisesRegex(RuntimeError, "Complete ontology preparation failed"):
+            self.execute_preparation(ns)
+        ns["extend_selected_project_ontology"].assert_not_called()
+        ns["extend_data_agent_sql_source"].assert_not_called()
+        ns["notebookutils"].notebook.exit.assert_not_called()
+        self.assertEqual(ns["persist_operational_settings"].call_args.args[0]["project_ontology_status"], "failed")
+        self.assertEqual(ns["step_results"]["sql_seed"]["status"], "completed")
 
 
 class DataAgentInstructionTests(unittest.TestCase):

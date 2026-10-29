@@ -28,7 +28,8 @@
 # `runMultiple` session has a real default lakehouse. Every child inherits it, so their relative
 # `spark.read.table(...)` / `saveAsTable(...)` calls resolve — no per-notebook attach, no ABFS rewrite.
 # 
-# - Runs **NB02–NB06, NB08–NB11** and **Weather_001** in one Spark session (VNet cold start paid once); independent
+# - Runs **NB02–NB06, NB08–NB11** and the standard **Weather** bootstrap in one Weather Environment
+#   Spark session (VNet cold start paid once); independent
 #   branches run in parallel per the DAG.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
@@ -48,13 +49,14 @@
 # limitation; other semantic errors and inconclusive results fail. NB10 restores the
 # full playbook, Teams/action and email
 # pipeline with definition readback. Both reject v1 and propagate actual API failures.
-# NB11 runs after NB09, NB10 and Weather_001: it inserts missing operational demo rows
-# and verifies additive ontology/SQL source publication before app deployment.
-# App-only redeployment does not reseed operational records. The Knowledge Graph uses native
-# ontology-managed graph instances, enriched by KQL and operational SQL.
-# Materialize through Manage graph and configure the verified graph binding.
-# NB09 and NB10 are independent branches. NB11 waits for both before changing
-# ontology/Data Agent definitions; unrelated setup branches remain parallel.
+# NB11's model phase runs after core bindings and the initial UKMet refresh. It prepares
+# operational SQL, inserts only missing demo rows, validates actual cross-source keys/weather
+# coverage and verifies the entire additive ontology before either agent can publish.
+# Its later agent phase attaches the SQL execution adapter without rebuilding the ontology.
+# App-only redeployment does not reseed operational records. The default graph reads the live
+# ontology model; native asset instances separately require Manage graph materialization and a verified binding.
+# NB09 and NB10 are independent required branches after the complete model gate. An agent
+# failure cannot leave the ontology missing its operational or weather business domains.
 
 # CELL ********************
 
@@ -105,6 +107,8 @@ import notebookutils
 from notebookutils.mssparkutils.handlers.notebookHandler import RunMultipleFailedException
 from urllib.parse import quote
 
+spark.conf.set("spark.sql.session.timeZone", "UTC")
+
 # NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).
 # The %%configure cell attached that lakehouse to this session, so NB02–NB10 inherit it and their
 # relative table reads/writes resolve. useRootDefaultLakehouse rides in each activity's args so a
@@ -119,13 +123,12 @@ setup_dag = {
         {"name": "NB06_tsbind",     "path": "RTI_006_TimeSeriesBinding_RTI_signal",          "dependencies": ["NB04_ontology", "NB05_entitybind", "NB02_eventhouse"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         # NB08 shortcuts the Lakehouse silver tables into the Eventhouse, so it needs NB03 as well as NB02.
         {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse", "NB03_medallion"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        # Both agents consume the completed v2 ontology binding directly; neither consumes the
-        # other agent. Keep them as independent branches so one product failure does not block
-        # the other's deployment evidence. Required failures still fail the overall DAG below.
-        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NBW01_weather",   "path": "Weather_001_create_lakehouse",                    "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB11_operations", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB09_dataagent", "NB10_opsagent", "NBW01_weather"], "args": {**_lh, "seed_demo_data": True, "provision_shared_store": True}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NBW02_weather_refresh", "path": "Weather_Orchestrator", "dependencies": ["NBW01_weather", "NB03_medallion"], "args": {**_lh, "enable_aurora": False, "per_notebook_timeout_secs": per_notebook_timeout_secs}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB11_model", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB06_tsbind", "NBW02_weather_refresh"], "args": {**_lh, "setup_phase": "model", "seed_demo_data": True, "provision_shared_store": True}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent", "dependencies": ["NB11_model"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent", "dependencies": ["NB11_model"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB11_operations", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB09_dataagent"], "args": {**_lh, "setup_phase": "agent", "seed_demo_data": False, "provision_shared_store": True}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
     "concurrency": 4,

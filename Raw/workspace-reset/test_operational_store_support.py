@@ -2,6 +2,7 @@ import base64
 import ast
 import contextlib
 import copy
+import csv
 import io
 import json
 import re
@@ -386,7 +387,7 @@ class OperationalItemLifecycleTests(unittest.TestCase):
                                isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
                                and call.func.id == "ensure_operational_item" for call in ast.walk(node)))
         namespace = {
-            "provision_shared_store": True, "seed_demo_data": True, "env_suffix": "V11",
+            "provision_shared_store": True, "seed_demo_data": True, "env_suffix": "V11", "setup_phase": "all",
             "sql_db_item_name": support.operational_store_name("V11"), "legacy_sql_db_item_id": "",
             "project_ontology_item_id": "ontology", "workspace_id": "workspace", "get_sql_token": Mock(),
             "ensure_operational_item": Mock(return_value={
@@ -394,6 +395,8 @@ class OperationalItemLifecycleTests(unittest.TestCase):
             "first_setting": Mock(return_value="folder"), "OPERATIONAL_STORE_NAME": support.OPERATIONAL_STORE_NAME,
             "operational_store_name": support.operational_store_name, "operational_connection": Mock(),
             "initialize_operational_schema": Mock(), "extend_selected_project_ontology": Mock(return_value={}),
+            "spark": Mock(), "prepare_project_relationship_sources": Mock(),
+            "verify_project_relationship_sources": Mock(return_value={}),
             "resolve_sql_database": Mock(return_value=("sql", "server", "physical-database")),
             "operational_item": Mock(), "copy_operational_records": Mock(), "seed_sql_database": Mock(),
             "step_results": {}, "step_errors": [], "json": json,
@@ -409,6 +412,7 @@ class OperationalItemLifecycleTests(unittest.TestCase):
 class RelationshipSourceProjectionTests(unittest.TestCase):
     def setUp(self):
         self.spark = Mock()
+        self.spark.catalog.tableExists.return_value = False
         self.spark.sql.return_value.limit.return_value.count.return_value = 0
         self.spark.sql.return_value.collect.return_value = [
             ("hydro.businessProjection", "equipment-types-v1")]
@@ -422,7 +426,7 @@ class RelationshipSourceProjectionTests(unittest.TestCase):
         self.assertIn("CASE WHEN target_kind='location' THEN target_id END", text)
         self.assertIn("CASE WHEN target_kind='area' THEN target_id END", text)
         self.assertIn("MERGE INTO ontology_equipment_types", text)
-        self.assertIn("LEFT ANTI JOIN silver_facilities", text)
+        self.assertIn("LEFT ANTI JOIN `silver_facilities`", text)
         self.assertNotIn("ontology_key =", text)
         self.assertNotIn("DROP ", text)
 
@@ -447,6 +451,18 @@ class RelationshipSourceProjectionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "one authoritative type name"):
             support.prepare_project_relationship_sources(self.spark)
         self.assertEqual(len(self.spark.sql.call_args_list), 1)
+
+    def test_projection_uses_authoritative_settings_for_equipment_and_facilities(self):
+        self.spark.catalog.tableExists.return_value = True
+        self.spark.table.return_value.limit.return_value.collect.return_value = [
+            Mock(asDict=Mock(return_value={
+                "setting_name": f"silver_{name}_table", "setting_value": f"tenant_{name}"}))
+            for name in support.PROJECT_CORE_ENTITIES]
+        support.prepare_project_relationship_sources(self.spark, "tenant_equipment")
+        statements = "\n".join(call.args[0] for call in self.spark.sql.call_args_list)
+        self.assertIn("FROM `tenant_equipment`", statements)
+        self.assertIn("LEFT ANTI JOIN `tenant_facilities`", statements)
+        self.assertNotIn("FROM `silver_equipment`", statements)
 
 
 class ProjectExtensionTests(unittest.TestCase):
@@ -687,6 +703,494 @@ class ProjectExtensionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Duplicate ontology source expression|expression is missing"):
                 self.source_metadata(before)
             self.assertEqual(before, snapshot)
+
+
+class ProjectContractValidationTests(unittest.TestCase):
+    def fixture(self):
+        setup = ProjectExtensionTests()
+        setup.setUp()
+        setup.parts.append(part("namespaces/default.tmdl", "namespace default\n"))
+        for name, (_, pk) in support.PROJECT_CORE_ENTITIES.items():
+            columns = {pk}
+            for source, target, sk, tk in support.PROJECT_REQUIRED_EDGES:
+                if source == name:
+                    columns.add(sk)
+                if target == name:
+                    columns.add(tk)
+            for path, text in (
+                (f"entities/{name}.tmdl", f"entity {name}\n\tbackingTable: {name}\n\tkeyProperty: {pk}\n"
+                 + "".join(f"\tproperty {c}\n\t\tbackingConfiguration\n\t\t\tvalueColumn: {name}.{c}\n"
+                           for c in sorted(columns))),
+                (f"tables/{name}.tmdl", f"table {name}\n"
+                 + "".join(f"\tcolumn {c}\n\t\tsourceColumn: {c}\n" for c in sorted(columns))
+                 + f"\tpartition {name} = entity\n\t\tsource\n"
+                   f"\t\t\tentityName: {support.PROJECT_CORE_ENTITIES[name][0]}\n"
+                   "\t\t\texpressionSource: HydroCore\n"),
+            ):
+                setup.parts = [p for p in setup.parts if p["path"] != path] + [part(path, text)]
+        setup.parts = [p for p in setup.parts if p["path"] != "model.tmdl"] + [part("model.tmdl",
+            "model Model\n" + "".join(f"ref entity {n}\nref table {n}\n" for n in support.PROJECT_CORE_ENTITIES))]
+        setup.parts += [
+            part("entityRelationships.tmdl", "".join(
+                f"entityRelationship core{i}\n\tfromEntity: {s}\n\ttoEntity: {t}\n"
+                f"\tbackingConfiguration\n\t\trelationship: core{i}\n"
+                for i, (s, t, _, _) in enumerate(support.PROJECT_REQUIRED_EDGES[:4]))),
+            part("relationships.tmdl", "".join(
+                f"relationship core{i}\n\tfromColumn: {s}.{sk}\n\ttoColumn: {t}.{tk}\n"
+                for i, (s, t, sk, tk) in enumerate(support.PROJECT_REQUIRED_EDGES[:4]))),
+        ]
+        result = setup.extend()
+        for p in result:
+            if p["path"] == "expressions.tmdl":
+                text = base64.b64decode(p["payload"]).decode()
+                def pin(match):
+                    item = "sql" if match[1] == "HydroProjectOperations" else "lakehouse"
+                    kind = "SQLDatabase" if item == "sql" else "Lakehouse"
+                    return (match[0].rstrip() + f"\n\tannotation ONT_WorkspaceId = workspace\n"
+                            f"\tannotation ONT_ItemId = {item}\n\tannotation ONT_ItemKind = {kind}\n\n")
+                p["payload"] = base64.b64encode(re.sub(
+                    r"(?ms)^expression (.+?) =\n.*?(?=^expression |\Z)", pin, text).encode()).decode()
+        return result
+
+    def verify(self, parts):
+        return support.verify_project_ontology_contract(parts, "workspace", "lakehouse", "sql")
+
+    def test_complete_real_bindings_and_unknown_parts_are_preserved(self):
+        parts = self.fixture()
+        parts += [part("entities/Custom.tmdl", "entity Custom\n"),
+                  part("operator-custom.json", '{"preserve":true}')]
+        before = copy.deepcopy(parts)
+        receipt = self.verify(parts)
+        self.assertEqual(parts, before)
+        self.assertEqual(receipt["required_entity_count"], 16)
+        self.assertEqual(receipt["entity_count"], 17)
+        self.assertEqual(receipt["required_relationship_count"], 21)
+        self.assertEqual(receipt["scope"], "definition_readback_only")
+
+    def test_missing_entity_binding_property_and_edge_fail(self):
+        for path, old, new in (
+            ("entities/WorkOrder.tmdl", None, None),
+            ("expressions.tmdl", "ONT_ItemId = sql", "ONT_ItemId = wrong"),
+            ("entities/Inspection.tmdl", "valueColumn: HydroProject_Inspection.equipmentId",
+             "valueColumn: HydroProject_Inspection.id"),
+            ("relationships.tmdl", "toColumn: equipment.equipment_id", "toColumn: equipment.tag"),
+            ("entityRelationships.tmdl", "relationship: core0", "relationship: missing"),
+            ("entities/WeatherArea.tmdl", "keyProperty: area_id", "keyProperty: location_id"),
+        ):
+            with self.subTest(path=path, old=old):
+                parts = self.fixture()
+                if old is None:
+                    parts = [p for p in parts if p["path"] != path]
+                else:
+                    p = next(p for p in parts if p["path"] == path)
+                    text = base64.b64decode(p["payload"]).decode().replace(old, new)
+                    p["payload"] = base64.b64encode(text.encode()).decode()
+                with self.assertRaises(RuntimeError):
+                    self.verify(parts)
+
+    def test_correct_additional_source_cannot_mask_wrong_primary_source(self):
+        parts = self.fixture()
+        entity = next(p for p in parts if p["path"] == "entities/WorkOrder.tmdl")
+        entity["payload"] = base64.b64encode((base64.b64decode(entity["payload"]).decode()
+            + "\tadditionalBackingTable\n\t\ttable: ValidExtra\n").encode()).decode()
+        table = next(p for p in parts if p["path"] == "tables/HydroProject_WorkOrder.tmdl")
+        original = base64.b64decode(table["payload"]).decode()
+        parts.append(part("tables/ValidExtra.tmdl", original.replace(
+            "HydroProject_WorkOrder", "ValidExtra")))
+        table["payload"] = base64.b64encode(original.replace(
+            "expressionSource: HydroProjectOperations", "expressionSource: HydroCore").encode()).decode()
+        with self.assertRaisesRegex(RuntimeError, "authoritative source"):
+            self.verify(parts)
+
+    def test_explicit_custom_core_physical_names_retain_verified_source_identity(self):
+        parts = self.fixture()
+        for name, (physical, _) in support.PROJECT_CORE_ENTITIES.items():
+            table = next(p for p in parts if p["path"] == f"tables/{name}.tmdl")
+            text = base64.b64decode(table["payload"]).decode().replace(
+                f"entityName: {physical}", f"entityName: tenant_{name}")
+            table["payload"] = base64.b64encode(text.encode()).decode()
+        receipt = self.verify(parts)
+        self.assertEqual(receipt["core_source_tables"],
+                         {name: f"tenant_{name}" for name in support.PROJECT_CORE_ENTITIES})
+
+
+def complete_project_ontology_fixture():
+    """Return fresh complete parts for validator(parts, 'workspace', 'lakehouse', 'sql')."""
+    return ProjectContractValidationTests().fixture()
+
+
+class ProjectRelationshipValidationTests(unittest.TestCase):
+    def setUp(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        self.rows = {
+            "silver_facilities": [{"facility_id": "F1"}, {"facility_id": "F2"}],
+            "silver_systems": [{"system_id": "S1", "facility_id": "F1"},
+                              {"system_id": "S2", "facility_id": "F2"}],
+            "silver_equipment": [
+                {"equipment_id": f"E{i}", "system_id": f"S{i}", "facility_id": f"F{i}",
+                 "equipment_type_code": "T", "equipment_type_name": "Turbine", "is_active": True}
+                for i in (1, 2)],
+            "silver_instruments": [
+                {"instrument_id": f"I{i}", "equipment_id": f"E{i}"} for i in (1, 2)],
+            "silver_signal_master": [
+                {"opcua_node_id": f"N{i}", "instrument_id": f"I{i}", "equipment_id": f"E{i}"}
+                for i in (1, 2)],
+            "ontology_equipment_types": [{"equipment_type_code": "T", "equipment_type_name": "Turbine"}],
+            "weather_sources": [{"source_id": "ukmet", "active": True}],
+            "weather_locations": [{"location_id": f"F{i}"} for i in (1, 2)],
+            "weather_areas": [{"area_id": "A1", "location_id": "F1", "metadata_json": '{"location_id":"F1"}'}],
+            "weather_latest_forecasts": [
+                {"source_id": "ukmet", "target_kind": "location", "target_id": f"F{i}",
+                 "location_id": f"F{i}", "area_id": None, "reference_time_utc": now - timedelta(hours=1),
+                 "valid_time_utc": now + timedelta(hours=3), "ontology_key": f"forecast{i}",
+                 "temperature": 8.0} for i in (1, 2)],
+            "weather_latest_observations": [
+                {"source_id": "ukmet", "location_id": "F1", "observed_at_utc": now - timedelta(hours=1),
+                 "ontology_key": "observation1", "precipitation": 1.0}],
+        }
+        self.sql = {table: [{"id": table + "-id", "equipmentId": "E1", "instrumentId": None,
+                            "opcuaNodeId": None, "equipmentType": "T"}]
+                    for table in support.SQL_PROJECT_ENTITIES.values()}
+        self.sql["WorkOrders"][0].update(instrumentId="I1", opcuaNodeId="N1")
+        self.spark = Mock()
+        self.spark.catalog.tableExists.return_value = False
+        self.spark.conf.get.return_value = "UTC"
+        def table(name):
+            if name not in self.rows:
+                raise RuntimeError("Missing table")
+            frame = Mock()
+            frame.limit.return_value.collect.return_value = [
+                Mock(asDict=Mock(return_value=row)) for row in self.rows[name]]
+            return frame
+        self.spark.table.side_effect = table
+        self.connection = Mock()
+        self.cursor = self.connection.cursor.return_value
+        def execute(query):
+            table_name = re.search(r"FROM dbo\.\[(.+)\]", query)[1]
+            columns = re.findall(r"\[([^]]+)\]", query.split(" FROM ")[0])
+            self.batches = [[tuple(row.get(c) for c in columns) for row in self.sql[table_name]], []]
+        self.cursor.execute.side_effect = execute
+        self.cursor.fetchmany.side_effect = lambda size: self.batches.pop(0)
+
+    def verify(self, *, require_current_weather=True):
+        return support.verify_project_relationship_sources(
+            self.spark, self.connection, require_current_weather=require_current_weather)
+
+    def test_success_is_read_only_bounded_and_discloses_observation_gaps(self):
+        before = copy.deepcopy(self.rows)
+        receipt = self.verify()
+        self.assertEqual(receipt["weather_coverage_status"], "verified")
+        self.assertEqual(receipt["weather_freshness_status"], "verified")
+        self.assertTrue(receipt["weather_readiness_attested"])
+        self.assertEqual(receipt["eligible_facility_count"], 2)
+        self.assertEqual(receipt["ukmet_forecast_covered_facility_count"], 2)
+        self.assertEqual(receipt["ukmet_observation_gap_facility_count"], 1)
+        self.assertEqual(receipt["forecast_max_issue_age_hours"], 13)
+        self.assertEqual(self.rows, before)
+        self.spark.sql.assert_not_called()
+        self.assertTrue(all(call.args[0].startswith("SELECT TOP (100001)")
+                            for call in self.cursor.execute.call_args_list))
+        self.cursor.close.assert_called_once()
+
+    def test_missing_and_empty_required_sources_fail(self):
+        for mode in ("missing", "empty", "sql-empty", "sql-failure"):
+            with self.subTest(mode=mode):
+                self.setUp()
+                if mode == "missing":
+                    del self.rows["weather_latest_observations"]
+                elif mode == "empty":
+                    self.rows["silver_equipment"] = []
+                elif mode == "sql-empty":
+                    self.sql["SpareParts"] = []
+                else:
+                    self.cursor.execute.side_effect = RuntimeError("SQL unavailable")
+                with self.assertRaises(RuntimeError):
+                    self.verify()
+
+    def test_sql_orphan_and_optional_conflicts_fail(self):
+        for table, field, value in (
+            ("WorkOrders", "equipmentId", "missing"),
+            ("Asset3DModels", "equipmentId", "missing"),
+            ("Inspections", "opcuaNodeId", "missing"),
+            ("MaintenanceNotifications", "opcuaNodeId", "N2"),
+            ("WorkOrders", "instrumentId", "I2"),
+            ("WorkOrders", "opcuaNodeId", "N2"),
+            ("SpareParts", "equipmentType", "unknown"),
+            ("WorkOrders", "instrumentId", ""),
+        ):
+            with self.subTest(table=table, field=field):
+                self.setUp()
+                self.sql[table][0][field] = value
+                with self.assertRaises(RuntimeError):
+                    self.verify()
+
+    def test_weather_cross_kind_registered_sources_and_coverage_fail(self):
+        for mutation in (
+            lambda r: r["weather_latest_forecasts"][0].update(area_id="A1"),
+            lambda r: r["weather_latest_forecasts"][0].update(target_kind="area"),
+            lambda r: r["weather_latest_forecasts"][0].update(source_id="unregistered"),
+            lambda r: r["weather_latest_forecasts"].pop(),
+            lambda r: r["weather_locations"].pop(),
+            lambda r: r["weather_areas"][0].update(location_id="F2"),
+            lambda r: r["weather_latest_observations"][0].update(location_id="missing"),
+            lambda r: r["weather_latest_forecasts"][0].update(temperature=None),
+        ):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                mutation(self.rows)
+                with self.assertRaises(RuntimeError):
+                    self.verify()
+
+    def test_freshness_uses_request_time_not_historic_run_success(self):
+        from datetime import timedelta
+        self.rows["weather_latest_forecasts"][0]["reference_time_utc"] -= timedelta(days=2)
+        with self.assertRaisesRegex(RuntimeError, "current UKMet"):
+            self.verify()
+        self.setUp()
+        self.rows["weather_latest_observations"][0]["observed_at_utc"] -= timedelta(days=2)
+        receipt = self.verify()
+        self.assertEqual(receipt["ukmet_observation_gap_facility_count"], 2)
+        self.assertEqual(receipt["ukmet_stale_observation_facility_count"], 1)
+        self.rows["weather_latest_observations"] = []
+        self.assertEqual(self.verify()["ukmet_observation_gap_facility_count"], 2)
+
+    def test_sql_bootstrap_does_not_attest_stale_or_absent_current_weather(self):
+        from datetime import timedelta
+        for mode in ("stale", "partial", "empty"):
+            with self.subTest(mode=mode):
+                self.setUp()
+                if mode == "stale":
+                    for row in self.rows["weather_latest_forecasts"]:
+                        row["reference_time_utc"] -= timedelta(days=2)
+                        row["valid_time_utc"] -= timedelta(days=2)
+                elif mode == "partial":
+                    self.rows["weather_latest_forecasts"].pop()
+                else:
+                    self.rows["weather_latest_forecasts"] = []
+                with self.assertRaises(RuntimeError):
+                    self.verify()
+                receipt = self.verify(require_current_weather=False)
+                self.assertEqual(receipt["status"], "integrity_verified_weather_not_attested")
+                self.assertEqual(receipt["weather_coverage_status"], "not_attested")
+                self.assertEqual(receipt["weather_freshness_status"], "not_attested")
+                self.assertFalse(receipt["weather_readiness_attested"])
+                self.assertEqual(receipt["ukmet_observation_gap_facility_count"], 1)
+                self.assertEqual(receipt["source_row_counts"]["WorkOrders"], 1)
+                if mode == "empty":
+                    self.assertIsNone(receipt["ukmet_latest_issue_utc"])
+
+    def test_both_weather_modes_still_reject_orphans_cross_kind_and_sql_corruption(self):
+        mutations = (
+            lambda r, sql: r["weather_latest_forecasts"][0].update(source_id="missing"),
+            lambda r, sql: r["weather_latest_forecasts"][0].update(area_id="A1"),
+            lambda r, sql: r["weather_latest_observations"][0].update(location_id="missing"),
+            lambda r, sql: r["weather_areas"][0].update(location_id="missing"),
+            lambda r, sql: sql["WorkOrders"][0].update(equipmentId="missing"),
+            lambda r, sql: sql["WorkOrders"][0].update(opcuaNodeId="N2"),
+        )
+        for required in (True, False):
+            for mutation in mutations:
+                with self.subTest(require_current_weather=required, mutation=mutation):
+                    self.setUp()
+                    mutation(self.rows, self.sql)
+                    with self.assertRaises(RuntimeError):
+                        self.verify(require_current_weather=required)
+
+    def test_bootstrap_retains_source_availability_failures_and_has_no_weather_writes(self):
+        self.assertEqual(self.verify(require_current_weather=False)["status"],
+                         "integrity_verified_weather_not_attested")
+        self.rows["weather_latest_forecasts"] = []
+        receipt = self.verify(require_current_weather=False)
+        self.assertEqual(receipt["source_row_counts"]["weather_latest_forecasts"], 0)
+        self.spark.sql.assert_not_called()
+        del self.rows["weather_latest_forecasts"]
+        with self.assertRaisesRegex(RuntimeError, "Cannot read required"):
+            self.verify(require_current_weather=False)
+        self.setUp()
+        self.rows["weather_sources"] = []
+        with self.assertRaisesRegex(RuntimeError, "Empty mandatory"):
+            self.verify(require_current_weather=False)
+
+    def test_area_target_uses_only_registered_area_not_representative_location_as_target(self):
+        row = copy.deepcopy(self.rows["weather_latest_forecasts"][0])
+        row.update(target_kind="area", target_id="A1", location_id=None, area_id="A1", ontology_key="area1")
+        self.rows["weather_latest_forecasts"].append(row)
+        self.assertEqual(self.verify()["source_row_counts"]["weather_latest_forecasts"], 3)
+        row["location_id"] = "F1"
+        with self.assertRaisesRegex(RuntimeError, "cross-kind"):
+            self.verify()
+
+    def test_optional_vendor_does_not_replace_ukmet_or_inherit_its_forecast_horizon(self):
+        from datetime import timedelta
+        self.rows["weather_sources"].append({"source_id": "aurora", "active": True})
+        row = copy.deepcopy(self.rows["weather_latest_forecasts"][0])
+        row.update(source_id="aurora", ontology_key="aurora1",
+                   valid_time_utc=row["reference_time_utc"] + timedelta(days=15))
+        self.rows["weather_latest_forecasts"].append(row)
+        self.assertEqual(self.verify()["ukmet_forecast_covered_facility_count"], 2)
+        self.rows["weather_latest_forecasts"].pop(0)
+        with self.assertRaisesRegex(RuntimeError, "current UKMet"):
+            self.verify()
+
+    def test_bounded_reads_do_not_accept_partial_validation(self):
+        row = type("Row", (), {"asDict": lambda self, recursive: {"facility_id": "F1"}})()
+        self.spark.table.side_effect = None
+        self.spark.table.return_value.limit.return_value.collect.return_value = [row] * 100001
+        with self.assertRaisesRegex(RuntimeError, "bounded validation limit"):
+            self.verify()
+
+    def test_sql_bound_reads_the_overflow_row_and_fails_not_partial_success(self):
+        def execute(query):
+            columns = re.findall(r"\[([^]]+)\]", query.split(" FROM ")[0])
+            self.remaining_sql = 100001
+            self.sql_row = tuple(self.sql["WorkOrders"][0].get(c) for c in columns)
+        def fetchmany(size):
+            size = min(size, self.remaining_sql)
+            self.remaining_sql -= size
+            return [self.sql_row] * size
+        self.cursor.execute.side_effect = execute
+        self.cursor.fetchmany.side_effect = fetchmany
+        with self.assertRaisesRegex(RuntimeError, "WorkOrders exceeds bounded validation limit"):
+            self.verify()
+        self.assertEqual(self.remaining_sql, 0)
+        self.cursor.close.assert_called_once()
+
+    def test_canonical_seeds_match_actual_stid_medallion_keys_and_settings(self):
+        from datetime import datetime, timedelta, timezone
+        root = Path(__file__).resolve().parents[2]
+        notebook = root / "Notebooks" / "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py"
+        tree = ast.parse(notebook.read_text(encoding="utf-8"))
+        seed = next(ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "SEED_SQL" for target in node.targets))
+        actual_sql = {}
+        for table_name, values, fields in re.findall(
+                r"MERGE dbo\.(\w+) AS target\s+USING \(VALUES\s*(.*?)\s*\) AS source\(([^)]+)\)",
+                seed, re.DOTALL):
+            columns = fields.split(",")
+            rows = []
+            for line in values.splitlines():
+                line = line.strip().rstrip(",")
+                if not line:
+                    continue
+                self.assertTrue(line.startswith("(") and line.endswith(")"))
+                tokens = re.findall(r"'(?:[^']|'')*'|NULL|@ActorOid|-?\d+(?:\.\d+)?", line[1:-1])
+                self.assertEqual(len(tokens), len(columns))
+                parsed = [None if token == "NULL" else token[1:-1].replace("''", "'")
+                          if token.startswith("'") else token for token in tokens]
+                rows.append(dict(zip(columns, parsed)))
+            actual_sql[table_name] = rows
+        self.assertEqual({name: len(rows) for name, rows in actual_sql.items()}, support.OPERATIONAL_DEMO_COUNTS)
+        self.sql = actual_sql
+        for entity in ("facilities", "systems", "equipment", "instruments"):
+            with (root / "Raw" / "stid_rti_fixed_source_files" / f"{entity}_stid.csv").open(
+                    encoding="utf-8", newline="") as stream:
+                self.rows[f"silver_{entity}"] = list(csv.DictReader(stream))
+        for row in self.rows["silver_equipment"]:
+            row["is_active"] = row["status"] == "ACTIVE"
+        self.rows["silver_signal_master"] = [
+            {name: row[name] for name in ("opcua_node_id", "instrument_id", "equipment_id", "system_id", "facility_id")}
+            for row in self.rows["silver_instruments"]]
+        self.rows["ontology_equipment_types"] = [
+            {"equipment_type_code": code, "equipment_type_name": name}
+            for code, name in sorted({(r["equipment_type_code"], r["equipment_type_name"])
+                                      for r in self.rows["silver_equipment"]})]
+        facilities = [row["facility_id"] for row in self.rows["silver_facilities"]]
+        self.rows["weather_locations"] = [{"location_id": facility} for facility in facilities]
+        self.rows["weather_areas"] = [{"area_id": "registered-area", "location_id": facilities[0],
+                                       "metadata_json": json.dumps({"location_id": facilities[0]})}]
+        now = datetime.now(timezone.utc)
+        self.rows["weather_latest_forecasts"] = [
+            {"source_id": "ukmet", "target_kind": "location", "target_id": facility,
+             "location_id": facility, "area_id": None, "reference_time_utc": now - timedelta(hours=1),
+             "valid_time_utc": now + timedelta(hours=3), "ontology_key": facility, "temperature": 8.0}
+            for facility in facilities]
+        self.rows["weather_latest_observations"] = []
+        receipt = self.verify()
+        self.assertEqual(receipt["eligible_facility_count"], 3)
+        self.assertEqual(receipt["ukmet_forecast_covered_facility_count"], 3)
+        self.assertEqual(receipt["ukmet_observation_gap_facility_count"], 3)
+        self.assertEqual(receipt["source_row_counts"]["silver_equipment"], 15)
+        self.assertEqual(receipt["source_row_counts"]["silver_instruments"], 90)
+        self.assertEqual(receipt["source_row_counts"]["silver_signal_master"], 90)
+        for table_name, expected_count in support.OPERATIONAL_DEMO_COUNTS.items():
+            self.assertEqual(receipt["source_row_counts"][table_name], expected_count)
+
+        # Renaming uses only settings identities; keys and physical associations stay unchanged.
+        self.rows["rti_demo_settings"] = []
+        for entity in support.PROJECT_CORE_ENTITIES:
+            target = f"tenant_{entity}"
+            self.rows[target] = self.rows.pop(f"silver_{entity}")
+            self.rows["rti_demo_settings"].append(
+                {"setting_name": f"silver_{entity}_table", "setting_value": target})
+        self.spark.catalog.tableExists.return_value = True
+        receipt = self.verify()
+        self.assertEqual(receipt["core_source_tables"],
+                         {name: f"tenant_{name}" for name in support.PROJECT_CORE_ENTITIES})
+        self.assertEqual(receipt["eligible_facility_count"], 3)
+
+    def test_active_weather_eligibility_matches_producer_is_active_precedence(self):
+        self.rows["silver_equipment"][1].update(is_active=False, status="ACTIVE")
+        self.rows["weather_latest_forecasts"].pop()
+        self.assertEqual(self.verify()["eligible_facility_count"], 1)
+        self.rows["silver_equipment"][1]["is_active"] = None
+        self.assertEqual(self.verify()["eligible_facility_count"], 1)
+        self.setUp()
+        for row in self.rows["silver_equipment"]:
+            del row["is_active"]
+            row["status"] = "active"
+        self.assertEqual(self.verify()["eligible_facility_count"], 2)
+        self.rows["silver_equipment"][1]["status"] = None
+        self.rows["weather_latest_forecasts"].pop()
+        self.assertEqual(self.verify()["eligible_facility_count"], 1)
+
+    def test_source_settings_are_authoritative_not_silently_defaulted(self):
+        settings = [{"setting_name": f"silver_{name}_table", "setting_value": physical}
+                    for name, (physical, _) in support.PROJECT_CORE_ENTITIES.items()]
+        self.spark.catalog.tableExists.return_value = True
+        self.rows["rti_demo_settings"] = settings
+        self.assertEqual(self.verify()["status"], "verified")
+        for mutation in (
+            lambda rows: rows.pop(),
+            lambda rows: rows.append(copy.deepcopy(rows[0])),
+            lambda rows: rows[0].update(setting_value="unsafe;name"),
+        ):
+            with self.subTest(mutation=mutation):
+                self.rows["rti_demo_settings"] = copy.deepcopy(settings)
+                mutation(self.rows["rti_demo_settings"])
+                with self.assertRaises(RuntimeError):
+                    self.verify()
+        self.rows["rti_demo_settings"] = copy.deepcopy(settings)
+        with self.assertRaisesRegex(RuntimeError, "conflicts"):
+            support.verify_project_relationship_sources(self.spark, self.connection, "wrong_equipment")
+
+    def test_utc_session_requirement_accepts_utc_alias_and_rejects_non_utc(self):
+        self.spark.conf.get.return_value = "Etc/UTC"
+        self.assertEqual(self.verify()["status"], "verified")
+        self.spark.conf.get.return_value = "Europe/London"
+        with self.assertRaisesRegex(RuntimeError, "requires a UTC Spark session"):
+            self.verify()
+
+    def test_duplicate_sql_ids_and_conflicting_equipment_types_fail(self):
+        self.sql["Inspections"].append(copy.deepcopy(self.sql["Inspections"][0]))
+        with self.assertRaisesRegex(RuntimeError, "Nonunique"):
+            self.verify()
+        self.setUp()
+        self.rows["silver_equipment"][0]["equipment_type_name"] = "wrong"
+        with self.assertRaisesRegex(RuntimeError, "type name"):
+            self.verify()
+
+    def test_nonunique_keys_and_malformed_utc_fail(self):
+        for table in ("silver_equipment", "weather_latest_forecasts", "weather_latest_observations"):
+            with self.subTest(table=table):
+                self.setUp()
+                self.rows[table].append(copy.deepcopy(self.rows[table][0]))
+                with self.assertRaisesRegex(RuntimeError, "Nonunique"):
+                    self.verify()
+        self.setUp()
+        self.rows["weather_latest_forecasts"][0]["reference_time_utc"] = "2026-10-28T10:00:00"
+        with self.assertRaisesRegex(RuntimeError, "UTC timestamp"):
+            self.verify()
 
 
 class CopyCursor:

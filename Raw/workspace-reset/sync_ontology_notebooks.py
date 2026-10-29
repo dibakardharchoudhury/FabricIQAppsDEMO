@@ -27,6 +27,35 @@ CELL = "# CELL ********************"
 METADATA = "# METADATA ********************"
 
 
+def agent_project_contract(content, root, include_topology):
+    support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8")
+    names = {
+        "PROJECT_CORE_ENTITIES", "PROJECT_REQUIRED_EDGES", "WEATHER_PROJECT_ENTITIES",
+        "SQL_PROJECT_ENTITIES", "OPERATIONAL_COLUMNS", "_project_contract_objects",
+        "_project_contract_setting", "verify_project_ontology_contract",
+    }
+    if include_topology:
+        names.update(("ontology_context_elements", "ontology_source_bindings"))
+    nodes = []
+    for node in ast.parse(support).body:
+        if isinstance(node, ast.FunctionDef) and node.name in names:
+            nodes.append(node)
+        elif isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in names for target in node.targets):
+            nodes.append(node)
+    if len(nodes) != len(names):
+        raise RuntimeError("Incomplete shared project ontology publication gate.")
+    helpers = "\n\n".join(ast.get_source_segment(support, node) for node in nodes)
+    content, count = re.subn(
+        r"(?ms)^# BEGIN PROJECT ONTOLOGY CONTRACT\n.*?^# END PROJECT ONTOLOGY CONTRACT",
+        lambda _match: "# BEGIN PROJECT ONTOLOGY CONTRACT\n" + helpers
+        + "\n# END PROJECT ONTOLOGY CONTRACT", content,
+    )
+    if count != 1:
+        raise RuntimeError("Expected one shared project ontology publication gate.")
+    return content
+
+
 def synchronize(root=ROOT, check=False):
     support = (root / "Raw/workspace-reset/ontology_notebook_support.py").read_text(encoding="utf-8").strip()
     pending = {}
@@ -98,7 +127,7 @@ def synchronize_operational_support(root=ROOT, check=False):
     for name in (*support_notebooks, "RTI_003_ingest_transform_medallion",
                  "RTI_003_ingest_transform_medallion_SelfContained", "Weather_020_area_calculations",
                  "RTI_Orchestrator_Setup", "Weather_001_create_lakehouse", "Weather_002_fetch_area_weather",
-                 "Weather_003_fetch_ukmet", "Weather_Orchestrator"):
+                 "Weather_003_fetch_ukmet", "Weather_Orchestrator", "RTI_010_build_operations_agent"):
         canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
         raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
         sections = canonical.read_text(encoding="utf-8").split(CELL)
@@ -111,6 +140,8 @@ def synchronize_operational_support(root=ROOT, check=False):
         if len(matches) != (1 if name in support_notebooks else 0):
             raise RuntimeError(f"Unexpected shared operational support cell count in {canonical}")
         content = CELL.join(sections)
+        if name == "RTI_010_build_operations_agent":
+            content = agent_project_contract(content, root, include_topology=True)
         compile(content, str(canonical), "exec")
         notebook = json.loads(raw.read_text(encoding="utf-8"))
         def identity(kind, source):
@@ -172,6 +203,7 @@ def synchronize_data_agent(root=ROOT, check=False):
     )
     if count != 1:
         raise RuntimeError("Expected one Data Agent source topology support region.")
+    content = agent_project_contract(content, root, include_topology=False)
     if canonical.read_text(encoding="utf-8") != content:
         if check:
             raise RuntimeError("NB009 source topology distribution drift; run --sync.")

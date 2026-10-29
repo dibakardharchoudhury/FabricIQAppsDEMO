@@ -352,11 +352,205 @@ SQL_PROJECT_ENTITIES = {
     "Asset3DModel": "Asset3DModels", "MaintenanceNotification": "MaintenanceNotifications",
 }
 
+PROJECT_CORE_ENTITIES = {
+    "facilities": ("silver_facilities", "facility_id"),
+    "systems": ("silver_systems", "system_id"),
+    "equipment": ("silver_equipment", "equipment_id"),
+    "instruments": ("silver_instruments", "instrument_id"),
+    "signal_master": ("silver_signal_master", "opcua_node_id"),
+}
+
+PROJECT_REQUIRED_EDGES = (
+    ("systems", "facilities", "facility_id", "facility_id"),
+    ("equipment", "systems", "system_id", "system_id"),
+    ("instruments", "equipment", "equipment_id", "equipment_id"),
+    ("signal_master", "instruments", "instrument_id", "instrument_id"),
+    *((name, "equipment", "equipmentId", "equipment_id") for name in
+      ("WorkOrder", "Inspection", "Asset3DModel", "MaintenanceNotification")),
+    ("WorkOrder", "instruments", "instrumentId", "instrument_id"),
+    *((name, "signal_master", "opcuaNodeId", "opcua_node_id") for name in
+      ("WorkOrder", "Inspection", "MaintenanceNotification")),
+    ("WeatherLatestObservation", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestObservation", "WeatherSource", "source_id", "source_id"),
+    ("WeatherLatestForecast", "WeatherSource", "source_id", "source_id"),
+    ("WeatherLocation", "facilities", "location_id", "facility_id"),
+    ("WeatherArea", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestForecast", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestForecast", "WeatherArea", "area_id", "area_id"),
+    ("equipment", "EquipmentType", "equipment_type_code", "equipment_type_code"),
+    ("SparePart", "EquipmentType", "equipmentType", "equipment_type_code"),
+)
+
+
+def _project_contract_objects(text, kind):
+    """Read TMDL objects without consuming same-indent siblings or custom parts."""
+    result = {}
+    lines = text.replace("\r\n", "\n").splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"([ \t]*)" + re.escape(kind) + r" (.+?)\s*", line)
+        if not match:
+            continue
+        name = match[2].strip().strip("'").replace("''", "'")
+        if name in result:
+            raise RuntimeError(f"Duplicate project {kind}: {name}.")
+        depth = len(match[1].expandtabs(4))
+        end = index + 1
+        while end < len(lines):
+            candidate = lines[end]
+            if candidate.strip() and not candidate.lstrip().startswith("//"):
+                prefix = candidate[:len(candidate) - len(candidate.lstrip())]
+                if len(prefix.expandtabs(4)) <= depth:
+                    break
+            end += 1
+        result[name] = "\n".join(lines[index:end])
+    return result
+
+
+def _project_contract_setting(text, key):
+    values = re.findall(r"(?m)^[ \t]+" + re.escape(key) + r":[ \t]*(.+?)[ \t]*$", text)
+    if len(values) != 1:
+        raise RuntimeError(f"Project contract requires one {key} binding.")
+    return values[0].strip("'").replace("''", "'")
+
+
+def verify_project_ontology_contract(parts, workspace_id, lakehouse_id, sql_db_item_id):
+    """Pure definition readback gate; live numeric generation must be checked by the caller."""
+    if not all(isinstance(value, str) and value.strip()
+               for value in (workspace_id, lakehouse_id, sql_db_item_id)) or lakehouse_id == sql_db_item_id:
+        raise RuntimeError("Project contract requires authoritative distinct source identities.")
+    texts = {p["path"]: base64.b64decode(p["payload"], validate=True).decode("utf-8") for p in parts}
+    if len(texts) != len(parts):
+        raise RuntimeError("Duplicate project definition paths.")
+    if not {"database.tmdl", "model.tmdl", "namespaces/default.tmdl"}.issubset(texts):
+        raise RuntimeError("Project contract requires complete v2 TMDL root parts.")
+    entities = {e["display_name"] for e in ontology_context_elements(parts)}
+    ontology_source_bindings(parts, workspace_id)
+    required = {name: (physical, (key,), "Lakehouse", lakehouse_id)
+                for name, (physical, key) in PROJECT_CORE_ENTITIES.items()}
+    required.update({name: (physical, keys, "Lakehouse", lakehouse_id)
+                     for name, (physical, keys) in WEATHER_PROJECT_ENTITIES.items()})
+    required.update({name: (physical, ("id",), "SQLDatabase", sql_db_item_id)
+                     for name, physical in SQL_PROJECT_ENTITIES.items()})
+    if not set(required).issubset(entities):
+        raise RuntimeError("Missing required project entities: " + ", ".join(sorted(set(required) - entities)))
+    aliases = {}
+    properties = {}
+    core_source_tables = {}
+    for name, (physical, keys, kind, item) in required.items():
+        entity = texts.get(f"entities/{name}.tmdl", "")
+        alias = _project_contract_setting(entity, "backingTable")
+        aliases[name] = alias
+        table = texts.get(f"tables/{alias}.tmdl", "")
+        actual_physical = _project_contract_setting(table, "entityName")
+        if name in PROJECT_CORE_ENTITIES:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", actual_physical):
+                raise RuntimeError(f"Invalid core source table identity for {name}.")
+            physical = actual_physical
+            core_source_tables[name] = physical
+        elif actual_physical != physical:
+            raise RuntimeError(f"Incorrect backing table for {name}.")
+        primary_parts = [
+            {"path": "expressions.tmdl", "payload": base64.b64encode(
+                texts.get("expressions.tmdl", "").encode()).decode()},
+            {"path": f"entities/{name}.tmdl", "payload": base64.b64encode(
+                f"entity {name}\n\tbackingTable: {alias}\n".encode()).decode()},
+            {"path": f"tables/{alias}.tmdl", "payload": base64.b64encode(table.encode()).decode()},
+        ]
+        primary_bindings = ontology_source_bindings(primary_parts, workspace_id)
+        if name not in primary_bindings.get((kind, item), {}).get(physical, set()):
+            raise RuntimeError(f"Unverified authoritative source binding for {name}.")
+        properties[name] = _project_contract_objects(entity, "property")
+        columns = _project_contract_objects(table, "column")
+        needed = set(keys)
+        if len(keys) > 1:
+            needed.add("ontology_key")
+        if name in SQL_PROJECT_ENTITIES:
+            needed.update(OPERATIONAL_COLUMNS[physical])
+        for source, target, source_key, target_key in PROJECT_REQUIRED_EDGES:
+            if name == source:
+                needed.add(source_key)
+            if name == target:
+                needed.add(target_key)
+        expected_key = "ontology_key" if len(keys) > 1 else keys[0]
+        if _project_contract_setting(entity, "keyProperty") != expected_key:
+            raise RuntimeError(f"Incorrect project key for {name}.")
+        for prop in needed:
+            if prop not in properties[name] or prop not in columns:
+                raise RuntimeError(f"Missing required property/column {name}.{prop}.")
+            if (_project_contract_setting(properties[name][prop], "valueColumn") != f"{alias}.{prop}"
+                    or _project_contract_setting(columns[prop], "sourceColumn") != prop):
+                raise RuntimeError(f"Incorrect backing property binding for {name}.{prop}.")
+        for ref_kind, ref_name in (("entity", name), ("table", alias)):
+            if not re.search(r"(?m)^ref " + ref_kind + r" (?:'?" + re.escape(ref_name) + r"'?)[ \t]*$",
+                             texts["model.tmdl"]):
+                raise RuntimeError(f"Missing project model reference for {ref_name}.")
+    physical_edges = _project_contract_objects(texts.get("relationships.tmdl", ""), "relationship")
+    semantic_edges = _project_contract_objects(texts.get("entityRelationships.tmdl", ""), "entityRelationship")
+    found = set()
+    for block in semantic_edges.values():
+        source = _project_contract_setting(block, "fromEntity")
+        target = _project_contract_setting(block, "toEntity")
+        if (source, target) not in {(s, t) for s, t, _, _ in PROJECT_REQUIRED_EDGES}:
+            continue
+        physical_name = _project_contract_setting(block, "relationship")
+        backing = physical_edges.get(physical_name)
+        if backing is None:
+            raise RuntimeError(f"Dangling required relationship {source} -> {target}.")
+        from_column = _project_contract_setting(backing, "fromColumn")
+        to_column = _project_contract_setting(backing, "toColumn")
+        for edge in PROJECT_REQUIRED_EDGES:
+            s, t, sk, tk = edge
+            if (source, target) == (s, t) and (
+                    from_column, to_column) == (f"{aliases[s]}.{sk}", f"{aliases[t]}.{tk}"):
+                found.add(edge)
+    missing = set(PROJECT_REQUIRED_EDGES) - found
+    if missing:
+        raise RuntimeError("Missing required project relationship bindings: " + repr(sorted(missing)))
+    return {
+        "status": "verified", "workspace_id": workspace_id, "lakehouse_id": lakehouse_id,
+        "sql_db_item_id": sql_db_item_id, "required_entity_count": len(required),
+        "entity_count": len(entities), "required_relationship_count": len(found),
+        "relationship_count": len(semantic_edges), "scope": "definition_readback_only",
+        "core_source_tables": core_source_tables,
+    }
+
+
+def _project_core_source_tables(spark, equipment_table):
+    """Use setup's explicit identities, never table-name discovery or suffix inference."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", equipment_table):
+        raise RuntimeError("Equipment relationship source requires an explicit safe table identity.")
+    tables = {name: physical for name, (physical, _) in PROJECT_CORE_ENTITIES.items()}
+    if spark.catalog.tableExists("rti_demo_settings"):
+        settings_rows = spark.table("rti_demo_settings").limit(100001).collect()
+        if len(settings_rows) > 100000:
+            raise RuntimeError("Relationship settings exceed bounded validation limit 100000.")
+        values = {}
+        names = {f"silver_{name}_table": name for name in tables}
+        for row in settings_rows:
+            row = row.asDict(recursive=True)
+            setting = row.get("setting_name")
+            if setting not in names:
+                continue
+            if setting in values:
+                raise RuntimeError(f"Duplicate authoritative source setting {setting}.")
+            value = row.get("setting_value")
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", value):
+                raise RuntimeError(f"Malformed authoritative source setting {setting}.")
+            values[setting] = value
+        if set(values) != set(names):
+            raise RuntimeError("Missing authoritative core table settings for relationship validation.")
+        tables = {entity: values[setting] for setting, entity in names.items()}
+        if equipment_table != PROJECT_CORE_ENTITIES["equipment"][0] and equipment_table != tables["equipment"]:
+            raise RuntimeError("Equipment argument conflicts with authoritative source settings.")
+    else:
+        tables["equipment"] = equipment_table
+    return tables
+
 
 def prepare_project_relationship_sources(spark, equipment_table="silver_equipment"):
     """Persist explicit relationship keys from the producers' verified identities."""
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", equipment_table):
-        raise RuntimeError("Equipment relationship source requires an explicit safe table identity.")
+    core_tables = _project_core_source_tables(spark, equipment_table)
+    equipment_table = core_tables["equipment"]
     def reject(query, message):
         if spark.sql(query).limit(1).count():
             raise RuntimeError(message)
@@ -408,7 +602,7 @@ def prepare_project_relationship_sources(spark, equipment_table="silver_equipmen
             reject(f"SELECT 1 FROM `{table}` WHERE NOT (`{column}` <=> ({expression}))",
                    f"Relationship-key readback failed for {table}.{column}.")
     for query, message in (
-        ("SELECT 1 FROM weather_locations w LEFT ANTI JOIN silver_facilities f "
+        (f"SELECT 1 FROM weather_locations w LEFT ANTI JOIN `{core_tables['facilities']}` f "
          "ON w.location_id=f.facility_id", "Weather location has no authoritative facility identity."),
         ("SELECT 1 FROM weather_areas a LEFT ANTI JOIN weather_locations l "
          "ON a.location_id=l.location_id", "Weather area has no registered representative location."),
@@ -420,6 +614,263 @@ def prepare_project_relationship_sources(spark, equipment_table="silver_equipmen
          "Area forecast has no registered weather area."),
     ):
         reject(query, message)
+
+
+def verify_project_relationship_sources(
+        spark, sql_connection, equipment_table="silver_equipment", *, require_current_weather=True):
+    """Read-only integrity gate; False never attests weather coverage or freshness."""
+    from datetime import datetime, timedelta, timezone
+    import math
+
+    if type(require_current_weather) is not bool:
+        raise RuntimeError("require_current_weather must be an explicit boolean.")
+    core_tables = _project_core_source_tables(spark, equipment_table)
+    if spark.conf.get("spark.sql.session.timeZone") not in ("UTC", "Etc/UTC"):
+        raise RuntimeError("Relationship-source validation requires a UTC Spark session.")
+    now = datetime.now(timezone.utc)
+    cap = 100000
+    counts = {}
+
+    def lake(table, mandatory=True):
+        try:
+            frame = spark.table(table)
+            rows = [row.asDict(recursive=True) for row in frame.limit(cap + 1).collect()]
+        except Exception as exc:
+            raise RuntimeError(f"Cannot read required relationship source {table}.") from exc
+        if len(rows) > cap:
+            raise RuntimeError(f"Relationship source {table} exceeds bounded validation limit {cap}.")
+        if mandatory and not rows:
+            raise RuntimeError(f"Empty mandatory relationship source {table}.")
+        counts[table] = len(rows)
+        return rows
+
+    def key(row, column, label):
+        value = row.get(column)
+        if value is not None and value.__class__.__name__ == "UUID":
+            value = str(value)
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise RuntimeError(f"Malformed relationship key {label}.{column}.")
+        return value
+
+    def index(rows, columns, label):
+        result = {}
+        for row in rows:
+            identity = tuple(key(row, column, label) for column in columns)
+            if identity in result:
+                raise RuntimeError(f"Nonunique relationship key in {label}.")
+            result[identity] = row
+        return result
+
+    def reference(row, column, target, label, nullable=False):
+        if nullable and row.get(column) is None:
+            return None
+        identity = key(row, column, label)
+        found = target.get((identity,))
+        if found is None:
+            raise RuntimeError(f"Orphan relationship {label}.{column}.")
+        return found
+
+    def timestamp(row, column, label):
+        value = row.get(column)
+        try:
+            if isinstance(value, str):
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if value.tzinfo is None:
+                    raise ValueError("Text timestamp must carry UTC")
+            elif isinstance(value, datetime) and value.tzinfo is None:
+                # Spark TimestampType values are naive under the verified UTC session.
+                value = value.replace(tzinfo=timezone.utc)
+            if not isinstance(value, datetime) or value.utcoffset() != timedelta(0):
+                raise ValueError("Expected UTC")
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(f"Malformed UTC timestamp {label}.{column}.") from exc
+        return value
+
+    facilities = index(lake(core_tables["facilities"]), ("facility_id",), "facilities")
+    systems = index(lake(core_tables["systems"]), ("system_id",), "systems")
+    equipment = index(lake(core_tables["equipment"]), ("equipment_id",), "equipment")
+    instruments = index(lake(core_tables["instruments"]), ("instrument_id",), "instruments")
+    signals = index(lake(core_tables["signal_master"]), ("opcua_node_id",), "signals")
+    types = index(lake("ontology_equipment_types"), ("equipment_type_code",), "EquipmentType")
+    eligible = set()
+    for row in systems.values():
+        reference(row, "facility_id", facilities, "systems")
+    for row in equipment.values():
+        facility = key(row, "facility_id", "equipment")
+        reference(row, "facility_id", facilities, "equipment")
+        system = reference(row, "system_id", systems, "equipment")
+        if system["facility_id"] != facility:
+            raise RuntimeError("Conflicting equipment system/facility relationship.")
+        equipment_type = reference(row, "equipment_type_code", types, "equipment")
+        if key(row, "equipment_type_name", "equipment") != key(
+                equipment_type, "equipment_type_name", "EquipmentType"):
+            raise RuntimeError("Conflicting authoritative equipment type name.")
+        if "is_active" in row:
+            if row["is_active"] is not None and type(row["is_active"]) is not bool:
+                raise RuntimeError("Malformed equipment active status.")
+            active = row["is_active"] is True
+        elif "status" in row and (row["status"] is None or isinstance(row["status"], str)):
+            active = row["status"] is not None and row["status"].upper() == "ACTIVE"
+        else:
+            raise RuntimeError("Equipment lacks authoritative active status for weather eligibility.")
+        if active:
+            eligible.add(facility)
+    if require_current_weather and not eligible:
+        raise RuntimeError("No eligible active-equipment facilities for initial weather coverage.")
+    for row in instruments.values():
+        reference(row, "equipment_id", equipment, "instruments")
+    for row in signals.values():
+        instrument = reference(row, "instrument_id", instruments, "signals")
+        reference(row, "equipment_id", equipment, "signals")
+        if row["equipment_id"] != instrument["equipment_id"]:
+            raise RuntimeError("Conflicting signal instrument/equipment relationship.")
+
+    cursor = sql_connection.cursor()
+    try:
+        for entity, table in SQL_PROJECT_ENTITIES.items():
+            columns = ["id", "equipmentType"] if entity == "SparePart" else ["id", "equipmentId"]
+            columns += [name for name in ("instrumentId", "opcuaNodeId") if name in OPERATIONAL_COLUMNS[table]]
+            try:
+                cursor.execute(f"SELECT TOP ({cap + 1}) " + ", ".join(f"[{c}]" for c in columns)
+                               + f" FROM dbo.[{table}]")
+                rows = []
+                while len(rows) <= cap:
+                    batch = cursor.fetchmany(min(1000, cap + 1 - len(rows)))
+                    if not batch:
+                        break
+                    rows.extend(dict(zip(columns, values)) for values in batch)
+            except Exception as exc:
+                raise RuntimeError(f"Cannot read required SQL relationship source {table}.") from exc
+            if len(rows) > cap:
+                raise RuntimeError(f"Relationship source {table} exceeds bounded validation limit {cap}.")
+            if not rows:
+                raise RuntimeError(f"Empty mandatory SQL relationship source {table}.")
+            counts[table] = len(rows)
+            index(rows, ("id",), table)
+            for row in rows:
+                if entity == "SparePart":
+                    reference(row, "equipmentType", types, table)
+                    continue
+                reference(row, "equipmentId", equipment, table)
+                instrument = reference(row, "instrumentId", instruments, table, True)
+                signal = reference(row, "opcuaNodeId", signals, table, True)
+                if instrument and instrument["equipment_id"] != row["equipmentId"]:
+                    raise RuntimeError(f"Conflicting optional instrument/equipment relationship in {table}.")
+                if signal and (signal["equipment_id"] != row["equipmentId"]
+                               or instrument and signal["instrument_id"] != row["instrumentId"]):
+                    raise RuntimeError(f"Conflicting optional signal/equipment relationship in {table}.")
+    finally:
+        cursor.close()
+
+    sources = index(lake("weather_sources"), ("source_id",), "WeatherSource")
+    locations = index(lake("weather_locations"), ("location_id",), "WeatherLocation")
+    areas = index(lake("weather_areas"), ("area_id",), "WeatherArea")
+    for row in locations.values():
+        reference(row, "location_id", facilities, "WeatherLocation")
+    for row in areas.values():
+        reference(row, "location_id", locations, "WeatherArea")
+        try:
+            metadata = json.loads(row.get("metadata_json", ""))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("WeatherArea lacks authoritative metadata location identity.") from exc
+        if not isinstance(metadata, dict) or metadata.get("location_id") != row["location_id"]:
+            raise RuntimeError("Conflicting WeatherArea projected location identity.")
+    if require_current_weather and not eligible.issubset({identity[0] for identity in locations}):
+        raise RuntimeError("Missing initial weather LOCATION coverage for eligible facilities.")
+    if require_current_weather and (
+            ("ukmet",) not in sources or sources[("ukmet",)].get("active") is not True):
+        raise RuntimeError("Missing active registered UKMet source.")
+
+    variables = ("precipitation", "temperature", "pressure", "relative_humidity", "dew_point",
+                 "solar_radiation", "wind_speed", "wind_gust", "wind_direction")
+
+    def usable(row):
+        return any(isinstance(row.get(column), (int, float)) and not isinstance(row[column], bool)
+                   and math.isfinite(row[column]) for column in variables)
+
+    forecast_coverage = set()
+    forecast_rows = lake("weather_latest_forecasts", mandatory=require_current_weather)
+    forecast_keys = set()
+    stale_forecasts = 0
+    latest_issue = None
+    for row in forecast_rows:
+        reference(row, "source_id", sources, "WeatherLatestForecast")
+        kind = key(row, "target_kind", "WeatherLatestForecast")
+        target = key(row, "target_id", "WeatherLatestForecast")
+        if kind not in ("location", "area"):
+            raise RuntimeError("Unsupported weather forecast target_kind.")
+        expected_location = target if kind == "location" else None
+        expected_area = target if kind == "area" else None
+        if row.get("location_id") != expected_location or row.get("area_id") != expected_area:
+            raise RuntimeError("Conflicting weather forecast cross-kind projected keys.")
+        reference(row, "location_id" if kind == "location" else "area_id",
+                  locations if kind == "location" else areas, "WeatherLatestForecast")
+        issue = timestamp(row, "reference_time_utc", "WeatherLatestForecast")
+        valid = timestamp(row, "valid_time_utc", "WeatherLatestForecast")
+        if (issue > now + timedelta(minutes=5) or valid < issue
+                or row["source_id"] == "ukmet" and valid > issue + timedelta(days=14)):
+            raise RuntimeError("Invalid weather forecast issue/valid-time bounds.")
+        identity = (row["source_id"], kind, target, issue, valid)
+        if identity in forecast_keys:
+            raise RuntimeError("Nonunique weather forecast natural key.")
+        forecast_keys.add(identity)
+        key(row, "ontology_key", "WeatherLatestForecast")
+        current = (now - timedelta(hours=13) <= issue
+                   and now <= valid <= now + timedelta(hours=12))
+        if not current:
+            stale_forecasts += 1
+        if row["source_id"] == "ukmet":
+            latest_issue = max(latest_issue, issue) if latest_issue else issue
+            if kind == "location" and current and usable(row):
+                forecast_coverage.add(target)
+    if require_current_weather and not eligible.issubset(forecast_coverage):
+        raise RuntimeError("Missing usable current UKMet forecast coverage for eligible facilities.")
+
+    observation_rows = lake("weather_latest_observations", mandatory=False)
+    observation_keys = set()
+    observation_coverage = set()
+    observation_available = set()
+    stale_observations = set()
+    for row in observation_rows:
+        reference(row, "source_id", sources, "WeatherLatestObservation")
+        reference(row, "location_id", locations, "WeatherLatestObservation")
+        observed = timestamp(row, "observed_at_utc", "WeatherLatestObservation")
+        if observed > now + timedelta(minutes=5):
+            raise RuntimeError("Weather observation timestamp is in the future.")
+        identity = (row["source_id"], row["location_id"], observed)
+        if identity in observation_keys:
+            raise RuntimeError("Nonunique weather observation natural key.")
+        observation_keys.add(identity)
+        key(row, "ontology_key", "WeatherLatestObservation")
+        if row["source_id"] == "ukmet":
+            observation_available.add(row["location_id"])
+            if observed >= now - timedelta(hours=24) and usable(row):
+                observation_coverage.add(row["location_id"])
+            elif usable(row):
+                stale_observations.add(row["location_id"])
+    for label, rows in (("forecast", forecast_rows), ("observation", observation_rows)):
+        index(rows, ("ontology_key",), "weather " + label)
+    return {
+        "status": "verified" if require_current_weather else "integrity_verified_weather_not_attested",
+        "scope": ("source_keys_and_initial_weather_only" if require_current_weather
+                  else "source_keys_only_weather_not_attested"),
+        "weather_coverage_status": "verified" if require_current_weather else "not_attested",
+        "weather_freshness_status": "verified" if require_current_weather else "not_attested",
+        "weather_readiness_attested": require_current_weather,
+        "checked_at_utc": now.isoformat(), "row_limit_per_source": cap, "source_row_counts": counts,
+        "core_source_tables": core_tables,
+        "eligible_facility_count": len(eligible),
+        "ukmet_forecast_covered_facility_count": len(eligible & forecast_coverage),
+        "ukmet_latest_issue_utc": latest_issue.isoformat() if latest_issue else None,
+        "forecast_max_issue_age_hours": 13, "observation_max_age_hours": 24,
+        "forecast_coverage_horizon_hours": 12,
+        "ukmet_observation_covered_facility_count": len(eligible & observation_coverage),
+        "ukmet_observation_available_facility_count": len(eligible & observation_available),
+        "ukmet_observation_gap_facility_count": len(eligible - observation_coverage),
+        "ukmet_stale_observation_facility_count": len((eligible & stale_observations) - observation_coverage),
+        "noncurrent_forecast_row_count": stale_forecasts,
+        "observations_required": False,
+    }
 
 
 def curate_project_catalog_entities(parts):

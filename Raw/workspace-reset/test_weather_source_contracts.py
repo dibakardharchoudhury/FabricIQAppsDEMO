@@ -307,7 +307,7 @@ class WeatherSourceContractTests(unittest.TestCase):
     def test_raw_setup_binds_weather_020_environment_twice(self):
         notebook = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
         source = "\n".join("\n".join(cell.get("source", [])) for cell in notebook["cells"])
-        expected = '{"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"}'
+        expected = '{"RTI_Orchestrator_Setup", "Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"}'
         self.assertEqual(source.count(expected), 2)
 
     def test_weather_query_contract_pages_the_verified_connector_without_legacy_api(self):

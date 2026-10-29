@@ -49,8 +49,14 @@ Two ways to run everything:
 
 Both NB01 Lakehouse setup variants provision `RTI_Demo_SQLDatabase_<env_suffix>` as an
 independent Fabric SQLDatabase in `RTI_DEMO_<env_suffix>`, alongside the Lakehouse
-and Eventhouse. Stage 2 automatically runs NB11 after both agents and Weather_001
-to insert missing demo rows and publish the SQL Data Agent source. Neither creation
+and Eventhouse. Stage 2 runs the standard initial UKMet refresh, then NB11's mandatory
+`model` phase after core bindings. It inserts only missing demo rows, verifies actual SQL
+asset/signal/instrument keys and weather coverage, and builds/reads back the complete
+16-type/21-relationship baseline before either agent can publish. Compatible custom content
+is preserved. Both agents require a successful selected-model receipt and recheck the live
+complete definition. NB11's subsequent mandatory `agent` phase only verifies the same model
+and publishes the SQL execution adapter after NB09; it never reseeds or rewrites the ontology.
+Standalone app/deployer calls retain `setup_phase="all"`. Neither creation
 nor seeding depends on an app-owned database. Existing marked `HydroOperationalStore`
 items are moved without changing identity; child SQL endpoints move with them.
 Fabric SQLDatabase names cannot be changed (`SQLDatabaseDisplayNameCannotBeChanged`).
@@ -599,11 +605,15 @@ same Key Vault passed to `Pipe_Setup`. The provisioner prints these names but in
 requests, reads, or stores their values.
 
 Provisioning also creates `03_Pipe_Weather` with its UTC schedule disabled. Stage 2 enables the
-six-hour schedule only after every setup activity, including Weather schema initialization,
-succeeds and `enable_weather_schedule` is true (the default). Set it to false for a
-feature workspace without provider credentials; the Git-free bootstrap does this
-automatically. The schedule aligns to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
-Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage rebuilds area metrics
+six-hour schedule only after every setup activity, including initial UKMet ingestion, current
+eligible-facility coverage and full ontology validation, succeeds and `enable_weather_schedule`
+is true (the default). Setting it false disables future scheduling, not the required initial
+UKMet bootstrap; feature workspaces also need valid UKMet credentials. Aurora remains optional.
+The Stage 2 root notebook inherits the published Weather Environment so nested weather stages
+use the same compatible Spark session and default Lakehouse. The schedule aligns to the
+00/06/12/18 UTC model runs both vendors derive from. Each run executes area preparation,
+UKMet and `Weather_020_area_calculations`, then optional Aurora and another serving refresh.
+The serving stage rebuilds area metrics
 separately for every vendor and forecast type, enforces retention, and refreshes the wide serving
 tables the app reads. Downstream activities depend on `Succeeded`, so a failed ingestion stops the
 pipeline before later ingestion or aggregation can publish incomplete results. Rerunning the provisioner reuses a matching schedule or repairs the existing

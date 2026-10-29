@@ -977,12 +977,329 @@ def agent_capability_policy(generation: int) -> dict:
     return {"status": "allowed", "reason": ""}
 
 
+# BEGIN PROJECT ONTOLOGY CONTRACT
+def ontology_context_elements(parts):
+    """Derive context only from actual entity declarations in the selected ontology."""
+    elements = []
+    seen = set()
+    for part in parts:
+        if not part["path"].startswith("entities/") or not part["path"].endswith(".tmdl"):
+            continue
+        text = base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+        matches = list(re.finditer(
+            r"(?m)^entity (?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z_0-9]*))[ \t]*$", text))
+        if len(matches) != 1:
+            raise RuntimeError(f"Expected one live entity in {part['path']!r}.")
+        match = matches[0]
+        name = (match[1] or match[2]).replace("''", "'")
+        if name in seen:
+            raise RuntimeError(f"Duplicate live ontology entity {name!r}.")
+        seen.add(name)
+        lines = text[:match.start()].splitlines()
+        description = []
+        while lines and lines[-1].startswith("///"):
+            description.append(lines.pop()[3:].strip())
+        elements.append({
+            "id": name, "is_selected": True, "display_name": name,
+            "type": "ontology.entity", "description": " ".join(reversed(description)) or None,
+            "children": [],
+        })
+    if not elements:
+        raise RuntimeError("The live ontology definition contains no entity metadata; refusing stale context.")
+    return elements
+
+def ontology_source_bindings(parts, workspace_id):
+    """Resolve physical tables only through source identities retained by the Fabric editor."""
+    texts = {part["path"]: base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+             for part in parts}
+    if len(texts) != len(parts):
+        raise RuntimeError("Duplicate Ontology definition paths.")
+    unquote = lambda value: value.strip().strip("'").replace("''", "'")
+    expressions = {}
+    for match in re.finditer(r"(?ms)^expression (.+?) =\n.*?(?=^expression |\Z)", texts.get("expressions.tmdl", "")):
+        name = unquote(match[1])
+        if name in expressions:
+            raise RuntimeError("Duplicate Ontology source expression.")
+        expressions[name] = match[0]
+    bindings = {}
+    for path, entity in texts.items():
+        if not path.startswith("entities/") or not path.endswith(".tmdl"):
+            continue
+        names = re.findall(r"(?m)^entity (.+?)[ \t]*$", entity)
+        if len(names) != 1:
+            raise RuntimeError(f"Ambiguous Ontology entity: {path}.")
+        entity_name = unquote(names[0])
+        tables = re.findall(r"(?m)^\tbackingTable:\s*(.+?)[ \t]*$", entity)
+        tables += re.findall(r"(?m)^\tadditionalBackingTable\n\t\ttable:\s*(.+?)[ \t]*$", entity)
+        for alias in tables:
+            table = texts.get(f"tables/{unquote(alias)}.tmdl", "")
+            sources = re.findall(r"(?m)^\s+expressionSource:\s*(.+?)[ \t]*$", table)
+            if len(sources) > 1:
+                raise RuntimeError("Ambiguous Ontology table source.")
+            metadata = expressions.get(unquote(sources[0]), "") if sources else table
+            identity = {}
+            for key in ("WorkspaceId", "ItemId", "ItemKind"):
+                values = re.findall(r"(?m)^\s+annotation ONT_" + key + r" = (.+?)[ \t]*$", metadata)
+                if len(values) > 1:
+                    raise RuntimeError("Ambiguous Ontology source identity.")
+                identity[key] = values[0] if values else None
+            if identity["WorkspaceId"] != workspace_id or not identity["ItemId"]:
+                continue
+            kind, item_id = identity["ItemKind"], identity["ItemId"]
+            if kind in ("Lakehouse", "SQLDatabase"):
+                expected = f"https://onelake.dfs.fabric.microsoft.com/{workspace_id}/{item_id}"
+                urls = re.findall(r'AzureStorage\.DataLake\(\s*"([^"]+)"', metadata)
+                physical = re.findall(r"(?m)^\s+entityName:\s*(.+?)[ \t]*$", table)
+                if urls != [expected] or len(physical) != 1:
+                    raise RuntimeError("Ontology source identity does not match its physical binding.")
+                physical_name = unquote(physical[0])
+            elif kind == "KQLDatabase":
+                queries = re.findall(r'AzureDataExplorer\.Contents\(\s*"(https://[^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)', table)
+                names = re.findall(r"(?m)^\s+annotation ONT_ItemName = (.+?)[ \t]*$", metadata)
+                if len(queries) != 1 or names != [queries[0][1]]:
+                    raise RuntimeError("Ontology Eventhouse source has no unambiguous physical table.")
+                physical_name = queries[0][2]
+            else:
+                continue
+            bindings.setdefault((kind, item_id), {}).setdefault(physical_name, set()).add(entity_name)
+    return bindings
+
+OPERATIONAL_COLUMNS = {
+    "WorkOrders": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "workOrderNumber": "nvarchar(max) NOT NULL", "equipmentId": "nvarchar(max) NOT NULL",
+        "instrumentId": "nvarchar(max) NULL", "opcuaNodeId": "nvarchar(max) NULL",
+        "title": "nvarchar(max) NOT NULL", "description": "nvarchar(max) NULL",
+        "priority": "nvarchar(max) NOT NULL", "status": "nvarchar(max) NOT NULL",
+        "assignedToOid": "nvarchar(max) NULL", "createdByOid": "nvarchar(max) NOT NULL",
+        "createdAt": "datetime2 NOT NULL", "dueAt": "datetime2 NULL", "completedAt": "datetime2 NULL",
+    },
+    "MaintenanceNotifications": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "equipmentId": "nvarchar(max) NOT NULL", "opcuaNodeId": "nvarchar(max) NULL",
+        "summary": "nvarchar(max) NOT NULL", "severity": "nvarchar(max) NOT NULL",
+        "status": "nvarchar(max) NOT NULL", "reportedByOid": "nvarchar(max) NOT NULL",
+        "reportedAt": "datetime2 NOT NULL",
+    },
+    "Asset3DModels": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "equipmentId": "nvarchar(max) NOT NULL", "modelName": "nvarchar(max) NOT NULL",
+        "format": "nvarchar(max) NOT NULL", "modelUrl": "nvarchar(max) NOT NULL",
+        "thumbnailUrl": "nvarchar(max) NULL", "fileSizeMb": "decimal(38,10) NULL",
+        "version": "nvarchar(max) NULL", "updatedByOid": "nvarchar(max) NOT NULL",
+        "updatedAt": "datetime2 NOT NULL",
+    },
+    "Inspections": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "equipmentId": "nvarchar(max) NOT NULL", "opcuaNodeId": "nvarchar(max) NULL",
+        "inspectionType": "nvarchar(max) NOT NULL", "result": "nvarchar(max) NOT NULL",
+        "findings": "nvarchar(max) NULL", "inspectorOid": "nvarchar(max) NOT NULL",
+        "inspectedAt": "datetime2 NOT NULL", "nextDueAt": "datetime2 NULL",
+    },
+    "SpareParts": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "partNumber": "nvarchar(255) NOT NULL UNIQUE", "name": "nvarchar(max) NOT NULL",
+        "category": "nvarchar(max) NOT NULL", "equipmentType": "nvarchar(max) NOT NULL",
+        "quantityOnHand": "int NOT NULL", "reorderLevel": "int NOT NULL",
+        "storageLocation": "nvarchar(max) NOT NULL", "unitCostUsd": "decimal(38,10) NULL",
+        "lastRestockedAt": "datetime2 NULL",
+    },
+}
+
+WEATHER_PROJECT_ENTITIES = {
+    "WeatherSource": ("weather_sources", ("source_id",)),
+    "WeatherLocation": ("weather_locations", ("location_id",)),
+    "WeatherArea": ("weather_areas", ("area_id",)),
+    "WeatherLatestObservation": ("weather_latest_observations", ("source_id", "location_id", "observed_at_utc")),
+    "WeatherLatestForecast": ("weather_latest_forecasts",
+                              ("source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc")),
+    "EquipmentType": ("ontology_equipment_types", ("equipment_type_code",)),
+}
+
+SQL_PROJECT_ENTITIES = {
+    "WorkOrder": "WorkOrders", "Inspection": "Inspections", "SparePart": "SpareParts",
+    "Asset3DModel": "Asset3DModels", "MaintenanceNotification": "MaintenanceNotifications",
+}
+
+PROJECT_CORE_ENTITIES = {
+    "facilities": ("silver_facilities", "facility_id"),
+    "systems": ("silver_systems", "system_id"),
+    "equipment": ("silver_equipment", "equipment_id"),
+    "instruments": ("silver_instruments", "instrument_id"),
+    "signal_master": ("silver_signal_master", "opcua_node_id"),
+}
+
+PROJECT_REQUIRED_EDGES = (
+    ("systems", "facilities", "facility_id", "facility_id"),
+    ("equipment", "systems", "system_id", "system_id"),
+    ("instruments", "equipment", "equipment_id", "equipment_id"),
+    ("signal_master", "instruments", "instrument_id", "instrument_id"),
+    *((name, "equipment", "equipmentId", "equipment_id") for name in
+      ("WorkOrder", "Inspection", "Asset3DModel", "MaintenanceNotification")),
+    ("WorkOrder", "instruments", "instrumentId", "instrument_id"),
+    *((name, "signal_master", "opcuaNodeId", "opcua_node_id") for name in
+      ("WorkOrder", "Inspection", "MaintenanceNotification")),
+    ("WeatherLatestObservation", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestObservation", "WeatherSource", "source_id", "source_id"),
+    ("WeatherLatestForecast", "WeatherSource", "source_id", "source_id"),
+    ("WeatherLocation", "facilities", "location_id", "facility_id"),
+    ("WeatherArea", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestForecast", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestForecast", "WeatherArea", "area_id", "area_id"),
+    ("equipment", "EquipmentType", "equipment_type_code", "equipment_type_code"),
+    ("SparePart", "EquipmentType", "equipmentType", "equipment_type_code"),
+)
+
+def _project_contract_objects(text, kind):
+    """Read TMDL objects without consuming same-indent siblings or custom parts."""
+    result = {}
+    lines = text.replace("\r\n", "\n").splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"([ \t]*)" + re.escape(kind) + r" (.+?)\s*", line)
+        if not match:
+            continue
+        name = match[2].strip().strip("'").replace("''", "'")
+        if name in result:
+            raise RuntimeError(f"Duplicate project {kind}: {name}.")
+        depth = len(match[1].expandtabs(4))
+        end = index + 1
+        while end < len(lines):
+            candidate = lines[end]
+            if candidate.strip() and not candidate.lstrip().startswith("//"):
+                prefix = candidate[:len(candidate) - len(candidate.lstrip())]
+                if len(prefix.expandtabs(4)) <= depth:
+                    break
+            end += 1
+        result[name] = "\n".join(lines[index:end])
+    return result
+
+def _project_contract_setting(text, key):
+    values = re.findall(r"(?m)^[ \t]+" + re.escape(key) + r":[ \t]*(.+?)[ \t]*$", text)
+    if len(values) != 1:
+        raise RuntimeError(f"Project contract requires one {key} binding.")
+    return values[0].strip("'").replace("''", "'")
+
+def verify_project_ontology_contract(parts, workspace_id, lakehouse_id, sql_db_item_id):
+    """Pure definition readback gate; live numeric generation must be checked by the caller."""
+    if not all(isinstance(value, str) and value.strip()
+               for value in (workspace_id, lakehouse_id, sql_db_item_id)) or lakehouse_id == sql_db_item_id:
+        raise RuntimeError("Project contract requires authoritative distinct source identities.")
+    texts = {p["path"]: base64.b64decode(p["payload"], validate=True).decode("utf-8") for p in parts}
+    if len(texts) != len(parts):
+        raise RuntimeError("Duplicate project definition paths.")
+    if not {"database.tmdl", "model.tmdl", "namespaces/default.tmdl"}.issubset(texts):
+        raise RuntimeError("Project contract requires complete v2 TMDL root parts.")
+    entities = {e["display_name"] for e in ontology_context_elements(parts)}
+    ontology_source_bindings(parts, workspace_id)
+    required = {name: (physical, (key,), "Lakehouse", lakehouse_id)
+                for name, (physical, key) in PROJECT_CORE_ENTITIES.items()}
+    required.update({name: (physical, keys, "Lakehouse", lakehouse_id)
+                     for name, (physical, keys) in WEATHER_PROJECT_ENTITIES.items()})
+    required.update({name: (physical, ("id",), "SQLDatabase", sql_db_item_id)
+                     for name, physical in SQL_PROJECT_ENTITIES.items()})
+    if not set(required).issubset(entities):
+        raise RuntimeError("Missing required project entities: " + ", ".join(sorted(set(required) - entities)))
+    aliases = {}
+    properties = {}
+    core_source_tables = {}
+    for name, (physical, keys, kind, item) in required.items():
+        entity = texts.get(f"entities/{name}.tmdl", "")
+        alias = _project_contract_setting(entity, "backingTable")
+        aliases[name] = alias
+        table = texts.get(f"tables/{alias}.tmdl", "")
+        actual_physical = _project_contract_setting(table, "entityName")
+        if name in PROJECT_CORE_ENTITIES:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", actual_physical):
+                raise RuntimeError(f"Invalid core source table identity for {name}.")
+            physical = actual_physical
+            core_source_tables[name] = physical
+        elif actual_physical != physical:
+            raise RuntimeError(f"Incorrect backing table for {name}.")
+        primary_parts = [
+            {"path": "expressions.tmdl", "payload": base64.b64encode(
+                texts.get("expressions.tmdl", "").encode()).decode()},
+            {"path": f"entities/{name}.tmdl", "payload": base64.b64encode(
+                f"entity {name}\n\tbackingTable: {alias}\n".encode()).decode()},
+            {"path": f"tables/{alias}.tmdl", "payload": base64.b64encode(table.encode()).decode()},
+        ]
+        primary_bindings = ontology_source_bindings(primary_parts, workspace_id)
+        if name not in primary_bindings.get((kind, item), {}).get(physical, set()):
+            raise RuntimeError(f"Unverified authoritative source binding for {name}.")
+        properties[name] = _project_contract_objects(entity, "property")
+        columns = _project_contract_objects(table, "column")
+        needed = set(keys)
+        if len(keys) > 1:
+            needed.add("ontology_key")
+        if name in SQL_PROJECT_ENTITIES:
+            needed.update(OPERATIONAL_COLUMNS[physical])
+        for source, target, source_key, target_key in PROJECT_REQUIRED_EDGES:
+            if name == source:
+                needed.add(source_key)
+            if name == target:
+                needed.add(target_key)
+        expected_key = "ontology_key" if len(keys) > 1 else keys[0]
+        if _project_contract_setting(entity, "keyProperty") != expected_key:
+            raise RuntimeError(f"Incorrect project key for {name}.")
+        for prop in needed:
+            if prop not in properties[name] or prop not in columns:
+                raise RuntimeError(f"Missing required property/column {name}.{prop}.")
+            if (_project_contract_setting(properties[name][prop], "valueColumn") != f"{alias}.{prop}"
+                    or _project_contract_setting(columns[prop], "sourceColumn") != prop):
+                raise RuntimeError(f"Incorrect backing property binding for {name}.{prop}.")
+        for ref_kind, ref_name in (("entity", name), ("table", alias)):
+            if not re.search(r"(?m)^ref " + ref_kind + r" (?:'?" + re.escape(ref_name) + r"'?)[ \t]*$",
+                             texts["model.tmdl"]):
+                raise RuntimeError(f"Missing project model reference for {ref_name}.")
+    physical_edges = _project_contract_objects(texts.get("relationships.tmdl", ""), "relationship")
+    semantic_edges = _project_contract_objects(texts.get("entityRelationships.tmdl", ""), "entityRelationship")
+    found = set()
+    for block in semantic_edges.values():
+        source = _project_contract_setting(block, "fromEntity")
+        target = _project_contract_setting(block, "toEntity")
+        if (source, target) not in {(s, t) for s, t, _, _ in PROJECT_REQUIRED_EDGES}:
+            continue
+        physical_name = _project_contract_setting(block, "relationship")
+        backing = physical_edges.get(physical_name)
+        if backing is None:
+            raise RuntimeError(f"Dangling required relationship {source} -> {target}.")
+        from_column = _project_contract_setting(backing, "fromColumn")
+        to_column = _project_contract_setting(backing, "toColumn")
+        for edge in PROJECT_REQUIRED_EDGES:
+            s, t, sk, tk = edge
+            if (source, target) == (s, t) and (
+                    from_column, to_column) == (f"{aliases[s]}.{sk}", f"{aliases[t]}.{tk}"):
+                found.add(edge)
+    missing = set(PROJECT_REQUIRED_EDGES) - found
+    if missing:
+        raise RuntimeError("Missing required project relationship bindings: " + repr(sorted(missing)))
+    return {
+        "status": "verified", "workspace_id": workspace_id, "lakehouse_id": lakehouse_id,
+        "sql_db_item_id": sql_db_item_id, "required_entity_count": len(required),
+        "entity_count": len(entities), "required_relationship_count": len(found),
+        "relationship_count": len(semantic_edges), "scope": "definition_readback_only",
+        "core_source_tables": core_source_tables,
+    }
+# END PROJECT ONTOLOGY CONTRACT
+
+
+def require_complete_project_ontology(ontology_id):
+    if (first_setting("project_ontology_status") != "verified"
+            or first_setting("project_ontology_id") != ontology_id):
+        raise RuntimeError("Run complete model preparation successfully before publishing this Operations Agent.")
+    return verify_project_ontology_contract(
+        get_definition_parts(ontology_id, "ontologies"), workspace_id,
+        first_setting("lakehouse_id", required=True), first_setting("operational_sql_db_id", required=True),
+    )
+
+
 def check_agent_capability() -> dict:
     persist_agent_status("checking", "Checking the selected live v2 ontology.")
     try:
         ontology_id = resolve_ontology_id()
         generation = get_ontology_generation(ontology_id)
         policy = agent_capability_policy(generation)
+        if policy["status"] == "allowed":
+            require_complete_project_ontology(ontology_id)
     except Exception as exc:
         persist_agent_status("failed", str(exc))
         raise

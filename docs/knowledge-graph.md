@@ -41,6 +41,18 @@ The managed **WeatherVariable**, **WeatherIngestionRun** and **InstrumentClassif
 catalog/audit/aggregate types were retired from the business ontology; their physical
 source data was not deleted. Original bindings and unknown definition parts were preserved.
 
+Fresh setup now constructs this complete baseline before either agent is published.
+The initial standard UKMet refresh precedes NB11 model preparation. Its gates verify
+authoritative Lakehouse/SQL identities, required backing tables and properties, both
+physical and semantic relationship keys, actual operational foreign-key consistency,
+and current forecast coverage for eligible facilities. Missing observations are disclosed,
+not manufactured. Invalid/orphaned keys and stale/missing required forecasts fail preparation.
+Required declarations are checked individually; compatible custom additions are not capped
+at 16 types or 21 edges. The preparation receipt describes source/model verification,
+not materialization or agent execution. An agent failure no longer prevents adding SQL
+and weather domains to the ontology. Historical live acceptance below is not evidence that
+the new setup sequence has executed in a newly recreated workspace.
+
 Data Agent draft and published ontology context were both refreshed and read back with
 16 types while preserving SQL/custom content. This verifies configuration, not agent
 execution or SQL/combined-source runtime. Native graph materialization remains a separate

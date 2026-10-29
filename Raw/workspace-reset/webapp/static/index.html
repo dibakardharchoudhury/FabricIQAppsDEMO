@@ -386,7 +386,7 @@
           <div id="workflowTestPanel"></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
-          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Core and Weather setup run alongside energy ingestion, then map serving is verified.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Core bindings and initial UKMet ingestion build the complete ontology before either Fabric agent; energy ingestion runs alongside.</span></div></div>
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
@@ -440,7 +440,7 @@
         <span class="ico" style="background:rgba(139,92,246,.16);color:#c4b5fd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg></span>
         <h2>Core setup</h2>
       </div>
-      <p class="hint">Checks Key Vault access, then runs Core/Weather and energy ingestion in parallel branches of one pipeline. Verifies map serving without a second import. Foundry is a separate step.</p>
+      <p class="hint">Requires both UKMet API keys in Key Vault. Core bindings, initial weather ingestion and SQL/weather relationship validation complete the ontology before either Fabric agent is published. Energy ingestion runs in parallel. Foundry follows successful Core setup.</p>
       <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
       <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run core setup</button>
       <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
@@ -730,7 +730,7 @@ const WORKFLOW_PHASE_GROUPS = [
   { key: "sync", title: "GitHub Sync", prefixes: ["Sync \u00b7"], components: ["GitHub sync"] },
   { key: "pipeline", title: "Core Setup: Fabric, Weather and Energy", prefixes: ["Pipeline \u00b7", "Energy \u00b7"], components: ["Setup pipeline", "Energy setup"],
     phaseLabels: {
-      "Pipeline \u00b7 Running": "Running Core/Weather + energy notebooks in parallel",
+      "Pipeline \u00b7 Running": "Building the complete ontology before Fabric agents; energy runs in parallel",
       "Energy \u00b7 Checking prerequisites": "Checking map serving prerequisites",
       "Energy \u00b7 Preparing energy sources": "Publishing map read models",
     } },

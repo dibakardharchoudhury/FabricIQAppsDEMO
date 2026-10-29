@@ -146,6 +146,12 @@ may be clipped visually without being truncated.
 Select **Full Deploy** for a new/prepared-empty workspace. It runs **1. GitHub sync
 → 2. Core setup → 3. Foundry agents → 4. Deploy app**, stops on failure, and streams
 the component's output. Core includes Weather and energy ingestion/read-model checks.
+Core first completes the ontology: core bindings and initial UKMet ingestion precede
+operational SQL seeding, actual source-key/coverage checks, and readback of all required
+business entities and relationships. Only then are the Fabric Data Agent and retained
+Operations Agent published/configured; the Data Agent SQL execution adapter follows.
+Foundry setup therefore receives the complete published Fabric context, not a five-type
+intermediate ontology. No Foundry prompt/model changes are needed for this ordering fix.
 Full Deploy is not a workspace-creation wizard or a safe routine website update:
 Git synchronization can remove generated items. For an existing prepared target,
 use **Deploy app**, or **Set up Foundry agents** followed by **Deploy app** when
@@ -182,6 +188,12 @@ source** line and the local version API identify the actual checkout.
 
 Key Vault URI, both Teams IDs and alert email are required by the local Core/Full
 Deploy form. Unknown destination values stay blank rather than being guessed.
+The same vault must contain `ukmet-global-spot-api-key` and
+`ukmet-land-observations-api-key` for the required initial weather refresh. Aurora is optional.
+Disabling the future Weather schedule does not skip initial ingestion or ontology validation.
+Standalone app/SQL bootstrap does not refresh weather or require current provider forecasts;
+it validates existing keys and explicitly does not certify weather readiness. Ontology SQL
+bindings do not themselves prove executable SQL capability, so retain the SQL execution adapter.
 Expand **Key Vault secret names and notebook settings** only when defaults differ:
 
 | Field | Default | Meaning |

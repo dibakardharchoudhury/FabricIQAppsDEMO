@@ -87,6 +87,16 @@ the published v2 source identity. NB09 records that response as a known product 
 claiming runtime readiness. Successful configuration still does not prove agent execution or alert
 delivery.
 
+Stage 2 completes the business ontology **before either agent is published**:
+core bindings and the initial UKMet refresh precede NB11's `model` phase, which prepares
+operational SQL, inserts only missing demo rows, checks actual cross-source keys/weather
+coverage and verifies all required bindings and relationships by readback. The baseline is
+16 meaningful business types and 21 relationships; compatible custom content is retained.
+NB09 and NB10 each check the successful selected-model receipt and its live definition.
+NB11's later `agent` phase only adds the operational SQL execution adapter; it cannot seed
+or mutate the ontology. Both phases and both agents are mandatory setup activities.
+Failed agent execution therefore cannot leave a newly built ontology limited to five core types.
+
 The separate Eventhouse-Knowledge Operations Agent is retired and is never provisioned.
 After verifying the retained ontology agent, RTI_010 removes only the exact
 `RTI_Demo_OpsAgent_Eventhouse_<suffix>` in the target folder with the matching KQL database
@@ -133,6 +143,11 @@ runtime result. It verifies the SQL source through draft/published readback, pre
 sources and custom settings, and records `data_agent_sql_source_status=published` without
 overwriting NB09's ontology status. Actual SQL-source failures still fail NB11. SQL/custom parts,
 custom instructions, and entity selections also survive runtime-failing NB09 reruns.
+
+An ontology SQL binding describes business semantics and source identity; it is not proof
+that a published Data Agent has an executable SQL tool for those tables. Retain the verified
+SQL execution adapter unless an ontology-only operational SQL execution test establishes
+equivalent capability. This does not create duplicate ontology entities or copy SQL data.
 
 The Operations Agent is configured in a **stopped** state; `configured` does not mean a playbook has
 run. The retained `OperationsAgentV1` business-configuration schema is not ontology generation 1.
@@ -214,8 +229,8 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then performs bounded real MCP facility-record validation; only the exact temporary unsupported-Ontology-v2 product response is non-fatal. | ✅ |
 | **RTI_010_build_operations_agent** | Provisions the ontology-backed Operations Agent, playbook/actions, Teams, and email-alert pipeline against v2; retires the verified obsolete Eventhouse-Knowledge agent/settings without deleting shared dependencies; failures propagate. | ✅ |
-| **RTI_011_seed_sql_wire_graphql_agent** | Configures the Data Agent SQL source without creating a STID API. Deployment bootstraps a missing published SQL source with `seed_demo_data=False`; explicit **Seed & provision** retains the default operational demo MERGE. Lakehouse reads use the app connector. The historical notebook name is retained for pipeline compatibility. | — |
-| **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
+| **RTI_011_seed_sql_wire_graphql_agent** | Builds and verifies the complete SQL/weather business model before agents (`model` phase); publishes the SQL execution adapter afterward (`agent` phase), without a STID API. Standalone app/deployer calls retain `all`; `seed_demo_data=False` preserves operational rows. | — |
+| **RTI_Orchestrator_Setup** | Stage 2 driver: shares the Weather Environment/default Lakehouse, runs core bindings and initial UKMet ingestion, completes the model before both agents, then enables the schedule after all required activities succeed. | Stage 2 |
 
 NB09 and NB10 persist diagnostic agent status in the same `rti_demo_settings` Delta table. Their
 execution order is **NB06 → NB09 → NB10**:
@@ -321,7 +336,7 @@ The following pipeline details are a manual Fabric reference.
    > starting Spark. Blank run-as uses the deploying user. Enter each **full**
    > value (the UI truncates long values visually).
 
-2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning. Use a fresh workspace or unused suffix if the target ontology is v1. Data Agent and Operations Agent provisioning are independent branches after NB06, so one product failure does not prevent the other attempt. All real notebook failures still fail setup; NB09 alone reports the exact documented temporary unsupported-Ontology-v2 response without claiming readiness. Inspect status/reasons and verify execution/delivery separately from configuration.
+2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 attaches it in the published Weather Environment — no manual lakehouse pinning. Use a fresh workspace or unused suffix if the target ontology is v1. Core bindings plus initial UKMet ingestion precede complete model preparation. Both agents independently require that verified complete model; an agent failure cannot block model construction. Real notebook failures still fail setup; NB09 alone reports the exact documented temporary unsupported-Ontology-v2 response without claiming readiness. Inspect status/reasons and verify execution/delivery separately from configuration.
 3. **Run `Pipe_Stream`** whenever you want a burst of live telemetry.
 4. **`03_Pipe_Weather` runs automatically every six hours** (03:20/09:20/15:20/21:20 UTC, aligned to the 00/06/12/18 UTC model runs both vendors derive from). `Weather_Orchestrator` shares one Spark session across area preparation, UKMet ingestion and `Weather_020_area_calculations`, rebuilding vendor- and forecast-type-specific metrics, enforcing retention and refreshing the app's wide serving tables. Aurora is opt-in (`enable_aurora=false` by default) and runs afterward with another metrics refresh. Workspace provisioning creates the schedule; Stage 2 enables it only after successful setup.
 
