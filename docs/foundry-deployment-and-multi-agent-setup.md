@@ -130,7 +130,9 @@ Consequences:
 - **Code changes deploy themselves.** The fingerprint covers the Python service, the Node bridge and the TypeScript
   files copied into the image. A change anywhere there triggers one build and one new Hosted Agent version on the next
   Foundry setup; an unchanged tree requires a single registry lookup. Final app
-  publication never builds or publishes the image.
+  publication never builds or publishes the image. App-only verification treats local
+  fingerprint drift as advisory after live compatibility checks succeed; it reuses the
+  existing runtime, not the newly edited hosted-service code.
 - **Build context is exact and temporary.** The deployer stages only that fingerprinted Dockerfile/COPY manifest
   before invoking ACR, preserving relative paths and verifying its image tag. The CLI never packages the entire
   checkout, dependency trees, generated deployment state or unrelated files. It logs file/byte counts and removes
@@ -438,7 +440,9 @@ facilities gate has been removed. Fabric's interactive agent can query ontology-
 sources even when that intermediate MCP question reports no Lakehouse tool. NB09 now
 verifies publication/readback without querying the agent or creating duplicate execution
 sources to satisfy the smoke. Existing profiles/selections remain preserved and NB11's
-later phase now publishes operational guidance without attaching SQL again. Deployment and
+later phase now reuses or directly mounts the operational SQL Database as a temporary
+workaround for omitted ontology-inherited SQL execution, preserving ontology bindings,
+operator instructions and custom sources. Deployment and
 Foundry verify the published ontology's SQL/weather bindings, not a separate SQL profile.
 The observations below remain specific to earlier sessions.
 
@@ -492,10 +496,12 @@ It does not issue a runtime query or gate setup on a language-model response.
    `data_agent_publication_status=published` and `data_agent_runtime_status=not_checked`.
    Previous runtime evidence is cleared. Actual deployment, publication and readback
    failures still propagate; interactive answers are not a setup requirement.
-3. NB09 preserves compatible SQL/custom sources on rerun. NB11 publishes operational guidance
-   using the ontology-associated SQL Database, without adding a separate source. Existing
-   operator-added SQL profiles remain intact. Its compatibility SQL-source status records
-   `source_mode=ontology_associated` and does not replace NB09's runtime result.
+3. NB09 preserves compatible SQL/custom sources on rerun. NB11 mounts the operational
+   SQL Database item directly, reusing a matching profile. Fabric uses that database's own
+   SQL analytics endpoint, not the Lakehouse endpoint; ontology semantics/bindings and
+   operator content remain intact. Its compatibility SQL-source status records
+   `source_mode=direct_sql_workaround` and does not replace NB09's runtime result.
+   This bypasses inherited-source expansion; it does not repair or certify that path.
 4. With unchanged source identity, existing Foundry connections require no manual rebinding.
    If deploying repository changes or changing target identity, use Section 4 or 5. The app deployer verifies
    publication/identity, **not** NB09's runtime smoke. Then test an explicit Fabric IQ request through Sparky.

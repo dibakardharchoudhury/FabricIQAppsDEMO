@@ -96,8 +96,9 @@ operational SQL, inserts only missing demo rows, checks actual cross-source keys
 coverage and verifies all required bindings and relationships by readback. The baseline is
 16 meaningful business types and 21 relationships; compatible custom content is retained.
 NB09 and NB10 each check the successful selected-model receipt and its live definition.
-NB11's later `agent` phase only updates operational guidance; SQL is an ontology-associated
-source and is not attached again. This phase cannot seed
+NB11's later `agent` phase mounts the same operational SQL Database directly as an execution
+workaround for omitted ontology-inherited SQL, reusing any matching source profile. It preserves
+ontology semantics, operator instructions and custom sources. This phase cannot seed
 or mutate the ontology. Both phases and both agents are mandatory setup activities.
 Failed agent execution therefore cannot leave a newly built ontology limited to five core types.
 
@@ -140,11 +141,14 @@ by deployment. Test questions interactively in Fabric or through Supervisor → 
 no exact facility-row count, JSON answer format or automatic runtime query is a setup prerequisite.
 Publication does not certify agent answers, native graph readiness or execution provenance.
 
-RTI_011 preserves the ontology-associated SQL source instead of attaching the database again.
-It publishes operational query guidance, preserves existing/custom sources and selections,
+RTI_011 preserves the ontology-associated SQL bindings and explicitly mounts the SQL Database
+item (not its SQL analytics endpoint item ID). Fabric queries that database's own SQL analytics
+endpoint through this direct source. This is a temporary execution workaround, not an ontology
+replacement or proof that inherited SQL execution is repaired. It reuses matching profiles,
+publishes operational query guidance, preserves existing/custom sources and selections,
 and verifies guidance/source retention in draft and published readback. The compatibility
 status key remains `data_agent_sql_source_status=published`, with
-`data_agent_sql_source_mode=ontology_associated`; NB09's status is not overwritten.
+`data_agent_sql_source_mode=direct_sql_workaround`; NB09's status is not overwritten.
 Publication/readback failures still fail NB11. Existing operator-added SQL sources are not deleted.
 The app deployer and Foundry validate the published v2 ontology and its operational SQL/weather
 bindings without requiring a separate SQL datasource profile or an automatic agent-answer test.

@@ -292,13 +292,15 @@ Outlook connection, and `Pipe_SendEmailAlert` remain unchanged.
 The ontology agent remains stopped by default, and API/readback failures never cause the notebook to
 silently remove the playbook, Teams delivery, or actions.
 
-NB11 updates a live Data Agent's operational guidance without adding a separate SQL Database
-source. The selected ontology already associates that database. Existing sources, custom
+NB11 mounts the operational SQL Database directly as a temporary execution workaround when
+ontology-inherited SQL is omitted at runtime. It reuses any matching profile and binds the
+SQL Database item, whose own SQL analytics endpoint executes queries. Ontology bindings, existing sources, custom
 settings, instructions and selections are retained, with draft/published readback. Missing
 agents and real SQL/API failures still fail setup; no automatic query is performed.
 Compatibility status keys remain `data_agent_sql_source_status/reason`, with
-`data_agent_sql_source_mode=ontology_associated`, leaving NB09's status untouched.
-The app deployer/Foundry verify ontology SQL/weather bindings, not a duplicate SQL profile.
+`data_agent_sql_source_mode=direct_sql_workaround`, leaving NB09's status untouched.
+The app deployer/Foundry verify ontology SQL/weather bindings; app-only publication neither
+requires this source profile nor mutates it. Publication/readback does not verify query execution.
 
 NB09's general Data Agent policy is bounded to 700 words / 5,500 characters before
 operator or NB11 additions. Ontology v2 supplies semantic context; its associated Lakehouse
@@ -882,6 +884,9 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
    to a supported lower allocation. Existing positive allocations are accepted without automatic resizing.
    The final app module only reads prepared Foundry definitions/runtime identities;
    it does not discover projects, bootstrap SQL, build images or publish agents.
+   Local packaged-code fingerprint drift is advisory after live identity/authentication/runtime
+   compatibility checks succeed. It does not mean Foundry is missing or require another setup
+   run just to publish the app. Hosted-service code changes still require Foundry setup to deploy them.
    For the optional native instance graph only, pass a fallback operator-verified binding through
    `HYDRO_ONTOLOGY_GRAPH_BINDING`; do not hand-edit generated state. See
    [Foundry deployment and multi-agent setup](../../docs/foundry-deployment-and-multi-agent-setup.md).

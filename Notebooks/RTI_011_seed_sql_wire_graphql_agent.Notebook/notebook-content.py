@@ -40,15 +40,16 @@
 #    Insert missing demo rows, validate actual operational/weather keys and current UKMet coverage,
 #    then build/read back all required business types, bindings and relationships before either agent.
 # 2. **Data Agent** (`setup_phase="agent"`) — verifies the same complete live model, then adds the
-#    operational guidance to the ontology-backed agent and
+#    operational SQL Database source and guidance to the ontology-backed agent and
 #    **republishes**, preserving existing sources and custom settings. This step is
 #    independent of NB09 runtime evidence; shared-store preparation failures prevent source switching.
 #    It never seeds, migrates or changes the ontology. Both phases are mandatory in setup; they are
 #    execution stages, not optional-agent modes. Standalone app/deployer calls retain `setup_phase="all"`.
 #
 # Lakehouse asset and weather reads use the app's read-only connector; no STID API is provisioned.
-# SQL seed runs independently of Data Agent availability. SQL is already an ontology-associated
-# source; setup does not attach it again. Guidance/source readback confirms publication,
+# SQL seed runs independently of Data Agent availability. A direct SQL Database source is an
+# execution workaround for omitted ontology-inherited SQL. Reuse its matching source profile;
+# never replace the ontology or duplicate an existing SQL mount. Guidance/source readback confirms publication,
 # not runtime verification. Real failures are surfaced after saving the per-step results.
 # Empty existing agent definitions are never replaced with SQL-only content. Required guidance
 # must fit alongside existing instructions without truncation. Shared settings writes retry
@@ -4124,7 +4125,7 @@ def build_stage_obj(existing: dict) -> dict:
 
 
 def extend_data_agent_sql_source(agent_id: str) -> dict:
-    """Legacy explicit-source utility; setup and deployment use ontology-associated sources."""
+    """Mount operational SQL while retaining ontology semantics and operator-authored content."""
     global sql_db_item_id, sql_server, sql_database, SQL_DATASOURCE_PATH
     definition = get_item_definition(agent_id)
     parts = definition_parts(definition)
@@ -4149,6 +4150,8 @@ def extend_data_agent_sql_source(agent_id: str) -> dict:
     schema_map = fetch_sql_table_schema(sql_server, sql_database, [t for t, _ in SQL_TABLES])
     filled = sum(1 for t, _ in SQL_TABLES if schema_map.get(t))
     print(f"✅ Enumerated columns for {filled}/{len(SQL_TABLES)} operational table(s)")
+    if filled != len(SQL_TABLES):
+        raise RuntimeError("Operational SQL schema is incomplete; Data Agent sources were not changed.")
 
     SQL_DATASOURCE_PATH = operational_source_path(
         parts, workspace_id, sql_db_item_id, SQL_DATASOURCE_PATH)
@@ -4196,8 +4199,7 @@ def extend_data_agent_sql_source(agent_id: str) -> dict:
         for part in parts if part["path"] == DRAFT_STAGE_CONFIG_PATH
         or (part["path"].startswith("Files/Config/draft/")
             and (part["path"].endswith("/ontology.json")
-                 or part["path"].endswith("/datasource.json")
-                 and decode_payload(part["payload"]).get("type") == "ontology"))
+                 or part["path"].endswith("/datasource.json")))
     })
 
     print(f"Applying definition: {len(parts)} part(s)")
@@ -4221,33 +4223,8 @@ def extend_data_agent_sql_source(agent_id: str) -> dict:
 
 
 def configure_operational_agent_guidance(agent_id: str) -> dict:
-    parts = definition_parts(get_item_definition(agent_id))
-    existing_stage = next(
-        (decode_payload(part["payload"]) for part in parts if part["path"] == DRAFT_STAGE_CONFIG_PATH), {})
-    stage = build_stage_obj(existing_stage)
-    if SQL_DS_INSTRUCTIONS not in stage["aiInstructions"]:
-        stage["aiInstructions"] += "\n\n" + SQL_DS_INSTRUCTIONS
-        stage = build_stage_obj(stage)
-    parts = upsert_part(parts, DRAFT_STAGE_CONFIG_PATH, stage)
-    parts = refresh_agent_ontology_sources(parts)
-    retained_sources = {
-        part["path"]: decode_payload(part["payload"])
-        for part in parts if part["path"] == DRAFT_STAGE_CONFIG_PATH
-        or (part["path"].startswith("Files/Config/draft/")
-            and (part["path"].endswith("/ontology.json")
-                 or part["path"].endswith("/datasource.json")
-                 and decode_payload(part["payload"]).get("type") == "ontology"))
-    }
-    update_item_definition(agent_id, {"parts": parts})
-    verify_agent_source_readback(agent_id, retained_sources=retained_sources)
-    enable_preview_runtime(agent_id)
-    publish_data_agent(agent_id, "Ontology-associated operational SQL guidance updated.")
-    verify_agent_source_readback(agent_id, published=True, retained_sources=retained_sources)
-    return {
-        "status": "published", "source_mode": "ontology_associated",
-        "reason": "Operational guidance and retained sources verified in draft/published readback. "
-                  "SQL is supplied by the ontology; no separate SQL source was added. Runtime is not checked.",
-    }
+    result = extend_data_agent_sql_source(agent_id)
+    return {**result, "source_mode": "direct_sql_workaround"}
 
 
 def persist_sql_extension_status(result: dict) -> None:
@@ -4260,7 +4237,7 @@ def persist_sql_extension_status(result: dict) -> None:
     persist_operational_settings(values)
 
 
-print("\n=== STEP B — Ontology-associated operational guidance ===")
+print("\n=== STEP B — Ontology-backed operational SQL execution source ===")
 step_results["data_agent_sql_source"] = {
     "status": "failed", "reason": "Operational guidance step did not complete; inspect the raised exception.",
 }

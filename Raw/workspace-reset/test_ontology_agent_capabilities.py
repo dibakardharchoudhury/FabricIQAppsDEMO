@@ -649,7 +649,8 @@ class DataAgentInstructionTests(unittest.TestCase):
             "connected SQL endpoint", "read-only T-SQL", "not the Lakehouse SQL analytics endpoint",
             "dbo.WorkOrders", "dbo.Inspections", "dbo.SpareParts",
             "dbo.MaintenanceNotifications", "dbo.Asset3DModels",
-            "SQL-only question", "do not require a separate SQL tool",
+            "SQL-only question", "mounted SQL Database source", "own SQL analytics endpoint",
+            "execution workaround", "not a replacement for ontology semantics",
             "SQL zero requires successful execution", "not a missing tool or failed query",
             "never claim no open work", "verified SQL coverage", custom,
         ):
@@ -1693,7 +1694,7 @@ class CapabilityTests(unittest.TestCase):
                        for part in extended["definition"]["parts"]
                        if part["path"].startswith(f"Files/Config/{stage}/")
                        and part["path"].endswith("/datasource.json")]
-            self.assertEqual({source["type"] for source in sources}, {"ontology"})
+            self.assertEqual({source["type"] for source in sources}, {"ontology", "sql_database"})
 
     def test_nb09_rerun_preserves_sql_and_custom_capabilities_without_runtime_gate(self):
         sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
@@ -2127,7 +2128,7 @@ class CapabilityTests(unittest.TestCase):
         ns["publish_data_agent"] = Mock(side_effect=publish)
         return ns, state
 
-    def test_operational_guidance_adds_no_sql_source_and_preserves_existing_sources(self):
+    def test_operational_guidance_mounts_sql_once_and_preserves_operator_sources(self):
         baseline = [
             ontology_part(),
             json_part("Files/Config/draft/operator-sql/datasource.json", {
@@ -2138,17 +2139,31 @@ class CapabilityTests(unittest.TestCase):
         ns, state = self.sql_extension_namespace(baseline)
         for _ in range(2):
             result = ns["configure_operational_agent_guidance"]("agent")
-            self.assertEqual(result["source_mode"], "ontology_associated")
+            self.assertEqual(result["source_mode"], "direct_sql_workaround")
             parts = {part["path"]: part for part in state["definition"]["parts"]}
             for stage in ("draft", "published"):
                 for original in baseline:
                     path = original["path"].replace("/draft/", f"/{stage}/")
                     self.assertEqual(parts[path]["payload"], original["payload"])
-                self.assertNotIn(ns["SQL_DATASOURCE_PATH"].replace("/draft/", f"/{stage}/"), parts)
+                sql_path = ns["SQL_DATASOURCE_PATH"].replace("/draft/", f"/{stage}/")
+                self.assertEqual(ns["decode_payload"](parts[sql_path]["payload"])["artifactId"], "sql-id")
+                self.assertEqual(sum(
+                    ns["decode_payload"](value["payload"]).get("artifactId") == "sql-id"
+                    for path, value in parts.items()
+                    if path.startswith(f"Files/Config/{stage}/") and path.endswith("/datasource.json")
+                ), 1)
                 instructions = ns["decode_payload"](
                     parts[f"Files/Config/{stage}/stage_config.json"]["payload"])["aiInstructions"]
-                self.assertEqual(instructions.count("SQL guidance"), 1)
-            ns["fetch_sql_table_schema"].assert_not_called()
+                self.assertEqual(instructions.count("Operational guidance"), 1)
+            self.assertEqual(ns["fetch_sql_table_schema"].call_count, _ + 1)
+
+    def test_sql_mount_rejects_missing_table_schema_before_mutation(self):
+        ns, _ = self.sql_extension_namespace()
+        ns["fetch_sql_table_schema"].return_value = {}
+        with self.assertRaisesRegex(RuntimeError, "schema is incomplete"):
+            ns["configure_operational_agent_guidance"]("agent")
+        ns["update_item_definition"].assert_not_called()
+        ns["publish_data_agent"].assert_not_called()
 
     def test_operational_guidance_rejects_empty_agent_and_failed_readback(self):
         ns, _ = self.sql_extension_namespace([])
@@ -2170,7 +2185,7 @@ class CapabilityTests(unittest.TestCase):
                 ns["update_item_definition"].side_effect = corrupt
             else:
                 ns["publish_data_agent"].side_effect = corrupt
-            with self.subTest(phase=broken_at), self.assertRaisesRegex(RuntimeError, "readback failed"):
+            with self.subTest(phase=broken_at), self.assertRaisesRegex(RuntimeError, "readback"):
                 ns["configure_operational_agent_guidance"]("agent")
 
     def ontology_duplicate_fixture(self):

@@ -25,9 +25,11 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
   ontology agent, then removes only the exact retired agent after checking folder/source identity
   and clears its obsolete settings. Preserve the shared Eventhouse, SQL/KQL grounding, email
   pipeline, Outlook connection, and Teams destination.
-- RTI_011 publishes operational guidance against the ontology-associated SQL source; do not attach
-  the SQL Database a second time or require a duplicate datasource profile in deployment/Foundry
-  checks. Preserve existing operator-added SQL/custom sources and propagate real publication/readback failures.
+- RTI_011 directly mounts the operational SQL Database as a temporary execution workaround for
+  omitted ontology-inherited SQL. Reuse a matching profile; preserve ontology bindings, operator
+  instructions, selections and custom sources. The artifact ID is the SQL Database item, not its
+  analytics endpoint. App-only deployment/Foundry checks must not require this profile or mutate
+  sources. Propagate real publication/readback failures; publication is not runtime verification.
   The app's single Knowledge Graph reads actual instances from the verified v2 ontology's
   authenticated physical source bindings and evaluates only declared relationships and keys.
   Preserve entity icons, Eventhouse readings, freshness and red/amber health pulses. No materialization,

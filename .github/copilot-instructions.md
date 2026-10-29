@@ -17,8 +17,10 @@ binding. Data Agent sources require matching verified v2 identity. NB09 verifies
 readback without an automatic MCP query or answer-format gate; setup records deployment/publication
 `published` and runtime `not_checked`. Do not add duplicate source attachments to satisfy a smoke
 response. Actual deployment/publication/readback failures propagate. NB11 preserves compatible
-added SQL/custom content and publishes operational guidance without attaching ontology-associated SQL
-again. Deployment/Foundry checks must not require a separate SQL datasource profile. Publication
+added SQL/custom content and directly mounts the operational SQL Database as a temporary workaround
+for omitted ontology-inherited SQL execution. Reuse matching profiles; retain operator instructions
+and ontology bindings. Bind the SQL Database item, not its analytics endpoint ID. App-only
+deployment/Foundry checks must not require or mutate this source profile. Publication
 does not certify SQL/combined-source answers. Configuration or
 hosted-page success does not certify agent execution or delivery. The app's single Knowledge Graph
 reads actual instances through the verified v2 ontology's authenticated physical source bindings
