@@ -462,7 +462,7 @@
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
         <h2>Set up Foundry agents</h2>
       </div>
-      <p class="hint">Run Core setup and materialize the ontology graph first. Creates or reuses the Fabric backend gateway (AppBackend with SQL/GraphQL dependencies) required by the Hosted Agent, then configures the Foundry multi-agent setup. Does not publish the website.</p>
+      <p class="hint">Run Core setup first; native graph materialization is not required. Creates or reuses the Fabric backend gateway (AppBackend with SQL/GraphQL dependencies) required by the Hosted Agent, then configures the Foundry multi-agent setup. Prefers 75,000 TPM for a new model where quota permits; lower allocations remain supported. Does not publish the website.</p>
       <div id="deployFoundryFields"></div>
       <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
       <p class="hint">After Foundry setup succeeds, <strong>Deploy app</strong> publishes the website using the prepared backend. A Fabric App item can already appear during backend setup. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>

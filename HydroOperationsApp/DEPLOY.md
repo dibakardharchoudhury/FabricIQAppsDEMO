@@ -321,8 +321,13 @@ When Fabric returns HTTP 204 for the queryable schema, the graph path stops befo
 the ontology definition or executing queries. Readiness network checks are bounded to ten
 seconds; **Retry graph query** rechecks failed readiness without waiting for a cache expiry.
 
-If setup stops here, materialize the graph, then retry **Foundry agents → Deploy
-app**. Do not reimport Git or rerun Core.
+Foundry setup and app publication do not require graph materialization. The deployer
+resolves `RAYFIN_PUBLIC_ONTOLOGY_ID` from the verified live generation-2 item,
+independently of optional `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`.
+Continue with **Foundry agents → Deploy app** without materializing a graph.
+New model allocations prefer 75,000 TPM within the selected model/SKU's available
+regional quota; smaller positive allocations are accepted with a throttling advisory.
+Existing allocations and explicit capacity overrides are not automatically resized.
 
 The engine resolves authoritative graph lineage. If unavailable, supply verified
 `workspaceId`, `ontologyId`, `graphModelId` JSON in graph overrides. Never infer

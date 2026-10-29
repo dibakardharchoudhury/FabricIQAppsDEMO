@@ -1302,9 +1302,13 @@ def _lineage_graph_binding(
         metadata.get("id") != ontology_id
         or (metadata.get("workspaceId") and str(metadata["workspaceId"]).casefold() != workspace_id.casefold())
         or not isinstance(metadata.get("properties"), dict)
-        or metadata["properties"].get("generation") != 2
+        or type(metadata["properties"].get("generation")) is not int
+        or metadata["properties"]["generation"] != 2
     ):
         raise DeployError("The selected Ontology is not a verified generation-2 item in the target workspace.")
+
+    if not any(item["type"] == "GraphModel" for item in items):
+        return None
 
     lineage = fabric_get(
         f"workspaces/{workspace_id}/items/{quote(ontology_id, safe='')}/relations/downstream?beta=true",
@@ -1440,6 +1444,7 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT": "",
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID": sql_endpoint_id,
         "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
+        "RAYFIN_PUBLIC_ONTOLOGY_ID": "",
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
         "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "",
         "RAYFIN_PUBLIC_GEO_LAKEHOUSE_NAME": "",
@@ -1512,6 +1517,7 @@ def resolve_public_artifact_config(
     )
     if selected_ontology:
         values["RAYFIN_PUBLIC_ONTOLOGY_NAME"] = str(selected_ontology["displayName"])
+        values["RAYFIN_PUBLIC_ONTOLOGY_ID"] = str(selected_ontology["id"])
     if lineage_binding:
         values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = json.dumps(
             lineage_binding, separators=(",", ":")
@@ -1534,6 +1540,7 @@ def resolve_public_artifact_config(
         by_id = {str(item["id"]): item for item in items}
         if (
             not isinstance(binding, dict) or binding.get("workspaceId") != workspace_id
+            or binding.get("ontologyId") != values["RAYFIN_PUBLIC_ONTOLOGY_ID"]
             or by_id.get(str(binding.get("ontologyId")), {}).get("type") != "Ontology"
             or by_id.get(str(binding.get("graphModelId")), {}).get("type") != "GraphModel"
         ):
@@ -2196,8 +2203,8 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
             {"name": "seed_demo_data", "value": False, "type": "Boolean"},
             {"name": "provision_shared_store", "value": True, "type": "Boolean"},
             {"name": "legacy_sql_db_item_id", "value": legacy[0]["id"], "type": "Text"},
-            {"name": "project_ontology_item_id", "value": json.loads(_public_config_value(
-                values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))["ontologyId"], "type": "Text"},
+            {"name": "project_ontology_item_id", "value": _public_config_value(
+                values, "RAYFIN_PUBLIC_ONTOLOGY_ID"), "type": "Text"},
         ]}, timeout=60,
     )
     if response.status_code != 202:
@@ -2248,8 +2255,9 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
         published_sql_source_ready, read_data_agent_definition, verify_published_identity,
     )
 
-    binding = json.loads(_public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
-    ontology_id = binding["ontologyId"]
+    ontology_id = _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_ID")
+    if not GUID_RE.fullmatch(ontology_id):
+        raise DeployError("Data Agent SQL publication requires the verified selected Ontology item ID.")
     ontology = fabric_get(f"workspaces/{workspace_id}/ontologies/{ontology_id}", headers)
     if ontology.get("id") != ontology_id or type(ontology.get("properties", {}).get("generation")) is not int \
             or ontology["properties"]["generation"] != 2:
@@ -2345,12 +2353,10 @@ def verify_lakehouse_connector(tenant: str) -> dict[str, int]:
 
 def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
     values, _ = current_rayfin_target()
-    if not _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"):
+    if not GUID_RE.fullmatch(_public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_ID")):
         raise DeployError(
-            "Native Ontology graph binding is missing. In the selected generation-2 Ontology, use "
-            "Manage graph -> select eligible entities/relationships -> Continue -> Materialize, then "
-            "supply authoritative lineage or operator-verified HYDRO_ONTOLOGY_GRAPH_BINDING JSON. "
-            "Ineligible entities or a zero-node materialization do not satisfy this prerequisite. "
+            "The verified selected Ontology item ID is missing. Resolve the target workspace's "
+            "generation-2 Ontology before Foundry setup; native graph materialization is not required. "
             "Stopped before AppBackend or Foundry provisioning."
         )
     foundry_spec = importlib.util.spec_from_file_location(

@@ -805,12 +805,13 @@ tenant and workspace selected in the sidebar:
    Both forms resolve settings from live model/catalog metadata, never the demo tenant.
    Requires `azd`; missing
    `azure.ai.agents` and `microsoft.foundry` extensions are installed
-   by the deployer. Native graph materialization remains a manual prerequisite; if Full Deploy stops
-   there after setup, complete the ontology's Manage graph flow, resolve the explicit binding and resume
-   **Set up Foundry agents**, followed by **Deploy app**, not another workspace reset.
+   by the deployer. Foundry uses the verified `RAYFIN_PUBLIC_ONTOLOGY_ID` independently of
+   graph binding; native graph materialization does not gate **Set up Foundry agents** or **Deploy app**.
+   New models prefer 75,000 TPM within the selected model/SKU's available regional quota, falling back
+   to a supported lower allocation. Existing positive allocations are accepted without automatic resizing.
    The final app module only reads prepared Foundry definitions/runtime identities;
    it does not discover projects, bootstrap SQL, build images or publish agents.
-   Pass a fallback operator-verified binding through the form or
+   For the optional native instance graph only, pass a fallback operator-verified binding through
    `HYDRO_ONTOLOGY_GRAPH_BINDING`; do not hand-edit generated state. See
    [Foundry deployment and multi-agent setup](../../docs/foundry-deployment-and-multi-agent-setup.md).
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build

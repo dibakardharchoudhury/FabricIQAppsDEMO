@@ -146,9 +146,13 @@ multi-user throughput guarantee.
 
 The existing deployment was separately read back at **75,000 TPM**; this is
 capacity configuration, not a measured latency or concurrent-user guarantee.
-Future orchestration setup requires at least 75,000 TPM, verified from the live
-token renewal window. An undersized or unverifiable allocation stops setup;
-the provisioner does not silently change quota, models or regions.
+Future orchestration setup prefers 75,000 TPM but accepts any verified positive
+allocation with a throttling advisory below that preference. New model creation
+uses model/SKU-specific token units and available regional quota to prefer 75,000
+TPM, or a supported lower allocation. Existing allocations and explicit capacity
+overrides are preserved; unverifiable or zero token limits still stop setup.
+Foundry source identity uses the verified ontology item ID, not native graph
+materialization or an optional graph binding.
 Semantic plans may retrieve the original Fabric answer only once and share that
 receipt with dependent specialists. Duplicate native steps are rejected before
 execution rather than making identical expensive requests.

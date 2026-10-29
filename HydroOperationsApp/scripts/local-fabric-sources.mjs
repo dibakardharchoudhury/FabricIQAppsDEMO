@@ -907,19 +907,19 @@ export async function configuration() {
     return runtimeConfiguration(input)
   }
   const env = parseEnv(await readFile(new URL('../rayfin/.env', import.meta.url), 'utf8'))
-  const binding = JSON.parse(env.RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING)
   const identity = {
     tenant_id: env.RAYFIN_PUBLIC_TENANT_ID,
     workspace_id: env.RAYFIN_PUBLIC_WORKSPACE_ID,
-    ontology_id: binding.ontologyId,
+    ontology_id: env.RAYFIN_PUBLIC_ONTOLOGY_ID,
     eventhouse_id: env.RAYFIN_PUBLIC_EVENTHOUSE_ID,
     database_id: env.RAYFIN_PUBLIC_KQL_DATABASE_ID,
     lakehouse_id: env.RAYFIN_PUBLIC_LAKEHOUSE_ID,
     appbackend_id: env.RAYFIN_PUBLIC_ITEM_ID,
     operational_sql_database_id: env.RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID,
   }
-  if (Object.values(identity).some(value => typeof value !== 'string' || !guid.test(value))
-    || binding.workspaceId !== identity.workspace_id) throw new Error('Explicit source identities are missing or inconsistent.')
+  if (Object.values(identity).some(value => typeof value !== 'string' || !guid.test(value))) {
+    throw new Error('Explicit source identities are missing or inconsistent.')
+  }
   const state = JSON.parse(await readFile(new URL('../rayfin/.deployments.json', import.meta.url), 'utf8'))
   const deployment = state.deployments?.[state.active]
   if (!env.RAYFIN_PUBLIC_API_URL || env.RAYFIN_PUBLIC_API_URL !== deployment?.fabricApiUrl

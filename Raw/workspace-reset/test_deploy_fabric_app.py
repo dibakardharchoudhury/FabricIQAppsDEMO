@@ -189,7 +189,7 @@ class FoundryBackendGatewayTests(unittest.TestCase):
                 self.assertIn("no website published; agent execution is separate", output.getvalue())
 
 
-class FoundryGraphPrerequisiteTests(unittest.TestCase):
+class FoundryOntologyPrerequisiteTests(unittest.TestCase):
     def test_core_energy_finalize_does_not_start_a_second_ingestion(self):
         for publish_only in (True, False):
             with self.subTest(publish_only=publish_only), \
@@ -210,33 +210,30 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
                     energy.return_value.prepare_energy.assert_called_once_with()
                     energy.return_value.publish_energy.assert_not_called()
 
-    def test_missing_graph_binding_stops_before_loading_foundry_provisioning(self):
+    def test_missing_ontology_id_stops_before_loading_foundry_provisioning(self):
         for binding in ("", "''", '""'):
             with (
                 self.subTest(binding=binding),
                 patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                    {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
+                    {"RAYFIN_PUBLIC_ONTOLOGY_ID": binding}, None,
                 )),
                 patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
                 patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
                 patch.object(
                     DEPLOY.importlib.util, "spec_from_file_location",
-                    side_effect=AssertionError("Foundry provisioning must not load without a graph binding."),
+                    side_effect=AssertionError("Foundry provisioning must not load without an ontology ID."),
                 ),
             ):
-                with self.assertRaisesRegex(DEPLOY.DeployError, "Native Ontology graph binding is missing"):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "verified selected Ontology item ID is missing"):
                     DEPLOY.provision_foundry_agents("tenant", "workspace")
                 backend.assert_not_called()
                 sources.assert_not_called()
 
-    def test_existing_binding_continues_to_the_existing_foundry_provisioner(self):
-        binding = json.dumps({
-            "workspaceId": "workspace", "ontologyId": "ontology", "graphModelId": "graph",
-        })
+    def test_ontology_without_graph_continues_to_the_existing_foundry_provisioner(self):
         foundry = Mock()
         with (
             patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
+                {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
             )),
             patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
             patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
@@ -257,7 +254,7 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
         foundry.resolve_project.side_effect = DEPLOY.DeployError("Choose one project")
         with (
             patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": '{"graphModelId":"graph"}'}, None,
+                {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
             )),
             patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
             patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
@@ -290,7 +287,7 @@ class HostedSourceBootstrapTests(unittest.TestCase):
             "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID": self.notebook,
             "RAYFIN_PUBLIC_ITEM_ID": self.backend,
             "RAYFIN_PUBLIC_LAKEHOUSE_ID": "66666666-6666-6666-6666-666666666666",
-            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({"ontologyId": self.ontology}),
+            "RAYFIN_PUBLIC_ONTOLOGY_ID": self.ontology,
         }
         self.active = []
         self.states = ["NotStarted", "InProgress", "Completed"]
@@ -1990,6 +1987,20 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             return DEPLOY.resolve_public_artifact_config(
                 self.workspace, self.tenant, self.config if configured is None else configured
             )
+
+    def test_unmaterialized_ontology_identity_is_verified_without_graph_lineage_requests(self):
+        ontology_id = "99999999-9999-9999-9999-999999999999"
+        self.items.append({"id": ontology_id, "type": "Ontology", "displayName": "Hydro ontology"})
+        self.details[ontology_id] = {
+            "id": ontology_id, "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        result = self.resolve()
+        self.assertEqual(result["RAYFIN_PUBLIC_ONTOLOGY_ID"], ontology_id)
+        self.assertEqual(result["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"], "")
+        for generation in (1, "2", 2.0, None):
+            self.details[ontology_id]["properties"]["generation"] = generation
+            with self.subTest(generation=generation), self.assertRaisesRegex(DEPLOY.DeployError, "generation-2"):
+                self.resolve()
 
     def test_named_shared_store_is_discovered_without_the_legacy_display_name(self):
         from operational_store_support import OPERATIONAL_STORE_DESCRIPTION

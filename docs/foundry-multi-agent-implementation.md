@@ -131,6 +131,8 @@ Focused validation: 184 backend tests completed (one optional live test skipped)
 135 frontend tests passed, TypeScript/scoped ESLint and the production build
 passed. All 47 provisioning tests passed, including rejection below 75,000 TPM
 and acceptance exactly at the floor using both 60- and 120-second windows.
+That historical 75,000-TPM rejection policy is superseded: current setup accepts
+verified positive lower allocations and treats 75,000 TPM as a best-effort preference.
 Three additional real-model planning probes used one planning call each:
 QA + Weather readers (26.202s), RCA alone (10.874s), and native + RCA + Work Order
 (14.070s). Those separate probes performed no business source reads or writes.

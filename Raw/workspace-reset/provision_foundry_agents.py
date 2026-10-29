@@ -19,7 +19,7 @@ from urllib.parse import quote, urlparse
 
 import requests
 
-MINIMUM_ORCHESTRATION_TPM = 75_000
+from deploy_foundry_project import PREFERRED_ORCHESTRATION_TPM
 
 
 def request_with_read_retry(method: str, url: str, **kwargs) -> requests.Response:
@@ -416,8 +416,7 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     if value("RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST") != hosted_module.source_fingerprint(deploy.REPO_ROOT):
         raise deploy.DeployError(f"Foundry setup is missing or its packaged code is stale. {guidance}")
     try:
-        binding = json.loads(value("RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
-        ontology = binding["ontologyId"]
+        ontology = value("RAYFIN_PUBLIC_ONTOLOGY_ID")
         public_values = {key: deploy._public_config_value(values, key) for key in (
             "RAYFIN_PUBLIC_EVENTHOUSE_ID", "RAYFIN_PUBLIC_KQL_DATABASE_ID", "RAYFIN_PUBLIC_LAKEHOUSE_ID",
             "RAYFIN_PUBLIC_ITEM_ID", "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID",
@@ -732,12 +731,12 @@ def read_model_selection(deploy, tenant: str, project_id: str, wanted: str) -> s
                 "Inspect the selected model deployment's quota before setting up orchestration."
             )
         tpm = min(limit["count"] * 60 / limit["renewalPeriod"] for limit in token_limits)
-        if tpm < MINIMUM_ORCHESTRATION_TPM:
-            raise RuntimeError(
-                f"Model '{model}' has {tpm:g} tokens/minute; Hydro orchestration requires at least "
-                f"{MINIMUM_ORCHESTRATION_TPM:,} for its planner, catalog and structured output. "
-                "Increase this deployment's allocation within available regional quota, then retry. "
-                "The catalog minimum/default is not runtime-ready capacity. No model or region was substituted."
+        if tpm < PREFERRED_ORCHESTRATION_TPM:
+            print(
+                f"Foundry: WARNING: model '{model}' has {tpm:g} tokens/minute, below the "
+                f"{PREFERRED_ORCHESTRATION_TPM:,} preference. Continuing with the available allocation; "
+                "planner and concurrent requests may be throttled. No allocation was changed.",
+                flush=True,
             )
         print(f"Foundry: verified model '{model}' allocation: {tpm:g} tokens/minute. "
               "Concurrent requests may need additional quota; runtime execution remains a separate check.", flush=True)
@@ -787,8 +786,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
 
-    binding = json.loads(deploy._public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
-    ontology = binding["ontologyId"]
+    ontology = deploy._public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_ID")
     public_values = {
         key: deploy._public_config_value(values, key)
         for key in (

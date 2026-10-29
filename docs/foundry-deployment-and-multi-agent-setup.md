@@ -23,7 +23,7 @@ do not prove source freshness or connector execution.
 ## Start a deployment
 
 1. Start the local app from the intended pushed checkout.
-2. Complete Core setup and manually materialize its ontology graph.
+2. Complete Core setup, including the verified generation-2 ontology and published Data Agent.
 3. Confirm the subscription; run **Set up Foundry agents**.
 4. Run **Deploy app**; require `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
 
@@ -198,15 +198,22 @@ Consequences:
   deployment names and explicitly approve resource creation. Existing deployment aliases are resolved
   in the selected subscription to their underlying model/version; catalog chat model names also work.
   The live regional catalog supplies a unique default version when no reference version is selected,
-  and minimum allowed or default capacity. Pay-as-you-go SKU preference is Standard, DataZoneStandard,
+  and a best-effort 75,000 TPM allocation using that model/SKU's token units and available regional quota.
+  If 75,000 TPM is unavailable, the largest supported lower allocation is used. Missing catalog token-unit
+  metadata is reported explicitly and retains a supported catalog default; allocation is verified after creation.
+  Existing allocations and explicit capacity overrides are preserved. Pay-as-you-go SKU preference is Standard, DataZoneStandard,
   then GlobalStandard, with global inference disclosed in the form. Provisioned capacity is never
   automatic. Environment overrides remain available; ambiguous identities or missing reliable defaults
   stop before creation. Azure provisioning rejects unavailable models, regions or quota.
 
 **Always required (not created by this deploy)**
 
-- A generation-2 ontology with its graph materialized and `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` resolved
-  ([knowledge-graph.md](knowledge-graph.md)), plus the published Data Agent `RTI_Demo_Agent_*`.
+- A verified generation-2 ontology, resolved as `RAYFIN_PUBLIC_ONTOLOGY_ID`, plus the published
+  Data Agent `RTI_Demo_Agent_*`. Native graph materialization and
+  `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` are optional and used only for the materialized native
+  instance-graph view ([knowledge-graph.md](knowledge-graph.md)), not Foundry source identity.
+- A ready model with a verifiable positive token allocation. 75,000 TPM is a preference, not a
+  prerequisite; smaller allocations continue with an explicit throttling advisory.
 
 ## 4. Local deploy app, step by step
 
@@ -223,9 +230,8 @@ is unchanged. **Fabric App authentication** retains the optional pre-created SPA
 choice; endpoint, registry, graph and write-policy overrides are not exposed in
 the form. See [environment variables](#6-settings) for specialist overrides.
 
-On a fresh workspace, run **Full Deploy**. If it stops for graph materialization,
-complete the portal action and resume Foundry, then app deployment; do not reset
-or reimport Git. `FOUNDRY_SETUP_SUCCESS` verifies configuration, not business
+On a fresh workspace, run **Full Deploy**. Graph materialization does not gate
+Foundry setup or app deployment. `FOUNDRY_SETUP_SUCCESS` verifies configuration, not business
 execution. Final publication requires `SUCCESS` and `DEPLOYED_APP_URL`.
 
 The UI does not require GitHub write access. CLI `--push-config` requires a clean,
@@ -320,7 +326,8 @@ including the independent `operational_sql_database_id`,
 Portability covers **public Azure/Fabric tenants and workspaces where the required services are available**,
 with sufficient permissions, active Fabric capacity, supported region/model/quota and the documented portal
 prerequisites. It is not a promise to bypass tenant policy, sovereign-cloud differences, unavailable previews
-or missing graph materialization. All such blockers must be resolved in the target environment.
+or missing graph materialization for the optional native instance-graph view only.
+Required service/permission blockers must be resolved in the target environment.
 
 **The newly automated build/publish/project-creation path has not been certified by a full live deployment.**
 Earlier hosted releases are recorded separately in the [implementation record](foundry-multi-agent-implementation.md);

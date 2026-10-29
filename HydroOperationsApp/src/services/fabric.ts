@@ -39,6 +39,7 @@ const eventhouseId = import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID as string | undef
 const kqlDatabaseId = import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID as string | undefined
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
+const configuredOntologyId = import.meta.env.VITE_RAYFIN_ONTOLOGY_ID as string | undefined
 const configuredEventhouseQueryUri = import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined
 const configuredKqlDatabase = import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined
 const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME as string | undefined
@@ -207,7 +208,13 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
     }
     // Published Data Agents use Fabric's official MCP-over-Streamable-HTTP endpoint.
     const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
-    const semantic = await discoverOntology(items, configuredOntologyName, {
+    if (configuredOntologyId && !items.some(i => i.type === 'Ontology' && i.id === configuredOntologyId)) {
+      throw new Error('The configured Ontology was not found in this workspace. Refresh deployment configuration.')
+    }
+    const ontologyItems = configuredOntologyId
+      ? items.filter(i => i.type !== 'Ontology' || i.id === configuredOntologyId)
+      : items
+    const semantic = await discoverOntology(ontologyItems, configuredOntologyName, {
       metadata: async id => {
         const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${id}`, { headers: { Authorization: `Bearer ${token}` } })
         if (!response.ok) throw new Error(`Ontology metadata request failed (${response.status}). Check Fabric item read access and refresh.`)
@@ -619,6 +626,9 @@ async function readBoundOntologyContract(ontologyId: string, displayName: string
 }
 
 export async function queryOntologyContract(force = false): Promise<OntologyContract | null> {
+  if (configuredOntologyId) {
+    return readBoundOntologyContract(configuredOntologyId, configuredOntologyName ?? 'Fabric Ontology', force)
+  }
   if (configuredGraphBindingValue?.trim()) {
     const binding = parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId())
     return readBoundOntologyContract(binding.ontologyId, configuredOntologyName ?? 'Fabric Ontology', force)

@@ -555,9 +555,9 @@ class ProjectCreationTests(unittest.TestCase):
                 "HYDRO_FOUNDRY_MODEL_SKU": "Standard", "HYDRO_FOUNDRY_MODEL_CAPACITY": "6",
             })
             argv = capture.call_args.args[0]
-            self.assertEqual(argv[:3], ["az", "cognitiveservices", "model"])
+            self.assertEqual(argv[:3], ["az", "rest", "--method"])
             self.assertEqual(argv[argv.index("--subscription") + 1], "sub")
-            self.assertEqual(argv[argv.index("--location") + 1], "targetregion")
+            self.assertIn("/locations/targetregion/models?", argv[argv.index("--url") + 1])
             model["skus"] = [
                 {"name": "GlobalStandard", "capacity": {"default": 12}},
                 {"name": "DataZoneStandard", "capacity": {"default": 8}},
@@ -672,6 +672,62 @@ class ProjectCreationTests(unittest.TestCase):
                 )["HYDRO_FOUNDRY_MODEL_VERSION"], "v1")
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "yes"}):
             self.assertFalse(project.enabled())
+
+    def test_new_capacity_prefers_75k_and_falls_back_to_available_model_specific_units(self):
+        fake = self.fake()
+        sku = {
+            "name": "Standard", "usageName": "OpenAI.Standard.chat",
+            "capacity": {"minimum": 1, "maximum": 1000, "step": 1},
+            "rateLimits": [{"key": "token", "count": 1000, "renewalPeriod": 60}],
+        }
+        cases = [
+            (1000, 100, 0, {}, "75"),
+            (1000, 50, 10, {}, "40"),
+            (6000, 100, 0, {}, "13"),
+            (1000, 100, 0, {"minimum": 10, "step": 10}, "80"),
+            (1000, 66, 0, {"minimum": 10, "step": 10}, "60"),
+            (1000, 100, 0, {"allowedValues": [10, 40, 100]}, "100"),
+            (1000, 60, 0, {"allowedValues": [10, 40, 100]}, "40"),
+            (1000, 100, 0, {"maximum": 30}, "30"),
+        ]
+        for rate, limit, used, constraints, expected in cases:
+            selected = {**sku, "capacity": {**sku["capacity"], **constraints},
+                        "rateLimits": [{"key": "token", "count": rate, "renewalPeriod": 60}]}
+            usage = [{"name": {"value": sku["usageName"]}, "limit": limit, "currentValue": used}]
+            with self.subTest(rate=rate, limit=limit, constraints=constraints), \
+                    patch.object(fake, "run_capture", return_value=json.dumps(usage)):
+                self.assertEqual(project.preferred_model_capacity(fake, "sub", "region", selected, "1"), expected)
+        with patch.object(fake, "run_capture", return_value=json.dumps([
+            {"name": {"value": sku["usageName"]}, "limit": 10, "currentValue": 10},
+        ])):
+            with self.assertRaisesRegex(fake.DeployError, "No supported positive capacity"):
+                project.preferred_model_capacity(fake, "sub", "region", sku, "1")
+
+    def test_new_model_uses_raw_catalog_rates_and_preserves_explicit_capacity(self):
+        fake = self.fake()
+        catalog = [{"model": {
+            "name": "chat", "format": "OpenAI", "version": "v1", "isDefaultVersion": True,
+            "capabilities": {"chatCompletion": True},
+            "skus": [{"name": "Standard", "usageName": "OpenAI.Standard.chat",
+                      "capacity": {"minimum": 1, "maximum": 1000},
+                      "rateLimits": [{"key": "token", "count": 1000, "renewalPeriod": 60}]}],
+        }}]
+        usage = [{"name": {"value": "OpenAI.Standard.chat"}, "limit": 50, "currentValue": 10}]
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", side_effect=[json.dumps(catalog), json.dumps(usage)]) as read:
+            self.assertEqual(project.model_defaults(
+                fake, subscription="sub", location="region", model="chat",
+            )["HYDRO_FOUNDRY_MODEL_CAPACITY"], "40")
+            self.assertEqual(read.call_count, 2)
+            read.reset_mock(side_effect=True)
+            read.return_value = json.dumps(catalog)
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_CAPACITY": "20"}):
+                self.assertEqual(project.model_defaults(
+                    fake, subscription="sub", location="region", model="chat",
+                )["HYDRO_FOUNDRY_MODEL_CAPACITY"], "20")
+            read.assert_called_once()
 
     def test_deployments_json_survives_the_templates_quoted_parameter_file(self):
         parameter = project.deployments_parameter("model-x")

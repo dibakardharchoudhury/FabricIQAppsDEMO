@@ -135,7 +135,7 @@ class IncrementalProvisionTests(unittest.TestCase):
     def run_provision(self, *, drift=None, missing=None, broken_readback=False, denied=False):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
         endpoint = values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]
-        ontology = json.loads(values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"])["ontologyId"]
+        ontology = values["RAYFIN_PUBLIC_ONTOLOGY_ID"]
         project_id = f"/subscriptions/{tenant}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/hydro/projects/hydro"
         selection = module.FoundrySelection(tenant, project_id, endpoint, "model")
         expected = {
@@ -517,7 +517,7 @@ class PreparedFoundryTests(unittest.TestCase):
                 module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
             request.assert_called_once()
 
-    def test_model_preflight_rejects_undersized_and_unverifiable_capacity_without_mutating_it(self):
+    def test_model_preflight_accepts_lower_capacity_but_rejects_unverifiable_limits_without_mutation(self):
         deploy = Mock()
         deploy.DeployError = RuntimeError
         deploy.run_capture.return_value = "access"
@@ -539,9 +539,10 @@ class PreparedFoundryTests(unittest.TestCase):
                     module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
             for count, period in ((10000, 60), (40000, 60), (74999, 60), (149999, 120)):
                 ready["properties"]["rateLimits"] = [{"key": "token", "count": count, "renewalPeriod": period}]
-                with self.subTest(count=count), self.assertRaisesRegex(RuntimeError, "requires at least 75,000"):
-                    module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
-            for count, period in ((75000, 60), (150000, 120)):
+                with self.subTest(count=count), patch("builtins.print") as output:
+                    self.assertEqual(module.read_model_selection(deploy, "tenant", project_id, "chosen-chat"), "chosen-chat")
+                    self.assertIn("Continuing with the available allocation", str(output.call_args_list))
+            for count, period in ((75000, 60), (150000, 120), (150000, 60)):
                 ready["properties"]["rateLimits"] = [{"key": "token", "count": count, "renewalPeriod": period}]
                 self.assertEqual(module.read_model_selection(deploy, "tenant", project_id, "chosen-chat"), "chosen-chat")
             self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
@@ -556,7 +557,7 @@ class PreparedFoundryTests(unittest.TestCase):
         tenant, workspace, ontology = [f"{i:08x}-1111-4111-8111-{i:012x}" for i in range(1, 4)]
         values = {
             "RAYFIN_PUBLIC_TENANT_ID": tenant, "RAYFIN_PUBLIC_WORKSPACE_ID": workspace,
-            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({"ontologyId": ontology}),
+            "RAYFIN_PUBLIC_ONTOLOGY_ID": ontology,
             "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://hydro.services.ai.azure.com/api/projects/hydro",
             "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "model",
             "RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST": "code",
@@ -658,12 +659,12 @@ class PreparedFoundryTests(unittest.TestCase):
                         target = (f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{target_workspace}/dataagents/{agent_id}/agent"
                                   if "/hydro-fabric-iq?" in url else
                                   f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/"
-                                  f"{json.loads(values['RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING'])['ontologyId']}/ontologyEndpoint")
+                                  f"{values['RAYFIN_PUBLIC_ONTOLOGY_ID']}/ontologyEndpoint")
                         props = {"category": "RemoteTool", "authType": "UserEntraToken", "target": target,
                                  "audience": "https://api.fabric.microsoft.com", "isSharedToAll": False,
                                  "metadata": {"type": "fabric_iq_preview"}}
                     return Mock(ok=True, json=lambda: {"properties": props})
-                ontology = json.loads(values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"])["ontologyId"]
+                ontology = values["RAYFIN_PUBLIC_ONTOLOGY_ID"]
                 with patch.object(module, "request_with_read_retry", side_effect=respond) as request, \
                         patch.object(module, "read_data_agent_definition", return_value=definition(
                             workspace=workspace, ontology=ontology,

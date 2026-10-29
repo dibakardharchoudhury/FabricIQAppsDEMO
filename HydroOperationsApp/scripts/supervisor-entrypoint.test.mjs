@@ -41,7 +41,7 @@ test('Hydro Intelligence always enters Supervisor without forcing a native bypas
     VITE_FABRIC_TENANT_ID: 'test-tenant',
     VITE_FABRIC_WORKSPACE_ID: 'test-workspace',
     VITE_RAYFIN_ORCHESTRATOR_SOURCE_DIGEST: 'a'.repeat(64),
-    VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING: JSON.stringify({ ontologyId: 'test-ontology', workspaceId: 'test-workspace' }),
+    VITE_RAYFIN_ONTOLOGY_ID: '22222222-2222-2222-2222-222222222222',
   })
   const entrypoint = loadService('askCopilot', { './foundry': foundry })
   const question = '  Ask Sparky for facility IDs.\r\nKeep the original answer.  '
@@ -54,6 +54,7 @@ test('Hydro Intelligence always enters Supervisor without forcing a native bypas
   assert.equal(answer.backendOwned, true)
   assert.deepEqual(progress, [result.text])
   assert.equal(instances.length, 1)
+  assert.equal(instances[0][2].ontology_id, '22222222-2222-2222-2222-222222222222')
   assert.equal(instances[0].at(-1), 'foundry.test-build')
   foundry.warmHostedCopilot()
   foundry.resetFoundryConversation()

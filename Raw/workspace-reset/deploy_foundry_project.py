@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -21,6 +22,7 @@ from urllib.parse import urlparse
 TEMPLATE = "https://github.com/Azure-Samples/azd-ai-starter-basic"
 ACCESS_TIMEOUT_S = 600
 ACCESS_POLL_S = 15
+PREFERRED_ORCHESTRATION_TPM = 75_000
 
 
 def enabled() -> bool:
@@ -98,6 +100,60 @@ def model_reference(deploy, *, subscription: str, deployment: str) -> tuple[str,
     return matches.pop()
 
 
+def preferred_model_capacity(deploy, subscription, location, sku, fallback):
+    limits = sku.get("capacity") or {}
+    rates = [rate for rate in sku.get("rateLimits") or []
+             if isinstance(rate, dict) and rate.get("key") == "token"]
+    if not sku.get("usageName") or not rates or any(
+        type(rate.get("count")) not in (int, float) or not math.isfinite(rate["count"]) or rate["count"] <= 0
+        or type(rate.get("renewalPeriod")) not in (int, float)
+        or not math.isfinite(rate["renewalPeriod"]) or rate["renewalPeriod"] <= 0
+        for rate in rates
+    ):
+        print("Foundry: WARNING: catalog token units are unverified; using its supported capacity "
+              "default, not assuming 1 unit = 1,000 TPM. Azure must validate the allocation.", flush=True)
+        return fallback
+    usage = json.loads(deploy.run_capture(deploy.az(
+        "cognitiveservices", "usage", "list", "--subscription", subscription,
+        "--location", location, "-o", "json",
+    )))
+    matches = [entry for entry in usage if entry.get("name", {}).get("value") == sku["usageName"]]
+    if len(matches) != 1 or any(
+        type(matches[0].get(key)) not in (int, float)
+        or not math.isfinite(matches[0][key]) or matches[0][key] < 0
+        for key in ("limit", "currentValue")
+    ):
+        raise deploy.DeployError("Cannot verify regional quota for the selected model deployment type.")
+    available = math.floor(matches[0]["limit"] - matches[0]["currentValue"])
+    maximum = limits.get("maximum")
+    if type(maximum) is int:
+        available = min(available, maximum)
+    tpm_per_unit = min(rate["count"] * 60 / rate["renewalPeriod"] for rate in rates)
+    desired = math.ceil(PREFERRED_ORCHESTRATION_TPM / tpm_per_unit)
+    minimum = limits.get("minimum") or 1
+    step = limits.get("step") or 1
+    allowed = limits.get("allowedValues")
+    if isinstance(allowed, list) and allowed:
+        candidates = sorted(value for value in allowed
+                            if type(value) is int and minimum <= value <= available
+                            and (value - (limits.get("minimum") or 0)) % step == 0)
+        units = next((value for value in candidates if value >= desired), candidates[-1] if candidates else 0)
+    else:
+        base = limits.get("minimum") or 0
+        target = base + math.ceil((max(desired, minimum) - base) / step) * step
+        ceiling = base + math.floor((available - base) / step) * step
+        units = min(target, ceiling)
+    if units < minimum:
+        raise deploy.DeployError(
+            "No supported positive capacity is available in the selected model/SKU's regional quota. "
+            "No model or region was substituted."
+        )
+    print(f"Foundry: preferred {PREFERRED_ORCHESTRATION_TPM:,} TPM; selected capacity {units} "
+          f"({units * tpm_per_unit:g} catalog TPM) within available quota. "
+          "Actual deployed token limits will be verified.", flush=True)
+    return str(units)
+
+
 def model_defaults(deploy, *, subscription: str, location: str, model: str) -> dict[str, str]:
     """Use live regional catalog defaults, never guessed versions or quota."""
     if not model:
@@ -106,8 +162,12 @@ def model_defaults(deploy, *, subscription: str, location: str, model: str) -> d
     version = os.environ.get("HYDRO_FOUNDRY_MODEL_VERSION", "").strip()
     sku = os.environ.get("HYDRO_FOUNDRY_MODEL_SKU", "").strip()
     capacity = os.environ.get("HYDRO_FOUNDRY_MODEL_CAPACITY", "").strip()
+    # The model-list SDK drops rateLimits.key; raw ARM preserves token-vs-request units.
     catalog = json.loads(deploy.run_capture(deploy.az(
-        "cognitiveservices", "model", "list", "--subscription", subscription, "--location", location, "-o", "json",
+        "rest", "--method", "GET", "--subscription", subscription, "--url",
+        f"https://management.azure.com/subscriptions/{subscription}/providers/"
+        f"Microsoft.CognitiveServices/locations/{location}/models?api-version=2025-06-01",
+        "--query", "value", "-o", "json",
     )))
     chat_models = [entry["model"] for entry in catalog if isinstance(entry.get("model"), dict)
                    and entry["model"].get("format") == "OpenAI"
@@ -163,6 +223,7 @@ def model_defaults(deploy, *, subscription: str, location: str, model: str) -> d
                 "The model catalog did not report a valid capacity default. "
                 "No resources were created; check the selected model's regional availability."
             )
+        capacity = preferred_model_capacity(deploy, subscription, location, skus[0], capacity)
     if not re.fullmatch(r"[1-9][0-9]*", capacity):
         raise deploy.DeployError("Model capacity must be a positive whole number.")
     units = int(capacity)
