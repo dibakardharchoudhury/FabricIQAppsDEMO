@@ -52,7 +52,7 @@
 # NB11's model phase runs after core bindings and the initial UKMet refresh. It prepares
 # operational SQL, inserts only missing demo rows, validates actual cross-source keys/weather
 # coverage and verifies the entire additive ontology before either agent can publish.
-# Its later agent phase attaches the SQL execution adapter without rebuilding the ontology.
+# Its later agent phase publishes operational guidance without adding duplicate SQL sources.
 # App-only redeployment does not reseed operational records. The default graph reads the live
 # ontology model; native asset instances separately require Manage graph materialization and a verified binding.
 # NB09 and NB10 are independent required branches after the complete model gate. An agent

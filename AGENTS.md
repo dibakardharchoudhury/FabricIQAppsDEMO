@@ -25,7 +25,9 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
   ontology agent, then removes only the exact retired agent after checking folder/source identity
   and clears its obsolete settings. Preserve the shared Eventhouse, SQL/KQL grounding, email
   pipeline, Outlook connection, and Teams destination.
-- RTI_011 always attempts the Data Agent SQL-source extension and propagates real extension failures.
+- RTI_011 publishes operational guidance against the ontology-associated SQL source; do not attach
+  the SQL Database a second time or require a duplicate datasource profile in deployment/Foundry
+  checks. Preserve existing operator-added SQL/custom sources and propagate real publication/readback failures.
   The app requires an explicitly bound ontology-managed
   native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK
   graph fabrication or GraphQL dependency for canvas/tree/scopes. Materialize through the selected

@@ -17,7 +17,9 @@ binding. Data Agent sources require matching verified v2 identity. NB09 verifies
 readback without an automatic MCP query or answer-format gate; setup records deployment/publication
 `published` and runtime `not_checked`. Do not add duplicate source attachments to satisfy a smoke
 response. Actual deployment/publication/readback failures propagate. NB11 preserves compatible
-added SQL/custom content. Publication does not certify SQL/combined-source answers. Configuration or
+added SQL/custom content and publishes operational guidance without attaching ontology-associated SQL
+again. Deployment/Foundry checks must not require a separate SQL datasource profile. Publication
+does not certify SQL/combined-source answers. Configuration or
 hosted-page success does not certify agent execution or delivery. The app's native graph
 requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
 → Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON generated from

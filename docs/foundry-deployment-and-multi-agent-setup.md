@@ -438,7 +438,9 @@ facilities gate has been removed. Fabric's interactive agent can query ontology-
 sources even when that intermediate MCP question reports no Lakehouse tool. NB09 now
 verifies publication/readback without querying the agent or creating duplicate execution
 sources to satisfy the smoke. Existing profiles/selections remain preserved and NB11's
-later SQL publication is unchanged. The observations below remain specific to earlier sessions.
+later phase now publishes operational guidance without attaching SQL again. Deployment and
+Foundry verify the published ontology's SQL/weather bindings, not a separate SQL profile.
+The observations below remain specific to earlier sessions.
 
 NB09 now generates 694 words / 5,287 characters of general guidance, replacing the
 legacy instructions that discouraged ontology use. Ontology v2 provides semantic context;
@@ -490,8 +492,10 @@ It does not issue a runtime query or gate setup on a language-model response.
    `data_agent_publication_status=published` and `data_agent_runtime_status=not_checked`.
    Previous runtime evidence is cleared. Actual deployment, publication and readback
    failures still propagate; interactive answers are not a setup requirement.
-3. NB09 preserves compatible SQL/custom sources on rerun. Run NB11 if its required operational SQL extension
-   has not completed; NB11's SQL-source status does not replace NB09's runtime result.
+3. NB09 preserves compatible SQL/custom sources on rerun. NB11 publishes operational guidance
+   using the ontology-associated SQL Database, without adding a separate source. Existing
+   operator-added SQL profiles remain intact. Its compatibility SQL-source status records
+   `source_mode=ontology_associated` and does not replace NB09's runtime result.
 4. With unchanged source identity, existing Foundry connections require no manual rebinding.
    If deploying repository changes or changing target identity, use Section 4 or 5. The app deployer verifies
    publication/identity, **not** NB09's runtime smoke. Then test an explicit Fabric IQ request through Sparky.

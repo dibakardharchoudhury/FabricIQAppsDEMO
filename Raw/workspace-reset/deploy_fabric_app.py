@@ -2147,7 +2147,7 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
     if _published_operational_source_ready(workspace_id, values, "", headers, required=False):
         bind_operational_store_env(workspace_id, headers)
-        print("Verified published Data Agent SQL source; no NB11 execution or demo DML needed.", flush=True)
+        print("Verified ontology-associated operational SQL; no NB11 execution or demo DML needed.", flush=True)
         return
     legacy = [item for item in _workspace_artifacts(workspace_id, headers)
               if item["type"] == "SQLDatabase" and item["displayName"] == backend["displayName"]]
@@ -2196,7 +2196,7 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         raise DeployError("Cannot verify an idle NB11 from its complete job inventory.")
     if any(job.get("status") in ("NotStarted", "InProgress") for job in jobs["value"]):
         raise DeployError("NB11 is already active. Let it finish before retrying deployment.")
-    print("Bootstrapping the Data Agent SQL source through NB11; no operational demo DML.", flush=True)
+    print("Preparing shared operational SQL and ontology guidance through NB11; no demo DML.", flush=True)
     response = requests.post(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}/jobs/execute/instances?beta=false",
         headers=headers, json={"parameters": [
@@ -2230,9 +2230,9 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     else:
         raise DeployError(f"NB11 bootstrap exceeded 15 minutes. Inspect the existing job before retrying: {location}")
     if not _published_operational_source_ready(workspace_id, values, "", headers):
-        raise DeployError("NB11 completed but its operational SQL source publication could not be verified.")
+        raise DeployError("NB11 completed but its ontology-associated operational SQL could not be verified.")
     bind_operational_store_env(workspace_id, headers)
-    print("Verified operational SQL source publication before Foundry provisioning.", flush=True)
+    print("Verified ontology-associated operational SQL before Foundry provisioning.", flush=True)
 
 
 def bind_operational_store_env(workspace_id, headers) -> None:
@@ -2252,7 +2252,7 @@ def bind_operational_store_env(workspace_id, headers) -> None:
 def _published_operational_source_ready(workspace_id, values, sql_name, headers, *, required=True) -> bool:
     from operational_store_support import is_operational_store_name
     from provision_foundry_agents import (
-        published_sql_source_ready, read_data_agent_definition, verify_published_identity,
+        read_data_agent_definition, verify_published_identity,
     )
 
     ontology_id = _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_ID")
@@ -2285,8 +2285,6 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
         matches.append(definition)
     if len(matches) != 1:
         raise DeployError("Exactly one published Data Agent must match the verified v2 Ontology.")
-    if not published_sql_source_ready(matches[0], workspace_id, databases[0]["id"]):
-        return False
     from operational_store_support import WEATHER_PROJECT_ENTITIES, SQL_PROJECT_ENTITIES, project_source_expressions
     from ontology_notebook_support import _verify_definition
     extension = read_data_agent_definition(

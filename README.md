@@ -93,7 +93,8 @@ operational SQL, inserts only missing demo rows, checks actual cross-source keys
 coverage and verifies all required bindings and relationships by readback. The baseline is
 16 meaningful business types and 21 relationships; compatible custom content is retained.
 NB09 and NB10 each check the successful selected-model receipt and its live definition.
-NB11's later `agent` phase only adds the operational SQL execution adapter; it cannot seed
+NB11's later `agent` phase only updates operational guidance; SQL is an ontology-associated
+source and is not attached again. This phase cannot seed
 or mutate the ontology. Both phases and both agents are mandatory setup activities.
 Failed agent execution therefore cannot leave a newly built ontology limited to five core types.
 
@@ -119,12 +120,12 @@ omitted empty defaults and generated authored-description markers are accepted. 
 ambiguous or lossy source readback still fails setup before any runtime readiness claim.
 NB09 preserves ontology-associated sources and compatible existing execution sources; it does not
 add separate Lakehouse/Eventhouse adapters to work around a smoke-test response. NB11 preserves
-existing sources when publishing the operational SQL adapter. Source identities, selections,
+existing sources when publishing operational guidance. Source identities, selections,
 custom metadata and source-specific guidance remain intact.
 
 The setup/runtime split is intentional for this synthetic-data demo, not a missing dependency:
 NB09 does not invoke an MCP query or enforce a natural-language/JSON answer before NB11
-publishes the final SQL adapter.
+publishes operational guidance.
 The app later invokes the Data Agent through Supervisor → Sparky → Fabric Responses.
 These transports do not need to be unified, and setup does not run an exhaustive SQL/KQL/
 combined-source answer matrix. NB10 configures the Operations Agent and its delivery actions
@@ -136,16 +137,14 @@ by deployment. Test questions interactively in Fabric or through Supervisor → 
 no exact facility-row count, JSON answer format or automatic runtime query is a setup prerequisite.
 Publication does not certify agent answers, native graph readiness or execution provenance.
 
-RTI_011 attaches and publishes the SQL source independently of the ontology source or NB09's
-runtime result. It verifies the SQL source through draft/published readback, preserves existing
-sources and custom settings, and records `data_agent_sql_source_status=published` without
-overwriting NB09's ontology status. Actual SQL-source failures still fail NB11. SQL/custom parts,
-custom instructions, and entity selections also survive runtime-failing NB09 reruns.
-
-An ontology SQL binding describes business semantics and source identity; it is not proof
-that a published Data Agent has an executable SQL tool for those tables. Retain the verified
-SQL execution adapter unless an ontology-only operational SQL execution test establishes
-equivalent capability. This does not create duplicate ontology entities or copy SQL data.
+RTI_011 preserves the ontology-associated SQL source instead of attaching the database again.
+It publishes operational query guidance, preserves existing/custom sources and selections,
+and verifies guidance/source retention in draft and published readback. The compatibility
+status key remains `data_agent_sql_source_status=published`, with
+`data_agent_sql_source_mode=ontology_associated`; NB09's status is not overwritten.
+Publication/readback failures still fail NB11. Existing operator-added SQL sources are not deleted.
+The app deployer and Foundry validate the published v2 ontology and its operational SQL/weather
+bindings without requiring a separate SQL datasource profile or an automatic agent-answer test.
 
 The Operations Agent is configured in a **stopped** state; `configured` does not mean a playbook has
 run. The retained `OperationsAgentV1` business-configuration schema is not ontology generation 1.
@@ -227,7 +226,7 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then performs bounded real MCP facility-record validation; only the exact temporary unsupported-Ontology-v2 product response is non-fatal. | ✅ |
 | **RTI_010_build_operations_agent** | Provisions the ontology-backed Operations Agent, playbook/actions, Teams, and email-alert pipeline against v2; retires the verified obsolete Eventhouse-Knowledge agent/settings without deleting shared dependencies; failures propagate. | ✅ |
-| **RTI_011_seed_sql_wire_graphql_agent** | Builds and verifies the complete SQL/weather business model before agents (`model` phase); publishes the SQL execution adapter afterward (`agent` phase), without a STID API. Standalone app/deployer calls retain `all`; `seed_demo_data=False` preserves operational rows. | — |
+| **RTI_011_seed_sql_wire_graphql_agent** | Builds and verifies the complete SQL/weather business model before agents (`model` phase); publishes ontology-backed operational guidance afterward (`agent` phase), without adding a separate SQL source or STID API. Standalone app/deployer calls retain `all`; `seed_demo_data=False` preserves operational rows. | — |
 | **RTI_Orchestrator_Setup** | Stage 2 driver: shares the Weather Environment/default Lakehouse, runs core bindings and initial UKMet ingestion, completes the model before both agents, then enables the schedule after all required activities succeed. | Stage 2 |
 
 NB09 and NB10 persist diagnostic agent status in the same `rti_demo_settings` Delta table. Their

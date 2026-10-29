@@ -269,6 +269,41 @@ class FoundryOntologyPrerequisiteTests(unittest.TestCase):
         foundry.provision.assert_not_called()
 
 
+class OntologyAssociatedOperationalSourceTests(unittest.TestCase):
+    def test_published_ontology_needs_no_separate_sql_datasource(self):
+        from operational_store_support import SQL_PROJECT_ENTITIES, WEATHER_PROJECT_ENTITIES
+        workspace = "11111111-1111-1111-1111-111111111111"
+        ontology = "22222222-2222-2222-2222-222222222222"
+        sql = "33333333-3333-3333-3333-333333333333"
+        lakehouse = "44444444-4444-4444-4444-444444444444"
+        agent = "55555555-5555-5555-5555-555555555555"
+        context = {"workspaceId": workspace, "artifactId": ontology}
+        definition = {"definition": {"parts": [{
+            "path": "Files/Config/published/ontologies/selected/ontology.json",
+            "payload": base64.b64encode(json.dumps(context).encode()).decode(),
+        }]}}
+        paths = ["expressions.tmdl"]
+        for entity in {**SQL_PROJECT_ENTITIES, **WEATHER_PROJECT_ENTITIES}:
+            paths.extend((f"entities/{entity}.tmdl", f"tables/HydroProject_{entity}.tmdl"))
+        extension = {"definition": {"parts": [{"path": path, "payload": "Zml4dHVyZQ=="} for path in paths]}}
+        values = {
+            "RAYFIN_PUBLIC_ONTOLOGY_ID": ontology, "RAYFIN_PUBLIC_LAKEHOUSE_ID": lakehouse,
+            "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": sql,
+        }
+        with patch.dict(sys.modules, {"deploy_fabric_app": DEPLOY}), \
+             patch.object(DEPLOY, "fabric_get", return_value={"id": ontology, "properties": {"generation": 2}}), \
+             patch.object(DEPLOY, "_workspace_artifacts", return_value=[
+                 {"id": sql, "type": "SQLDatabase", "displayName": "store"},
+                 {"id": agent, "type": "DataAgent", "displayName": "RTI_Demo_Agent_Test"},
+             ]), \
+             patch("provision_foundry_agents.read_data_agent_definition", side_effect=[definition, extension]), \
+             patch("provision_foundry_agents.published_sql_source_ready",
+                   side_effect=AssertionError("Must not require an explicit SQL datasource")), \
+             patch("ontology_notebook_support._verify_definition") as verify:
+            self.assertTrue(DEPLOY._published_operational_source_ready(workspace, values, "store", {}))
+        verify.assert_called_once()
+
+
 class HostedSourceBootstrapTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -422,7 +457,7 @@ class HostedSourceBootstrapTests(unittest.TestCase):
     def test_completion_without_verified_sql_publication_is_not_success(self):
         self.publication.side_effect = None
         self.publication.return_value = False
-        with self.assertRaisesRegex(DEPLOY.DeployError, "SQL source publication could not be verified"):
+        with self.assertRaisesRegex(DEPLOY.DeployError, "ontology-associated operational SQL could not be verified"):
             DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.assertNotIn(self.graphql, self.env.read_text(encoding="utf-8"))
 

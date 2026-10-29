@@ -606,6 +606,7 @@ class PreparedFoundryTests(unittest.TestCase):
                 patch.object(module, "request_with_read_retry", side_effect=responses) as request:
             module.verify_existing(deploy, tenant, workspace)
         connections.assert_called_once()
+        deploy._published_operational_source_ready.assert_called_once()
         self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "GET"])
         self.assertEqual([call.args[:2] for call in deploy.az.call_args_list], [("account", "get-access-token")])
 
@@ -668,7 +669,8 @@ class PreparedFoundryTests(unittest.TestCase):
                 with patch.object(module, "request_with_read_retry", side_effect=respond) as request, \
                         patch.object(module, "read_data_agent_definition", return_value=definition(
                             workspace=workspace, ontology=ontology,
-                        )) as read_agent, patch.object(module, "published_sql_source_ready", return_value=True):
+                        )) as read_agent, patch.object(module, "published_sql_source_ready",
+                            side_effect=AssertionError("Ontology-associated SQL needs no separate profile")):
                     if wrong_workspace:
                         with self.assertRaisesRegex(RuntimeError, "no longer matches"):
                             module.verify_prepared_connections(deploy, tenant, workspace, ontology, values)
@@ -676,6 +678,7 @@ class PreparedFoundryTests(unittest.TestCase):
                     else:
                         module.verify_prepared_connections(deploy, tenant, workspace, ontology, values)
                         read_agent.assert_called_once()
+                        deploy._published_operational_source_ready.assert_not_called()
                     self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
 
 

@@ -55,7 +55,8 @@ asset/signal/instrument keys and weather coverage, and builds/reads back the com
 16-type/21-relationship baseline before either agent can publish. Compatible custom content
 is preserved. Both agents require a successful selected-model receipt and recheck the live
 complete definition. NB11's subsequent mandatory `agent` phase only verifies the same model
-and publishes the SQL execution adapter after NB09; it never reseeds or rewrites the ontology.
+and publishes operational guidance after NB09; it never reseeds, rewrites the ontology or
+attaches the ontology-associated SQL Database a second time.
 The extension requires readable, nonempty existing agent content and preserves complete custom
 instructions rather than silently truncating them to the service's 15,000-character limit.
 Overflow stops before agent updates. Operational settings and SQL-publication status share
@@ -255,7 +256,7 @@ Successful NB09 completion is **deployment `published`, publication `published`,
 No automatic MCP query, exact facilities comparison or answer-format gate runs during setup.
 Multi-source agents and compatible SQL/custom content/selections are preserved. NB09 does not
 create separate Lakehouse/Eventhouse profiles to work around an early MCP answer, and does not
-wait for the operational SQL adapter that NB11 adds afterward.
+wait for NB11's later operational-guidance publication.
 After a Fabric service fix, rerun NB09 against the existing settings Lakehouse to republish and
 verify source identity/readback, then test questions interactively if desired. Previous runtime
 evidence is cleared; no code switch or workspace reset is needed. See the
@@ -285,13 +286,13 @@ Outlook connection, and `Pipe_SendEmailAlert` remain unchanged.
 The ontology agent remains stopped by default, and API/readback failures never cause the notebook to
 silently remove the playbook, Teams delivery, or actions.
 
-NB11 extends a live Data Agent with the operational SQL Database independently of NB09's
-ontology result. No ontology lookup, attachment, generation check, or runtime proof is required.
-Existing sources, custom settings, instructions, and selections are retained. Exact SQL-source
-draft and published readback is required; publication is not runtime verification. Missing agents
-and real SQL/API failures still fail the always-attempted extension. NB11
-writes only its SQL-source status/reason, leaving NB09's deployment/publication/runtime results
-untouched. Independent SQL/GraphQL results are preserved before required failure is raised.
+NB11 updates a live Data Agent's operational guidance without adding a separate SQL Database
+source. The selected ontology already associates that database. Existing sources, custom
+settings, instructions and selections are retained, with draft/published readback. Missing
+agents and real SQL/API failures still fail setup; no automatic query is performed.
+Compatibility status keys remain `data_agent_sql_source_status/reason`, with
+`data_agent_sql_source_mode=ontology_associated`, leaving NB09's status untouched.
+The app deployer/Foundry verify ontology SQL/weather bindings, not a duplicate SQL profile.
 
 NB09's general Data Agent policy is bounded to 700 words / 5,500 characters before
 operator or NB11 additions. Ontology v2 supplies semantic context; its associated Lakehouse
@@ -312,7 +313,7 @@ connection validator recognizes this published shape too. NB09 preserves ontolog
 sources and existing compatible profiles/selections without adding duplicate execution sources.
 A failed intermediate MCP facilities answer is not treated as proof that the ontology needs
 different source attachments. Interactive Fabric queries can use the ontology-associated sources
-without a separately attached SQL Database. NB11's later SQL extension is unchanged.
+without a separately attached SQL Database. NB11's later phase publishes operational guidance only.
 
 Geo001 applies its existing bounded retry budget to transient ArcGIS error envelopes
 as well as HTTP errors. In the reported reservoir failure, NVE returned HTTP 200 with

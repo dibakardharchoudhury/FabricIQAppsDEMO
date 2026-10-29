@@ -23,7 +23,7 @@
 
 # MARKDOWN ********************
 
-# # 11 — Prepare shared operational SQL and publish its Data Agent source
+# # 11 — Prepare shared operational SQL and configure ontology-backed agent guidance
 # 
 # This notebook uses `RTI_Demo_SQLDatabase_<env_suffix>`, provisioned by NB01 alongside
 # the Lakehouse in `RTI_DEMO_<env_suffix>`. Stage 2 runs its model phase after core bindings
@@ -40,16 +40,16 @@
 #    Insert missing demo rows, validate actual operational/weather keys and current UKMet coverage,
 #    then build/read back all required business types, bindings and relationships before either agent.
 # 2. **Data Agent** (`setup_phase="agent"`) — verifies the same complete live model, then adds the
-#    operational SQL execution adapter to the live agent and
+#    operational guidance to the ontology-backed agent and
 #    **republishes**, preserving existing sources and custom settings. This step is
 #    independent of NB09 runtime evidence; shared-store preparation failures prevent source switching.
 #    It never seeds, migrates or changes the ontology. Both phases are mandatory in setup; they are
 #    execution stages, not optional-agent modes. Standalone app/deployer calls retain `setup_phase="all"`.
 #
 # Lakehouse asset and weather reads use the app's read-only connector; no STID API is provisioned.
-# SQL seed runs independently of Data Agent availability. The SQL source step
-# always extends the provisioned Data Agent with the SQL source. Real failures are surfaced after saving the per-step results.
-# Exact SQL draft/published readback confirms publication, not runtime verification.
+# SQL seed runs independently of Data Agent availability. SQL is already an ontology-associated
+# source; setup does not attach it again. Guidance/source readback confirms publication,
+# not runtime verification. Real failures are surfaced after saving the per-step results.
 # Empty existing agent definitions are never replaced with SQL-only content. Required guidance
 # must fit alongside existing instructions without truncation. Shared settings writes retry
 # bounded Delta concurrency conflicts, not authentication, schema or other failures.
@@ -235,8 +235,8 @@ SQL_TABLES = [
 OPERATIONAL_INSTRUCTIONS_MARKER = f"## Operational data ({sql_db_item_name} SQL)"
 OPERATIONAL_INSTRUCTIONS = (
     f"\n\n{OPERATIONAL_INSTRUCTIONS_MARKER}\n"
-    "In addition to the telemetry ontology, a Fabric SQL Database "
-    f"('{sql_db_item_name}') holds the plant's operational records. Use it for questions "
+    "The selected ontology associates a Fabric SQL Database "
+    f"('{sql_db_item_name}') holding the plant's operational records. Use it for questions "
     "about work orders, maintenance notifications, inspections, spare-part inventory and "
     "3D/digital-twin models. Every row is keyed to an asset by `equipmentId` "
     "(e.g. `EQUIP_RTI_T001`) and, where relevant, `opcuaNodeId`. Join operational rows to "
@@ -278,7 +278,7 @@ in all `analyze_ontology` and `analyze_sql_database` queries.
 '''
 
 SQL_DS_INSTRUCTIONS = (
-    "Operational system-of-record for the hydro fleet (Fabric SQL Database). Prefer THIS source "
+    "Operational system-of-record for the hydro fleet (ontology-associated Fabric SQL Database). Use it "
     "for anything about maintenance and asset operations; use the Eventhouse/KQL source for live "
     "telemetry values. Tables (dbo schema):\n"
     "- WorkOrders: planned/active maintenance. Open means status NOT IN ('Completed','Cancelled'); "
@@ -3975,7 +3975,7 @@ if setup_phase == "model":
     }))
 
 # ---------------------------------------------------------------------------
-# STEP B — Add the SQL Database as a Data Agent source and republish
+# STEP B — Configure operational guidance without adding a separate SQL source
 # ---------------------------------------------------------------------------
 def resolve_data_agent_id() -> Optional[str]:
     # Never trust a persisted data_agent_id blindly — the agent may have been deleted/rebuilt
@@ -3990,17 +3990,18 @@ def resolve_data_agent_id() -> Optional[str]:
 
 
 def verify_agent_source_readback(
-    agent_id: str, submitted_sql_source: dict, published: bool = False,
+    agent_id: str, submitted_sql_source: dict | None = None, published: bool = False,
     retained_sources: dict | None = None,
 ) -> list:
     parts = definition_parts(get_item_definition(agent_id))
-    path = SQL_DATASOURCE_PATH.replace("/draft/", "/published/", 1) if published else SQL_DATASOURCE_PATH
-    sql_part = next((part for part in parts if part["path"] == path), None)
-    if sql_part is None or decode_payload(sql_part["payload"]) != submitted_sql_source:
-        raise RuntimeError(
-            f"SQL source readback at {path!r} does not match the submitted SQL source; "
-            "source retention and publish success are unverified."
-        )
+    if submitted_sql_source is not None:
+        path = SQL_DATASOURCE_PATH.replace("/draft/", "/published/", 1) if published else SQL_DATASOURCE_PATH
+        sql_part = next((part for part in parts if part["path"] == path), None)
+        if sql_part is None or decode_payload(sql_part["payload"]) != submitted_sql_source:
+            raise RuntimeError(
+                f"SQL source readback at {path!r} does not match the submitted SQL source; "
+                "source retention and publish success are unverified."
+            )
     for draft_path, expected in (retained_sources or {}).items():
         retained_path = draft_path.replace("/draft/", "/published/", 1) if published else draft_path
         retained = next((part for part in parts if part["path"] == retained_path), None)
@@ -4029,10 +4030,10 @@ def refresh_agent_ontology_sources(parts: list) -> list:
 
 def resolve_agent_extension_target() -> tuple:
     if not data_agent_id and not data_agent_name:
-        raise RuntimeError("No Data Agent configured; configure a live Data Agent before SQL extension.")
+        raise RuntimeError("No Data Agent configured; configure a live Data Agent before publishing operational guidance.")
     agent_id = resolve_data_agent_id()
     if not agent_id:
-        raise RuntimeError("No live Data Agent found; create or configure one before SQL extension.")
+        raise RuntimeError("No live Data Agent found; create or configure one before publishing operational guidance.")
     return agent_id, {"status": "allowed", "reason": ""}
 
 
@@ -4123,6 +4124,7 @@ def build_stage_obj(existing: dict) -> dict:
 
 
 def extend_data_agent_sql_source(agent_id: str) -> dict:
+    """Legacy explicit-source utility; setup and deployment use ontology-associated sources."""
     global sql_db_item_id, sql_server, sql_database, SQL_DATASOURCE_PATH
     definition = get_item_definition(agent_id)
     parts = definition_parts(definition)
@@ -4218,17 +4220,49 @@ def extend_data_agent_sql_source(agent_id: str) -> dict:
     }
 
 
+def configure_operational_agent_guidance(agent_id: str) -> dict:
+    parts = definition_parts(get_item_definition(agent_id))
+    existing_stage = next(
+        (decode_payload(part["payload"]) for part in parts if part["path"] == DRAFT_STAGE_CONFIG_PATH), {})
+    stage = build_stage_obj(existing_stage)
+    if SQL_DS_INSTRUCTIONS not in stage["aiInstructions"]:
+        stage["aiInstructions"] += "\n\n" + SQL_DS_INSTRUCTIONS
+        stage = build_stage_obj(stage)
+    parts = upsert_part(parts, DRAFT_STAGE_CONFIG_PATH, stage)
+    parts = refresh_agent_ontology_sources(parts)
+    retained_sources = {
+        part["path"]: decode_payload(part["payload"])
+        for part in parts if part["path"] == DRAFT_STAGE_CONFIG_PATH
+        or (part["path"].startswith("Files/Config/draft/")
+            and (part["path"].endswith("/ontology.json")
+                 or part["path"].endswith("/datasource.json")
+                 and decode_payload(part["payload"]).get("type") == "ontology"))
+    }
+    update_item_definition(agent_id, {"parts": parts})
+    verify_agent_source_readback(agent_id, retained_sources=retained_sources)
+    enable_preview_runtime(agent_id)
+    publish_data_agent(agent_id, "Ontology-associated operational SQL guidance updated.")
+    verify_agent_source_readback(agent_id, published=True, retained_sources=retained_sources)
+    return {
+        "status": "published", "source_mode": "ontology_associated",
+        "reason": "Operational guidance and retained sources verified in draft/published readback. "
+                  "SQL is supplied by the ontology; no separate SQL source was added. Runtime is not checked.",
+    }
+
+
 def persist_sql_extension_status(result: dict) -> None:
     values = {
         "data_agent_sql_source_status": result["status"],
         "data_agent_sql_source_reason": result["reason"],
     }
+    if "source_mode" in result:
+        values["data_agent_sql_source_mode"] = result["source_mode"]
     persist_operational_settings(values)
 
 
-print("\n=== STEP B — Data Agent SQL source ===")
+print("\n=== STEP B — Ontology-associated operational guidance ===")
 step_results["data_agent_sql_source"] = {
-    "status": "failed", "reason": "SQL source step did not complete; inspect the raised exception.",
+    "status": "failed", "reason": "Operational guidance step did not complete; inspect the raised exception.",
 }
 try:
     if provision_shared_store and step_errors:
@@ -4237,7 +4271,7 @@ try:
         ) from step_errors[0]
     agent_id, agent_policy = resolve_agent_extension_target()
     step_results["data_agent_sql_source"] = (
-        extend_data_agent_sql_source(agent_id) if agent_id else agent_policy
+        configure_operational_agent_guidance(agent_id) if agent_id else agent_policy
     )
 except Exception as exc:
     step_results["data_agent_sql_source"] = {"status": "failed", "reason": str(exc)}
@@ -4281,7 +4315,7 @@ if step_errors:
     raise RuntimeError("Operational setup failed; inspect the per-step results above.") from step_errors[0]
 notebookutils.notebook.exit(json.dumps({
     "status": "completed",
-    "reason": "Operational steps completed; Data Agent SQL source published.",
+    "reason": "Operational steps completed; ontology-backed agent guidance published.",
     "capability": "operational_setup",
     "agent_ready": False,
     "steps": step_results,

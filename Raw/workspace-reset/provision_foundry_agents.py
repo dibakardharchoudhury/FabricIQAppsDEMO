@@ -391,8 +391,6 @@ def verify_prepared_connections(deploy, tenant: str, workspace: str, ontology: s
             raise RuntimeError(f"Prepared Foundry connection {name} no longer matches the selected source/authentication.")
     definition = read_data_agent_definition(deploy, workspace, agent_id, deploy.fabric_headers(tenant))
     verify_published_identity(definition, workspace, ontology)
-    if not published_sql_source_ready(definition, workspace, value("RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")):
-        raise RuntimeError("The connected Data Agent no longer exposes the verified operational SQL source.")
     token = deploy.run_capture(deploy.az(
         "account", "get-access-token", "--tenant", tenant, "--resource", "https://ai.azure.com",
         "--query", "accessToken", "-o", "tsv",
@@ -432,7 +430,7 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     if type(generation) is not int or generation != 2:
         raise deploy.DeployError("Live numeric Ontology generation 2 is required.")
     if not deploy._published_operational_source_ready(workspace, values, "", deploy.fabric_headers(tenant)):
-        raise deploy.DeployError(f"Published Data Agent/SQL source configuration is incomplete. {guidance}")
+        raise deploy.DeployError(f"Published Data Agent/ontology-associated SQL configuration is incomplete. {guidance}")
     try:
         verify_prepared_connections(deploy, tenant, workspace, ontology, values)
     except RuntimeError as error:

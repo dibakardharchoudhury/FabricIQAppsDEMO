@@ -557,7 +557,8 @@ The authoritative semantic asset is built before the app runs:
    only the exact documented temporary unsupported-Ontology response after verified v2 publication;
    other failures propagate. There are no agent-mode flags.
 5. `RTI_011_seed_sql_wire_graphql_agent` prepares independent operational SQL, enriches the additive
-   operational/weather ontology entities, and always attempts its Data Agent SQL-source extension.
+   operational/weather ontology entities, and publishes Data Agent operational guidance without
+   attaching the ontology-associated SQL Database again. Existing custom sources are preserved.
    It preserves compatible custom content and does not recreate `Hydro_STID_API`.
 
 The governed semantic path is:
@@ -1090,7 +1091,10 @@ publication/semantic-error evidence, not a verified smoke result.
 and answer-format check described below has been removed. NB09 now verifies publication
 and source identity/readback, records deployment/publication as `published` and runtime
 as `not_checked`, and continues to NB11. It does not add duplicate execution sources to
-satisfy the old smoke. Existing sources and selections are preserved.
+satisfy the old smoke. Existing sources and selections are preserved. NB11's later phase
+publishes operational guidance against the ontology-associated SQL Database, without
+adding it again. Deployment/Foundry verify the published ontology's operational SQL/weather
+bindings without requiring a separate SQL datasource profile.
 
 The earlier implementation used a bounded functional smoke test:
 

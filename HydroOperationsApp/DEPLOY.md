@@ -154,7 +154,7 @@ the component's output. Core includes Weather and energy ingestion/read-model ch
 Core first completes the ontology: core bindings and initial UKMet ingestion precede
 operational SQL seeding, actual source-key/coverage checks, and readback of all required
 business entities and relationships. Only then are the Fabric Data Agent and retained
-Operations Agent published/configured; the Data Agent SQL execution adapter follows.
+Operations Agent published/configured; Data Agent operational guidance follows.
 Foundry setup therefore receives the complete published Fabric context, not a five-type
 intermediate ontology. No Foundry prompt/model changes are needed for this ordering fix.
 Full Deploy is not a workspace-creation wizard or a safe routine website update:
@@ -203,9 +203,9 @@ starts, with binding-repair guidance. Sync the corrected notebook source and rer
 setup (including Stage 1), rather than installing packages locally or retrying Stage 2 alone.
 Standalone app/SQL bootstrap does not refresh weather or require current provider forecasts;
 it validates existing keys and explicitly does not certify weather readiness. Ontology SQL
-bindings do not themselves prove executable SQL capability, so retain the SQL execution adapter.
-NB11 extends a nonempty existing Data Agent definition; it does not reconstruct an unreadable
-agent as SQL-only. Existing/custom instructions are preserved without silent truncation.
+bindings are verified without requiring a separate Data Agent SQL attachment.
+NB11 updates guidance in a nonempty existing agent definition; it does not reconstruct an unreadable
+agent or add duplicate SQL sources. Existing/custom instructions are preserved without silent truncation.
 If the existing 15,000-character service limit would be exceeded, publication stops before
 changing the agent and identifies the instructions to shorten. Both NB11 settings writers
 share the bounded Delta-conflict retry used by the parallel agent setup branches; unrelated
@@ -213,7 +213,7 @@ errors still propagate.
 
 NB09 verifies source identity and publication/readback without invoking the agent or enforcing
 an answer format. It records runtime as `not_checked`; a successful publish is not runtime
-certification. NB11 publishes the final SQL adapter afterward, and interactive app requests
+certification. NB11 publishes operational guidance afterward, and interactive app requests
 use Supervisor → Sparky → Fabric Responses. That sequence is expected; no extra SQL/KQL/
 combined-source runtime or Teams/email delivery checks are required to complete setup.
 Expand **Key Vault secret names and notebook settings** only when defaults differ:
@@ -291,7 +291,7 @@ complete. Supply Key Vault URI, Teams IDs and alert email.
 Notebook identity defaults to the signed-in user; timeout is 3600 seconds.
 
 Core creates Lakehouse, Eventhouse, independent operational SQL, v2 ontology,
-dashboard and agents. NB11 adds missing demo records and publishes the SQL source.
+dashboard and agents. NB11 adds missing demo records and publishes ontology-backed operational guidance.
 After NB01 creates and binds the Lakehouses, the Core/Weather `runMultiple` DAG
 and `Geo_001_ingest_energy_context` run in parallel branches of `01_Pipe_Setup`.
 Energy keeps its separate, schema-disabled GeoContext Lakehouse and Spark session:
@@ -497,7 +497,10 @@ approval drafts are separate, never replacements for the source answer.
 The ontology supplies semantic context and associated data sources. NB09 preserves these
 and compatible existing execution sources; it does not add Lakehouse/Eventhouse profiles to
 work around an intermediate MCP smoke response. NB11 preserves existing selections when
-adding the operational SQL adapter. No automatic agent query is a setup prerequisite.
+publishing operational guidance, without attaching the ontology-associated SQL Database again.
+The deployer/Foundry verify the published ontology's SQL/weather bindings without requiring
+a separate SQL datasource profile. Existing custom sources are retained. No automatic agent
+query is a setup prerequisite.
 Only the five operational SQL tables are
 selected; visible but unselected SQL control tables are not extra query sources.
 Native JSON result files and their typed tables are retained without rewriting the

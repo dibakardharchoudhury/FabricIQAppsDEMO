@@ -1829,7 +1829,7 @@ try:
     )
     print("🌐 Published — consumption endpoint:")
     print(f"   • MCP: {mcp_endpoint}")
-    print("✅ Publication verified. No automatic agent query; setup continues to NB11 SQL wiring.")
+    print("✅ Publication verified. No automatic agent query; setup continues to NB11 operational guidance.")
 except Exception as exc:
     persist_agent_status("failed", str(exc))
     raise
