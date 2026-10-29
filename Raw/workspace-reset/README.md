@@ -302,8 +302,11 @@ Compatibility status keys remain `data_agent_sql_source_status/reason`, with
 The app deployer/Foundry verify ontology SQL/weather bindings; app-only publication neither
 requires this source profile nor mutates it. Publication/readback does not verify query execution.
 
-NB09's general Data Agent policy is bounded to 700 words / 5,500 characters before
-operator or NB11 additions. Ontology v2 supplies semantic context; its associated Lakehouse
+NB09's general Data Agent policy is bounded to 850 words / 6,500 characters before
+operator or NB11 additions. Historical "had BAD today" questions require every BAD event
+from UTC midnight through query time, including signals now GOOD; latest-row filtering is
+reserved for current-state questions. This distinction must be carried into tool questions.
+Ontology v2 supplies semantic context; its associated Lakehouse
 and Eventhouse execute source-native queries. Correlate telemetry/reference rows by
 `opcua_node_id`, then operational SQL rows by `equipment_id` / `equipmentId` and, where
 applicable, `opcuaNodeId`. Instructions cannot create missing source access or runtime

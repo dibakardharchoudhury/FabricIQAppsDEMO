@@ -1373,7 +1373,7 @@ Resolve ontology reference keys, then query telemetry/SQL independently; never u
 Match equipment_id/equipmentId and opcua_node_id/opcuaNodeId. Pass EVERY required returned identifier/count tuple, not previews. Retain all parents, including zero-child rows; count distinct WOs; conserve totals; report unmatched/duplicate keys.
 Label source failures and successful reads; never infer data or widen windows.
 SQL zero requires successful execution on the intended SQL source, not a missing tool or failed query. If SQL fails, return verified partial reads; never claim no open work or recommend additional WOs without verified SQL coverage.
-"Had BAD today" means any BAD event in today's UTC window, not latest-only. Latest quality means arg_max before quality filtering. Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative.
+"Had BAD today" means any BAD event in today's UTC window, not latest-only. Only explicit current/latest-state questions use arg_max before quality filtering. Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative.
 Retain each registered signal's quality/event_time/unit; summary counts must reconcile exactly to returned rows.
 Use query execution UTC (KQL now()) as query_asof_utc, not the newest reading or clustered snapshot timestamps. Return age_seconds; readings older than 60 seconds are stale unless the operator specifies otherwise. Missing readings remain missing."""
 
@@ -1385,7 +1385,8 @@ Use all facilities/assets unless narrowed. Resolve references; standalone questi
 RUNNING_BAD_MARKER = '### Canonical "running bad" questions'
 RUNNING_BAD_INSTRUCTIONS = """### Canonical "running bad" questions
 
-"Running bad" means literal telemetry quality BAD. Unless overridden, query all active signals in a 30-minute window; select the latest raw row using summarize arg_max(event_time, value, quality) by opcua_node_id, then filter BAD. Never filter quality before arg_max, prefilter signal type, or limit results. Resolve active turbine metadata and return every match.
+Before any telemetry tool call, distinguish historical occurrence from current state. "Had BAD today" means ALL BAD events in that window, including signals now GOOD. For today use event_time >= startofday(now()) and event_time <= now(), filter quality == 'BAD', then count() by opcua_node_id. Never discard historical BAD events using arg_max or max(event_time). This historical rule overrides current-state defaults.
+Only "running bad" or explicit current/latest quality uses latest raw rows: default 30 minutes, summarize arg_max(event_time, value, quality) by opcua_node_id, then filter BAD. For current state: Never filter quality before arg_max, prefilter signal type, or limit results. Resolve active turbine metadata and return every match.
 Include tag, equipment/node/instrument, value/unit, quality and event time. Treat null/0001 timestamps as missing, not zero readings. Compare active-node coverage; report missing counts, never widen the window or equate empty BAD results with healthy turbines. Join all open work by affected equipment; do not filter work by node/instrument. Label same-signal only for matching node/instrument; otherwise equipment-level."""
 
 RUNNING_HOT_MARKER = '### Canonical "running hot" questions'

@@ -601,6 +601,24 @@ class DataAgentInstructionTests(unittest.TestCase):
         ):
             self.assertNotIn(phrase, text)
 
+    def test_historical_bad_policy_precedes_current_state_in_tool_questions(self):
+        ns = data_agent_instruction_namespace()
+        text = ns["build_stage_obj"]({})["aiInstructions"]
+        policy = ns["RUNNING_BAD_INSTRUCTIONS"]
+        for phrase in (
+            "Before any telemetry tool call", "historical occurrence from current state",
+            "ALL BAD events", "including signals now GOOD",
+            "event_time >= startofday(now()) and event_time <= now()",
+            "filter quality == 'BAD', then count() by opcua_node_id",
+            "Never discard historical BAD events using arg_max or max(event_time)",
+            "historical rule overrides current-state defaults",
+            'Only "running bad" or explicit current/latest quality',
+            "For current state: Never filter quality before arg_max",
+        ):
+            self.assertIn(phrase, policy)
+            self.assertIn(phrase, text)
+        self.assertLess(policy.index("ALL BAD events"), policy.index("summarize arg_max"))
+
     def test_migration_preserves_custom_sql_sections_and_settings_idempotently(self):
         ns = data_agent_instruction_namespace()
         sql = "## Operational data (operations SQL)\nKeep the SQL policy exactly."
