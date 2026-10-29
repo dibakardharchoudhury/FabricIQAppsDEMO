@@ -576,8 +576,8 @@ class DataAgentInstructionTests(unittest.TestCase):
     def test_compact_policy_uses_ontology_context_and_actual_source_keys(self):
         ns = data_agent_instruction_namespace()
         text = ns["build_stage_obj"]({})["aiInstructions"]
-        self.assertLessEqual(len(text), 5500)
-        self.assertLessEqual(len(text.split()), 700)
+        self.assertLessEqual(len(text), 6500)
+        self.assertLessEqual(len(text.split()), 850)
         for phrase in (
             "Ontology v2 as semantic context", "associated Lakehouse", "associated Eventhouse",
             "Source-native SQL/KQL", "not a bypass", "opcua_node_id", "equipment_id",
@@ -628,6 +628,35 @@ class DataAgentInstructionTests(unittest.TestCase):
             self.assertNotIn(removed, text)
         self.assertEqual(text.count(ns["MULTISOURCE_INSTRUCTIONS_MARKER"]), 1)
         self.assertEqual(ns["build_stage_obj"](result), result)
+
+    def test_sql_endpoint_routing_preserves_sources_and_rejects_unverified_zero_work(self):
+        ns = data_agent_instruction_namespace()
+        custom = "### Operator policy\nKeep this custom policy unchanged."
+        original = {
+            "customOptions": {"retain": True},
+            "aiInstructions": (
+                ns["AI_INSTRUCTIONS"] + "\n\n"
+                + ns["MULTISOURCE_INSTRUCTIONS_MARKER"] + "\nOld operational source guidance.\n\n"
+                + custom
+            ),
+        }
+        before = copy.deepcopy(original)
+        updated = ns["build_stage_obj"](original)
+        self.assertEqual(original, before)
+        self.assertEqual(updated["customOptions"], before["customOptions"])
+        text = updated["aiInstructions"]
+        for phrase in (
+            "connected SQL endpoint", "read-only T-SQL", "not the Lakehouse SQL analytics endpoint",
+            "dbo.WorkOrders", "dbo.Inspections", "dbo.SpareParts",
+            "dbo.MaintenanceNotifications", "dbo.Asset3DModels",
+            "SQL-only question", "do not require a separate SQL tool",
+            "SQL zero requires successful execution", "not a missing tool or failed query",
+            "never claim no open work", "verified SQL coverage", custom,
+        ):
+            self.assertIn(phrase, text)
+        self.assertNotIn("Old operational source guidance.", text)
+        self.assertNotIn("database.windows.net", text)
+        self.assertEqual(ns["build_stage_obj"](updated), updated)
 
     def test_owned_section_stops_before_any_markdown_heading(self):
         ns = data_agent_instruction_namespace()

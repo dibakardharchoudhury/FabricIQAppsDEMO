@@ -145,6 +145,13 @@ status key remains `data_agent_sql_source_status=published`, with
 Publication/readback failures still fail NB11. Existing operator-added SQL sources are not deleted.
 The app deployer and Foundry validate the published v2 ontology and its operational SQL/weather
 bindings without requiring a separate SQL datasource profile or an automatic agent-answer test.
+NB09's owned routing guidance directs operational reads to that connected SQL Database's SQL
+endpoint, not the Lakehouse SQL analytics endpoint. It names the five `dbo` operational tables
+and uses source-scoped questions through the available query capability. A missing SQL tool or
+failed SQL read is unavailable evidence, never a zero-work result; verified partial telemetry
+can still be returned, but additional-work recommendations require verified SQL coverage.
+These instructions cannot create a missing query capability; successful publication is not
+proof that the agent can execute SQL against an associated source.
 
 The Operations Agent is configured in a **stopped** state; `configured` does not mean a playbook has
 run. The retained `OperationsAgentV1` business-configuration schema is not ontology generation 1.
