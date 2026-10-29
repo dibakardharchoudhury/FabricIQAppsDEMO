@@ -884,14 +884,21 @@ The same signed-user `/invocations` boundary accepts `operation: "decide"` with
 Rejection contains no edits. Another user/source, changed card, expired draft,
 or changed terminal decision cannot create work.
 
-Production writes remain disabled by default. Explicit runtime
-`production_writes_enabled: true` enables the separate human-decision provider,
-not an agent tool. It revalidates the target and duplicate open work, uses a
+Production writes are enabled by default through the separate human-decision provider,
+not an agent tool. Explicit runtime `production_writes_enabled: false` disables them.
+Chat and draft generation remain read-only: only a signed user's reviewed approval can
+create a work order. The provider revalidates the target and duplicate open work, uses a
 stable creation ID, and verifies exact SQL readback including the signed-in
 creator and approved fields. Lost acknowledgements are reconciled by ID;
 an uncertain submission never automatically repeats a SQL create. Known
 pre-write failures explicitly report no write. Decision intents/results are
 available in the same authenticated evidence audit.
+
+An explicit editable work-order draft request cannot be downgraded to native prose by
+the semantic planner: one bounded correction must retain the governed Work Order step.
+Fresh source coverage may still justify no new work; that outcome must not fabricate a
+draft. Hydro Intelligence displays either the typed editable approval cards or an explicit
+no-approval-ready-drafts outcome alongside the supporting answer.
 
 Tests use signed synthetic tokens and simulated SQL boundaries. This is not
 live SQL authorization, distributed idempotency or production-write acceptance.

@@ -2310,7 +2310,7 @@ class FoundrySupervisor:
                         duration_ms += elapsed
                         try:
                             decision = SemanticDecision.model_validate_json(text)
-                            self.validate_semantic_plan(decision, catalog)
+                            self.validate_semantic_plan(decision, catalog, question=request.question)
                         except (ValidationError, SourceFailure) as error:
                             logger.warning(
                                 "Semantic planning attempt %s/%s failed governed validation (%s).",
@@ -2337,7 +2337,7 @@ class FoundrySupervisor:
                         break
                     else:
                         raise SourceFailure("Semantic planning produced no governed decision.")
-        self.validate_semantic_plan(decision, catalog)
+        self.validate_semantic_plan(decision, catalog, question=request.question)
         if request.native_sources and (
             decision.plan is None
             or not any(step.native_source in request.native_sources for step in decision.plan.steps)
@@ -2368,7 +2368,25 @@ class FoundrySupervisor:
         )
         return normalized
 
-    def validate_semantic_plan(self, decision: SemanticDecision, catalog: SourceCatalog) -> None:
+    def validate_semantic_plan(
+        self, decision: SemanticDecision, catalog: SourceCatalog, *, question: str = "",
+    ) -> None:
+        if (decision.mode != "clarify" and not decision.proposal_requested
+                and re.search(r"\b(?:work[\s-]*orders?|wos?)\b", question, re.IGNORECASE)
+                and any(
+                    re.search(r"\bdrafts?\b", clause, re.IGNORECASE)
+                    and re.search(
+                        r"\b(?:prepare|stage|propose|generate|create|make|help)\b|^\s*(?:please\s+)?draft\b",
+                        clause, re.IGNORECASE,
+                    )
+                    and requests_new_work_order_proposal(clause)
+                    for clause in re.split(r"[.!?;]+", question)
+                )):
+            raise SourceFailure(
+                "The operator requested editable work-order drafts. Include a governed Work Order step with "
+                "proposal_requested=true; native prose or recommendations cannot replace approval cards. "
+                "Check fresh open work first and return a grounded no-draft review if nothing new is justified."
+            )
         if decision.plan is None:
             return
         governed = governed_datasets(catalog.context)

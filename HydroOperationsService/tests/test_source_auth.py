@@ -1037,6 +1037,14 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                                 generation=2, configuration_digest="a" * 64)
         endpoint = "https://test.services.ai.azure.com/api/projects/test"
         runtime = RuntimeConfiguration(source=source, authorization=policy, project_endpoint=endpoint)
+        self.assertTrue(runtime.production_writes_enabled)
+        self.assertFalse(RuntimeConfiguration.model_validate({
+            **runtime.model_dump(), "production_writes_enabled": False,
+        }).production_writes_enabled)
+        with self.assertRaises(ValidationError):
+            RuntimeConfiguration.model_validate({
+                **runtime.model_dump(), "production_writes_enabled": "false",
+            })
         configured = {"tenant_id": str(TENANT), "workspace_id": str(SPA), "ontology_id": str(USER),
                       "configuration_digest": source.configuration_digest}
         bridge = AsyncMock()
@@ -1050,7 +1058,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                                              base_url="http://test") as client:
                     health = await client.get("/health")
                     self.assertFalse(health.json()["live_sources_verified"])
-                    self.assertFalse(health.json()["production_writes_enabled"])
+                    self.assertTrue(health.json()["production_writes_enabled"])
                     readiness = await client.get("/readiness")
                     self.assertEqual(readiness.json(), health.json())
             self.assertTrue(tracked_client.is_closed)
@@ -1137,7 +1145,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(health.status_code, 200)
                     self.assertEqual(health.json()["status"], "awaiting_authorized_invocation")
                     self.assertFalse(health.json()["live_sources_verified"])
-                    self.assertFalse(health.json()["production_writes_enabled"])
+                    self.assertTrue(health.json()["production_writes_enabled"])
                     readiness = await client.get(f"http://127.0.0.1:{port}/readiness")
                     self.assertEqual(readiness.status_code, 200)
                     self.assertEqual(readiness.json(), health.json())

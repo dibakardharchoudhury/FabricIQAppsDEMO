@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
-import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
+import { isWorkOrderRequest, type OrchestrationEvent, type WorkOrderProposal } from '../services/copilot/orchestration'
 import { WorkOrderDraftPager } from './WorkOrderDraftPager'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
@@ -134,7 +134,8 @@ export const CopilotResponse = memo(function CopilotResponse({ message, streamin
 
 function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
   const receiptPrefix = useId()
-  const hasBody = Boolean(message.text || message.proposals?.length || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
+  const draftOutcome = !streaming && !message.failed && !message.proposals?.length && Boolean(question && isWorkOrderRequest(question))
+  const hasBody = Boolean(draftOutcome || message.text || message.proposals?.length || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
   // A running tool already shows its own progress, so only flag the gap where the model itself
@@ -161,6 +162,10 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
     {draftReady && message.proposals && <WorkOrderDraftPager proposals={message.proposals} />}
+    {draftOutcome && <section className="v2-work-order-approval" aria-label="Work-order draft outcome">
+      <h3>No approval-ready work-order drafts returned</h3>
+      <p>Review the findings below for existing work, evidence gaps or clarification needed. Recommendations in the answer are not editable drafts. No work order was created.</p>
+    </section>}
     {streaming ? <CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} />
       : steps.length > 0 && <details className="v2-answer-support"><summary>Execution audit — tool calls and receipts</summary><CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} /></details>}
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">

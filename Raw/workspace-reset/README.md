@@ -871,6 +871,9 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
    `HYDRO_AZURE_SUBSCRIPTION_ID`; the engine verifies that it is enabled in the Fabric tenant. New target-specific
    project creation is an explicit, billable opt-in requiring only project and model deployment names.
    Both forms resolve settings from live model/catalog metadata, never the demo tenant.
+   Work-order writes are enabled by default behind explicit human approval, including redeployments
+   of older disabled coordinators. Set `HYDRO_PRODUCTION_WRITES_ENABLED=false` for an intentional
+   read-only deployment; this does not change chat/draft generation into a write operation.
    Requires `azd`; missing
    `azure.ai.agents` and `microsoft.foundry` extensions are installed
    by the deployer. Foundry uses the verified `RAYFIN_PUBLIC_ONTOLOGY_ID` independently of

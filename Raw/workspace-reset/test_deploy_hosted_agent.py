@@ -61,7 +61,7 @@ def configuration(writes=False):
     ), digest
 
 
-def environment(writes=False, state="/home/session/hydro"):
+def environment(writes=True, state="/home/session/hydro"):
     (orchestrator, fabric), _ = configuration(writes)
     return {
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": "model-x", "HYDRO_RUNTIME_STATE_DIR": state,
@@ -330,7 +330,7 @@ class ConvergenceTests(unittest.TestCase):
         sets = fake.environment_settings()
         self.assertEqual(len(fake.commands("azd", "env", "set")), 1)
         self.assertEqual(sets["HYDRO_ORCHESTRATOR_IMAGE"], f"myreg.azurecr.io/hydro-orchestrator@{DIGEST_B}")
-        self.assertEqual(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
+        self.assertEqual(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], True)
         self.assertEqual(sets["AZURE_AI_MODEL_DEPLOYMENT_NAME"], "model-x")
         deploy_calls = fake.commands("azd", "deploy")
         self.assertEqual(deploy_calls, [["azd", "deploy", "hydro-orchestrator", "--environment", "hydro-orchestrator", "--no-prompt"]])
@@ -391,26 +391,24 @@ class ConvergenceTests(unittest.TestCase):
             fake.log.index(fake.commands("azd", "deploy")[0]),
         )
 
-    def test_unreadable_or_non_boolean_live_write_policy_requires_an_explicit_override(self):
+    def test_old_live_write_policy_does_not_override_the_enabled_default(self):
         for raw in ("not-json", "[]", '{"production_writes_enabled":"false"}'):
-            with self.subTest(raw=raw), patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}), \
-                 patch.object(hosted, "ACTIVATION_TIMEOUT_S", -1):
+            with self.subTest(raw=raw), patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}):
                 fake = FakeDeploy()
                 live = agent(env={**environment(), "HYDRO_ORCHESTRATOR_CONFIG": raw})
-                with self.assertRaisesRegex(FakeDeploy.DeployError, "production-write policy"):
-                    run(fake, [live])
-                self.assertEqual(fake.commands("az", "acr", "build"), [])
-                self.assertEqual(fake.commands("azd", "deploy"), [])
+                run(fake, [live, agent(DIGEST_B)])
+                sets = fake.environment_settings()
+                self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], True)
         with patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": "false"}):
             live = agent(env={**environment(), "HYDRO_ORCHESTRATOR_CONFIG": "not-json"})
             fake = FakeDeploy()
-            run(fake, [live, agent(DIGEST_B)])
+            run(fake, [live, agent(DIGEST_B, env=environment(writes=False))])
             sets = fake.environment_settings()
             self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
 
-    def test_production_writes_are_preserved_from_the_live_agent_unless_overridden(self):
+    def test_production_writes_default_to_enabled_and_respect_an_explicit_override(self):
         fake = FakeDeploy()
-        live = agent(DIGEST_A, env=environment(writes=True))
+        live = agent(DIGEST_A, env=environment(writes=False))
         with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}):
             run(fake, [live, live, agent(DIGEST_B, env=environment(writes=True))])
         sets = fake.environment_settings()

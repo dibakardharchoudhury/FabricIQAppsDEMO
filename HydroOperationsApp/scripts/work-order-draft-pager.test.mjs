@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import * as answerPresentation from '../src/services/copilot/answerPresentation.ts'
+import { isWorkOrderRequest } from '../src/services/copilot/orchestration.ts'
 
 const require = createRequire(import.meta.url)
 const Empty = () => null
@@ -27,6 +28,7 @@ function loadComponent(file, symbol) {
     if (specifier === './CopilotThinking') return { CopilotThinking: () => createElement('p', null, 'Thinking'), CopilotStreamCursor: Empty }
     if (specifier === '../ui-shared/hooks/useExpandedView') return { useExpandedView: () => ({ expanded: false, toggleExpanded: Empty }) }
     if (specifier === '../services/copilot/answerPresentation') return answerPresentation
+    if (specifier === '../services/copilot/orchestration') return { isWorkOrderRequest }
     if (specifier === '../services/copilot/suggestions') return {}
     if (specifier === 'react-markdown') return { __esModule: true, default: ({ children }) => createElement('div', null, children) }
     if (specifier === 'remark-gfm') return { __esModule: true, default: Empty }
@@ -92,4 +94,37 @@ test('a proposal-only response renders cards rather than an endless thinking ind
   }))
   assert.match(html, /Diagnostic draft 1/)
   assert.doesNotMatch(html, /Thinking/)
+})
+
+test('a completed draft request without typed cards has an explicit visual outcome', () => {
+  const question = 'Which turbines had BAD telemetry quality today, and what work is already open for these? '
+    + 'Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.'
+  const html = renderToStaticMarkup(createElement(AgentMessage, {
+    question, message: { role: 'agent', text: 'Existing work already covers these concerns.', backendOwned: true, proposals: [] },
+    streaming: false, showCrew: false,
+  }))
+  assert.match(html, /aria-label="Work-order draft outcome"/)
+  assert.match(html, /No approval-ready work-order drafts returned/)
+  assert.match(html, /No work order was created/)
+  assert.doesNotMatch(html, /Yes, create work order|Review backend work-order draft/)
+  const empty = renderToStaticMarkup(createElement(AgentMessage, {
+    question, message: { role: 'agent', text: '', backendOwned: true, proposals: [] },
+    streaming: false, showCrew: false,
+  }))
+  assert.match(empty, /No approval-ready work-order drafts returned/)
+  assert.doesNotMatch(empty, /Thinking/)
+})
+
+test('facts, failed responses and in-flight requests do not display a completed draft outcome', () => {
+  for (const props of [
+    { question: 'Which work orders are already open?', streaming: false },
+    { question: 'Prepare work-order drafts.', streaming: true },
+    { question: 'Prepare work-order drafts.', streaming: false, failed: true },
+  ]) {
+    const html = renderToStaticMarkup(createElement(AgentMessage, {
+      ...props, message: { role: 'agent', text: 'Current answer', failed: props.failed, backendOwned: true },
+      showCrew: false,
+    }))
+    assert.doesNotMatch(html, /Work-order draft outcome/)
+  }
 })

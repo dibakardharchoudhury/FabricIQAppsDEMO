@@ -225,6 +225,76 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.owner.evidence)
         self.assertFalse(self.owner.specialists)
 
+    async def test_explicit_rca_and_drafts_cannot_be_downgraded_to_native_prose(self):
+        question = (
+            "Which turbines had BAD telemetry quality today, and what work is already open for these? "
+            "Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts."
+        )
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        omitted = decision("fabric-iq", "native_claims", reader=False)
+        corrected = decision("fabric-iq", "native_claims", reader=False)
+        corrected["proposal_requested"] = True
+        corrected["plan"]["steps"].extend({
+            "specialist": role, "question": assignment, "reason": "Complete the requested grounded review.",
+            "nativeSource": None, "requiresSelection": False, "requiresVerifiedIssue": False,
+            "execution": "agent", "reads": [],
+        } for role, assignment in (
+            ("rca", "Investigate the quality issue without claiming a mechanical diagnosis."),
+            ("work-order", "Stage editable diagnostic drafts only for verified uncovered work."),
+        ))
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        api.responses.create.side_effect = [
+            SimpleNamespace(status="completed", id="resp_omitted", output_text=json.dumps(omitted)),
+            SimpleNamespace(status="completed", id="resp_corrected", output_text=json.dumps(corrected)),
+        ]
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            planned = await self.owner.plan_semantically(
+                self.request.model_copy(update={"question": question}), self.journal,
+            )
+        self.assertEqual(api.responses.create.await_count, 2)
+        self.assertEqual(planned.required_specialists, ("rca", "work-order"))
+        self.assertTrue(self.owner.proposal_requested(planned))
+        feedback = json.loads(api.responses.create.call_args_list[1].kwargs["input"])["validation_feedback"]
+        self.assertIn("editable work-order drafts", feedback["errors"][0]["msg"])
+        self.owner.bridge.call.assert_not_called()
+        self.assertFalse(self.owner.evidence)
+
+    async def test_saved_plan_cannot_drop_an_explicit_draft_request(self):
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        self.journal.save("semantic_decision", {"decision": decision("fabric-iq", "native_claims", False)})
+        with self.assertRaisesRegex(SourceFailure, "editable work-order drafts"):
+            await self.owner.plan_semantically(
+                self.request.model_copy(update={"question": "Prepare editable work-order drafts for T005."}),
+                self.journal,
+            )
+        self.assertFalse(self.owner.evidence)
+
+    async def test_conversation_cannot_replace_an_explicit_draft_request(self):
+        planned = decision()
+        planned.update(mode="conversation", plan=None)
+        self.journal.save("semantic_decision", {"decision": planned})
+        with self.assertRaisesRegex(SourceFailure, "editable work-order drafts"):
+            await self.owner.plan_semantically(
+                self.request.model_copy(update={"question": "Prepare editable work-order drafts for T005."}),
+                self.journal,
+            )
+        self.assertFalse(self.owner.evidence)
+
+    def test_prior_draft_reviews_and_explicit_no_new_drafts_do_not_require_proposals(self):
+        for question in (
+            "I want to review the prior work-order draft and show its evidence gaps.",
+            "Which work orders need to be created? Do not create any drafts.",
+            "Show existing work orders. Do not prepare, create or stage drafts.",
+        ):
+            with self.subTest(question=question):
+                self.owner.validate_semantic_plan(
+                    SemanticDecision.model_validate(decision()),
+                    SourceCatalog.model_validate(catalog()), question=question,
+                )
+
     async def test_unconfigured_planner_fails_before_client_or_source_execution(self):
         self.owner.analysis_model = None
         with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient") as client:

@@ -250,22 +250,10 @@ def ensure_hosted_agent(
         raise deploy.DeployError(str(error)) from error
     subscription = project_id.split("/")[2]
 
-    writes = os.environ.get("HYDRO_PRODUCTION_WRITES_ENABLED", "").strip().lower()
-    if writes not in ("", "true", "false"):
+    writes = os.environ.get("HYDRO_PRODUCTION_WRITES_ENABLED", "").strip().lower() or "true"
+    if writes not in ("true", "false"):
         raise deploy.DeployError("HYDRO_PRODUCTION_WRITES_ENABLED must be true or false.")
     production_writes = writes == "true"
-    if not writes and existing is not None:
-        message = (
-            "Cannot preserve the live production-write policy. Set HYDRO_PRODUCTION_WRITES_ENABLED "
-            "to true or false explicitly after reviewing the current agent."
-        )
-        try:
-            previous = json.loads(live_environment.get("HYDRO_ORCHESTRATOR_CONFIG", ""))
-        except (TypeError, ValueError) as error:
-            raise deploy.DeployError(message) from error
-        if not isinstance(previous, dict) or type(previous.get("production_writes_enabled")) is not bool:
-            raise deploy.DeployError(message)
-        production_writes = previous["production_writes_enabled"]
     orchestrator, fabric_source = compose_runtime_configuration(
         tenant=tenant, workspace=workspace, ontology=ontology, spa_client_id=spa_client_id, kusto_origin=kusto_origin,
         project_endpoint=endpoint, values=values, source_digest=source_digest, production_writes=production_writes,

@@ -532,16 +532,15 @@ successful tool discovery alone does not establish a successful native answer.
   across Foundry, full workflow and app publication for this tenant/workspace.
   An explicit selection requires a valid GUID and is verified before deployment;
   redirect, permission and consent setup remains automated.
-- **Work-order permissions:** the launcher preserves this target's current policy
-  without a UI override; enabled writes require human approval.
-  A new coordinator defaults to disabled writes. To deliberately change the
-  existing target's policy, set the process-local
-  `$env:HYDRO_PRODUCTION_WRITES_ENABLED = 'true'` (or `'false'`) before the
-  canonical combined CLI command in section 7. Later deployments without this
-  override preserve that live value. This does not grant SQL permissions or
-  create a work order: each creation still requires a fresh draft, explicit
-  human approval and backend validation/readback. Remove the process-local
-  override afterwards so it cannot affect another target.
+- **Work-order permissions:** approval-gated writes are enabled by default for both
+  new and redeployed coordinators. An old disabled flag is not inherited.
+  To deliberately disable writes, set the process-local
+  `$env:HYDRO_PRODUCTION_WRITES_ENABLED = 'false'` before the canonical combined CLI
+  command in section 7. Keep that explicit override for deployments that must remain
+  read-only; without it, deployment enables approval-gated writes. This grants no SQL
+  permissions and creates nothing automatically: every creation still requires a fresh
+  draft, explicit human approval and backend validation/readback. Remove the process-local
+  override when finished so it cannot affect another target.
 - **Automatic configuration:** project endpoints, connected registries and ontology
   graph ownership are resolved internally. The launcher does not accept graph-binding
   JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
@@ -635,7 +634,8 @@ Teams/email delivery separately; hosting success is not runtime acceptance.
 
 If a draft reports **Production work-order writes are disabled; no SQL write was
 attempted**, the coordinator's write-policy flag is off, not a SQL write failure.
-Review the target policy using section 6. Do not retry an expired or previously
+Check for an explicit disable override or an older coordinator deployment using section 6.
+New deployments enable approval-gated writes by default. Do not retry an expired or previously
 blocked card after changing it: request fresh evidence and review a new draft.
 
 ### Independent operational SQL lifecycle

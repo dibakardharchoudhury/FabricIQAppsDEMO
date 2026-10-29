@@ -290,7 +290,7 @@ class RuntimeConfiguration(Contract):
     authorization: SourceAuthPolicy
     project_endpoint: str
     native_binding: NativeBinding | None = None
-    production_writes_enabled: bool = Field(default=False, strict=True)
+    production_writes_enabled: bool = Field(default=True, strict=True)
 
     @model_validator(mode="after")
     def consistent_runtime(self) -> "RuntimeConfiguration":
@@ -835,7 +835,7 @@ def create_delegated_app(
 def create_fabric_delegated_app(
     root: Path, verifier: SourceTokenVerifier, source: SourceIdentity, endpoint: str,
     *, bridge: Bridge | None = None, native_binding: NativeBinding | None = None,
-    production_writes_enabled: bool = False,
+    production_writes_enabled: bool = True,
 ) -> FastAPI:
     """Compose the request boundary with verified Fabric read-only primitives."""
     endpoint = verified_project_endpoint(endpoint)
