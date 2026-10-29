@@ -740,7 +740,9 @@ documentation/local-UI changes do not invalidate completed setup. Energy retry
 detects changed `Geo_001`/`Geo_002` source and offers **Sync updated definitions and
 resume**. It updates only changed existing notebooks from the local checkout through
 Fabric definition APIs, retaining their Lakehouse/Environment bindings and unknown parts,
-then verifies readback before retrying Energy. It does not reconnect Git, import the
+then verifies readback before retrying Energy. Source comparison accounts for Fabric's
+Markdown blank-comment serialization and line endings; executable code, binding metadata
+and other retained parts must still match. It does not reconnect Git, import the
 workspace again or repeat successful Core setup for a Geo-only fix. A changed core
 notebook instead restarts at Setup pipeline after the targeted update. The checkout must
 match the selected repository/branch. Environment, pipeline, item-metadata changes,

@@ -14,6 +14,7 @@ from sync_workspace_from_git import (
     Fabric, configure_weather_assets, configure_weather_schedule,
     ensure_spark_runtime, verify_environment_runtimes,
     bind_notebook_definition, notebook_definition, update_notebooks_from_checkout,
+    _normalized_notebook_source,
 )
 
 LAKEHOUSE_ID = "lakehouse-id"
@@ -133,6 +134,67 @@ class FakeFabric:
 
 
 class TargetedNotebookSyncTests(unittest.TestCase):
+    def test_markdown_normalization_does_not_change_executable_cells(self):
+        source = '# CELL ********************\n\nvalue = """\n#\n# text\n"""\n'
+        self.assertEqual(_normalized_notebook_source(source), source)
+        self.assertNotEqual(
+            _normalized_notebook_source(source),
+            _normalized_notebook_source(source.replace("#\n# ", "# # ")),
+        )
+
+    def test_fabric_markdown_serialization_is_accepted_and_not_uploaded_again(self):
+        name = "Geo_001_ingest_energy_context"
+        source = (Path(__file__).resolve().parents[2] / "Notebooks" / f"{name}.Notebook" /
+                  "notebook-content.py").read_text(encoding="utf-8")
+        original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(
+            (source + "\nold_code = True\n").encode()).decode(), "payloadType": "InlineBase64"}]}
+        bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"}, {})
+        state = copy.deepcopy(original)
+        fab = Mock()
+        fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+
+        def update(method, url, **kwargs):
+            state.clear()
+            state.update(copy.deepcopy(kwargs["json"]["definition"]))
+            submitted = base64.b64decode(state["parts"][0]["payload"]).decode()
+            saved = submitted.replace("#\n# ", "# # ").replace("\n", "\r\n")
+            state["parts"][0]["payload"] = base64.b64encode(saved.encode()).decode()
+            return FakeResponse(200)
+
+        fab.request.side_effect = update
+        with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
+            update_notebooks_from_checkout(fab, "workspace", [name])
+            update_notebooks_from_checkout(fab, "workspace", [name])
+        self.assertEqual(fab.request.call_count, 1)
+
+    def test_readback_rejects_changed_code_and_bindings(self):
+        name = "Geo_002_publish_map_agent"
+        for before_text, after_text in (
+            ("def publish_map_agent(api, models):", "def publish_map_agent(api, wrong):"),
+            ("existing-lakehouse", "different-lakehouse"),
+        ):
+            with self.subTest(changed=before_text):
+                original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(
+                    b"# METADATA ********************\n\n# META {}\n\nold = True\n").decode()}]}
+                bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"}, {})
+                state = copy.deepcopy(original)
+                fab = Mock()
+                fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+
+                def update(method, url, **kwargs):
+                    state.clear()
+                    state.update(copy.deepcopy(kwargs["json"]["definition"]))
+                    submitted = base64.b64decode(state["parts"][0]["payload"]).decode()
+                    self.assertIn(before_text, submitted)
+                    state["parts"][0]["payload"] = base64.b64encode(
+                        submitted.replace(before_text, after_text).encode()).decode()
+                    return FakeResponse(200)
+
+                fab.request.side_effect = update
+                with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
+                    with self.assertRaisesRegex(RuntimeError, "readback failed"):
+                        update_notebooks_from_checkout(fab, "workspace", [name])
+
     def test_only_changed_code_is_written_and_live_bindings_and_other_parts_survive(self):
         name = "Geo_002_publish_map_agent"
         source = (Path(__file__).resolve().parents[2] / "Notebooks" / f"{name}.Notebook" /

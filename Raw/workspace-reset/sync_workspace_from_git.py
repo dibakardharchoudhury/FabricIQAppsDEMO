@@ -470,6 +470,16 @@ def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dic
     return response.json()["definition"]
 
 
+def _normalized_notebook_source(source: str) -> str:
+    source = source.removeprefix("\ufeff").replace("\r\n", "\n")
+    sections = re.split(r"(?m)(^# [A-Z][A-Z ]* \*+\n)", source)
+    for index in range(1, len(sections), 2):
+        if sections[index].startswith("# MARKDOWN "):
+            # Fabric folds a bare Markdown comment into the following comment line.
+            sections[index + 1] = re.sub(r"(?m)^#\n(?=# )", "# ", sections[index + 1])
+    return "".join(sections)
+
+
 def update_notebooks_from_checkout(fab: Fabric, workspace_id: str, names: list[str]) -> None:
     """Refresh existing notebook code only, preserving live bindings and unknown parts."""
     root = Path(__file__).resolve().parents[2] / "Notebooks"
@@ -497,7 +507,7 @@ def update_notebooks_from_checkout(fab: Fabric, workspace_id: str, names: list[s
         if not live_header or not local_header:
             raise ValueError(f"{name}: notebook dependency metadata is missing.")
         candidate = candidate[:local_header.start(1)] + live_header[1] + candidate[local_header.end(1):]
-        if before == candidate:
+        if _normalized_notebook_source(before) == _normalized_notebook_source(candidate):
             print(f"  {name}: source already current; bindings retained.", flush=True)
             continue
         part["payload"] = base64.b64encode(candidate.encode("utf-8")).decode("ascii")
@@ -515,7 +525,16 @@ def update_notebooks_from_checkout(fab: Fabric, workspace_id: str, names: list[s
         actual_parts = {part["path"]: part for part in actual["parts"]}
         for expected in definition["parts"]:
             saved = actual_parts.get(expected["path"])
-            if saved is None or base64.b64decode(saved["payload"]) != base64.b64decode(expected["payload"]):
+            if saved is None:
+                raise RuntimeError(f"{name}: targeted source/binding retention readback failed at {expected['path']}.")
+            saved_payload = base64.b64decode(saved["payload"])
+            expected_payload = base64.b64decode(expected["payload"])
+            if expected["path"] == "notebook-content.py":
+                payload_matches = _normalized_notebook_source(saved_payload.decode("utf-8-sig")) == (
+                    _normalized_notebook_source(expected_payload.decode("utf-8-sig")))
+            else:
+                payload_matches = saved_payload == expected_payload
+            if not payload_matches:
                 raise RuntimeError(f"{name}: targeted source/binding retention readback failed at {expected['path']}.")
         print(f"  {name}: updated code; live bindings and other definition parts retained.", flush=True)
 
