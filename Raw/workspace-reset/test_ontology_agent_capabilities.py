@@ -42,7 +42,7 @@ def functions(number, *names, **overrides):
         "definition_parts", "is_ontology_context_path", "operational_source_path",
         "ontology_context_matches_source",
         "normalize_lakehouse_elements",
-        "selected_ontology_entities", "ontology_source_bindings", "ensure_execution_sources",
+        "selected_ontology_entities", "ontology_source_bindings",
         "refresh_agent_ontology_sources",
         "ontology_context_elements", "refresh_ontology_context_parts",
     }
@@ -1343,7 +1343,7 @@ class CapabilityTests(unittest.TestCase):
                 ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True)
             self.assertEqual(len(parts), 2)
 
-    def test_publication_is_preserved_but_inconclusive_runtime_fails(self):
+    def test_publication_requires_readback_but_does_not_invoke_runtime_smoke(self):
         tree = ast.parse(source("009"))
         deploy = next(
             node for node in tree.body if isinstance(node, ast.Try)
@@ -1437,33 +1437,17 @@ class CapabilityTests(unittest.TestCase):
                 ),
                 probe_data_agent_ontology=runtime_probe,
             )
-            if mismatch_at == "healthy":
+            if mismatch_at in ("none", "healthy", "known_product_result", "known_product_exception"):
                 exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
                 final = ns["persist_agent_status"].call_args
-                self.assertEqual(final.args[0], "ready")
-                self.assertEqual(final.kwargs["runtime_status"], "verified")
+                self.assertEqual(final.args[0], "published")
+                self.assertEqual(final.kwargs["runtime_status"], "not_checked")
                 self.assertEqual(final.kwargs["publication_status"], "published")
-                continue
-            if mismatch_at in ("known_product_result", "known_product_exception"):
-                exec(compile(ast.Module(body=[deploy], type_ignores=[]), "known-product", "exec"), ns)
-                final = ns["persist_agent_status"].call_args
-                self.assertEqual(final.args[0], "known_product_limitation")
-                self.assertEqual(final.kwargs["runtime_status"], "known_product_limitation")
-                self.assertEqual(final.kwargs["publication_status"], "published")
-                continue
-            if mismatch_at == "none":
-                with self.assertRaisesRegex(RuntimeError, "runtime inconclusive"):
-                    exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
-                calls = ns["persist_agent_status"].call_args_list
-                published_calls = [call for call in calls if call.args[0] == "published"]
-                self.assertEqual(len(published_calls), 1)
-                self.assertEqual(published_calls[0].kwargs["publication_status"], "published")
-                self.assertEqual(published_calls[0].kwargs["id"], "agent-id")
-                self.assertEqual(published_calls[0].kwargs["name"], "agent")
-                runtime_calls = [call for call in calls if "runtime_evidence" in call.kwargs]
-                self.assertEqual(runtime_calls[0].kwargs["runtime_status"], "inconclusive")
-                self.assertEqual(runtime_calls[0].kwargs["publication_status"], "published")
-                self.assertEqual(calls[-1].args[0], "failed")
+                self.assertEqual(final.kwargs["runtime_evidence"], {})
+                self.assertEqual(final.kwargs["id"], "agent-id")
+                ns["probe_data_agent_ontology"].assert_not_called()
+                ns["build_lakehouse_datasource_obj"].assert_not_called()
+                ns["build_kusto_datasource_obj"].assert_not_called()
                 self.assertEqual(ns["get_item_definition"].call_count, 3)
                 continue
             message = "No verified published" if mismatch_at == "draft_only" else "does not match selected ontology"
@@ -1589,7 +1573,7 @@ class CapabilityTests(unittest.TestCase):
             with self.subTest(elements=malformed), self.assertRaisesRegex(RuntimeError, "malformed"):
                 normalize(malformed)
 
-    def test_fresh_nb09_and_following_sql_extension_retain_execution_sources(self):
+    def test_fresh_nb09_and_following_sql_extension_need_no_smoke_or_extra_sources(self):
         state = {"parts": []}
         texts = {
             "expressions.tmdl": (
@@ -1668,18 +1652,10 @@ class CapabilityTests(unittest.TestCase):
             for stage in ("draft", "published"):
                 paths = {part["path"] for part in state["parts"]}
                 self.assertIn(f"Files/Config/{stage}/ontology-source/datasource.json", paths)
-                self.assertIn(f"Files/Config/{stage}/lakehouse-source/datasource.json", paths)
-                self.assertIn(f"Files/Config/{stage}/kusto-source/datasource.json", paths)
-            ns["lakehouse_schema_map"].assert_called_once_with(["silver_facilities", "weather_sites"])
-        context = json_part("Files/Config/draft/ontologies/selected/ontology.json",
-                            {"artifactId": "ontology", "workspaceId": "ws"})
-        repaired = ns["ensure_execution_sources"]([context], "ontology")
-        self.assertIn(context, repaired)
-        lakehouse = next(ns["decode_payload"](part["payload"]) for part in repaired
-                         if part["path"] == ns["LAKEHOUSE_DATASOURCE_PATH"])
-        self.assertEqual({table["display_name"] for table in lakehouse["elements"][0]["children"]},
-                         {"silver_facilities", "weather_sites"})
-        self.assertEqual(ns["ensure_execution_sources"](repaired, "ontology"), repaired)
+                self.assertNotIn(f"Files/Config/{stage}/lakehouse-source/datasource.json", paths)
+                self.assertNotIn(f"Files/Config/{stage}/kusto-source/datasource.json", paths)
+            ns["lakehouse_schema_map"].assert_not_called()
+            ns["probe_data_agent_ontology"].assert_not_called()
         sql, extended = self.sql_extension_namespace(state["parts"])
         sql["extend_data_agent_sql_source"]("agent")
         for stage in ("draft", "published"):
@@ -1687,10 +1663,9 @@ class CapabilityTests(unittest.TestCase):
                        for part in extended["definition"]["parts"]
                        if part["path"].startswith(f"Files/Config/{stage}/")
                        and part["path"].endswith("/datasource.json")]
-            self.assertEqual({source["type"] for source in sources},
-                             {"ontology", "lakehouse_tables", "kusto", "sql_database"})
+            self.assertEqual({source["type"] for source in sources}, {"ontology", "sql_database"})
 
-    def test_nb09_failed_runtime_rerun_preserves_sql_and_custom_capabilities(self):
+    def test_nb09_rerun_preserves_sql_and_custom_capabilities_without_runtime_gate(self):
         sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
                                           if assign_to(node, "SQL_TABLES")))
         sql = {
@@ -1841,8 +1816,7 @@ class CapabilityTests(unittest.TestCase):
         )
         deployment = next(node for node in ast.parse(source("009")).body
                           if isinstance(node, ast.Try) and "create_data_agent" in ast.unparse(node))
-        with self.assertRaisesRegex(RuntimeError, "runtime failed"):
-            exec(compile(ast.Module(body=[deployment], type_ignores=[]), "preserving-rerun", "exec"), ns)
+        exec(compile(ast.Module(body=[deployment], type_ignores=[]), "preserving-rerun", "exec"), ns)
         actual = {part["path"]: part for part in state["parts"]}
         for version in ("draft", "published"):
             prefix = f"Files/Config/{version}/"
@@ -1896,7 +1870,8 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(actual[custom_part["path"]], custom_part)
         ns["update_item_definition"].assert_called_once()
         ns["publish_data_agent"].assert_called_once()
-        self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
+        self.assertEqual(ns["persist_agent_status"].call_args.args[0], "published")
+        ns["probe_data_agent_ontology"].assert_not_called()
         self.assertEqual(
             ns["build_stage_obj"]({})["aiInstructions"],
             "default ontology instructions\n\n### Asset & Facility Resolution (Must Follow)\nResolve actual keys"
@@ -1945,11 +1920,11 @@ class CapabilityTests(unittest.TestCase):
         }
         exec(compile(ast.Module(body=[deployment], type_ignores=[]), "recovered-rerun", "exec"), ns)
         final = ns["persist_agent_status"].call_args
-        self.assertEqual(final.args[0], "ready")
+        self.assertEqual(final.args[0], "published")
         self.assertEqual(final.kwargs["publication_status"], "published")
-        self.assertEqual(final.kwargs["runtime_status"], "verified")
-        self.assertEqual(final.kwargs["runtime_evidence"], {"fresh": True})
-        self.assertEqual(ns["probe_data_agent_ontology"].call_count, 2)
+        self.assertEqual(final.kwargs["runtime_status"], "not_checked")
+        self.assertEqual(final.kwargs["runtime_evidence"], {})
+        ns["probe_data_agent_ontology"].assert_not_called()
         self.assertEqual(state["parts"], preserved)
 
     def test_malformed_existing_agent_baseline_never_updates_or_publishes(self):

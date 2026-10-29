@@ -190,7 +190,7 @@ def synchronize_data_agent(root=ROOT, check=False):
     content = canonical.read_text(encoding="utf-8")
     support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8")
     names = {"selected_ontology_entities", "ontology_source_bindings",
-             "ontology_context_elements", "refresh_ontology_context_parts", "operational_source_path"}
+             "ontology_context_elements", "refresh_ontology_context_parts"}
     helpers = [ast.get_source_segment(support, node) for node in ast.parse(support).body
                if isinstance(node, ast.FunctionDef) and node.name in names]
     if len(helpers) != len(names):

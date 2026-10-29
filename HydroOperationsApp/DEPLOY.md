@@ -211,8 +211,9 @@ changing the agent and identifies the instructions to shorten. Both NB11 setting
 share the bounded Delta-conflict retry used by the parallel agent setup branches; unrelated
 errors still propagate.
 
-The bounded NB09 MCP facilities smoke is deliberately a setup sanity check, not an app
-acceptance suite. NB11 publishes the final SQL adapter afterward, and interactive app requests
+NB09 verifies source identity and publication/readback without invoking the agent or enforcing
+an answer format. It records runtime as `not_checked`; a successful publish is not runtime
+certification. NB11 publishes the final SQL adapter afterward, and interactive app requests
 use Supervisor → Sparky → Fabric Responses. That sequence is expected; no extra SQL/KQL/
 combined-source runtime or Teams/email delivery checks are required to complete setup.
 Expand **Key Vault secret names and notebook settings** only when defaults differ:
@@ -493,10 +494,10 @@ and application authorization; it does not claim managed MCP execution-policy en
 Original source text and resource receipts are retained; downstream analysis and
 approval drafts are separate, never replacements for the source answer.
 
-The ontology supplies semantic context; explicit Lakehouse and Eventhouse adapters
-provide source-native query tools. NB09 restores missing adapters using live source
-identity/schema and retains existing selections. NB11 preserves them when adding the
-operational SQL adapter; ontology associations alone do not guarantee query tools.
+The ontology supplies semantic context and associated data sources. NB09 preserves these
+and compatible existing execution sources; it does not add Lakehouse/Eventhouse profiles to
+work around an intermediate MCP smoke response. NB11 preserves existing selections when
+adding the operational SQL adapter. No automatic agent query is a setup prerequisite.
 Only the five operational SQL tables are
 selected; visible but unselected SQL control tables are not extra query sources.
 Native JSON result files and their typed tables are retained without rewriting the

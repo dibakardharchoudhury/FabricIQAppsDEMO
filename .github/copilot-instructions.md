@@ -13,11 +13,11 @@ branches. Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10
 after verifying the retained ontology agent and the retired folder/source identity, then clears
 its obsolete settings. Preserve the shared Eventhouse and SQL/KQL grounding.
 Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
-binding. Data Agent sources require matching verified v2 identity. NB09 reports the exact temporary
-Fabric response `This API version is not supported for the specified Ontology item` as a known
-product limitation after verified v2 publication; every other deployment, publication, runtime, and
-readback failure propagates. NB11 preserves compatible added SQL/custom content. The bounded smoke
-does not attest execution provenance or certify SQL/combined-source answers. Configuration or
+binding. Data Agent sources require matching verified v2 identity. NB09 verifies publication and
+readback without an automatic MCP query or answer-format gate; setup records deployment/publication
+`published` and runtime `not_checked`. Do not add duplicate source attachments to satisfy a smoke
+response. Actual deployment/publication/readback failures propagate. NB11 preserves compatible
+added SQL/custom content. Publication does not certify SQL/combined-source answers. Configuration or
 hosted-page success does not certify agent execution or delivery. The app's native graph
 requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
 → Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON generated from

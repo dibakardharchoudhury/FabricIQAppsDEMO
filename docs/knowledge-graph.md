@@ -1086,8 +1086,13 @@ with the unsupported-API semantic error (RootActivityId `5082e3f9-6b1e-45a5-b675
 That probe preceded the authorized revised-NB09 run documented below; it remains historical
 publication/semantic-error evidence, not a verified smoke result.
 
-The revised implementation requires a **bounded functional smoke test**, not full agent
-certification or attested execution provenance:
+**Historical smoke policy, no longer a setup gate:** the automatic NB09 functional query
+and answer-format check described below has been removed. NB09 now verifies publication
+and source identity/readback, records deployment/publication as `published` and runtime
+as `not_checked`, and continues to NB11. It does not add duplicate execution sources to
+satisfy the old smoke. Existing sources and selections are preserved.
+
+The earlier implementation used a bounded functional smoke test:
 
 - NB09 uses the selected ontology as semantic context and permits source-native SQL on its
   associated Lakehouse static binding for the first five facility IDs/names. Expected values are
@@ -1103,7 +1108,7 @@ certification or attested execution provenance:
   agent.
 - Semantic errors (including nested JSON errors despite `isError: false`), wrong rows, and
   transport failures are `failed`. Nonparseable, count-only, or otherwise unverifiable answers are
-  `inconclusive`. Both fail required modes; neither is a static v2 skip.
+  `inconclusive`. Those outcomes blocked setup under the old policy, not the current one.
 - NB11 configures its SQL source independently of NB09's ontology status or attachment.
   It preserves existing sources and custom content, verifies the submitted SQL source in draft
   and published readback, and writes only its own SQL-source status. It neither requires nor

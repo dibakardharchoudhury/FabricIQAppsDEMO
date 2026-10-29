@@ -26,11 +26,10 @@
 # # 09 — Build a Data Agent over Ontology v2
 #
 # Uses `rti_demo_settings` to configure and publish a Fabric **Data Agent** with the
-# selected Ontology v2, then verifies it with a sample query. Ontology context guides
+# selected Ontology v2, then verifies publication and source readback. Ontology context guides
 # queries against its associated Lakehouse/Eventhouse; operational SQL guidance stays
-# owned by NB11. Explicit Lakehouse/Eventhouse execution adapters expose source-native
-# query tools; ontology association alone is not sufficient in every runtime session.
-# Existing execution sources, custom selections and SQL guidance are retained.
+# owned by NB11. Existing execution sources, custom selections and SQL guidance are
+# retained. Setup does not invoke the agent or require a particular answer format.
 #
 # > **Known Fabric response:** After verified v2 publication, only the exact response
 # > "This API version is not supported for the specified Ontology item" is reported as
@@ -290,26 +289,6 @@ def ontology_source_bindings(parts, workspace_id):
                 continue
             bindings.setdefault((kind, item_id), {}).setdefault(physical_name, set()).add(entity_name)
     return bindings
-
-def operational_source_path(parts, workspace_id, item_id, preferred_path, source_type="sql_database"):
-    sources = {
-        part["path"]: json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
-        for part in parts
-        if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json")
-    }
-    matching = [path for path, source in sources.items()
-                if source.get("type") == source_type and source.get("artifactId") == item_id]
-    label = "operational SQL" if source_type == "sql_database" else source_type
-    if len(matching) > 1:
-        raise RuntimeError(f"Multiple Data Agent {label} sources reference the same item.")
-    if matching:
-        path = matching[0]
-        if sources[path].get("workspaceId") != workspace_id:
-            raise RuntimeError(f"Existing {label} source has a conflicting workspace identity.")
-        return path
-    if preferred_path in sources:
-        raise RuntimeError(f"The preferred {label} source path belongs to another source.")
-    return preferred_path
 # END ONTOLOGY SOURCE TOPOLOGY SUPPORT
 
 FABRIC_API_BASE = "https://api.fabric.microsoft.com"
@@ -1384,7 +1363,7 @@ ASSET_RESOLUTION_INSTRUCTIONS = """### Asset & Facility Resolution (Must Follow)
 Resolve tags, facilities, exact opcua_node_id values, equipment identifiers and units through ontology-associated reference data. Turbine 5 suggests tag T005, not an invented equipment_id. Use actual bindings and canonical keys, not display-name guesses or schema samples."""
 MULTISOURCE_INSTRUCTIONS = """### Ontology context and source execution
 
-Use ontology context and the attached Lakehouse execution source for static entities/relationships, and the attached Eventhouse execution source for telemetry. These adapters expose the ontology-associated SQL/KQL query tools; they are not duplicate business models or ontology traversal endpoints. "Use the ontology" permits this execution unless the user explicitly restricts it.
+Use ontology context and its associated Lakehouse for static entities/relationships, and its associated Eventhouse for telemetry. Source-native SQL/KQL on these associated sources is normal ontology-backed execution, not a bypass. Do not require duplicate source attachments or an ontology traversal endpoint. "Use the ontology" permits this execution unless the user explicitly restricts it.
 Use the existing SQL database for work orders, maintenance notifications, inspections, spare parts and 3D models. Follow its source-specific instructions; do not answer operational-record questions from telemetry."""
 
 CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
@@ -1660,26 +1639,6 @@ def build_kusto_datasource_obj(existing: dict) -> dict:
     return ds
 
 
-def ensure_execution_sources(parts: list, ontology_id: str) -> list:
-    for source_type, item_id, preferred in (
-        (LAKEHOUSE_DATASOURCE_TYPE, lakehouse_id, LAKEHOUSE_DATASOURCE_PATH),
-        (KUSTO_DATASOURCE_TYPE, kql_db_id, KUSTO_DATASOURCE_PATH),
-    ):
-        path = operational_source_path(parts, workspace_id, item_id, preferred, source_type)
-        if any(part["path"] == path for part in parts):
-            continue
-        if source_type == LAKEHOUSE_DATASOURCE_TYPE:
-            bindings = ontology_source_bindings(
-                definition_parts(get_item_definition(ontology_id)), workspace_id)
-            tables = sorted({name for name, _ in LAKEHOUSE_TABLES}
-                            | set(bindings.get(("Lakehouse", lakehouse_id), {})))
-            source = build_lakehouse_datasource_obj({}, lakehouse_schema_map(tables))
-        else:
-            source = build_kusto_datasource_obj({})
-        parts = upsert_part(parts, path, source)
-    return parts
-
-
 def upsert_instruction_section(instructions: str, marker: str, desired: str) -> str:
     """Replace one owned section while preserving all unrelated instructions."""
     desired = desired.strip("\n")
@@ -1813,7 +1772,6 @@ try:
         )
         parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
         parts = update_operational_source_guidance(parts)
-    parts = ensure_execution_sources(parts, ontology_id)
     for part in parts:
         if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json"):
             ds = decode_payload(part["payload"])
@@ -1843,7 +1801,7 @@ try:
     else:
         print("   • ontology data source  ->", DATASOURCE_PATH)
         print("       Entity metadata refreshed from the live ontology; custom selections preserved.")
-    print("       Retained Lakehouse/Eventhouse execution adapters and compatible custom sources.")
+    print("       Retained ontology-associated sources and compatible custom sources.")
 
     update_item_definition(data_agent_item_id, {"parts": parts})
     verify_agent_source_readback(
@@ -1854,13 +1812,15 @@ try:
     # 4) PUBLISH — promote staging; verify published identity, not runtime readiness.
     enable_preview_runtime(data_agent_item_id)
     publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
-    published_parts = verify_agent_source_readback(
+    verify_agent_source_readback(
         data_agent_item_id, ontology_id, submitted_direct_sources, published=True,
     )
     persist_agent_status(
         "published",
-        "REST publish and selected live generation 2 source identity verified; runtime probe pending.",
-        publication_status="published", runtime_status="checking",
+        "REST publish and selected live generation 2 source identity verified; no runtime query performed.",
+        publication_status="published", runtime_status="not_checked",
+        runtime_reason="Automatic query smoke is not part of setup; test the agent interactively.",
+        runtime_evidence={},
         id=data_agent_item_id, name=data_agent_name,
     )
     mcp_endpoint = (
@@ -1869,28 +1829,7 @@ try:
     )
     print("🌐 Published — consumption endpoint:")
     print(f"   • MCP: {mcp_endpoint}")
-    try:
-        runtime = probe_data_agent_ontology(data_agent_item_id, ontology_id, published_parts)
-    except Exception as exc:
-        if not is_known_ontology_v2_product_limitation(str(exc)):
-            persist_agent_status("failed", str(exc), runtime_status="failed", runtime_reason=str(exc))
-            raise
-        runtime = {"status": "known_product_limitation", "reason": str(exc), "evidence": {}}
-    if is_known_ontology_v2_product_limitation(runtime["reason"]):
-        persist_agent_status(
-            "known_product_limitation", runtime["reason"],
-            publication_status="published", runtime_status="known_product_limitation",
-            runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
-        )
-        print("⚠️ Data Agent published, but Fabric currently rejects the verified Ontology v2 source.")
-    else:
-        persist_agent_status(
-            "ready" if runtime["status"] == "verified" else "failed", runtime["reason"],
-            publication_status="published", runtime_status=runtime["status"],
-            runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
-        )
-        if runtime["status"] != "verified":
-            raise RuntimeError(f"Data Agent published but ontology runtime {runtime['status']}: {runtime['reason']}")
+    print("✅ Publication verified. No automatic agent query; setup continues to NB11 SQL wiring.")
 except Exception as exc:
     persist_agent_status("failed", str(exc))
     raise

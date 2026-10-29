@@ -16,11 +16,11 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
 - Always provision the Data Agent and the ontology-backed Operations Agent; there are no agent mode flags or skip
   branches. Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
   binding. NB10 is configured/stopped, not runtime certified. `OperationsAgentV1` is the retained
-  business configuration schema, not ontology generation. NB09 reports only the exact temporary
-  Fabric response `This API version is not supported for the specified Ontology item` as a known
-  product limitation after verified v2 publication; all other failures propagate. NB11 preserves
-  compatible added SQL/custom content. The bounded smoke test does not attest execution provenance
-  or certify SQL/combined-source runtime.
+  business configuration schema, not ontology generation. NB09 verifies publication and source
+  readback without an automatic MCP query or answer-format gate; successful setup records
+  deployment/publication `published` and runtime `not_checked`. Do not add duplicate source
+  attachments to satisfy a smoke response. Actual deployment/publication/readback failures
+  propagate. NB11 preserves compatible SQL/custom content; publication does not certify runtime.
 - Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10 verifies the retained
   ontology agent, then removes only the exact retired agent after checking folder/source identity
   and clears its obsolete settings. Preserve the shared Eventhouse, SQL/KQL grounding, email

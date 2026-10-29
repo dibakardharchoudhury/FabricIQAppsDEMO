@@ -61,7 +61,8 @@ instructions rather than silently truncating them to the service's 15,000-charac
 Overflow stops before agent updates. Operational settings and SQL-publication status share
 bounded retries for Delta concurrency conflicts with other setup branches; other failures propagate.
 
-NB09's earlier MCP facilities smoke is intentional and remains lightweight. The app's later
+NB09 no longer runs the automatic MCP facilities smoke or blocks setup on an answer format.
+It verifies publication/readback and records runtime as `not_checked`. The app's later
 Supervisor → Sparky → Fabric Responses route and NB10's Teams/email actions are exercised
 interactively as needed, not added as exhaustive setup checks for this synthetic-data demo.
 Standalone app/deployer calls retain `setup_phase="all"`. Neither creation
@@ -249,18 +250,15 @@ setup. Product support and execution must still be checked in the target tenant;
 implementation is not live certification. See
 [ontology generation policies](../../README.md#ontology-generations-and-optional-agents).
 
-Healthy Data Agent completion is **deployment `ready`, publication `published`, runtime
-`verified`**, with generation `2`; publication-only success is not reported as readiness. The real NB09 smoke
-check requests the selected ontology's first five facility IDs/names, compares exact records with
-independently read Lakehouse rows, and does not put expected values in the prompt. Multi-source
-agents are allowed, with SQL/custom content and selections retained and no cached proof required.
-Evidence is a source-specific functional smoke test; **execution provenance is not attested**, and
-SQL/combined-source answers are not certified. Failed or inconclusive checks fail, except for the
-exact temporary `This API version is not supported for the specified Ontology item` response after
-verified publication. That response is recorded as `known_product_limitation`, not readiness.
-After a Fabric service fix, rerun NB09 against the existing settings Lakehouse as the delegated
-notebook user: it republishes/verifies the selected v2 source and makes a fresh smoke query without
-skipping because of the previous result. No code switch or workspace reset is needed. See the
+Successful NB09 completion is **deployment `published`, publication `published`, runtime
+`not_checked`**, with generation `2`; publication is not reported as runtime readiness.
+No automatic MCP query, exact facilities comparison or answer-format gate runs during setup.
+Multi-source agents and compatible SQL/custom content/selections are preserved. NB09 does not
+create separate Lakehouse/Eventhouse profiles to work around an early MCP answer, and does not
+wait for the operational SQL adapter that NB11 adds afterward.
+After a Fabric service fix, rerun NB09 against the existing settings Lakehouse to republish and
+verify source identity/readback, then test questions interactively if desired. Previous runtime
+evidence is cleared; no code switch or workspace reset is needed. See the
 [recheck procedure](../../docs/foundry-deployment-and-multi-agent-setup.md#recheck-after-a-data-agentontology-service-fix)
 for exact status keys, preservation guarantees and separate acceptance gates.
 NB10 leaves the ontology-backed Operations Agent stopped; configuration does not prove delivery.
@@ -310,13 +308,11 @@ draft selections, and publishing can promote those unrelated draft changes.
 For an existing context-backed agent, NB09 recognizes
 `Files/Config/<stage>/ontologies/<name>/ontology.json`, verifies its matching live v2
 identity, and preserves it without rewriting NB11's SQL source guidance. The Foundry
-connection validator recognizes this published shape too. NB09 restores missing
-Lakehouse/Eventhouse execution adapters, reusing existing same-item profiles and
-preserving custom selections. New Lakehouse adapters use live schemas for core and
-ontology-bound tables, including weather. NB11 no longer removes these profiles:
-the later fresh setup exposed no Lakehouse SQL query tool despite valid ontology bindings.
-Earlier automatic attachment succeeded in a bounded context-only session; that evidence
-does not establish a general requirement to remove execution profiles.
+connection validator recognizes this published shape too. NB09 preserves ontology-associated
+sources and existing compatible profiles/selections without adding duplicate execution sources.
+A failed intermediate MCP facilities answer is not treated as proof that the ontology needs
+different source attachments. Interactive Fabric queries can use the ontology-associated sources
+without a separately attached SQL Database. NB11's later SQL extension is unchanged.
 
 Geo001 applies its existing bounded retry budget to transient ArcGIS error envelopes
 as well as HTTP errors. In the reported reservoir failure, NVE returned HTTP 200 with

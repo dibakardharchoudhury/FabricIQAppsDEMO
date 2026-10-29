@@ -260,9 +260,9 @@ a multi-step question (Gauge → Sleuth → Fixer), and a Fabric IQ question thr
 Exercise Teams/email only when demonstrating those actions; provisioning does not send test alerts.
 Native graph materialization is needed only for the optional native instance-graph view.
 
-NB09 intentionally uses a bounded MCP facilities smoke before NB11's final SQL-source
-publication. The app uses Supervisor → Sparky → Fabric Responses afterward. Different
-transports and validation scopes are not themselves a defect; this synthetic-data demo does
+NB09 publishes and verifies source readback without an automatic MCP facilities query or
+answer-format gate. NB11's final SQL-source publication follows. The app uses
+Supervisor → Sparky → Fabric Responses afterward. This synthetic-data demo does
 not require an automatic SQL/KQL/combined-source runtime matrix or delivery certification
 during setup. Source-identity and publication readback checks still protect the intended bindings.
 
@@ -433,13 +433,12 @@ This verifies retirement and dependency preservation, not monitoring or Teams/em
 
 ### Compact Data Agent instructions and automatic sources (October 23, 2026)
 
-**Historical evidence, not the current provisioning policy:** a later fresh setup
-failed because the context-only agent had no Lakehouse SQL query tool. NB09 now restores
-missing explicit Lakehouse/Eventhouse execution adapters from live identities and schemas,
-including ontology-bound weather tables. Existing profiles/selections are preserved and
-NB11 retains them during SQL publication. Ontology association alone is not treated as
-proof that execution tools are available. The observations below remain specific to
-the earlier sessions; they do not justify removing adapters from other workspaces.
+**Historical evidence, not the current provisioning policy:** the automatic NB09 MCP
+facilities gate has been removed. Fabric's interactive agent can query ontology-associated
+sources even when that intermediate MCP question reports no Lakehouse tool. NB09 now
+verifies publication/readback without querying the agent or creating duplicate execution
+sources to satisfy the smoke. Existing profiles/selections remain preserved and NB11's
+later SQL publication is unchanged. The observations below remain specific to earlier sessions.
 
 NB09 now generates 694 words / 5,287 characters of general guidance, replacing the
 legacy instructions that discouraged ontology use. Ontology v2 provides semantic context;
@@ -481,26 +480,24 @@ before changing bindings or reattaching tables.
 ### Recheck after a Data Agent/Ontology service fix
 
 No ontology-generation downgrade, new agent mode, source fallback or application code switch is needed.
-NB09 selects Preview Runtime, publishes, verifies the live generation-2 source identity and issues a **new**
-bounded facilities query on every run. A previous `known_product_limitation` is not a sticky skip.
+NB09 selects Preview Runtime, publishes and verifies the live generation-2 source identity.
+It does not issue a runtime query or gate setup on a language-model response.
 
 1. In the target workspace, attach the existing settings Lakehouse and rerun
    [RTI_009](../Notebooks/RTI_009_build_data_agent.Notebook/notebook-content.py) as the delegated notebook user
    with permission to query the agent. Do not reset the workspace or replace the ontology/Data Agent.
-2. Inspect `rti_demo_settings`: require `data_agent_deployment_status=ready`,
-   `data_agent_publication_status=published` and `data_agent_runtime_status=verified`.
-   Review `data_agent_runtime_reason` and `data_agent_runtime_evidence` for the fresh result.
-   The exact unsupported-Ontology response remains a narrow known-product limitation **if still returned**;
-   all other failures propagate. Its absence alone is not a pass.
+2. Inspect `rti_demo_settings`: expect `data_agent_deployment_status=published`,
+   `data_agent_publication_status=published` and `data_agent_runtime_status=not_checked`.
+   Previous runtime evidence is cleared. Actual deployment, publication and readback
+   failures still propagate; interactive answers are not a setup requirement.
 3. NB09 preserves compatible SQL/custom sources on rerun. Run NB11 if its required operational SQL extension
    has not completed; NB11's SQL-source status does not replace NB09's runtime result.
 4. With unchanged source identity, existing Foundry connections require no manual rebinding.
    If deploying repository changes or changing target identity, use Section 4 or 5. The app deployer verifies
    publication/identity, **not** NB09's runtime smoke. Then test an explicit Fabric IQ request through Sparky.
 
-The bounded facilities smoke is functional evidence only: it does not attest execution provenance or certify
-SQL/combined-source answers, the full multi-agent matrix, or Operations Agent delivery. The service fix has not
-been independently verified in a target tenant by this documentation review.
+Interactive testing is separate from provisioning. Publication/readback does not attest execution
+provenance or certify SQL/combined-source answers, the full multi-agent matrix or Operations Agent delivery.
 
 ### Operations Agent playbook and alert frequency
 

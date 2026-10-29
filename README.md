@@ -105,11 +105,11 @@ Identity conflicts and deletion/readback failures fail setup rather than deletin
 The original ontology Knowledge source, SQL/KQL playbook grounding, Teams destination,
 `Pipe_SendEmailAlert`, Outlook connection, Eventhouse, and silver tables are retained.
 
-RTI_009 tracks publication separately from functional validation. Healthy runtime status remains
-`data_agent_deployment_status=ready`, `data_agent_publication_status=published`, and
-`data_agent_runtime_status=verified`, with live generation `2`. The exact temporary unsupported
-Ontology-v2 API response is recorded as `known_product_limitation`; publication alone is never
-misreported as readiness.
+RTI_009 verifies publication, not question-answering during setup. Successful completion records
+`data_agent_deployment_status=published`, `data_agent_publication_status=published`, and
+`data_agent_runtime_status=not_checked`, with live generation `2`. Previous runtime reasons and
+evidence are cleared rather than reused as a readiness claim. Deployment, publication and source
+readback failures still propagate.
 
 Fabric can promote an ontology `datasource.json` into an
 `ontologies/<name>/ontology.json` context during publication. NB09 verifies that conversion
@@ -117,33 +117,24 @@ by the selected live v2 workspace/item identity, not the old path alone. It requ
 entity selections, descriptions and custom content; only the known schema/type conversion,
 omitted empty defaults and generated authored-description markers are accepted. Missing,
 ambiguous or lossy source readback still fails setup before any runtime readiness claim.
-NB09 retains or creates explicit execution adapters for the selected ontology's Lakehouse
-and Eventhouse. Ontology association supplies semantic bindings but does not reliably expose
-SQL/KQL query tools in every session. New Lakehouse adapters include the authoritative
-ontology-bound tables, including weather, alongside the core reference tables.
-NB11 retains these adapters when publishing the operational SQL source. Existing source
-identities, selections, custom metadata and source-specific guidance remain intact.
+NB09 preserves ontology-associated sources and compatible existing execution sources; it does not
+add separate Lakehouse/Eventhouse adapters to work around a smoke-test response. NB11 preserves
+existing sources when publishing the operational SQL adapter. Source identities, selections,
+custom metadata and source-specific guidance remain intact.
 
 The setup/runtime split is intentional for this synthetic-data demo, not a missing dependency:
-NB09's bounded MCP smoke checks facilities before NB11 publishes the final SQL adapter.
+NB09 does not invoke an MCP query or enforce a natural-language/JSON answer before NB11
+publishes the final SQL adapter.
 The app later invokes the Data Agent through Supervisor → Sparky → Fabric Responses.
 These transports do not need to be unified, and setup does not run an exhaustive SQL/KQL/
 combined-source answer matrix. NB10 configures the Operations Agent and its delivery actions
 without sending Teams/email notifications as part of provisioning; delivery is exercised when
 demonstrating those actions, not made another setup gate.
 
-The Data Agent smoke check uses the selected ontology as semantic context and permits source-native
-SQL on its associated Lakehouse static binding. It compares the first five facility IDs/names with
-independently read configured Lakehouse rows. Expected values are not supplied in the prompt;
-operational SQL, KQL and unrelated sources are excluded, while their configurations remain preserved.
-Exact query-result CSV attachments are supported, including the generated-file footer returned by
-Fabric MCP. Receipts retain source identities and exact reference/returned rows, not full source
-schemas; diagnostic response excerpts are bounded and explicitly marked when truncated.
-Evidence uses `verification=ontology_context_facilities_smoke_v1`, scoped to
-**"Ontology-context facilities functional smoke test; execution provenance, native ontology traversal,
-telemetry and operational SQL are not attested."** It does not certify cryptographic provenance,
-SQL/combined-source answers, native graph readiness, or the entire agent. Semantic/transport errors and wrong rows fail;
-nonparseable, count-only, or unverifiable answers are inconclusive. Both fail required execution.
+The former facilities smoke helpers remain available for explicit diagnostics, but are not called
+by deployment. Test questions interactively in Fabric or through Supervisor → Sparky when needed;
+no exact facility-row count, JSON answer format or automatic runtime query is a setup prerequisite.
+Publication does not certify agent answers, native graph readiness or execution provenance.
 
 RTI_011 attaches and publishes the SQL source independently of the ontology source or NB09's
 runtime result. It verifies the SQL source through draft/published readback, preserves existing
