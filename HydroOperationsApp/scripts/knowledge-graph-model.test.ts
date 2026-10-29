@@ -222,7 +222,7 @@ test('telemetry refresh updates native signal values and health without changing
   assert.deepEqual(unavailable.edges, initial.edges)
 })
 
-test('native weather instances retain their declared type for icon presentation without fabricated health or topology', () => {
+test('unlinked native weather rows are omitted from the facility weather projection without fabricating topology', () => {
   const options = input()
   options.ontology = structuredClone(ontology)
   options.ontology.entityTypes.push({
@@ -232,12 +232,11 @@ test('native weather instances retain their declared type for icon presentation 
   options.ontologyGraph!.nodes.push({
     oid: 'forecast', labels: ['WeatherLatestForecast'], properties: { Id: 'weather-1', temperature: 7 },
   })
+  const before = structuredClone(options.ontologyGraph)
   const graph = buildKnowledgeGraph(options)
-  const forecast = graph.nodes.find(node => node.nativeOid === 'forecast')!
-  assert.equal(forecast.properties['Entity type'], 'WeatherLatestForecast')
-  assert.equal(forecast.properties.temperature, 7)
-  assert.equal(forecast.status, 'nodata')
-  assert.ok(!graph.edges.some(edge => edge.source === forecast.id || edge.target === forecast.id))
+  assert.equal(graph.error, undefined)
+  assert.ok(!graph.nodes.some(node => node.nativeOid === 'forecast'))
+  assert.deepEqual(options.ontologyGraph, before)
 })
 
 test('preserves main presentation for one-to-one signals and the existing inspector', () => {

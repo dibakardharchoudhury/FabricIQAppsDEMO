@@ -308,12 +308,7 @@
 .kg-graph-actions button:hover { color: var(--cp-accent); background: var(--cp-accent-soft); }
 .kg-graph-actions button:disabled { opacity: .4; }
 .kg-canvas { position: relative; z-index: 1; width: 100%; height: 100%; }
-.kg-telemetry-state { position: absolute; z-index: 3; top: 62px; left: 14px; right: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: fit-content; max-width: calc(100% - 28px); padding: 7px 10px; border: 1px solid var(--cp-border); border-radius: 10px; background: var(--cp-surface); color: var(--cp-text-muted); font-size: 10px; }
-.kg-telemetry-state[data-state="live"] > svg, .kg-telemetry-state[data-state="live"] > span { color: var(--cp-success); }
-.kg-telemetry-state[data-state="delayed"] > span, .kg-telemetry-state[data-state="stale"] > span { color: var(--cp-warning); }
-.kg-telemetry-state strong { color: var(--cp-text); }
-.kg-telemetry-state button { display: grid; place-items: center; padding: 2px; border: 0; background: transparent; color: var(--cp-text-muted); cursor: pointer; }
-.kg-telemetry-state button:disabled { opacity: .5; cursor: default; }
+.kg-type-dot.type-weather, .kg-selected-node.type-weather { background: var(--cp-link); }
 .kg-no-results p.kg-materialization-help { max-width: 420px; margin-top: 16px; }
 .kg-legend { position: absolute; z-index: 3; bottom: 12px; left: 50%; display: flex; align-items: center; gap: 12px; transform: translateX(-50%); padding: 8px 12px; border: 1px solid var(--cp-border); border-radius: 999px; background: var(--kg-glass); box-shadow: 0 10px 28px rgba(2, 12, 27, .12); backdrop-filter: blur(14px); color: var(--cp-text-muted); font-size: 9px; white-space: nowrap; }
 .kg-legend span { display: flex; align-items: center; gap: 5px; }

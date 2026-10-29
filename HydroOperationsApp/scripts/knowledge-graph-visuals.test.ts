@@ -38,7 +38,7 @@ test('schema presentation restores sized business categories without mutating sc
     const presentation = ontologyNodePresentation(schemaNode)
     assert.equal(presentation.category, category)
     assert.ok(presentation.size >= 58, `${name}: entity-type nodes must not use tiny signal-instance sizes`)
-    assert.ok(/^#[a-f0-9]{6}$/i.test(presentation.color))
+    assert.ok(/^#[a-f0-9]{6}$|^var\(--cp-[a-z-]+\)$/i.test(presentation.color))
     colors.add(presentation.color)
     assert.deepEqual(schemaNode, before)
     assert.equal(schemaNode.status, 'nodata')
@@ -126,7 +126,7 @@ test('schema controls restore prior graph navigation with no instance health con
   assert.match(canvas, /font-size': modelView \? 20 : 10\.5/)
   assert.match(canvas, /font-size': modelView \? 16 : 7\.5/)
   assert.match(canvas, /'target-arrow-shape': 'triangle'/)
-  assert.match(canvas, /ring: modelView \? ontologyNodePresentation\(node\)\.color : statusColors/)
+  assert.match(canvas, /ring: modelView \? presentationColor\(node\) : statusColors/)
   assert.match(canvas, /!containerRef\.current \|\| modelView\) return/, 'schema canvas never starts the operational telemetry animation loop')
 })
 
@@ -197,7 +197,7 @@ test('native presentation retains weather icons and visible readings without cha
   assert.match(canvas, /getPropertyValue\('--cp-danger'\)/)
   assert.match(canvas, /getPropertyValue\('--cp-warning'\)/)
   assert.match(canvas, /label: 'data\(displayLabel\)'/)
-  assert.match(canvas, /displayLabel: !modelView && node.reading/)
+  assert.match(canvas, /displayLabel: modelView \? node\.label : knowledgeNodeDisplayLabel\(node\)/)
 })
 test('topology diagnostics distinguish disconnected components from isolates without adding links', () => {
   const nodes = [node('facility', 'facility'), node('equipment', 'equipment'), node('weather', 'ontology'), node('isolated', 'ontology')]

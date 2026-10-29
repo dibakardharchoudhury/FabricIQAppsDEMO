@@ -15,7 +15,7 @@ const categories: Record<OntologyPresentationCategory, { label: string; color: s
   'work-order': { label: 'Work orders', color: KNOWLEDGE_TYPE_COLOR['work-order'], size: 64 },
   inspection: { label: 'Inspections', color: KNOWLEDGE_TYPE_COLOR.inspection, size: 60 },
   notification: { label: 'Notifications', color: KNOWLEDGE_TYPE_COLOR.notification, size: 60 },
-  weather: { label: 'Weather', color: '#818cf8', size: 64 },
+  weather: { label: 'Weather', color: KNOWLEDGE_TYPE_COLOR.weather, size: 64 },
   document: { label: 'Documents', color: '#a3a3e6', size: 60 },
   organization: { label: 'Organizations', color: '#e879f9', size: 66 },
   'equipment-type': { label: 'Equipment types', color: '#d8b4fe', size: 66 },

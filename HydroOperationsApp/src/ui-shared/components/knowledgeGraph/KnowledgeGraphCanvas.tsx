@@ -11,6 +11,7 @@ import {
   knowledgeFaultPulse,
   knowledgeHaloPadding,
   knowledgeFocusElementIds,
+  knowledgeNodeDisplayLabel,
   layoutOntologyModel,
   telemetryFlowEdgeIds,
 } from '../../knowledgeGraphVisuals'
@@ -177,17 +178,17 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
       warn: css.getPropertyValue('--cp-warning').trim(),
     }
     const routes = knowledgeEdgeRoutes(edges)
+    const presentationColor = (node: KnowledgeNode) => ontologyNodePresentation(node).category === 'weather'
+      ? css.getPropertyValue('--cp-link').trim() : ontologyNodePresentation(node).color
     const elements: ElementDefinition[] = [
       ...nodes.map(node => ({
         data: {
           ...node,
-          displayLabel: !modelView && node.reading
-            ? `${node.label}\n${node.reading.value.toLocaleString()} ${node.properties.Unit ?? node.properties.unit ?? ''}`.trimEnd()
-            : node.label,
+          displayLabel: modelView ? node.label : knowledgeNodeDisplayLabel(node),
           presentationCategory: ontologyNodePresentation(node).category,
-          color: modelView || node.type === 'ontology' ? ontologyNodePresentation(node).color : KNOWLEDGE_TYPE_COLOR[node.type],
+          color: modelView || node.type === 'ontology' || node.type === 'weather' ? presentationColor(node) : KNOWLEDGE_TYPE_COLOR[node.type],
           size: modelView ? ontologyNodePresentation(node).size : KNOWLEDGE_NODE_SIZE[node.type],
-          ring: modelView ? ontologyNodePresentation(node).color : statusColors[node.status],
+          ring: modelView ? presentationColor(node) : statusColors[node.status],
           icon: modelView ? modelNodeIcons[ontologyNodePresentation(node).category] : nodeIcons[ontologyNodePresentation(node).category],
           haloPadding: knowledgeHaloPadding(13, graph.zoom()),
         },

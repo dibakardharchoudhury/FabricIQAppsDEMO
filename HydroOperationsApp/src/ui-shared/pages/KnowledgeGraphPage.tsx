@@ -1,9 +1,9 @@
 import type { Core } from 'cytoscape'
-import { Activity, Box, ChevronRight, CircleDot, Database, Download, Focus, GitBranch, Maximize2, Minimize2, Radio, RefreshCw, Scan, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
+import { Activity, Box, ChevronRight, CircleDot, CloudSun, Database, Download, Focus, GitBranch, Maximize2, Minimize2, Radio, RefreshCw, Scan, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { connectOntologyAccess, queryOntologyContract, queryOntologySourceGraph, type OntologyContract } from '../../services/fabric'
 import type { OntologySourceGraph } from '../../services/ontologySourceGraph'
-import { knowledgeGraphExportFileName, serializeKnowledgeGraph, type KnowledgeGraphExportFormat } from '../../services/knowledgeGraphExport'
+import { KNOWLEDGE_GRAPH_EXPORT_OPTIONS, knowledgeGraphExportFileName, serializeKnowledgeGraph, type KnowledgeGraphExportFormat } from '../../services/knowledgeGraphExport'
 import { subscribeWorkOrdersChanged } from '../../services/rayfin'
 import { ageLabel } from '../../twin'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
@@ -22,7 +22,8 @@ const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
   { type: 'equipment', label: 'Equipment' },
   { type: 'instrument', label: 'Instruments & signals' },
   { type: 'signal', label: 'Time-series signals' },
-  { type: 'ontology', label: 'Weather & other Ontology entities' },
+  { type: 'weather', label: 'Facility weather' },
+  { type: 'ontology', label: 'Other Ontology entities' },
   { type: 'model', label: '3D models' },
   { type: 'work-order', label: 'Work orders' },
   { type: 'inspection', label: 'Inspections' },
@@ -166,6 +167,7 @@ export function KnowledgeGraphPage() {
   }, [graphView.expanded])
 
   const graph = useMemo(() => buildKnowledgeGraph({
+    nowMs: data.now,
     facilities: [],
     systems: [],
     equipment: [],
@@ -177,7 +179,7 @@ export function KnowledgeGraphPage() {
     models: data.assetModels,
     ontology: ontology ?? data.ontology,
     ontologyGraph,
-  }), [data.assetModels, data.inspections, data.notifications, data.ontology, data.orders, data.telemetry, ontology, ontologyGraph])
+  }), [data.assetModels, data.inspections, data.notifications, data.now, data.ontology, data.orders, data.telemetry, ontology, ontologyGraph])
 
   const sharedSelectedId = data.selectedAssetId ? `equipment:${data.selectedAssetId}` : undefined
   const explicitSelectedId = selection && graph.nodes.some(item => item.id === selection.nodeId)
@@ -211,7 +213,6 @@ export function KnowledgeGraphPage() {
   const visibleTopology = useMemo(() => summarizeKnowledgeGraph({ nodes: visibleNodes, edges: visibleEdges }), [visibleNodes, visibleEdges])
   const selectedNode = graph.nodes.find(item => item.id === effectiveSelectedId)
   const selectedReadingState = knowledgeTelemetryState(selectedNode?.reading?.eventTime, data.now)
-  const boundSignalCount = useMemo(() => new Set(graph.nodes.flatMap(node => node.reading ? [node.reading.opcuaNodeId] : [])).size, [graph.nodes])
 
   const selectNode = (nodeId: string) => {
     const node = graph.nodes.find(item => item.id === nodeId)
@@ -314,13 +315,8 @@ export function KnowledgeGraphPage() {
       <section className="kg-stage" aria-label="Knowledge Graph canvas" aria-busy={graphLoading}>
         <div className="kg-toolbar">
           <div className="kg-view-controls"><div className="kg-layout-control"><GitBranch size={14} /><select value={layout} title={LAYOUT_DESCRIPTION[layout]} aria-label={`Graph layout. ${LAYOUT_DESCRIPTION[layout]}`} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div></div>
-          <div className="kg-graph-actions"><select value={exportFormat} aria-label="Knowledge Graph export format" title="Export the Ontology schema and verified source instances" onChange={event => setExportFormat(event.target.value as KnowledgeGraphExportFormat)}><option value="owl-turtle">OWL 2 · Turtle</option><option value="rdf-turtle">RDF 1.1 · Turtle</option></select><button type="button" title="Export verified Knowledge Graph" aria-label="Export verified Knowledge Graph" disabled={!hasVerifiedGraph} onClick={exportGraph}><Download size={16} /></button><button type="button" title="Zoom out" aria-label="Zoom out" disabled={!visibleNodes.length} onClick={() => zoomGraph(.8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" disabled={!visibleNodes.length} onClick={() => zoomGraph(1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" disabled={!visibleNodes.length} onClick={fitGraph}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={focusGraph}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
+          <div className="kg-graph-actions"><select value={exportFormat} aria-label="Knowledge Graph export vocabulary (Turtle)" title="Both downloads use Turtle (.ttl). OWL adds ontology declarations; RDF/RDFS uses basic classes and properties. Exports retain the complete verified source graph." onChange={event => setExportFormat(event.target.value as KnowledgeGraphExportFormat)}>{KNOWLEDGE_GRAPH_EXPORT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><button type="button" title="Export verified Knowledge Graph" aria-label="Export verified Knowledge Graph" disabled={!hasVerifiedGraph} onClick={exportGraph}><Download size={16} /></button><button type="button" title="Zoom out" aria-label="Zoom out" disabled={!visibleNodes.length} onClick={() => zoomGraph(.8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" disabled={!visibleNodes.length} onClick={() => zoomGraph(1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" disabled={!visibleNodes.length} onClick={fitGraph}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={focusGraph}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
         </div>
-        {hasVerifiedGraph && <div className="kg-telemetry-state" data-state={data.telemetryStatus} role="status">
-          <Radio size={14} /><span>Eventhouse: {data.telemetryStatusLabel}</span>
-          <strong>{boundSignalCount} graph-bound signals</strong><small>30s polling{data.telemetryAgeLabel ? ` · ${data.telemetryAgeLabel}` : ''}</small>
-          <button type="button" disabled={data.telemetryState === 'loading'} onClick={() => void data.actions.connectTelemetry()} aria-label="Refresh bound graph telemetry"><RefreshCw size={13} /></button>
-        </div>}
         {exportError && <div className="kg-no-results" role="alert"><p>{exportError}</p></div>}
         {!hasVerifiedGraph
           ? graphLoading
@@ -335,8 +331,8 @@ export function KnowledgeGraphPage() {
       <aside className="kg-sidebar kg-inspector">
         {selectedNode ? <>
           <div className="kg-inspector-hero">
-            <div className="kg-selected-heading"><div className={`kg-selected-node type-${selectedNode.type} status-${selectedNode.status}`}><CircleDot size={20} /></div><div><span className="v2-eyebrow">{selectedNode.type.replace('-', ' ')}</span><h2>{selectedNode.label}</h2><code>{selectedNode.entityId}</code></div></div>
-            <div className={`kg-health-banner status-${selectedNode.status}`}><i /><strong>{STATUS_LABEL[selectedNode.status]}</strong><span>{selectedNode.subtitle}</span></div>
+            <div className="kg-selected-heading"><div className={`kg-selected-node type-${selectedNode.type} status-${selectedNode.status}`}>{selectedNode.type === 'weather' ? <CloudSun size={20} /> : <CircleDot size={20} />}</div><div><span className="v2-eyebrow">{selectedNode.type.replace('-', ' ')}</span><h2>{selectedNode.label}</h2><code>{selectedNode.entityId}</code></div></div>
+            <div className={`kg-health-banner status-${selectedNode.status}`}><i /><strong>{selectedNode.type === 'weather' ? selectedNode.properties['Weather status'] : STATUS_LABEL[selectedNode.status]}</strong><span>{selectedNode.subtitle}</span></div>
           </div>
           {selectedNode.reading && <section className={`kg-live-reading freshness-${selectedReadingState}`}><div><Radio size={15} /><span>{selectedReadingState === 'live' ? 'Live bound signal' : selectedReadingState === 'delayed' ? 'Delayed bound signal' : selectedReadingState === 'stale' ? 'Stale bound signal' : 'Unverified signal timestamp'}</span><small>{new Date(selectedNode.reading.eventTime).toLocaleString()}</small></div><strong>{selectedNode.reading.value.toLocaleString()} <small>{String(selectedNode.properties.Unit ?? '')}</small></strong><p><span>Quality (last known)</span><b>{selectedNode.reading.quality}</b></p><p><span>Event age</span><b>{selectedReadingState === 'unavailable' ? 'Missing, invalid or future time' : ageLabel(selectedNode.reading.eventTime, data.now)}</b></p></section>}
           <section className="kg-property-section"><div className="kg-section-title"><span>Overview</span><small>{selectedProperties.length} properties</small></div><dl>{primaryProperties.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>{additionalProperties.length > 0 && <details className="kg-more-properties"><summary>Show {additionalProperties.length} more properties</summary><dl>{additionalProperties.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}</section>

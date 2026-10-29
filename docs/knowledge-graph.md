@@ -26,7 +26,26 @@ overruns are errors, never an invitation to manufacture topology.
 
 The read connector includes the ontology equipment-type dimension and the persisted
 weather area/location join columns so these declared relationships remain queryable.
-OWL/RDF exports identify source-backed instances without claiming a GraphModel identity.
+Weather is presented as at most one actual, declared WeatherLocation per facility,
+retaining its original identity and facility relationship. Its cloud icon and inspector
+show one recent observation (at most three hours old), otherwise the nearest upcoming
+location forecast (within six hours, issued within 48 hours). A valid declared area
+forecast is used only when location data is unavailable. Invalid/future observations,
+expired forecasts, inactive providers and malformed area geometry are not selected.
+Point geometry uses validated WGS84 longitude/latitude; area geometry must be a closed
+GeoJSON Polygon/MultiPolygon in WGS84. Missing current weather is explicit, never healthy
+or replaced by old values. Weather source/catalog/area/time-step rows remain available
+in the underlying source graph, not as a separate cluttered canvas cluster.
+Facility weather is included consistently in selected-asset, facility and all scopes.
+This is a display projection, not a change to the ontology or its declared relationships.
+
+The canvas telemetry badge is omitted; polling, freshness in the inspector, live values
+and health pulses are unchanged. Both export choices use Turtle (`.ttl`):
+**Turtle (OWL)** includes OWL ontology declarations; **Turtle (RDF/RDFS)** uses basic
+RDF/RDFS classes and properties. These name vocabularies, not different file formats
+or ontology generations. Exports retain the complete verified source graph, including
+weather source records, and identify source-backed instances without claiming a
+GraphModel identity.
 
 ## Historical implementation notes (superseded)
 

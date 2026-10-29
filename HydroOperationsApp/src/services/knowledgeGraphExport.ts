@@ -3,6 +3,10 @@ import type { OntologyGraph } from './ontologyGraph'
 import type { OntologyInstanceGraph } from './ontologySourceGraph'
 
 export type KnowledgeGraphExportFormat = 'owl-turtle' | 'rdf-turtle'
+export const KNOWLEDGE_GRAPH_EXPORT_OPTIONS: ReadonlyArray<{ value: KnowledgeGraphExportFormat; label: string }> = [
+  { value: 'owl-turtle', label: 'Turtle (OWL)' },
+  { value: 'rdf-turtle', label: 'Turtle (RDF/RDFS)' },
+]
 
 const prefixes = [
   '@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .',

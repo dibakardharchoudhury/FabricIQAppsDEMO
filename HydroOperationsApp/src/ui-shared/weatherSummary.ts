@@ -1,3 +1,8 @@
+export const WEATHER_VALUE_UNITS: Record<string, string> = {
+  precipitation: 'mm', temperature: '°C', pressure: 'hPa', relative_humidity: '%',
+  dew_point: '°C', solar_radiation: 'W/m2', wind_speed: 'm/s', wind_gust: 'm/s', wind_direction: '°',
+}
+
 export type PrecipitationBucket = {
   valid_time_utc: string
   precipitation_interval_hours?: number | null

@@ -2,8 +2,9 @@ import type { Equipment, Facility, Instrument, OntologyContract, OntologyGraph, 
 import { ontologyContractSignature, type OntologyInstanceGraph, type OntologySourceGraph } from '../services/ontologySourceGraph'
 import type { Asset3DModelRecord, InspectionRecord, MaintenanceNotificationRecord, WorkOrderRecord } from '../services/rayfin'
 import { twinSignalStatus, twinStatus, type TwinStatus } from '../twin'
+import { projectFacilityWeather, weatherEntityKind, type WeatherEntityKind } from './knowledgeGraphWeather'
 
-export type KnowledgeNodeType = 'facility' | 'system' | 'equipment' | 'instrument' | 'signal' | 'ontology' | 'model' | 'work-order' | 'inspection' | 'notification'
+export type KnowledgeNodeType = 'facility' | 'system' | 'equipment' | 'instrument' | 'signal' | 'weather' | 'ontology' | 'model' | 'work-order' | 'inspection' | 'notification'
 export type KnowledgeNode = {
   id: string
   entityId: string
@@ -18,6 +19,7 @@ export type KnowledgeNode = {
   properties: Record<string, string | number | boolean | undefined>
   provenance: string
   reading?: TelemetryReading
+  weatherKind?: WeatherEntityKind
 }
 export type KnowledgeEdgeType = 'contains' | 'has-instrument' | 'has-signal' | 'has-model' | 'affects' | 'documents' | 'reports'
 export type KnowledgeEdge = {
@@ -118,6 +120,7 @@ export function isExactKnowledgeNodeMatch(node: KnowledgeNode, query: string): b
 }
 
 export type KnowledgeGraphInput = {
+  nowMs?: number
   facilities: Facility[]
   systems: System[]
   equipment: Equipment[]
@@ -238,6 +241,7 @@ export function knowledgeGraphScope(graph: KnowledgeGraph, scope: 'asset' | 'fac
   for (const node of graph.nodes) if (asset.equipmentId && node.equipmentId === asset.equipmentId) visible.add(node.id)
   for (const node of relatedNodes(asset, graph.nodes, graph.edges, 'system', [])) visible.add(node.id)
   for (const node of relatedNodes(asset, graph.nodes, graph.edges, 'facility', ['system'])) visible.add(node.id)
+  for (const node of graph.nodes) if (node.type === 'weather' && node.facilityId === asset.facilityId) visible.add(node.id)
   return visible
 }
 
@@ -295,8 +299,9 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     })
     const contractKey = keyValues?.length && keyValues.every(Boolean) ? keyValues.join('|') : undefined
     const entityId = contractKey ?? (role ? text(properties[role.key]) : undefined)
-    const type = role?.type ?? 'ontology'
-    const id = entityId && role ? nodeId(type, entityId) : nodeId('ontology', raw.oid)
+    const weatherKind = weatherEntityKind(entity)
+    const type = weatherKind === 'location' ? 'weather' : role?.type ?? 'ontology'
+    const id = entityId && (role || weatherKind === 'location') ? nodeId(type, entityId) : nodeId('ontology', raw.oid)
     if (nodeIds.has(id)) return unavailable(`Ontology entities have an ambiguous ${type} identity ${entityId}; cannot safely join operational context.`)
     nodeIds.add(id)
     const opcuaNodeId = (type === 'signal' || type === 'instrument') ? text(properties.opcua_node_id) : undefined
@@ -334,7 +339,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       nativeOid: raw.oid, ontologyEntityTypeId: entity?.id,
       facilityId: type === 'facility' ? entityId : undefined,
       equipmentId: type === 'equipment' ? entityId : undefined,
-      properties: presentGraphProperties(presentation), reading, provenance,
+      properties: presentGraphProperties(presentation), reading, provenance, weatherKind,
     }
     if (type === 'work-order') {
       node.subtitle = text(properties.title) ?? 'Work order'
@@ -458,5 +463,5 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     parent.status = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'
   }
 
-  return { nodes, edges }
+  return projectFacilityWeather({ nodes, edges }, input.nowMs ?? Date.now())
 }

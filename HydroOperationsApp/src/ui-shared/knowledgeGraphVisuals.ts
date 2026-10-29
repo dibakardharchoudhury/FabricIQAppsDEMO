@@ -88,6 +88,7 @@ export const KNOWLEDGE_TYPE_COLOR: Record<KnowledgeNode['type'], string> = {
   equipment: '#c084fc',
   instrument: '#2dd4bf',
   signal: '#38bdf8',
+  weather: 'var(--cp-link)',
   ontology: '#94a3b8',
   model: '#a78bfa',
   'work-order': '#fbbf24',
@@ -118,6 +119,7 @@ export const KNOWLEDGE_NODE_SIZE: Record<KnowledgeNode['type'], number> = {
   equipment: 44,
   instrument: 34,
   signal: 28,
+  weather: 40,
   ontology: 36,
   model: 30,
   'work-order': 32,
@@ -126,6 +128,11 @@ export const KNOWLEDGE_NODE_SIZE: Record<KnowledgeNode['type'], number> = {
 }
 
 const topologyEdges = new Set<KnowledgeEdge['type']>(['contains', 'has-instrument', 'has-signal'])
+
+export function knowledgeNodeDisplayLabel(node: KnowledgeNode): string {
+  if (node.reading) return `${node.label}\n${node.reading.value.toLocaleString()} ${node.properties.Unit ?? node.properties.unit ?? ''}`.trimEnd()
+  return node.type === 'weather' ? `${node.label}\n${node.subtitle}` : node.label
+}
 const topologyRanks: Partial<Record<KnowledgeNode['type'], number>> = {
   facility: 0, system: 1, equipment: 2, instrument: 3, signal: 4,
 }
@@ -211,7 +218,17 @@ export function knowledgeFocusElementIds(nodes: KnowledgeNode[], edges: Knowledg
     relationshipIds.add(edge.id)
   }
   const ancestors = topologyAncestors(nodes, edges, neighborIds)
-  return new Set([...ancestors.nodeIds, ...ancestors.edgeIds, ...relationshipIds])
+  const context = new Set([...ancestors.nodeIds, ...ancestors.edgeIds, ...relationshipIds])
+  const facilities = new Set(nodes.filter(node => node.type === 'facility' && ancestors.nodeIds.has(node.id)).map(node => node.id))
+  const weather = new Set(nodes.filter(node => node.type === 'weather').map(node => node.id))
+  for (const edge of edges) {
+    if ((facilities.has(edge.source) && weather.has(edge.target)) || (facilities.has(edge.target) && weather.has(edge.source))) {
+      context.add(edge.id)
+      context.add(edge.source)
+      context.add(edge.target)
+    }
+  }
+  return context
 }
 
 export function telemetryFlowEdgeIds(nodes: KnowledgeNode[], edges: KnowledgeEdge[], nowMs = Date.now()): Set<string> {
