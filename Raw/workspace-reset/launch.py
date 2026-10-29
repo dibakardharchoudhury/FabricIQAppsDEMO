@@ -15,8 +15,10 @@ or double-click one of the thin shims that just call this file:
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +34,40 @@ SERVER = HERE / "webapp" / "server.py"
 APP_URL = "http://127.0.0.1:5000/"
 # Windows can take about two seconds to report a closed localhost port.
 PORT_PROBE_TIMEOUT = 3
+
+
+def only_generated_redirect_additions(checkout: Path, status: str) -> bool:
+    relative = "HydroOperationsApp/rayfin/rayfin.yml"
+    if status.rstrip("\r\n") != f" M {relative}":
+        return False
+    committed = subprocess.run(
+        ["git", "-C", str(checkout), "show", f"HEAD:{relative}"],
+        capture_output=True, text=True, encoding="utf-8", timeout=30, check=True,
+    ).stdout.splitlines()
+    current = (checkout / "HydroOperationsApp" / "rayfin" / "rayfin.yml").read_text(encoding="utf-8").splitlines()
+    keys = [index for index, line in enumerate(committed) if line.strip() == "allowedRedirectUris:"]
+    if len(keys) != 1:
+        return False
+    start = keys[0]
+    indent = len(committed[start]) - len(committed[start].lstrip())
+    end = start + 1
+    while end < len(committed):
+        line = committed[end]
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        end += 1
+    origin = re.compile(r" {" + str(indent + 2) + r"}- https://[a-z0-9][a-z0-9-]*\.webapp\.fabricapps\.net")
+    added = False
+    for tag, old_start, _old_end, new_start, new_end in difflib.SequenceMatcher(
+        a=committed, b=current, autojunk=False,
+    ).get_opcodes():
+        if tag == "equal":
+            continue
+        if (tag != "insert" or not start < old_start <= end
+                or not all(origin.fullmatch(line) for line in current[new_start:new_end])):
+            return False
+        added = True
+    return added
 
 
 def server_path() -> Path:
@@ -50,7 +86,12 @@ def server_path() -> Path:
         capture_output=True, text=True, timeout=30, check=True,
     )
     if status.stdout.strip():
-        raise ValueError(f"The configured deployment checkout has modified tracked files: {checkout}.")
+        if not only_generated_redirect_additions(checkout, status.stdout):
+            raise ValueError(
+                f"The configured deployment checkout has modified tracked files: {checkout}.\n"
+                f"{status.stdout.rstrip()}"
+            )
+        print("  Retaining generated Rayfin hosting redirects; tracked source files are unchanged.")
     return server
 
 

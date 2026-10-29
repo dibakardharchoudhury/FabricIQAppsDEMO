@@ -97,6 +97,73 @@ class ExistingServerTests(unittest.TestCase):
             ), self.assertRaisesRegex(ValueError, "modified tracked files"):
                 LAUNCH.server_path()
 
+    def test_configured_checkout_retains_generated_redirects_but_rejects_other_edits(self):
+        with tempfile.TemporaryDirectory() as root:
+            here = Path(root)
+            checkout = here / "release"
+            server = checkout / "Raw" / "workspace-reset" / "webapp" / "server.py"
+            server.parent.mkdir(parents=True)
+            server.write_text("# test server\n", encoding="utf-8")
+            config = checkout / "HydroOperationsApp" / "rayfin" / "rayfin.yml"
+            config.parent.mkdir(parents=True)
+            original = (
+                "services:\n"
+                "  auth:\n"
+                "    enabled: true\n"
+                "    allowedRedirectUris:\n"
+                "      - https://existing.webapp.fabricapps.net\n"
+                "      - http://localhost:5173\n"
+                "  staticHosting:\n"
+                "    enabled: true\n"
+            )
+            config.write_text(original, encoding="utf-8")
+            (here / "launcher.local.json").write_text(json.dumps({"checkout": str(checkout)}), encoding="utf-8")
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-C", str(checkout), *args],
+                    check=True, capture_output=True, text=True,
+                )
+
+            git("init", "-q")
+            git("add", ".")
+            git("-c", "user.name=Launcher test", "-c", "user.email=launcher@example.invalid",
+                "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={here / 'no-hooks'}",
+                "commit", "-qm", "Fixture")
+            generated = original.replace(
+                "  staticHosting:",
+                "      - https://new-origin.webapp.fabricapps.net\n  staticHosting:",
+            )
+            config.write_text(generated, encoding="utf-8")
+            with patch.object(LAUNCH, "HERE", here):
+                self.assertEqual(LAUNCH.server_path(), server)
+            self.assertEqual(config.read_text(encoding="utf-8"), generated)
+            windows_content = generated.replace("\n", "\r\n").encode("utf-8")
+            config.write_bytes(windows_content)
+            with patch.object(LAUNCH, "HERE", here):
+                self.assertEqual(LAUNCH.server_path(), server)
+            self.assertEqual(config.read_bytes(), windows_content)
+
+            for changed in (
+                generated.replace("    enabled: true", "    enabled: false", 1),
+                generated.replace("      - https://existing.webapp.fabricapps.net\n", ""),
+                generated.replace("new-origin.webapp.fabricapps.net", "untrusted.example"),
+                original + "      - https://new-origin.webapp.fabricapps.net\n",
+            ):
+                with self.subTest(changed=changed):
+                    config.write_text(changed, encoding="utf-8")
+                    with patch.object(LAUNCH, "HERE", here), self.assertRaisesRegex(ValueError, "modified tracked files"):
+                        LAUNCH.server_path()
+
+            config.write_text(generated, encoding="utf-8")
+            server.write_text("# unpublished source edit\n", encoding="utf-8")
+            with patch.object(LAUNCH, "HERE", here), self.assertRaisesRegex(ValueError, "modified tracked files"):
+                LAUNCH.server_path()
+            server.write_text("# test server\n", encoding="utf-8")
+            git("add", str(config.relative_to(checkout)))
+            with patch.object(LAUNCH, "HERE", here), self.assertRaisesRegex(ValueError, "modified tracked files"):
+                LAUNCH.server_path()
+
     def test_invalid_configuration_does_not_fall_back_to_the_old_checkout(self):
         with tempfile.TemporaryDirectory() as root:
             here = Path(root)

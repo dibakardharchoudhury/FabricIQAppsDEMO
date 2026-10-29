@@ -189,7 +189,13 @@ Quota, access and unresolved/ambiguous model identities fail explicitly, not by 
 
 The launcher can use a separate clean deployment checkout without overwriting local
 development edits. Set `checkout` in gitignored `launcher.local.json` beside
-`launch.py`. The configured checkout must have no tracked modifications. The
+`launch.py`. The configured checkout must have no tracked source modifications.
+The launcher permits only unstaged additions of Fabric hosting origins inside
+`HydroOperationsApp/rayfin/rayfin.yml`'s existing `allowedRedirectUris` list, so
+generated redirects from a prior deployment do not block startup. It preserves
+that file; staged edits, redirect removals and other configuration changes still
+block startup, with the modified paths included in the error. This startup check
+does not verify a hosting origin or bypass deployment/authentication checks. The
 launcher retains the original local pipeline settings file; restarting the server
 preserves that settings path. The version API reports the actual source checkout.
 Relaunching waits for the previous server to release its port. Windows connection
