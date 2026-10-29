@@ -18,6 +18,47 @@ from test_durable_service import BODY, HEADERS, SOURCE, TOKEN, TestAdapters, dec
 
 
 class PresentationTests(unittest.TestCase):
+    def test_native_answer_keeps_separate_checked_specialist_assessments_without_a_writer(self):
+        original = "## Original Fabric answer\r\n\r\nT005: BAD quality; not a physical diagnosis.\r\n"
+        report = {
+            "observations": [{"evidence_id": "read-1", "path": "/rows/0"}],
+            "hypotheses": [{
+                "category": category,
+                "supporting": [{"evidence_id": "read-1", "path": "/rows/0"}],
+                "contradicting": [], "missing": ["independent_measurement", "approved_limits"],
+            } for category in ("sensor_or_ingestion", "equipment_condition")],
+            "maintenance_follow_up": {
+                "decision": "not_supported", "reason": "missing_issue_evidence",
+                "equipment_ids": [], "evidence": [],
+            },
+        }
+        specialists = tuple(SpecialistResult(
+            role=role, agent_name=f"hydro-{role}-agent", version="1", response_id=f"resp-{role}",
+            duration_ms=1, input_digest="a" * 64, text="Do not render this unverified prose.",
+            report=body,
+        ) for role, body in (
+            ("rca", report),
+            ("work-order", {"decision": "needs_clarification", "reason": "No current complete work coverage."}),
+        ))
+        answer = ChatAnswer(
+            run_id=uuid4(), source=SOURCE, requested_at=utc_now(), source_read_times=(),
+            summary="Separate specialist assessments.", tables=(), charts=(), limitations=(),
+            cell_sources=(), specialists=specialists, audit_url="/invocations",
+            native_answers=(NativeAnswer(evidence_id="native", text=original,
+                                        content_sha256=sha256(original.encode()).hexdigest()),),
+        )
+        text = client_presentation(answer).text
+        self.assertEqual(text.count(original), 1)
+        self.assertIn("## Sleuth - Evidence-backed investigation", text)
+        self.assertIn("Cause remains undetermined", text)
+        self.assertIn("Physical equipment condition", text)
+        self.assertIn("read-1 /rows/0", text)
+        self.assertIn("No current complete work coverage.", text)
+        self.assertNotIn("Do not render this unverified prose.", text)
+        self.assertIn("## Fixer - Maintenance review", client_presentation(
+            answer.model_copy(update={"native_answers": ()}),
+        ).text)
+
     def test_backend_presentation_uses_exact_source_columns_and_chart_values_without_inference(self):
         table = AnswerTable.model_validate({
             "id": "source", "title": "Returned readings",

@@ -27,6 +27,12 @@ const REASONING_EFFORT: Record<SpecialistRole, 'low'> = {
 
 export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_weather', 'query_work_backlog', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
 export const WEATHER_TOOLS = ['query_weather', 'query_assets', 'visualize_dataset'] as const
+export const SPECIALIST_TOOLS: Record<Exclude<SpecialistRole, 'fabric-iq'>, readonly string[]> = {
+  qa: DIRECT_TOOLS,
+  weather: WEATHER_TOOLS,
+  rca: ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot'],
+  'work-order': ['query_assets', 'query_operations', 'query_work_backlog', 'query_telemetry', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'propose_work_order'],
+}
 export const WORK_REVIEW_TOOL = {
   type: 'function', name: 'complete_work_order_review',
   description: 'Record why no approval card is being staged. This is a read-only review outcome, not a SQL write.',
@@ -68,7 +74,7 @@ export function agentDefinition(
     description: 'Execute a permitted Hydro tool as the signed-in user. Tool schemas and source catalog are supplied in the current context. Pass arguments as a structured object matching the selected tool schema, never a JSON-encoded string. Prefer exact identifiers or non-regex KQL when possible.',
     parameters: {
       type: 'object', properties: {
-        tool_name: { type: 'string', enum: role === 'weather' ? [...WEATHER_TOOLS] : [...DIRECT_TOOLS, ...(role === 'work-order' ? ['propose_work_order'] : [])] },
+        tool_name: { type: 'string', enum: usesFabricIq ? [] : [...SPECIALIST_TOOLS[role]] },
         arguments: { type: 'object', additionalProperties: true },
       }, required: ['tool_name', 'arguments'], additionalProperties: false,
     }, strict: false,

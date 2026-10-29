@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { agentDefinition, AGENT_NAMES, WEATHER_TOOLS, parseDelegation } from '../src/services/copilot/agentDefinitions.ts'
+import { agentDefinition, AGENT_NAMES, SPECIALIST_TOOLS, WEATHER_TOOLS, parseDelegation } from '../src/services/copilot/agentDefinitions.ts'
 import { AGENT_DISPLAY_NAMES, createOrchestrationEvent, requiredSpecialists } from '../src/services/copilot/orchestration.ts'
 import { WEATHER_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_DATASETS, describeToolEvidence } from '../src/services/copilot/domainContract.ts'
@@ -30,6 +30,25 @@ test('weather role restrictions are enforced by the runtime, not only the model 
   assert.equal((await handle(request('query_weather'))).toolName, 'query_weather')
   for (const name of ['query_operations', 'propose_work_order', 'run_kql']) {
     await assert.rejects(handle(request(name)), /not permitted/)
+  }
+})
+
+test('every specialist shares one explicit least-privilege model and runtime allowlist', async () => {
+  for (const [role, allowed] of Object.entries(SPECIALIST_TOOLS)) {
+    const definition = agentDefinition(role as keyof typeof SPECIALIST_TOOLS, 'test-model')
+    const query = definition.tools.find(tool => 'name' in tool && tool.name === 'hydro_query')
+    assert.ok(query && 'parameters' in query)
+    assert.deepEqual(query.parameters.properties.tool_name.enum, [...allowed])
+    for (const tool of ['query_weather', 'query_operations', 'run_kql', 'show_3d_model', 'propose_work_order']) {
+      const request = { action: 'validate_hydro_query', role,
+        report: JSON.stringify({ tool_name: tool, arguments: {} }) }
+      if (allowed.includes(tool)) assert.equal((await handle(request)).toolName, tool)
+      else await assert.rejects(handle(request), /not permitted/)
+    }
+  }
+  for (const role of ['supervisor', 'fabric-iq', 'unknown', '__proto__']) {
+    await assert.rejects(handle({ action: 'validate_hydro_query', role,
+      report: JSON.stringify({ tool_name: 'query_assets', arguments: {} }) }), /not permitted/)
   }
 })
 test('forecast temperature stays weather while operational context retains Q&A', () => {

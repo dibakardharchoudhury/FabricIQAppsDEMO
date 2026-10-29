@@ -221,6 +221,8 @@ class NativeInvocationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(journal.read("prepared_answer")["answer"]["native_response"], text)
             self.assertEqual(journal.read("answer")["native_response"], text)
             self.assertEqual(journal.read("evidence")["supervisor"]["response_id"], "planning-1")
+            self.assertEqual(journal.read("evidence")["execution_manifest"]["capabilities"][0]["provider"],
+                             "native-fabric-responses")
             native.assert_awaited_once()
             self.assertEqual(native.call_args.args[3], question)
             self.assertEqual(answer.specialists[0].model_round_count, 0)

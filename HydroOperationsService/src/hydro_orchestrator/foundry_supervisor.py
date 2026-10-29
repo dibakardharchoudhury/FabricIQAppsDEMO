@@ -31,7 +31,7 @@ from .live_sources import Bridge, NativeSourceRefusal, NativeSourceServiceError,
 from .foundry_rca import verified_project_endpoint
 from .native_data_agent import call_native_data_agent, quality_work_evidence
 from .native_fidelity import source_answer
-from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation
+from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation, RCA_GAP_LABELS
 from .source_auth import SourceAuthorizationError
 from .workflow import RequiredCheckpointStorage
 
@@ -50,7 +50,7 @@ MAX_CHAT_RUN_DURATION = timedelta(minutes=10)
 ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "supervisor": ("source-reconciliation", "grounded-presentation"),
     "qa": ("source-reconciliation",),
-    "rca": ("root-cause-evidence", "maintenance-planning"),
+    "rca": ("root-cause-evidence",),
     "work-order": ("maintenance-planning", "work-order-review"),
     "fabric-iq": ("source-reconciliation",),
     "weather": ("source-reconciliation", "grounded-presentation"),
@@ -1559,18 +1559,6 @@ def with_production_write_status(summary: str, write_reviewed: bool) -> str:
     return value
 
 
-RCA_GAP_LABELS = {
-    "fresh_measurements": "fresh, timestamped measurements and ingestion-health evidence",
-    "independent_measurement": "an independently obtained measurement",
-    "matched_baseline": "a baseline matched for load and operating regime",
-    "approved_limits": "versioned, engineering-approved diagnostic limits",
-    "operating_context": "dispatch, control-state and operating-condition records",
-    "inspection_evidence": "qualified inspection evidence relevant to the signal and time window",
-    "maintenance_scope": "verified scope and closure evidence for existing maintenance work",
-    "parts_compatibility": "authoritative BOM, compatibility, reservation and lead-time evidence",
-}
-
-
 def rca_answer_limitations(specialists: list[SpecialistResult]) -> tuple[str, ...]:
     missing: set[str] = set()
     has_rca = False
@@ -2390,6 +2378,8 @@ class FoundrySupervisor:
                     or requirement.authority not in dataset.evidence_authorities:
                 raise SourceFailure(f"Semantic plan requested ungoverned evidence: {requirement.evidence}.")
         native = any(step.specialist == "fabric-iq" for step in decision.plan.steps)
+        if sum(step.specialist == "fabric-iq" for step in decision.plan.steps) > 1:
+            raise SourceFailure("Retrieve the original Fabric answer once and share its receipt with dependent specialists.")
         if native != any(item.authority == "native" for item in decision.plan.answer_contract.requirements):
             raise SourceFailure("Native steps and native evidence must be explicitly paired.")
         if native and self.native_binding is None:
@@ -4147,7 +4137,9 @@ class FoundrySupervisor:
         return None
 
     def needs_analysis(self) -> bool:
-        if self.native_answers():
+        if self.native_answers() or any(
+            item.role == "rca" and item.report is not None for item in self.specialists
+        ):
             return False
         plan = self.semantic_decision.plan if self.semantic_decision else None
         return bool(self.analysis_model) and (
@@ -4165,7 +4157,7 @@ class FoundrySupervisor:
             return AnalysisReport.model_validate(saved["analysis"])
         root_cause = (
             await self.root_cause_evidence(request, journal)
-            if any(item.role == "rca" for item in self.specialists) else None
+            if not self.semantic_planning and any(item.role == "rca" for item in self.specialists) else None
         )
         context_text = json.dumps(
             self.analysis_context(request, answer, root_cause), sort_keys=True, default=str, ensure_ascii=False,
@@ -4717,8 +4709,7 @@ class FoundrySupervisor:
                             "provider": (
                                 "governed-reader" if step.execution == "reader"
                                 else "native-fabric-responses" if step.specialist == "fabric-iq"
-                                and not owner.semantic_planning
-                                and owner.native_binding is not None and owner.native_binding.toolbox is not None
+                                and versions[step.specialist].model == "native-fabric-responses"
                                 else "foundry-prompt-agent"
                             ),
                             "name": versions[step.specialist].name if step.execution == "agent" else None,
@@ -4907,7 +4898,8 @@ class FoundrySupervisor:
                             await ctx.send_message(updated.model_dump_json())
                             return
                         root_cause_scope: list[str] = []
-                        if delegation.specialist == "rca" and await owner.root_cause_evidence(request, journal) is not None:
+                        if (delegation.specialist == "rca" and not owner.semantic_planning
+                                and await owner.root_cause_evidence(request, journal) is not None):
                             root_cause_scope = cast(list[str], owner.root_cause_scope(request, journal)["equipment_ids"])
                         prior_evidence_ids = set(owner.evidence)
                         maintenance_gate_required = (

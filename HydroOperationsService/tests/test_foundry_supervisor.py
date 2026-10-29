@@ -266,6 +266,21 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_semantic_rca_does_not_preload_unassigned_48_hour_sources(self):
+        from test_semantic_planning import decision
+        request = self.request.model_copy(update={"run_id": uuid4(), "question": "Investigate the last six hours."})
+        self.seed(request)
+        planned = decision("rca", "signal_quality", reader=False)
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("semantic_decision", {"decision": planned, "response_id": "plan-rca", "duration_ms": 1})
+        owner = self.make_owner(semantic_planning=True, analysis_model="test-model")
+        owner.root_cause_evidence = AsyncMock(side_effect=AssertionError("Unassigned enrichment ran."))
+        owner.handoff = AsyncMock(side_effect=RuntimeError("scoped specialist reached"))
+        with self.assertRaisesRegex(RuntimeError, "scoped specialist reached"):
+            await owner.run(request)
+        owner.handoff.assert_awaited_once()
+        owner.root_cause_evidence.assert_not_awaited()
+
     async def test_direct_mode_draft_request_reaches_guarded_planning_before_native_execution(self):
         request = self.request.model_copy(update={
             "question": (
@@ -1446,7 +1461,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         expected = {
             "supervisor": {"source-reconciliation", "grounded-presentation"},
             "qa": {"source-reconciliation"},
-            "rca": {"root-cause-evidence", "maintenance-planning"},
+            "rca": {"root-cause-evidence"},
             "work-order": {"maintenance-planning", "work-order-review"},
             "fabric-iq": {"source-reconciliation"},
         }

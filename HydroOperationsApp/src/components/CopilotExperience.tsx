@@ -59,11 +59,11 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
     'Summarize the facilities with their type, country, and number of assets.',
   ],
   foundry: [
-    'Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?',
-    'Chart average power output per station over the last 24 hours.',
-    'List the most critical equipment that has an open work order.',
-    'Which spare parts are at or below their reorder level?',
-    'Show UKMet rainfall forecasts for each station over the next 24 hours.',
+    'Investigate turbine telemetry-quality issues in the last 6 hours. Compare competing explanations and state the missing evidence; do not assume a mechanical fault.',
+    'Independently verify the open-work backlog by facility using governed source reads and show a ranked chart.',
+    'Compare the latest UKMet forecasts with observations for the same facilities. Keep vendors, forecast issues, valid times and units separate.',
+    'Review existing work coverage for turbine T005 and prepare an editable diagnostic draft only for a verified uncovered gap. Do not save or approve work.',
+    'Use the Fabric Data Agent for the facts, then investigate telemetry-quality gaps and review maintenance coverage separately. Preserve the Fabric answer unchanged; do not prepare or save work orders.',
   ],
 }
 

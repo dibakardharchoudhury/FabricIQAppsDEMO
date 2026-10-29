@@ -1,5 +1,33 @@
 # Foundry and multi-agent implementation record
 
+## October 29 role-boundary and presentation correction
+
+Current architecture and enterprise limitations are described in the
+[service contract](../HydroOperationsService/README.md#current-minimal-agent-execution-architecture).
+Ordinary factual questions use the original Fabric Data Agent answer, without
+a Supervisor/Sparky response-rewriting chain. Foundry orchestration adds only
+requested capabilities: Gauge for governed reads/verification, Weather for
+weather-aware retrieval/interpretation, Sleuth for competing hypotheses, and
+Fixer for coverage review or explicitly requested approval-only drafts.
+
+This correction removes the semantic RCA path's unrelated legacy 48-hour
+preload and the extra briefing after a checked RCA assessment. RCA and Fixer
+have separate, shared model/runtime tool allowlists; RCA no longer receives
+maintenance-authoring skills. Repeated original-question Fabric retrieval in a
+single plan is rejected. Native execution is identified as
+`native-fabric-responses` in the audit even in mixed semantic workflows.
+
+Previously, mixed native/investigation workflows could execute specialists but
+hide their structured assessments behind the native-only presentation shortcut.
+Checked RCA and no-draft/clarification maintenance reviews now render separately,
+without rewriting or duplicating the original Fabric text. Arbitrary specialist
+prose still cannot become a certified finding.
+
+The existing model allocation was verified at 75,000 TPM. Configuration, unit
+tests and deployment alone do not certify authenticated source execution,
+collective-agent latency or enterprise availability. The dated acceptance
+records below remain historical; their limitations have not been erased.
+
 ## October 27 semantic orchestration implementation
 
 This supersedes the phrase-routing design below. The implementation is deployed,

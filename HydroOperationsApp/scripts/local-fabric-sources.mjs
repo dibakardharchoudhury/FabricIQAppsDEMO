@@ -10,7 +10,7 @@ import { lakehouseConnectorConfig } from '../src/services/lakehouseConnector.ts'
 import { operationalConnectorConfig } from '../src/services/operationalConnector.ts'
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
-import { AGENT_NAMES, DIRECT_TOOLS, WEATHER_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
+import { AGENT_NAMES, SPECIALIST_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
 import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, qualityMatchForRequest, qualityWorkWorkflow, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsDirectSourceRead, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
@@ -1362,9 +1362,8 @@ export async function handle(request, deps = {}) {
   if (request.action === 'validate_hydro_query') {
     const parsed = parseHydroQuery(request.report)
     if (!parsed.ok) throw new Error(parsed.error)
-    const allowed = request.role === 'weather' ? WEATHER_TOOLS
-      : request.role === 'work-order' ? [...DIRECT_TOOLS, 'propose_work_order'] : DIRECT_TOOLS
-    if (!allowed.includes(parsed.toolName)) throw new Error('Tool is not permitted for this specialist.')
+    const allowed = Object.hasOwn(SPECIALIST_TOOLS, request.role) ? SPECIALIST_TOOLS[request.role] : undefined
+    if (!allowed?.includes(parsed.toolName)) throw new Error('Tool is not permitted for this specialist.')
     return parsed
   }
   const config = await configuration()

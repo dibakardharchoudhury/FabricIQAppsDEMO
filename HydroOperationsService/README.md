@@ -145,6 +145,12 @@ JSON; receipts record input bytes, observed provider usage and elapsed model tim
 Input bytes are not a token count, and a 40,000-TPM allocation is not a measured
 multi-user throughput guarantee.
 
+The existing deployment was separately read back at **75,000 TPM**; this is
+capacity configuration, not a measured latency or concurrent-user guarantee.
+Semantic plans may retrieve the original Fabric answer only once and share that
+receipt with dependent specialists. Duplicate native steps are rejected before
+execution rather than making identical expensive requests.
+
 Semantic native execution preserves the provider's original answer and typed
 artifacts under the selected native evidence contract. It does not impose the
 legacy BAD-since-midnight quality/work JSON schema on arbitrary freshness,
@@ -161,6 +167,20 @@ rewriter. Reader-only weather comparison can request interpretation without
 introducing a Weather agent loop.
 Planning and briefing HTTP clients are closed explicitly on success, failure
 and cancellation rather than leaving their connection pools to garbage collection.
+
+RCA starts from the assigned scope and available receipts, not an unconditional
+legacy 48-hour source bundle. Its tool allowlist excludes weather, the dedicated
+spare-stock tool and draft authoring; Fixer's allowlist separately permits maintenance
+coverage and guarded proposals. The model declarations and source bridge use
+the same role allowlists. RCA receives investigation skills only, not maintenance
+authoring instructions.
+
+A checked RCA assessment is already the analysis: it does not trigger another
+briefing model. Deterministic presentation displays its observations, competing
+hypotheses, evidence references, missing tests and conditional maintenance gate
+separately from the unchanged Fabric answer. A structured Fixer no-draft or
+clarification review is also visible. Unchecked specialist prose is not displayed
+as a verified finding.
 
 The execution audit includes the accepted capability/provider manifest,
 version pins, limits and persistence boundary. The UI shows only participating

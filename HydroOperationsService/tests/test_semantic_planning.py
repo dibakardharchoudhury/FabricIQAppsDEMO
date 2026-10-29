@@ -139,6 +139,26 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
                 self.owner.semantic_decision = SemanticDecision.model_validate(planned)
                 self.assertTrue(self.owner.needs_analysis())
 
+    def test_repeated_fabric_retrieval_cannot_replay_the_same_original_question(self):
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        planned = decision("fabric-iq", "native_claims", reader=False)
+        planned["plan"]["steps"].append(dict(planned["plan"]["steps"][0]))
+        with self.assertRaisesRegex(SourceFailure, "original Fabric answer once"):
+            self.owner.validate_semantic_plan(
+                SemanticDecision.model_validate(planned), SourceCatalog.model_validate(catalog()),
+            )
+
+    def test_checked_rca_report_does_not_invoke_another_briefing_model(self):
+        from hydro_orchestrator.foundry_supervisor import SpecialistResult
+        planned = decision()
+        planned["analysis_requested"] = True
+        self.owner.semantic_decision = SemanticDecision.model_validate(planned)
+        self.owner.specialists.append(SpecialistResult(
+            role="rca", agent_name="hydro-rca-agent", version="1", response_id="rca-1",
+            duration_ms=1, input_digest="a" * 64, text="", report={"observations": []},
+        ))
+        self.assertFalse(self.owner.needs_analysis())
+
     async def test_semantic_intent_not_phrase_classifier_owns_requirements(self):
         self.journal.save("semantic_decision", {"decision": decision()})
         request = await self.owner.plan_semantically(self.request, self.journal)
