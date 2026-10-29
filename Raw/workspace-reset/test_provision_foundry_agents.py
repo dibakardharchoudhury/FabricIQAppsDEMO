@@ -473,7 +473,7 @@ class PreparedFoundryTests(unittest.TestCase):
         ready = {"name": "chosen-chat", "properties": {
             "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
             "capabilities": {"chatCompletion": "true"},
-            "rateLimits": [{"key": "token", "count": 40000, "renewalPeriod": 60}],
+            "rateLimits": [{"key": "token", "count": 75000, "renewalPeriod": 60}],
         }}
         with patch.object(module, "request_with_read_retry", return_value=Mock(
             ok=True, json=lambda: {"value": [ready]},
@@ -496,7 +496,7 @@ class PreparedFoundryTests(unittest.TestCase):
         ready = {"name": "chosen-chat", "properties": {
             "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
             "capabilities": {"chatCompletion": "true"},
-            "rateLimits": [{"key": "token", "count": 40000, "renewalPeriod": 60}],
+            "rateLimits": [{"key": "token", "count": 75000, "renewalPeriod": 60}],
         }}
         with patch.object(module, "request_with_read_retry", return_value=Mock(
             ok=True, json=lambda: ready,
@@ -537,12 +537,13 @@ class PreparedFoundryTests(unittest.TestCase):
                 ready["properties"]["rateLimits"] = limits
                 with self.subTest(limits=limits), self.assertRaisesRegex(RuntimeError, "no verifiable token"):
                     module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
-            for count, period in ((10000, 60), (20000, 60), (60000, 120)):
+            for count, period in ((10000, 60), (40000, 60), (74999, 60), (149999, 120)):
                 ready["properties"]["rateLimits"] = [{"key": "token", "count": count, "renewalPeriod": period}]
-                with self.subTest(count=count), self.assertRaisesRegex(RuntimeError, "requires at least 40,000"):
+                with self.subTest(count=count), self.assertRaisesRegex(RuntimeError, "requires at least 75,000"):
                     module.read_model_selection(deploy, "tenant", project_id, "chosen-chat")
-            ready["properties"]["rateLimits"] = [{"key": "token", "count": 80000, "renewalPeriod": 120}]
-            self.assertEqual(module.read_model_selection(deploy, "tenant", project_id, "chosen-chat"), "chosen-chat")
+            for count, period in ((75000, 60), (150000, 120)):
+                ready["properties"]["rateLimits"] = [{"key": "token", "count": count, "renewalPeriod": period}]
+                self.assertEqual(module.read_model_selection(deploy, "tenant", project_id, "chosen-chat"), "chosen-chat")
             self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
         deploy.run_stream.assert_not_called()
 

@@ -19,7 +19,7 @@ from urllib.parse import quote, urlparse
 
 import requests
 
-MINIMUM_ORCHESTRATION_TPM = 40_000
+MINIMUM_ORCHESTRATION_TPM = 75_000
 
 
 def request_with_read_retry(method: str, url: str, **kwargs) -> requests.Response:

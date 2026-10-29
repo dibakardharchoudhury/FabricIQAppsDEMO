@@ -142,11 +142,14 @@ specialists receive native evidence once, rather than receiving another copy of
 the full answer in completed-specialist context. The immutable audit and displayed
 native answer remain complete. Planner and specialist inputs use compact canonical
 JSON; receipts record input bytes, observed provider usage and elapsed model time.
-Input bytes are not a token count, and a 40,000-TPM allocation is not a measured
+Input bytes are not a token count, and model allocation is not a measured
 multi-user throughput guarantee.
 
 The existing deployment was separately read back at **75,000 TPM**; this is
 capacity configuration, not a measured latency or concurrent-user guarantee.
+Future orchestration setup requires at least 75,000 TPM, verified from the live
+token renewal window. An undersized or unverifiable allocation stops setup;
+the provisioner does not silently change quota, models or regions.
 Semantic plans may retrieve the original Fabric answer only once and share that
 receipt with dependent specialists. Duplicate native steps are rejected before
 execution rather than making identical expensive requests.
@@ -169,8 +172,8 @@ Planning and briefing HTTP clients are closed explicitly on success, failure
 and cancellation rather than leaving their connection pools to garbage collection.
 
 RCA starts from the assigned scope and available receipts, not an unconditional
-legacy 48-hour source bundle. Its tool allowlist excludes weather, the dedicated
-spare-stock tool and draft authoring; Fixer's allowlist separately permits maintenance
+legacy 48-hour source bundle. Its tool allowlist excludes weather and draft
+authoring; Fixer's allowlist separately permits maintenance
 coverage and guarded proposals. The model declarations and source bridge use
 the same role allowlists. RCA receives investigation skills only, not maintenance
 authoring instructions.

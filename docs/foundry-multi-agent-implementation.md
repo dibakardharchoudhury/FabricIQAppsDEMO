@@ -28,6 +28,58 @@ tests and deployment alone do not certify authenticated source execution,
 collective-agent latency or enterprise availability. The dated acceptance
 records below remain historical; their limitations have not been erased.
 
+### Publication and bounded signed-browser acceptance
+
+Source commit `d03e8c0` was published through the canonical Foundry and app
+stages. Coordinator **v7**, source image `src-5d123a1b6806c3d6`, is active;
+the browser loaded app **1.0.1220 / `d03e8c0`**. Both stages completed their
+configuration readback; the app stage printed `SUCCESS` and `DEPLOYED_APP_URL`.
+AppBackend preflights/POST readiness passed and all 43 existing Entra redirects
+were preserved. Live allocation remained **75,000 TPM / 75 requests per minute**.
+Future setup now enforces the 75,000-TPM floor without mutating allocation.
+
+After reloading the published build and establishing normal delegated telemetry
+access, three read-only signed-browser checks completed:
+
+| Check | Observed execution | Invocation stream duration |
+|---|---|---|
+| Plain facility question | One native Fabric leg; zero wrapper model rounds; presentation exactly equals the original text | 30.207s |
+| Independent facility inventory plus vendor-aware forecast comparison | QA and Weather application readers, then requested interpretation; three facilities and 24 UKMet forecast rows; missing Aurora coverage disclosed | 31.435s |
+| Original Fabric facts, competing RCA hypotheses, independent maintenance coverage review | Fabric IQ -> RCA -> Work Order; both checked specialist reports visibly rendered; original Fabric text retained once with matching SHA-256 | 185.381s |
+
+These are observed stream durations, not SLOs or sustained-load measurements.
+The first chat's displayed duration, including client admission/startup, was
+36.6s. The compound native Fabric leg took **118.164s**, RCA **29.366s** and
+Work Order **21.137s**. Native legs recorded zero prompt-wrapper model rounds;
+RCA and Work Order each used two model rounds. The compound result is therefore
+not a claim that every multi-agent question is now fast.
+
+The original first answer referenced `result_0.json`; it was not rewritten into
+an application-authored facility table. RCA kept physical cause undetermined.
+Fixer returned `needs_clarification`: stale/quality-flagged telemetry and no
+open work do not establish a mechanical fault or current maintenance need.
+Every check returned zero proposals and `production_write_executed=false`.
+No approval, SQL write, notification delivery or cross-replica recovery was tested.
+
+Run IDs:
+- Native fidelity: `0f8874ba-cd21-41fd-ab89-cd0128a10a95`.
+- QA/Weather readers: `0147fea4-010c-4b62-b9d2-ec1d4643219f`.
+- Collective review: `3f2240e7-8949-4d30-bfb4-d36e87650afc`.
+
+The initial old-build browser session stalled before producing an execution
+receipt and was abandoned by reload; its cause was not established. The three
+new-build successes do not establish that all cold-start/authentication stalls
+are resolved. An empty-body warm-up returned the expected validation HTTP 422,
+not a failed business query.
+
+Focused validation: 184 backend tests completed (one optional live test skipped),
+135 frontend tests passed, TypeScript/scoped ESLint and the production build
+passed. All 47 provisioning tests passed, including rejection below 75,000 TPM
+and acceptance exactly at the floor using both 60- and 120-second windows.
+Three additional real-model planning probes used one planning call each:
+QA + Weather readers (26.202s), RCA alone (10.874s), and native + RCA + Work Order
+(14.070s). Those separate probes performed no business source reads or writes.
+
 ## October 27 semantic orchestration implementation
 
 This supersedes the phrase-routing design below. The implementation is deployed,
