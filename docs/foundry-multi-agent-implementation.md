@@ -21,6 +21,37 @@ when configured, rather than awaiting unrelated workspace/Ontology discovery
 before requesting the delegated token leases. Missing endpoint configuration
 still follows discovery and fails explicitly if unresolved.
 
+### Unified-entry publication and signed-browser acceptance
+
+Source commit `8bd7231` was published through the canonical app orchestrator as
+**1.0.1222 / `8bd7231`**. Deployment completed with `SUCCESS` and
+`DEPLOYED_APP_URL`; AppBackend preflight/POST readiness passed, and all 43
+existing Entra redirects were preserved. The existing coordinator v7 was reused.
+
+The signed-in browser loaded this build in both `ui=v1` and `ui=v2`.
+Each had one Hydro Intelligence heading, the Supervisor/Sparky label, and no
+Direct Data Agent, Foundry orchestration or comparison selector.
+
+The normal starter question, "Ask Sparky (Fabric IQ) to list every facility with
+its identifier and name in the answer.", completed through Supervisor ->
+Sparky/Fabric IQ -> Fabric Data Agent. The browser request contained only
+`chat.question`, without a forced `native_sources` bypass. The stream recorded
+Supervisor dispatch, one completed Fabric IQ specialist and Supervisor
+verification. Native execution recorded **zero wrapper model rounds**.
+
+Run `f5471814-0332-42be-a205-58fd844f8f51` took **26.677s** for the invocation
+stream, including **18.617s** in the native Fabric leg. These are one observed
+sample, not a latency SLO. The provider returned all three facility identifiers
+and names. Presentation text exactly matched the native response, whose SHA-256
+was `c3a155f2fdaee6b1422cb9779920c559e5ade0b3b949a0bf98c9ec36e6f7ed5c`;
+the answer appeared once in the rendered chat. There were zero proposals and
+`production_write_executed=false`. Temporary browser diagnostics were removed
+by navigation after verification.
+
+Validation also passed 46 focused frontend tests, eight backend native-fidelity
+tests, TypeScript checking, scoped ESLint and the production build. These checks
+do not certify enterprise availability, sustained load or production writes.
+
 The preceding two-mode acceptance record below is historical; it does not
 describe the current Hydro Intelligence navigation.
 
