@@ -42,6 +42,12 @@ NativeSource = Literal["data-agent"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
 SEMANTIC_PLANNING_ATTEMPTS = 2
+PLANNING_MAX_OUTPUT_TOKENS = 3072
+REPORT_MAX_OUTPUT_TOKENS = 3072
+SPECIALIST_MAX_OUTPUT_TOKENS: dict[Role, int] = {
+    "supervisor": PLANNING_MAX_OUTPUT_TOKENS,
+    "qa": 2048, "weather": 2048, "rca": 3072, "work-order": 3072, "fabric-iq": 4096,
+}
 # The Supervisor is this hosted orchestrator's deterministic control plane, not a Foundry prompt agent. Its pinned
 # identity is the control-plane contract revision; bump it when the orchestration contract changes incompatibly.
 CONTROL_PLANE_AGENT = "hydro-orchestrator"
@@ -470,6 +476,92 @@ class SourceCatalog(Contract):
             if tool.parameters.get("type") != "object" or tool.parameters.get("additionalProperties") is not False:
                 raise ValueError("Backend tool schemas must explicitly reject unknown argument fields.")
         return self
+
+
+def model_tool_schema(schema: dict[str, object]) -> dict[str, object]:
+    """Factor repeated column enums without changing any JSON Schema constraint."""
+    counts: dict[str, int] = {}
+    enums: dict[str, dict[str, object]] = {}
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            if set(value) == {"enum"} and len(encoded := _encoded(value)) >= 80:
+                key = encoded.decode()
+                counts[key] = counts.get(key, 0) + 1
+                enums[key] = value
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(schema)
+    names = {key: f"hydro_columns_{sha256(key.encode()).hexdigest()[:12]}"
+             for key, count in counts.items() if count > 1}
+    definitions = schema.get("$defs", {})
+    if not isinstance(definitions, dict) or set(names.values()).intersection(definitions):
+        raise SourceFailure("Model tool schema has conflicting shared definitions.")
+
+    def project(value: object) -> object:
+        if isinstance(value, dict):
+            key = _encoded(value).decode() if set(value) == {"enum"} else None
+            if key in names:
+                return {"$ref": f"#/$defs/{names[key]}"}
+            return {key: project(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [project(child) for child in value]
+        return value
+
+    result = cast(dict[str, object], project(schema))
+    if names:
+        result["$defs"] = {
+            **cast(dict[str, object], result.get("$defs", {})),
+            **{name: enums[key] for key, name in names.items()},
+        }
+    return result
+
+
+def model_catalog(catalog: SourceCatalog, *, include_datasets: bool = True) -> dict[str, object]:
+    """Only omit catalog sections that none of the permitted tools can use."""
+    names = {tool.name for tool in catalog.tools}
+    groups = {
+        "asset_entities": {"query_assets", "query_telemetry", "query_work_backlog",
+                           "query_signal_quality_snapshot", "query_turbine_temperature_snapshot", "propose_work_order"},
+        "operations_entities": {"query_operations", "query_work_backlog",
+                                "query_signal_quality_snapshot", "query_turbine_temperature_snapshot", "propose_work_order"},
+        "weather_entities": {"query_weather"},
+    }
+    context = dict(catalog.context)
+    if not include_datasets:
+        context.pop("datasets", None)
+    excluded_entities: set[str] = set()
+    for group, tools in groups.items():
+        if names.intersection(tools):
+            continue
+        entities = context.pop(group, [])
+        if isinstance(entities, list):
+            excluded_entities.update(
+                item["key"] for item in entities if isinstance(item, dict) and isinstance(item.get("key"), str)
+            )
+    if excluded_entities:
+        datasets = context.get("datasets")
+        if isinstance(datasets, list):
+            context["datasets"] = [
+                item for item in datasets
+                if not isinstance(item, dict) or item.get("entity") not in excluded_entities
+            ]
+        relationships = context.get("relationships")
+        if isinstance(relationships, list):
+            context["relationships"] = [
+                item for item in relationships if not isinstance(item, dict) or not any(
+                    isinstance(endpoint := item.get(side), dict)
+                    and endpoint.get("entity") in excluded_entities for side in ("from", "to")
+                )
+            ]
+    return {
+        "tools": [{"name": tool.name, "parameters": model_tool_schema(tool.parameters)} for tool in catalog.tools],
+        "context": context,
+    }
 
 
 class DomainDatasetDefinition(Contract):
@@ -1454,11 +1546,16 @@ def _bounded_citation_fragments(text: str, limit: int = 1800, maximum: int = 40)
 def rca_reference_examples(evidence: dict[str, ToolEvidence], limit: int = 40) -> tuple[str, ...]:
     examples: list[str] = []
     for evidence_id, receipt in evidence.items():
-        rows = receipt.result.get("rows")
-        if isinstance(rows, list):
-            for index, row in enumerate(rows[:4]):
-                if len(_encoded(row)) <= 2400:
-                    examples.append(f"{evidence_id}:/rows/{index}")
+        row_fields = ["rows", *(
+            field for field in receipt.result
+            if receipt.tool == "fabriciq-data-agent" and re.fullmatch(r"native_table_\d+(?:_rows)*", field)
+        )]
+        for field in row_fields:
+            rows = receipt.result.get(field)
+            if isinstance(rows, list):
+                for index, row in enumerate(rows[:4]):
+                    if isinstance(row, dict) and len(_encoded(row)) <= 2400:
+                        examples.append(f"{evidence_id}:/{field}/{index}")
         fragments = receipt.result.get("citation_fragments")
         if isinstance(fragments, list):
             for index, fragment in enumerate(fragments[:8]):
@@ -2065,7 +2162,32 @@ class FoundrySupervisor:
             if receipt is None:
                 continue
             if receipt.tool == "fabriciq-data-agent":
-                target_equipment_ids.update(receipt.resolved_equipment_ids)
+                cited_equipment: set[str] = set()
+                for path in paths:
+                    segments = path.split("/")
+                    field = segments[1].replace("~1", "/").replace("~0", "~") if len(segments) >= 3 else ""
+                    rows = receipt.result.get(field)
+                    if (len(segments) >= 3 and segments[2].isascii() and segments[2].isdecimal()
+                            and isinstance(rows, list) and int(segments[2]) < len(rows)):
+                        row = rows[int(segments[2])]
+                        if isinstance(row, dict):
+                            cited_equipment.update(
+                                value for key in ("equipment_id", "equipmentId")
+                                if isinstance(value := row.get(key), str) and value in receipt.resolved_equipment_ids
+                            )
+                affected = receipt.result.get("affected_signals")
+                affected_equipment = {
+                    value for row in affected if isinstance(row, dict)
+                    and isinstance(value := row.get("equipment_id"), str)
+                    and value in receipt.resolved_equipment_ids
+                } if isinstance(affected, list) and all(
+                    isinstance(row, dict) and isinstance(row.get("equipment_id"), str)
+                    and row["equipment_id"] in receipt.resolved_equipment_ids for row in affected
+                ) else set()
+                scope = self.selected_equipment_ids or affected_equipment
+                target_equipment_ids.update(
+                    scope.union(cited_equipment) if scope else receipt.resolved_equipment_ids
+                )
             for path in paths:
                 identity = receipt.row_identities.get(path, {})
                 for key in ("equipment_id", "equipmentId"):
@@ -2090,12 +2212,64 @@ class FoundrySupervisor:
             rows = receipt.result.get("rows")
             if receipt.tool == "fabriciq-data-agent" and (metadata_match or receipt.id in referenced_rows):
                 result = model_result(receipt)
+                if target_equipment_ids:
+                    signal_ids: set[str] = set()
+                    for values in result.values():
+                        if not isinstance(values, list):
+                            continue
+                        for row in values:
+                            if isinstance(row, dict) and any(
+                                isinstance(value := row.get(key), str) and value in target_equipment_ids
+                                for key in ("equipment_id", "equipmentId")
+                            ):
+                                signal_ids.update(
+                                    value for key in ("opcua_node_id", "opcuaNodeId")
+                                    if isinstance(value := row.get(key), str)
+                                )
+                    projected_counts: dict[str, int] = {}
+                    for field, values in tuple(result.items()):
+                        if not isinstance(values, list) or not values or not all(isinstance(row, dict) for row in values):
+                            continue
+                        identity_keys = ("equipment_id", "equipmentId", "opcua_node_id", "opcuaNodeId")
+
+                        def has_identity(row: dict[str, object]) -> bool:
+                            return any(isinstance(value := row.get(key), str) and bool(value.strip())
+                                       for key in identity_keys)
+
+                        if not any(has_identity(row) for row in values):
+                            continue
+                        prefix = "/" + field.replace("~", "~0").replace("/", "~1") + "/"
+                        indices = {
+                            index for index, row in enumerate(values)
+                            if not has_identity(row)
+                            or any(isinstance(value := row.get(key), str) and value in target_equipment_ids
+                                   for key in ("equipment_id", "equipmentId"))
+                            or any(isinstance(value := row.get(key), str) and value in signal_ids
+                                   for key in ("opcua_node_id", "opcuaNodeId"))
+                            or any(path == f"{prefix}{index}" or path.startswith(f"{prefix}{index}/")
+                                   for path in relevant_paths)
+                        }
+                        if len(indices) == len(values):
+                            continue
+                        result[field] = [
+                            row if index in indices else None
+                            for index, row in enumerate(values[:max(indices) + 1] if indices else [])
+                        ]
+                        projected_counts[field] = len(indices)
+                    if projected_counts:
+                        result["projected_row_counts"] = projected_counts
             elif isinstance(rows, list):
                 selected_rows = [
                     row for index, row in enumerate(rows) if f"/rows/{index}" in relevant_paths
                 ]
                 if selected_rows:
-                    result["rows"] = selected_rows
+                    last_index = max(
+                        index for index in range(len(rows)) if f"/rows/{index}" in relevant_paths
+                    )
+                    result["rows"] = [
+                        row if f"/rows/{index}" in relevant_paths else None
+                        for index, row in enumerate(rows[:last_index + 1])
+                    ]
                     result["projected_row_count"] = len(selected_rows)
             elif metadata_match or receipt.id in referenced_rows:
                 result = dict(receipt.result)
@@ -2113,14 +2287,18 @@ class FoundrySupervisor:
                 "work_coverage_equipment_ids": tuple(
                     value for value in receipt.work_coverage_equipment_ids if value in target_equipment_ids
                 ),
-                "model_context_scope": "Role-relevant projection; the complete immutable receipt remains in the audit.",
+                "model_context_scope": (
+                    "Role-relevant projection; the complete immutable receipt remains in the audit. "
+                    "Null row slots are omitted records, not missing measurements. Population counts describe "
+                    "the original read, not this projected subset."
+                ),
             })
         return projected
 
     def model_specialists(self, role: Role, compact: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not compact:
             return [
-                item.model_dump(mode="json", exclude={"text"} if item.role == "fabric-iq" else set())
+                item.model_dump(mode="json", exclude={"text"} if item.role == "fabric-iq" or item.report is not None else set())
                 for item in self.specialists
             ]
         values: list[dict[str, object]] = []
@@ -2264,7 +2442,7 @@ class FoundrySupervisor:
                 if request.historical_context else None,
                 "resolved_scope": request.resolved_scope.model_dump(mode="json") if request.resolved_scope else None,
                 "carried_evidence_ids": request.carried_evidence_ids,
-                "source_catalog": catalog.model_dump(mode="json"),
+                "source_catalog": model_catalog(catalog),
                 "native_data_agent_available": self.native_binding is not None,
                 "explicit_native_sources": request.native_sources,
             }
@@ -2285,7 +2463,7 @@ class FoundrySupervisor:
                             response = await openai_client.responses.create(
                                 model=model, instructions=SEMANTIC_PLANNER_INSTRUCTIONS,
                                 input=_encoded(context).decode(), store=False,
-                                reasoning={"effort": "low"}, max_output_tokens=6000,
+                                reasoning={"effort": "low"}, max_output_tokens=PLANNING_MAX_OUTPUT_TOKENS,
                                 text={"format": {
                                     "type": "json_schema", "name": "hydro_semantic_decision", "strict": True,
                                     "schema": semantic_output_schema(catalog),
@@ -2298,8 +2476,8 @@ class FoundrySupervisor:
                                 "model": model, "duration_ms": (perf_counter() - started) * 1000,
                                 "input_digest": digest,
                                 "input_bytes": len(_encoded(context)),
-                                "usage": response.usage.model_dump(mode="json")
-                                if getattr(response, "usage", None) is not None else None,
+                                "usage": usage.model_dump(mode="json")
+                                if (usage := getattr(response, "usage", None)) is not None else None,
                             }
                             journal.save(key, receipt)
                         response_id, text, elapsed = receipt.get("response_id"), receipt.get("text"), receipt.get("duration_ms")
@@ -3213,7 +3391,7 @@ class FoundrySupervisor:
                 if role == "qa" and required_backlog_group is not None
                 else None
             ),
-            "permitted_source_catalog": permitted_catalog.model_dump(mode="json"),
+            "permitted_source_catalog": model_catalog(permitted_catalog, include_datasets=False),
             "proposal_authorization": (
                 "This current turn explicitly requests a new editable proposal; propose_work_order may be called "
                 "only after fresh complete work coverage and canonical equipment verification."
@@ -3305,13 +3483,15 @@ class FoundrySupervisor:
         )
         started = perf_counter()
         async with project_client, agent:
+            output_budget = SPECIALIST_MAX_OUTPUT_TOKENS[role]
             options: ChatOptions = {
                 "store": False,
-                "max_tokens": 4096,
+                "max_tokens": output_budget,
             }
             active_context = context
             response: AgentResponse | None = None
             native_results: dict[str, dict[str, object]] = {}
+            model_input = ""
             for completion_attempt in range(2):
                 input_repairs.clear()
                 try:
@@ -3324,6 +3504,14 @@ class FoundrySupervisor:
                         repair = active_context.get("native_source_repair")
                         if isinstance(repair, str):
                             model_input += "\n\nnative_source_repair: " + repair
+                    journal.save(f"specialist_input:{role}:{self.delegations}:{completion_attempt}", {
+                        "role": role, "input_bytes": len(model_input.encode("utf-8")),
+                        "input_digest": sha256(model_input.encode("utf-8")).hexdigest(),
+                        "max_output_tokens": output_budget,
+                        "context_sections_bytes": {
+                            key: len(_encoded(value)) for key, value in active_context.items()
+                        } if role != "fabric-iq" else {},
+                    })
                     response = await agent.run(model_input, options=options)
                 except AgentFrameworkException as error:
                     logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
@@ -3561,6 +3749,7 @@ class FoundrySupervisor:
             journal.save(f"specialist_usage:{response.response_id}", {
                 "role": role, "response_id": response.response_id,
                 "input_bytes": len(model_input.encode("utf-8")),
+                "max_output_tokens": output_budget,
                 "usage": response.usage_details, "duration_ms": elapsed,
             })
             return response, completed_report, elapsed
@@ -4120,7 +4309,7 @@ class FoundrySupervisor:
                                 f"{context_text}\n\nYour previous briefing was rejected: {feedback}. "
                                 "Rewrite it using only values present in the input, and keep every other part "
                                 "of the briefing."),
-                            max_output_tokens=6000, reasoning={"effort": "low"}, store=False,
+                            max_output_tokens=REPORT_MAX_OUTPUT_TOKENS, reasoning={"effort": "low"}, store=False,
                             text={"format": {"type": "json_schema", "name": schema_name,
                                              "schema": schema, "strict": True}},
                         )

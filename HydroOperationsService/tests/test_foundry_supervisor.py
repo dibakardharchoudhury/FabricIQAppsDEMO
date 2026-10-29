@@ -23,6 +23,7 @@ from hydro_orchestrator.foundry_supervisor import (
     EquipmentSelection, EvidenceDataset,
     FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+    SPECIALIST_MAX_OUTPUT_TOKENS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeAnswer, NativeBinding, OperatorAnswerContract, RunJournal,
     SemanticDecision, SourceCatalog, SpecialistResult, ToolEvidence,
     operation_skill_guidance,
@@ -2068,7 +2069,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("trusted_operation_skills", json.dumps(payload["input"]))
         self.assertFalse(payload["store"])
         name = reference["name"]
-        self.assertEqual(payload["max_output_tokens"], 4096)
+        role = next(role for role, version in self.versions.items() if version.name == name)
+        self.assertEqual(payload["max_output_tokens"], SPECIALIST_MAX_OUTPUT_TOKENS[role])
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
         if ((self.mode == "work_order_rate_limit_once" and name == "hydro-work-order-agent" and round_number == 0)
@@ -3172,6 +3174,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         sleep.assert_awaited_once_with(1.0)
         self.assertEqual(self.calls["hydro-qa-agent"], 2)
         self.assertEqual(self.tools.calls, 0)
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        budget = journal.read("specialist_input:qa:1:0")
+        self.assertEqual(budget["max_output_tokens"], 2048)
+        self.assertGreater(budget["input_bytes"], 0)
+        self.assertGreater(budget["context_sections_bytes"]["permitted_source_catalog"], 0)
 
     async def test_per_request_rate_retry_keeps_tool_result_and_does_not_restart_source_dispatch(self):
         self.mode = "qa_rate_limit_after_source"
@@ -3650,6 +3657,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-rca-agent"], 1)
         self.assertEqual(self.calls["hydro-work-order-agent"], 1)
         self.assertEqual(self.tools.calls, 1)
+        self.assertLessEqual(
+            sum(len(json.dumps(payload["input"], separators=(",", ":")).encode()) for payload in self.payloads),
+            40_000,
+        )
+        self.assertLessEqual(sum(payload["max_output_tokens"] for payload in self.payloads), 14_336)
         self.assertEqual(len(result.tables), 1)
         self.assertEqual(sum("agent_reference" not in payload for payload in self.payloads), 0)
         self.assertEqual(result.specialists[1].model_round_count, 1)

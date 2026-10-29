@@ -2,6 +2,35 @@
 
 ## Model throughput and runtime failures
 
+Model throughput is shared across every internal call and concurrent conversation,
+not allocated per user prompt. The model-facing catalog factors repeated column
+enums into equivalent JSON Schema definitions. Specialists receive only catalog
+sections reachable through their existing tool allowlist; the full backend catalog,
+column validation, source semantics and immutable evidence remain authoritative.
+Specialists do not receive the planner's presentation/dataset routing metadata.
+Structured reports are not accompanied by duplicate narrative text. Projected
+equipment rows retain their original JSON-pointer indices; omitted rows are null
+placeholders, not empty measurements or evidence of population completeness.
+After RCA, an explicit backend selection or the complete source-declared affected
+population narrows native registry, telemetry and work rows to those equipment
+and exactly mapped signals. All cited rows and affected equipment remain in the
+handoff. Citations alone cannot narrow an unspecified population; unknown identity
+shapes remain available rather than being guessed or discarded.
+
+Planning and structured briefings reserve at most 3,072 output tokens per call.
+RCA and work review reserve 3,072, factual/Weather specialists 2,048, and the legacy
+native wrapper retains 4,096. Existing structured completions, bounded correction
+and approval gates remain in place. These are output ceilings,
+not a claim about actual token usage or a guarantee against deployment-wide 429s.
+The original native answer is still forwarded once and displayed unchanged.
+
+Before each specialist invocation, the execution journal records input bytes,
+per-section byte sizes, input digest and requested output budget, even if the
+provider subsequently throttles. Successful calls retain actual provider usage.
+No quota, model, source permissions or conversation concurrency is changed.
+These runtime changes require updating the Foundry hosted backend; publishing
+only the Fabric app continues using the previously deployed backend.
+
 The model catalog's minimum/default capacity is not proof that the deployment can
 serve the orchestration prompt, catalog and structured-output schema. Verify the
 selected deployment's live token/request limits and available regional quota.
