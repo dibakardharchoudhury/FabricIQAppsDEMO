@@ -410,9 +410,6 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     model = value("RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT")
     if not re.fullmatch(r"https://[a-z0-9-]+\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_.-]+", endpoint) or not model:
         raise deploy.DeployError(f"Verified Foundry project/model configuration is missing. {guidance}")
-    hosted_module = _load_sibling("deploy_hosted_agent")
-    if value("RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST") != hosted_module.source_fingerprint(deploy.REPO_ROOT):
-        raise deploy.DeployError(f"Foundry setup is missing or its packaged code is stale. {guidance}")
     try:
         ontology = value("RAYFIN_PUBLIC_ONTOLOGY_ID")
         public_values = {key: deploy._public_config_value(values, key) for key in (
@@ -468,7 +465,17 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
                 or image != value("RAYFIN_PUBLIC_ORCHESTRATOR_IMAGE_DIGEST")
                 or url != value("RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL")):
             raise deploy.DeployError(f"Foundry Hosted runtime identity changed. {guidance}")
-    print("Prepared Foundry configuration verified; no agents were provisioned or republished.", flush=True)
+    hosted_module = _load_sibling("deploy_hosted_agent")
+    if value("RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST") != hosted_module.source_fingerprint(deploy.REPO_ROOT):
+        print(
+            "Foundry: WARNING - prepared runtime passed configuration readback, but its packaged code "
+            "differs from this checkout or its fingerprint is unavailable. Reusing the deployed runtime "
+            "for app-only publication; new agent features are not certified. "
+            "Run the local Foundry multi-agent setup module separately to update agent code.",
+            flush=True,
+        )
+    print("Prepared Foundry configuration verified; no agents were provisioned or republished. "
+          "Agent execution is not certified.", flush=True)
 
 
 class FoundrySelection(NamedTuple):

@@ -603,19 +603,43 @@ class PreparedFoundryTests(unittest.TestCase):
         ]
         with patch.object(module, "_load_sibling", return_value=hosted), \
                 patch.object(module, "verify_prepared_connections") as connections, \
-                patch.object(module, "request_with_read_retry", side_effect=responses) as request:
+                patch.object(module, "request_with_read_retry", side_effect=responses) as request, \
+                patch("builtins.print") as output:
             module.verify_existing(deploy, tenant, workspace)
         connections.assert_called_once()
         deploy._published_operational_source_ready.assert_called_once()
         self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "GET"])
         self.assertEqual([call.args[:2] for call in deploy.az.call_args_list], [("account", "get-access-token")])
+        self.assertNotIn("WARNING", str(output.call_args_list))
 
-    def test_stale_code_sources_and_specialists_fail_instead_of_provisioning(self):
-        for stale in ("code", "source", "specialist", "hosted"):
+    def test_app_reuses_compatible_runtime_with_older_or_unknown_packaged_code(self):
+        for code_digest in ("old", ""):
+            with self.subTest(code_digest=code_digest):
+                deploy, values, agent, tenant, workspace = self.prepared()
+                values["RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST"] = code_digest
+                hosted = Mock(source_fingerprint=Mock(return_value="code"))
+                responses = [
+                    Mock(ok=True, json=lambda: {"versions": {"latest": {"definition": {"model": "model"}}}}),
+                    Mock(ok=True, json=lambda: agent),
+                ]
+                with patch.object(module, "_load_sibling", return_value=hosted), \
+                        patch.object(module, "verify_prepared_connections") as connections, \
+                        patch.object(module, "request_with_read_retry", side_effect=responses) as request, \
+                        patch("builtins.print") as output:
+                    module.verify_existing(deploy, tenant, workspace)
+                connections.assert_called_once()
+                deploy._published_operational_source_ready.assert_called_once()
+                self.assertEqual([item.args[0] for item in request.call_args_list], ["GET", "GET"])
+                self.assertIn("new agent features are not certified", str(output.call_args_list))
+                self.assertIn("setup module separately", str(output.call_args_list))
+                deploy.run_stream.assert_not_called()
+                deploy.write_env_values.assert_not_called()
+
+    def test_stale_sources_and_specialists_fail_even_with_older_packaged_code(self):
+        for stale in ("source", "specialist", "hosted"):
             with self.subTest(stale=stale):
                 deploy, values, agent, tenant, workspace = self.prepared()
-                if stale == "code":
-                    values["RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST"] = "old"
+                values["RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST"] = "old"
                 if stale == "source":
                     values["RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID"] = workspace
                 if stale == "hosted":
@@ -629,9 +653,34 @@ class PreparedFoundryTests(unittest.TestCase):
                         patch.object(module, "request_with_read_retry", side_effect=[
                     response, Mock(ok=True, json=lambda: agent),
                 ]) as request:
-                    with self.assertRaisesRegex(RuntimeError, "setup module"):
+                    expected_error = {
+                        "source": "source identities changed",
+                        "specialist": "specialist .* is stale",
+                        "hosted": "Hosted runtime identity changed",
+                    }[stale]
+                    with self.assertRaisesRegex(RuntimeError, expected_error):
                         module.verify_existing(deploy, tenant, workspace)
                     self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+
+    def test_older_code_does_not_mask_missing_runtime_or_broken_connections(self):
+        for failure in ("missing-agent", "connection"):
+            with self.subTest(failure=failure):
+                deploy, values, _, tenant, workspace = self.prepared()
+                values["RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST"] = "old"
+                with patch.object(module, "_load_sibling") as load, \
+                        patch.object(module, "verify_prepared_connections",
+                                     side_effect=RuntimeError("source/authentication mismatch")
+                                     if failure == "connection" else None), \
+                        patch.object(module, "request_with_read_retry",
+                                     return_value=Mock(ok=False, status_code=404)) as request, \
+                        patch("builtins.print") as output:
+                    expected = "source/authentication mismatch" if failure == "connection" else "Cannot verify Foundry agent"
+                    with self.assertRaisesRegex(RuntimeError, expected):
+                        module.verify_existing(deploy, tenant, workspace)
+                load.assert_not_called()
+                self.assertNotIn("new agent features", str(output.call_args_list))
+                self.assertTrue(all(item.args[0] == "GET" for item in request.call_args_list))
+                deploy.run_stream.assert_not_called()
 
     def test_connection_readback_rejects_cross_workspace_targets_before_reading_their_agent(self):
         for wrong_workspace in (False, True):

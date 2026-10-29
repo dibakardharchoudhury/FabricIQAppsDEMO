@@ -455,6 +455,13 @@ by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds sh
 **Deploy app** publish the website and run its authentication/CORS/connector checks.
 `FOUNDRY_SETUP_SUCCESS` confirms configuration readback, not agent execution.
 
+**Deploy app** performs read-only checks of the prepared source/authentication bindings,
+specialist definitions and active immutable Hosted runtime identity. A packaged-code
+fingerprint difference (or missing fingerprint) alone is a warning, not missing setup:
+compatible deployed agents are reused without provisioning or republishing them. This
+does not certify new agent features or execution. Run **Set up Foundry agents** separately
+to update agent code; missing or incompatible configuration still blocks app publication.
+
 Model preflight requires a verified allocation of at least **40,000 tokens/minute**
 for the planner, source catalog and structured output. The catalog minimum/default
 can be too small even for the first question; setup rejects undersized or
