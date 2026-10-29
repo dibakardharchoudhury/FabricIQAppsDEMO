@@ -51,9 +51,11 @@ The shared semantic catalog adds entity/property descriptions, synonyms, and usa
 scoped business rules use documented `rules/{name}.tmdl` parts and `ref rule` model references.
 Operator metadata is preserved. Rules guide consumers; they are not enforced SQL constraints or
 evidence that an agent executed an action.
-Graph materialization is optional in the Fabric generation-2 experience but required for the app's
-native graph canvas, tree, and scopes. Ontology-backed Data Agent execution does not universally
-require materialization. No published ontology-owned materialization REST operation is established.
+Graph materialization is optional in the Fabric generation-2 experience and is not required by
+the app's source-backed Knowledge Graph, tree, or scopes. The app reads verified ontology
+bindings and evaluates declared relationships over actual source rows; Eventhouse supplies bound
+telemetry. Ontology-backed Data Agent execution also does not universally require materialization.
+No published ontology-owned materialization REST operation is established. For optional native GQL:
 Use **Manage graph → select eligible entities/relationships → Continue → Materialize** in the selected
 ontology. A key, a supported Delta/mirrored source, and a single backing table are graph eligibility
 requirements; do not remove the working `signal_master` Eventhouse stitch to make it eligible.
@@ -66,8 +68,9 @@ The canonical deployment orchestrator then generates the explicit
 `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`).
 An operator may supply the same verified binding as a fallback when lineage is unavailable.
 Ownership is never inferred from names, a sole graph, or sampled structure.
-Missing lineage or graph data is an error, not an empty successful query or a reason to fabricate
-STID/FK topology. See [the native graph contract](docs/knowledge-graph.md).
+Missing lineage or graph data is an error for native GQL, not a reason to fabricate ownership.
+The app's source-backed view independently requires verified v2 bindings and successful source
+reads; names and guessed foreign keys never create topology. See [the graph contract](docs/knowledge-graph.md).
 
 | V2 definition part | Purpose |
 | --- | --- |
@@ -375,10 +378,11 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 
 [`HydroOperationsApp/`](HydroOperationsApp/README.md) — a React + Rayfin app that joins STID (Lakehouse
 connector), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
-Knowledge Graph requires verified native GraphModel entities and relationships for canvas, tree
-and scopes. Lakehouse/STID rows never substitute for missing or failed native topology.
-Eventhouse readings and SQL operational overlays enrich only actual native entities; operational
-pages remain independently available. Published REST metadata does not expose ontology ownership, so native queries
+Knowledge Graph reads actual source instances through verified generation-2 ontology bindings
+and evaluates only declared relationships for its canvas, tree and scopes. It preserves entity
+icons, displays bound Eventhouse values, and pulses red/amber health halos without graph
+materialization. Failed reads clear old results; unrelated STID rows are never a topology fallback.
+Operational pages remain independently available. Optional native queries
 require an explicit operator binding; names and structural similarity
 are not evidence. Latest production-parser/model checks passed with 111 native nodes / 108 edges
 and 174 enriched nodes / 171 edges using real KQL/SQL and empty STID topology inputs. Protected

@@ -287,8 +287,8 @@ target's credentials or guessed resource identities.
 
 Automation does not create the prerequisite Key Vault secrets or grant permissions
 you do not hold. Follow any explicit administrator action. If using the optional
-**Materialized native graph (GQL)** mode, its portal materialization remains manual;
-the default live ontology-governed mode does not require that materialization.
+native GQL utilities, their portal materialization remains manual;
+the Knowledge Graph page does not require that materialization.
 
 ## 3. Prepare core Fabric data, only when needed
 
@@ -315,9 +315,9 @@ Core refuses the old serial pipeline before starting a long run.
 Notebook completion is not agent runtime acceptance. NB09's exact unsupported-v2
 API response is a documented product limitation, not proof of a working query.
 
-## 4. Choose Knowledge Graph execution
+## 4. Verify Knowledge Graph sources
 
-The app defaults to **Live ontology-governed sources**. It verifies the live
+The app's single Knowledge Graph uses **live ontology-governed sources**. It verifies the live
 ontology's workspace/item/table/property/key bindings against the existing
 Rayfin Lakehouse and independent SQL connectors, then joins only declared
 relationships. Materialization is not required for this mode. The page reports
@@ -328,19 +328,16 @@ Successful work-order creation, status changes and deletion invalidate graph
 snapshots immediately. Returning to the Knowledge Graph reads the committed
 records without a page refresh; an already-open graph refreshes automatically
 (or when the browser tab becomes visible). In-flight pre-mutation reads cannot
-replace the refreshed snapshot. Native GQL mode still reflects Fabric's latest
-materialization, not unmaterialized SQL changes.
+replace the refreshed snapshot. There is no separate operational/native tab.
 On a first visit, **Connect Fabric and retry** authorizes only Fabric workspace/item
 read access. The graph does not require connecting telemetry to establish this
 separate ontology-read session.
 
-For the separate **Materialized native graph (GQL)** mode, use Fabric:
+Optional native GQL utilities, which are not used by the Knowledge Graph page, require Fabric:
 **Manage graph → select eligible entities/relationships → Continue →
 Materialize**. This remains a manual portal prerequisite for native execution.
-The app never silently switches modes or treats source-backed instances as a GraphModel.
-When Fabric returns HTTP 204 for the queryable schema, the graph path stops before loading
-the ontology definition or executing queries. Readiness network checks are bounded to ten
-seconds; **Retry graph query** rechecks failed readiness without waiting for a cache expiry.
+Source-backed instances are never presented as a native GraphModel. Native-only readiness
+failures do not block the source-backed page.
 
 Foundry setup and app publication do not require graph materialization. The deployer
 resolves `RAYFIN_PUBLIC_ONTOLOGY_ID` from the verified live generation-2 item,
@@ -693,7 +690,7 @@ publication does not configure provider authentication or ingest data.
 |---|---|
 | Permission, consent or private endpoint | Give the exact error to the resource owner; do not weaken access controls |
 | Stale agent/source configuration | Foundry setup, then app deployment |
-| Native graph not materialized | Use the explicitly labelled live-source mode, or complete the portal action for native GQL; never fabricate graph ownership |
+| Graph source unavailable | Verify the ontology's exact source bindings, connector coverage and access; no materialization is required for the Knowledge Graph page |
 | Weather provider HTTP 401 | Credential owner checks the named provider's Key Vault key: UKMet Global Spot/Land Observations by default; `mai-weather-api-key` only for opted-in Aurora. Rerun Weather only |
 | Energy/Weather source failure | Fix that source's credentials/connectivity, then refresh it |
 | Paused capacity or unsupported region | Fix the target prerequisite, not the app build |

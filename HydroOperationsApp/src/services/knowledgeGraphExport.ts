@@ -1,5 +1,6 @@
 import type { OntologyContract, OntologyEntityType } from './ontologyContract'
 import type { OntologyGraph } from './ontologyGraph'
+import type { OntologyInstanceGraph } from './ontologySourceGraph'
 
 export type KnowledgeGraphExportFormat = 'owl-turtle' | 'rdf-turtle'
 
@@ -19,10 +20,8 @@ const propertyIri = (ontologyId: string, entityId: string, name: string) =>
   `${classIri(ontologyId, entityId)}:property:${iriSegment(name)}`
 const edgePropertyIri = (ontologyId: string, relationshipId: string, name: string) =>
   `${relationshipIri(ontologyId, relationshipId)}:property:${iriSegment(name)}`
-const nodeIri = (graphModelId: string, oid: string) =>
-  `urn:microsoft-fabric:graph:${iriSegment(graphModelId)}:node:${iriSegment(oid)}`
-const edgeIri = (graphModelId: string, oid: string) =>
-  `urn:microsoft-fabric:graph:${iriSegment(graphModelId)}:edge:${iriSegment(oid)}`
+const nodeIri = (namespace: string, oid: string) => `${namespace}:node:${iriSegment(oid)}`
+const edgeIri = (namespace: string, oid: string) => `${namespace}:edge:${iriSegment(oid)}`
 const iri = (value: string) => `<${value}>`
 
 function textLiteral(value: string): string {
@@ -63,7 +62,7 @@ function typeMap(ontology: OntologyContract): Map<string, OntologyEntityType> {
   return values
 }
 
-function validateNativeGraph(ontology: OntologyContract, graph: OntologyGraph) {
+function validateNativeGraph(ontology: OntologyContract, graph: OntologyInstanceGraph) {
   if (ontology.generation !== 2) throw new Error('Knowledge Graph export requires a verified generation-2 Ontology.')
   if (graph.ontologyId && graph.ontologyId.toLowerCase() !== ontology.id.toLowerCase()) {
     throw new Error('Knowledge Graph export source does not match the selected Ontology.')
@@ -96,7 +95,19 @@ export function serializeNativeKnowledgeGraph(
   graph: OntologyGraph,
   format: KnowledgeGraphExportFormat,
 ): string {
+  return serializeKnowledgeGraph(ontology, graph, format)
+}
+
+export function serializeKnowledgeGraph(
+  ontology: OntologyContract,
+  graph: OntologyInstanceGraph,
+  format: KnowledgeGraphExportFormat,
+): string {
   const { entities, relationships } = validateNativeGraph(ontology, graph)
+  const sourceBacked = graph.execution === 'source-backed'
+  const namespace = sourceBacked
+    ? `${ontologyIri(ontology.id)}:source:${graph.evidence.contractSignature}`
+    : `urn:microsoft-fabric:graph:${iriSegment(graph.graphModelId)}`
   const owl = format === 'owl-turtle'
   const lines = [...prefixes]
   lines.push(statement(
@@ -107,8 +118,8 @@ export function serializeNativeKnowledgeGraph(
   lines.push(statement(ontologyIri(ontology.id), 'rdfs:label', textLiteral(ontology.displayName)))
   lines.push(statement(
     ontologyIri(ontology.id),
-    iri(`${ontologyIri(ontology.id)}:graphModelId`),
-    textLiteral(graph.graphModelId),
+    iri(`${ontologyIri(ontology.id)}:${sourceBacked ? 'execution' : 'graphModelId'}`),
+    textLiteral(sourceBacked ? 'source-backed' : graph.graphModelId),
   ))
   lines.push('')
 
@@ -137,7 +148,7 @@ export function serializeNativeKnowledgeGraph(
 
   for (const node of [...graph.nodes].sort((left, right) => left.oid.localeCompare(right.oid))) {
     const entity = entities.get(node.entityTypeId!)!
-    const subject = nodeIri(graph.graphModelId, node.oid)
+    const subject = nodeIri(namespace, node.oid)
     const keyNames = entity.entityIdParts.map(propertyId =>
       Object.entries(entity.properties).find(([, id]) => id === propertyId)?.[0])
     const keyValues = keyNames.map(name => name ? node.properties[name] : undefined)
@@ -160,10 +171,10 @@ export function serializeNativeKnowledgeGraph(
   for (const edge of [...graph.edges].sort((left, right) => left.oid.localeCompare(right.oid))) {
     const relationship = relationships.get(edge.relationshipTypeId!)!
     const predicate = relationshipIri(ontology.id, relationship.id)
-    const source = nodeIri(graph.graphModelId, edge.sourceOid)
-    const target = nodeIri(graph.graphModelId, edge.targetOid)
+    const source = nodeIri(namespace, edge.sourceOid)
+    const target = nodeIri(namespace, edge.targetOid)
     lines.push(statement(source, iri(predicate), iri(target)))
-    const resource = edgeIri(graph.graphModelId, edge.oid)
+    const resource = edgeIri(namespace, edge.oid)
     lines.push(statement(resource, 'a', 'rdf:Statement'))
     lines.push(statement(resource, 'rdf:subject', iri(source)))
     lines.push(statement(resource, 'rdf:predicate', iri(predicate)))

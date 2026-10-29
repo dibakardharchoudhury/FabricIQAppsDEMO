@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseOntologyContract } from '../src/services/ontologyContract.ts'
 import { readOntologySourceGraph, SOURCE_GRAPH_LIMITS, type OntologySourceReader } from '../src/services/ontologySourceGraph.ts'
-import { buildKnowledgeGraph, knowledgeGraphScope, loadNativeGraphSnapshot } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { buildKnowledgeGraph, knowledgeGraphScope, loadNativeGraphSnapshot, loadOntologySourceSnapshot } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { serializeKnowledgeGraph } from '../src/services/knowledgeGraphExport.ts'
 
 const workspace = '11111111-1111-4111-8111-111111111111'
 const item = '22222222-2222-4222-8222-222222222222'
@@ -68,7 +69,7 @@ test('maps physical aliases and only joins declared directed ontology relationsh
   assert.equal((await readOntologySourceGraph(ontology, readers())).edges.length, 0)
 })
 
-test('presentation rejects reconstructed source topology even when all source reads succeed', async () => {
+test('presents real source instances and declared links without a materialized graph or synthetic overlays', async () => {
   const ontology = contract()
   ontology.entityTypes[1].localName = 'equipment'
   const topology = await readOntologySourceGraph(ontology, readers())
@@ -77,9 +78,29 @@ test('presentation rejects reconstructed source topology even when all source re
     workOrders: [], inspections: [], notifications: [],
     models: [{ id: 'fabricated-overlay', equipmentId: 'S1', modelName: 'Not declared', modelUrl: 'ignored', format: 'glb', updatedAt: new Date(), updatedByOid: 'user' }],
   })
-  assert.match(graph.error!, /Source-reconstructed topology cannot replace/)
-  assert.deepEqual(graph.nodes, [])
-  assert.deepEqual(graph.edges, [])
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.nodes.length, 2)
+  assert.equal(graph.edges.length, 1)
+  assert.ok(graph.nodes.every(node => node.provenance.includes('live source binding')))
+  assert.ok(!graph.nodes.some(node => node.entityId === 'fabricated-overlay'))
+  assert.ok(!graph.nodes.some(node => node.provenance.includes('materialized')))
+  const exported = serializeKnowledgeGraph(ontology, topology, 'owl-turtle')
+  assert.ok(exported.includes('source-backed'))
+  assert.ok(!exported.includes(':graphModelId>'))
+})
+
+test('source snapshot verifies the exact contract used for instance reads and rejects changed bindings', async () => {
+  const ontology = contract()
+  const graph = await readOntologySourceGraph(ontology, readers())
+  const snapshot = await loadOntologySourceSnapshot(async () => graph, async () => ontology)
+  assert.equal(snapshot.ontologyGraph, graph)
+  assert.equal(snapshot.ontology, ontology)
+  await assert.rejects(loadOntologySourceSnapshot(async () => graph, async () => ({
+    ...ontology, relationshipTypes: [],
+  })), /definition changed/)
+  await assert.rejects(loadOntologySourceSnapshot(async () => { throw new Error('Source unavailable') }, async () => {
+    assert.fail('Failed source reads must not reuse an older contract or graph.')
+  }), /Source unavailable/)
 })
 
   test('diagnostic joins and synthetic native presentation retain distinct maintenance endpoints', async () => {

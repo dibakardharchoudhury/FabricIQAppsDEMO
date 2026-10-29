@@ -7,7 +7,7 @@ import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
 test('connector exposes only scalar read selections, never server decorators', () => {
   assert.deepEqual(lakehouseConnectorConfig.operations, ['read'])
   assert.equal(lakehouseConnectorConfig.connector, 'fabric-sqlanalytics')
-  assert.equal(Object.keys(lakehouseConnectorConfig.entities).length, 13)
+  assert.equal(Object.keys(lakehouseConnectorConfig.entities).length, 14)
   assert.ok(Object.values(lakehouseConnectorConfig.entities).every(fields => Array.isArray(fields) && fields.length))
 })
 
@@ -23,6 +23,10 @@ test('ontology Lakehouse projections expose identity, declared joins and every p
   assert.deepEqual(entities.WeatherVariables, ['variable_id', 'canonical_unit', 'canonical_name',
     'aggregation_kind', 'description', 'updated_at_utc'])
   assert.ok(entities.WeatherLocations.includes('metadata_json'))
+  assert.deepEqual(entities.OntologyEquipmentTypes, ['equipment_type_code', 'equipment_type_name'])
+  assert.ok(entities.WeatherAreas.includes('location_id'))
+  assert.ok(entities.WeatherLatestForecasts.includes('location_id'))
+  assert.ok(entities.WeatherLatestForecasts.includes('area_id'))
   for (const fields of [entities.WeatherLocations, entities.WeatherAreas]) assert.ok(fields.includes('updated_at_utc'))
   for (const fields of [entities.WeatherLatestObservations, entities.WeatherLatestForecasts]) {
     assert.ok(fields.includes('ontology_key'))

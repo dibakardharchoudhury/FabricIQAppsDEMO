@@ -158,6 +158,7 @@ export function ontologySourceReaders(): OntologySourceReader[] {
     reader('Lakehouse', 'silver_equipment', lake.SilverEquipment, cursor => lakehouse.SilverEquipment.select([...lake.SilverEquipment]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'silver_instruments', lake.SilverInstruments, cursor => lakehouse.SilverInstruments.select([...lake.SilverInstruments]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'silver_signal_master', lake.SilverSignalMaster, cursor => lakehouse.SilverSignalMaster.select([...lake.SilverSignalMaster]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'ontology_equipment_types', lake.OntologyEquipmentTypes, cursor => lakehouse.OntologyEquipmentTypes.select([...lake.OntologyEquipmentTypes]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'weather_sources', lake.WeatherSources, cursor => lakehouse.WeatherSources.select([...lake.WeatherSources]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'weather_ingestion_runs', lake.WeatherIngestionRuns, cursor => lakehouse.WeatherIngestionRuns.select([...lake.WeatherIngestionRuns]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'gold_instrument_classification', lake.InstrumentClassification, cursor => lakehouse.InstrumentClassification.select([...lake.InstrumentClassification]).first(200).after(cursor).executePaginated()),

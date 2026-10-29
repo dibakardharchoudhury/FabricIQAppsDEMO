@@ -1,6 +1,39 @@
 # Hydro Operations Knowledge Graph
 
-## Direct Ontology model by default
+## Live ontology-bound instances
+
+The Knowledge Graph is one source-backed instance view, not separate schema and
+materialized operational tabs. It verifies the selected live generation-2 ontology,
+reads its physical source bindings through the authenticated read connectors, and
+evaluates only its declared, directed relationships against actual source keys.
+It never invents links from matching names or undeclared foreign keys. A native
+GraphModel, graph binding, GQL query, or portal materialization is not required.
+
+The existing entity icons, including weather, stay inside their nodes. Eventhouse
+readings refresh every 30 seconds; actual values, units, quality, timestamps and
+freshness appear on bound signals and in the inspector. Critical red and warning
+amber halos use the existing pulse engine, respect reduced motion, and pause
+offscreen. Stale values are labelled; failed telemetry reads clear old values.
+Health rolls up only through evaluated ontology relationships.
+
+Source instances refresh every five minutes and after work-order mutations.
+Their reads are bounded, coalesced, identity-keyed and memory-only, and are not an
+atomic cross-source snapshot. Failed source reads clear the instance graph rather
+than displaying a previous successful result. Unsupported projections are disclosed
+in Advanced graph details, together with source read times and the exact contract
+signature. Missing bindings, ambiguous identities, broken references and budget
+overruns are errors, never an invitation to manufacture topology.
+
+The read connector includes the ontology equipment-type dimension and the persisted
+weather area/location join columns so these declared relationships remain queryable.
+OWL/RDF exports identify source-backed instances without claiming a GraphModel identity.
+
+## Historical implementation notes (superseded)
+
+The sections below retain earlier implementation and verification history. Their
+schema/native view descriptions are not the current application contract above.
+
+### Direct Ontology model by default (historical)
 
 The default **Ontology model** reads the live numeric generation-2 definition.
 Its nodes are entity types, not asset instances; edges are exactly the declared

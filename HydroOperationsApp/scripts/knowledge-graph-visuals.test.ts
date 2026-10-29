@@ -171,11 +171,13 @@ test('ontology layout packs real components and isolates without altering endpoi
   }
 })
 
-test('default Ontology view renders without native graph queries or materialization', () => {
+test('one live Ontology graph uses bound sources, without schema/native tabs or materialization dependencies', () => {
   const page = readFileSync(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
   const model = readFileSync(new URL('../src/ui-shared/pages/OntologyModelView.tsx', import.meta.url), 'utf8')
-  assert.match(page, /useState<'ontology' \| 'native'>\('ontology'\)/)
-  assert.match(page, /view === 'ontology' \? <OntologyModelView \/> : <NativeKnowledgeGraphPage \/>/)
+  assert.match(page, /loadOntologySourceSnapshot/)
+  assert.match(page, /\(\) => queryOntologySourceGraph\(force\), queryOntologyContract/)
+  assert.doesNotMatch(page, /kg-view-choice|NativeKnowledgeGraphPage|<OntologyModelView|queryOntologyGraph\b|Manage graph|Awaiting materialized topology/)
+  assert.match(page, /<h1>Knowledge Graph<\/h1>/)
   assert.match(model, /queryOntologyContract\(force\)/)
   assert.doesNotMatch(model, /\b(?:queryOntologyGraph|queryOntologySourceGraph|GraphModel|graphModelId)\b/)
   assert.match(model, /Schema only - not individual turbines/)
@@ -386,7 +388,7 @@ test('compact graph presentation retains earlier fluid strokes and keeps diagnos
   const styles = read('../src/ui-shared/styles/app.css')
   assert.ok(page.indexOf('<details className="kg-source-coverage">') > page.indexOf('<div className={`kg-workspace'))
   assert.doesNotMatch(page, /JSON · topology, ontology/)
-  assert.match(page, /'Native graph unavailable'/)
+  assert.match(page, /'Ontology sources unavailable'/)
   assert.doesNotMatch(page, /'Live ontology sources'/)
   assert.doesNotMatch(page, /not materialized/)
   assert.match(page, /Moving dashes require valid telemetry less than 60 seconds old/)
@@ -407,15 +409,15 @@ test('loading and errors stay inside the graph workspace without a blocking plac
   assert.doesNotMatch(page, /v2-placeholder-card|Loading the Ontology graph/)
   assert.match(page, /className="kg-stage" aria-label="Knowledge Graph canvas" aria-busy=\{graphLoading\}/)
   assert.match(page, /kg-loading-skeleton" aria-hidden="true"/)
-  assert.match(page, /Entities appear after verification/)
+  assert.match(page, /Loading actual instances and evaluating declared relationships/)
   assert.match(page, /className="kg-no-results" role="alert"/)
   assert.match(page, /Connect Fabric and retry/)
   assert.match(page, /Refreshing · showing last verified graph/)
   assert.match(page, /hasVerifiedGraph && graphQueriedAt/)
-  assert.match(page, /disabled=\{!hasVerifiedGraph\} onClick=\{exportNativeGraph\}/)
+  assert.match(page, /disabled=\{!hasVerifiedGraph\} onClick=\{exportGraph\}/)
   assert.match(page, /<summary>Advanced graph details/)
-  assert.doesNotMatch(page, /executionControl|queryOntologySourceGraph|setExecution/)
-  assert.match(page, /\(\) => queryOntologyGraph\(force\), queryOntologyContract/)
+  assert.doesNotMatch(page, /executionControl|queryOntologyGraph\b|setExecution/)
+  assert.match(page, /\(\) => queryOntologySourceGraph\(force\), queryOntologyContract/)
 })
 
 test('loading and unavailable headers do not display the live-ready treatment', () => {

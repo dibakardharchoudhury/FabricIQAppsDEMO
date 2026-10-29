@@ -16,12 +16,13 @@ export const lakehouseConnectorConfig = {
       'unit', 'instrument_type', 'is_active'],
     SilverSignalMaster: ['opcua_node_id', 'tag', 'instrument_id', 'equipment_id', 'system_id', 'facility_id',
       'unit', 'is_active', 'signal_type'],
+    OntologyEquipmentTypes: ['equipment_type_code', 'equipment_type_name'],
     WeatherSources: ['source_id', 'source_name', 'source_type', 'provider', 'license', 'endpoint', 'active', 'updated_at_utc'],
     WeatherIngestionRuns: ['run_id', 'source_id', 'source_item_id', 'data_kind', 'reference_time_utc',
       'started_at_utc', 'completed_at_utc', 'status', 'row_count', 'error_message'],
     InstrumentClassification: ['system_id', 'signal_type', 'signal_count', 'ontology_key'],
     WeatherLocations: ['location_id', 'location_name', 'latitude', 'longitude', 'elevation_m', 'metadata_json', 'updated_at_utc'],
-    WeatherAreas: ['area_id', 'area_name', 'geometry_geojson', 'crs', 'metadata_json', 'updated_at_utc'],
+    WeatherAreas: ['area_id', 'area_name', 'geometry_geojson', 'crs', 'location_id', 'metadata_json', 'updated_at_utc'],
     WeatherVariables: ['variable_id', 'canonical_unit', 'canonical_name', 'aggregation_kind', 'description', 'updated_at_utc'],
     WeatherLatestObservations: ['source_id', 'location_id', 'observed_at_utc', 'precipitation', 'temperature',
       'pressure', 'relative_humidity', 'dew_point', 'solar_radiation', 'wind_speed', 'wind_gust', 'wind_direction',
@@ -29,7 +30,7 @@ export const lakehouseConnectorConfig = {
     WeatherLatestForecasts: ['source_id', 'target_kind', 'target_id', 'reference_time_utc', 'valid_time_utc',
       'lead_hours', 'precipitation_interval_hours', 'cumulative_precipitation', 'rainfall_volume_m3',
       'cumulative_rainfall_volume_m3', 'precipitation', 'temperature', 'pressure', 'relative_humidity',
-      'dew_point', 'solar_radiation', 'wind_speed', 'wind_gust', 'wind_direction', 'calculated_at_utc', 'ontology_key'],
+      'dew_point', 'solar_radiation', 'wind_speed', 'wind_gust', 'wind_direction', 'calculated_at_utc', 'location_id', 'area_id', 'ontology_key'],
   },
 } as const satisfies ConnectorConfig
 

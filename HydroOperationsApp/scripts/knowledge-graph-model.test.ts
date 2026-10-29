@@ -250,7 +250,7 @@ test('preserves main presentation for one-to-one signals and the existing inspec
     'Latest value': 96.8, Quality: 'Bad', 'Event time': '2026-09-14T08:00:00Z', 'Signal entity': 'node-1',
   })
 
-  assert.equal(instrument.provenance, 'Fabric Ontology · Native Hydro graph · combined one-to-one instruments + signal_master node with Eventhouse time-series binding')
+  assert.equal(instrument.provenance, 'Fabric Ontology · Native Hydro graph · materialized graph node · combined one-to-one instruments + signal_master with Eventhouse time-series binding')
   const system = graph.nodes.find(node => node.id === 'system:S1')!
   assert.equal(system.subtitle, '1 connected assets')
   assert.deepEqual(system.properties, { 'System ID': 'S1', 'OAG RDS code': undefined, 'Equipment count': 1 })
@@ -289,7 +289,7 @@ test('does not render STID topology or SQL overlays before the native query comp
     equipment: [{ equipment_id: 'E1', facility_id: 'F1', system_id: 'S1', tag: 'Turbine' }],
     instruments: [{ instrument_id: 'I1', equipment_id: 'E1', system_id: 'S1', facility_id: 'F1', opcua_node_id: 'node-1' }],
   }))
-  assert.match(graph.error ?? '', /No verified native Ontology graph.*Manage graph/)
+  assert.match(graph.error ?? '', /No verified Ontology instance graph.*bound sources/)
   assert.deepEqual(graph.nodes, [])
   assert.deepEqual(graph.edges, [])
 })
@@ -341,7 +341,7 @@ test('missing native topology cannot expose SQL overlay nodes or guessed relatio
   const graph = buildKnowledgeGraph(input({
     ontologyGraph: null, ontology: { ...ontology, relationshipTypes: [] },
   }))
-  assert.match(graph.error ?? '', /native Ontology graph/)
+  assert.match(graph.error ?? '', /Ontology instance graph/)
   assert.deepEqual(graph.nodes, [])
   assert.deepEqual(graph.edges, [])
 })

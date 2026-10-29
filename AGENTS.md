@@ -28,14 +28,14 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
 - RTI_011 publishes operational guidance against the ontology-associated SQL source; do not attach
   the SQL Database a second time or require a duplicate datasource profile in deployment/Foundry
   checks. Preserve existing operator-added SQL/custom sources and propagate real publication/readback failures.
-  The app requires an explicitly bound ontology-managed
-  native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK
-  graph fabrication or GraphQL dependency for canvas/tree/scopes. Materialize through the selected
-  ontology's Manage graph flow. Generate `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from authoritative
-  Ontology-to-GraphIndex item lineage, or use an operator-verified explicit fallback; never infer
-  ownership from names, a sole graph, or matching structure. Portal materialization is a manual
-  prerequisite, not an established public REST automation contract. Do not claim agent or graph runtime readiness
-  from item creation, notebook completion, or successful app hosting.
+  The app's single Knowledge Graph reads actual instances from the verified v2 ontology's
+  authenticated physical source bindings and evaluates only declared relationships and keys.
+  Preserve entity icons, Eventhouse readings, freshness and red/amber health pulses. No materialization,
+  GraphModel or graph binding is required for its canvas/tree/scopes; never fabricate topology from
+  STID rows, names or undeclared foreign keys. Disclose unsupported projections and fail closed on
+  invalid, incomplete or failed source reads. Optional native GQL utilities still require explicit,
+  verified ontology ownership; never infer it from names, a sole graph or matching structure.
+  Do not claim agent or graph runtime readiness from item creation, notebook completion or hosting.
 - Keep canonical notebook prose, Raw mirrors, and packaged workflow documents aligned with
   the [current policy](README.md#ontology-generations-and-optional-agents).
 

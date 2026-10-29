@@ -111,22 +111,17 @@ interactive Digital Twin model remains lazy-loaded when a selected asset support
 automatically without an additional operator action. The bootstrap uses local system fonts and does
 not wait on a third-party font stylesheet.
 
-The **Knowledge Graph** defaults to an **Ontology model**: one node per entity type and
-one arrow per declared relationship, read directly from the live generation-2 definition.
-It does not require graph materialization, execute source-row joins, or claim to show individual
-assets. Relationship endpoint identities and directions are preserved. Components are packed
-separately, genuinely unrelated types remain visible in a compact group, and search filters the
-type list rather than cutting connections out of the diagram. The inspector shows property
-definitions, declared keys and relationship cardinalities. Schema export uses JSON.
-The model reuses the rich graph canvas: sized, icon/color-coded business types, visible
-relationship labels and direction, network/hierarchy/concentric layouts, zoom, fit, selected-neighborhood
-focus and an expanded view (Escape restores it). The category legend describes presentation only,
-not inferred relationships or operational health. **Neighborhood** shows only declarations incident
-to the selected type; **All types** restores the full definition. Schema nodes have no telemetry,
-health rings or animated operational flows. Equipment-type and spare-part categories do not imply
-installed parts or verified compatibility.
+The **Knowledge Graph** is one live ontology-bound instance view, without separate schema or
+operational tabs. It verifies the generation-2 definition, reads actual rows through authenticated
+source connectors, and evaluates only declared relationships against their physical keys.
+It preserves the entity icons, weather nodes, directional links, network/hierarchy/concentric
+layouts, zoom, fit, selected-asset scope and expanded view. Eventhouse enrichment supplies actual
+readings, units, quality, timestamps and freshness. Critical red and warning amber halos pulse
+around affected nodes and respect reduced motion. Neither graph materialization nor a GraphModel
+binding is required. Source coverage and non-atomic read timing are disclosed; invalid or failed
+reads clear the graph instead of displaying invented or previous data.
 
-For a browser-only presentation check without Fabric access, run
+For a separate schema-only development preview without Fabric access, run
 `node scripts\knowledge-graph-preview.mjs` from `HydroOperationsApp` and open
 `http://127.0.0.1:5189/ontology-preview`. This development-only server mounts the real model page
 with explicitly declared synthetic schema inputs and a conspicuous fixture banner; it is not
@@ -142,21 +137,15 @@ TMDL parser and topology validation, rejects conflicting identities, and does no
 into the repository. Saved mode disables the synthetic isolates override. This remains an
 offline preview, not independent verification of live generation, materialization or agent runtime.
 
-The separate **Native asset instances** view visualizes operational composition as a scoped property graph. Its performant
-Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a
-WebGL dependency. It defaults to the selected turbine and synchronizes that selection with Overview,
-Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
-**generation-2 Ontology** and an explicitly bound, materialized ontology-owned
-GraphModel. Source-reconstructed topology is not a canvas fallback. SQL and Eventhouse
-only enrich actual native entities. Native header counts describe returned instances and links;
-advanced details disclose visible connected components and isolates. Selecting an asset
-in the tree switches to its selected scope. Native exports use OWL/RDF Turtle.
-Missing materialization, source eligibility, access, valid identities or complete reads
-fail closed. FEATURE currently has an unresolved portal **Unsupported Datasource**
-eligibility blocker; successful hosting does not certify native graph availability.
+The instance view defaults to the selected turbine and synchronizes selection with Overview,
+Real-Time Telemetry, Digital Twin and Maintenance. Header counts describe returned instances and
+links; advanced details disclose supported and excluded projections, read timing and the exact
+contract signature. OWL/RDF Turtle exports identify source-backed instances without claiming a
+native GraphModel identity. Native GQL utilities remain available internally but are not the
+Knowledge Graph page's topology source or a prerequisite for its canvas.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
-scenarios, historical screenshots, freshness behavior, and native graph prerequisites.
+scenarios, freshness behavior and superseded native-graph implementation history.
 
 Individual signal colours in the graph, 3D twin, and map reflect the reading's quality.
 Open work orders remain visible and contribute to asset-level health, but do not turn a GOOD
@@ -181,8 +170,8 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Namespaces stay distinct; display names and namespace are derived from the qualified name.
 - **Only `entityRelationships.tmdl` defines semantic relationship types.** `relationships.tmdl`
   resolves referenced single-column physical joins, never additional semantic edge types.
-  Only actual native graph instances supply topology; declared binding keys and STID rows
-  do not synthesize missing entities or relationships.
+  Actual rows from verified source bindings and their declared joins supply instance topology.
+  Names, STID rows and undeclared foreign keys do not synthesize missing entities or relationships.
 - Primitive, `Any`, `TimeSeries<T>`, and single-line `complexDataType` JSON metadata are
   retained, including `additionalBackingTable` references for Eventhouse time-series bindings.
   Complex values and recursive `valueBackingConfiguration` metadata are **not evaluated**.
@@ -190,11 +179,10 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   reports these limitations. Composite keys, multiline expressions, unknown entity/property
   constructs, invalid payloads, unresolved endpoints, and mixed v1/v2 definitions produce errors
   rather than a silently empty contract. The parser is bounded, not a general TOM engine.
-- A v2 materialized GraphModel is required for the graph's **canvas, tree and scopes**.
-  Complete **Manage graph → select eligible entities/relationships → Continue → Materialize**
-  in the selected Ontology. Item creation, child-definition readback and a queryable schema
-  do not prove entity eligibility or populated native topology.
-  Configure the `.env` binding with single-quoted JSON:
+- The graph's **canvas, tree and scopes** use verified source-backed instances; materialization
+  is not required. Optional native GQL utilities separately require an explicitly bound,
+  ontology-owned GraphModel materialized through the selected ontology's Manage graph flow.
+  For those utilities only, configure the `.env` binding with single-quoted JSON:
   `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'`.
   Retain the outer single quotes when adding alias maps: dotenv truncates an unquoted value at
   `#`, including inside JSON double quotes, so exact ontology names containing `#` require quoting.
@@ -211,13 +199,12 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   on the configured `graphModels/{id}`. Opaque string `result.nextPage` continuations are followed.
   Query errors, warnings, truncation, malformed/dangling results, or exceeding 2,000 nodes/4,000 edges
   fail explicitly. Malformed native results are never reinterpreted as valid native topology.
-- Ontology definitions and native results are cached and concurrent requests are coalesced.
-  The page shows a loading state while native queries run and an explicit unavailable state
-  after native failures; no STID compatibility graph is rendered. Definition errors also prevent
-  unverified topology. Workspace refreshes
-  restart obsolete reads against current discovery rather than surfacing cache-invalidation errors.
-  Manual refresh queries the native source independently of STID connectivity.
-  The five-minute native poll does not repeatedly download the TMDL definition.
+- Ontology definitions and source-backed results use bounded, identity-keyed in-memory caches
+  and concurrent reads are coalesced. The page shows loading and explicit unavailable states;
+  failed reads clear the instance graph. Definition errors also prevent unverified topology.
+  Workspace refreshes restart obsolete reads against current discovery. Manual refresh and
+  five-minute source polling work independently of STID connectivity. Work-order mutations
+  invalidate the source snapshot immediately.
 
 These read capabilities do **not** imply Data Agent semantic runtime or Operations Agent playbook
 execution succeeds. The latest live attempt accepted source publication and stopped-agent
@@ -514,7 +501,7 @@ HydroOperationsApp/
 
   Pages shared by the original and redesigned app layouts, including Knowledge Graph, Telemetry,
   Digital Twin, and Maintenance, live under
-  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` enriches native graph topology and
+  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` enriches verified ontology-source topology and
   `src/ui-shared/pages/KnowledgeGraphPage.tsx` owns scope, filtering, shared asset selection, and the
   entity inspector.
   Layout names such as V1/V2 do not enable Ontology v1; both layouts use the same v2-only services.

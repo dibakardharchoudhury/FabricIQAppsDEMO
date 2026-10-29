@@ -83,6 +83,7 @@ export class WeatherAreas extends Source({ schema: 'dbo', table: 'weather_areas'
   @text({ optional: true, max: 8000 }) area_name?: string
   @text({ optional: true, max: 8000 }) geometry_geojson?: string
   @text({ optional: true, max: 8000 }) crs?: string
+  @text({ optional: true, max: 8000 }) location_id?: string
   @text({ optional: true, max: 8000 }) metadata_json?: string
   @date({ optional: true }) updated_at_utc?: Date
 }
@@ -143,7 +144,17 @@ export class WeatherLatestForecasts extends Source({ schema: 'dbo', table: 'weat
   @decimal({ optional: true }) wind_gust?: number
   @decimal({ optional: true }) wind_direction?: number
   @date({ optional: true }) calculated_at_utc?: Date
+  @text({ optional: true, max: 8000 }) location_id?: string
+  @text({ optional: true, max: 8000 }) area_id?: string
   @text({ optional: true, max: 8000 }) ontology_key?: string
+}
+
+@entity()
+@authenticated('read')
+export class OntologyEquipmentTypes extends Source({ schema: 'dbo', table: 'ontology_equipment_types', primaryKey: [] }) {
+  declare static [Symbol.metadata]: EntityClass[typeof Symbol.metadata]
+  @text({ optional: true, max: 8000 }) equipment_type_code?: string
+  @text({ optional: true, max: 8000 }) equipment_type_name?: string
 }
 
 @entity()
@@ -206,7 +217,7 @@ export const connectorConfig = {
   operations: ['read'],
   entities: { SilverFacilities, SilverSystems, SilverEquipment, SilverInstruments,
     WeatherLocations, WeatherAreas, WeatherVariables, WeatherLatestObservations, WeatherLatestForecasts,
-    SilverSignalMaster, WeatherSources, WeatherIngestionRuns, InstrumentClassification },
+    SilverSignalMaster, OntologyEquipmentTypes, WeatherSources, WeatherIngestionRuns, InstrumentClassification },
 } as const satisfies ConnectorConfig
 
 export type HydrolakehouseSchema = GraphQLBackedConnector<typeof connectorConfig.entities, typeof connectorConfig>

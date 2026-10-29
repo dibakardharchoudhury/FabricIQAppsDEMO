@@ -261,7 +261,7 @@ entityRelationship unbound
 `)])
   assert.equal(contract.relationshipTypes.length, 2)
   assert.ok(contract.relationshipTypes.every(relationship => relationship.compatibilityUnsupported))
-  assert.match(contract.warnings!.join(' '), /Only materialized native graph instances/)
+  assert.match(contract.warnings!.join(' '), /source-backed view does not evaluate/)
 })
 
 const graphInput = {
@@ -269,12 +269,12 @@ const graphInput = {
   systems: [{ system_id: 'S1', facility_id: 'F1' }],
   equipment: [], instruments: [], telemetry: [], workOrders: [], inspections: [], notifications: [], models: [],
 }
-test('v2 bindings require native topology and never promote namespace-aware source rows into graph nodes', () => {
+test('v2 presentation requires verified instance reads and never promotes unrelated source rows into graph nodes', () => {
   const ontology = parse(hydro)
   const bound = buildKnowledgeGraph({ ...graphInput, ontology })
   assert.deepEqual(bound.nodes, [])
   assert.deepEqual(bound.edges, [])
-  assert.match(bound.error ?? '', /No verified native Ontology graph/)
+  assert.match(bound.error ?? '', /No verified Ontology instance graph/)
   const ontologyGraph = {
     ontologyId: ontology.id, graphModelId: 'native', graphModelName: 'Verified v2 projection',
     nodes: [

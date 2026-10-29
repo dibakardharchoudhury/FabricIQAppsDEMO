@@ -20,14 +20,15 @@ response. Actual deployment/publication/readback failures propagate. NB11 preser
 added SQL/custom content and publishes operational guidance without attaching ontology-associated SQL
 again. Deployment/Foundry checks must not require a separate SQL datasource profile. Publication
 does not certify SQL/combined-source answers. Configuration or
-hosted-page success does not certify agent execution or delivery. The app's native graph
-requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
-→ Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON generated from
-authoritative Ontology-to-GraphIndex item lineage or supplied as an operator-verified fallback.
-No ownership is inferred from names, sole-graph discovery, or structure. Native topology is authoritative; KQL/SQL only enrich
-actual native entities. GraphQL/STID is not a canvas/tree/scope dependency or topology fallback.
-No published ontology-owned materialization REST endpoint is established; keep this portal
-prerequisite separate from automated deployment and agent runtime readiness.
+hosted-page success does not certify agent execution or delivery. The app's single Knowledge Graph
+reads actual instances through the verified v2 ontology's authenticated physical source bindings
+and evaluates only declared relationships and keys. Preserve entity icons, Eventhouse readings,
+freshness and red/amber health pulses. Its canvas/tree/scopes do not require materialization,
+a GraphModel or a graph binding. Never fabricate topology from STID rows, names or undeclared
+foreign keys. Disclose unsupported projections and fail closed on invalid, incomplete or failed
+source reads. Optional native GQL utilities still require verified ontology ownership; never infer
+it from names, sole-graph discovery or structure. Keep native portal prerequisites separate from
+source-backed visualization, automated deployment and agent runtime readiness.
 
 ## Deploying HydroOperationsApp (Rayfin) — don't reinvent the wheel
 This repo already automates deployment. Before doing ANY deploy / new-tenant / redeploy work:
