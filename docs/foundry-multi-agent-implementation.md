@@ -1,5 +1,36 @@
 # Foundry and multi-agent implementation record
 
+## October 30 scope-corruption and dependent-review correction
+
+SQL schema metadata could become equipment scope: recursively inspecting the raw
+native execution audit promoted `equipmentId: varchar` to a selected asset.
+Identity extraction now excludes raw responses, documents, query/schema metadata
+and tool arguments, while retaining actual result rows and explicit answer identity
+fields. Original source responses remain unchanged in the audit.
+
+A second handoff defect could replace a previously established fleet with the
+subset read by RCA or maintenance verification. Dependent RCA/Work Order stages
+now preserve the established scope; a partial check neither narrows that fleet nor
+adds unrelated targets. Explicit operator and metric-based selections retain their
+separate authoritative selection paths.
+
+The published V16 native transport was exercised with the reported question.
+One execution queried Kusto, Lakehouse and operational SQL, returning fifteen
+affected turbines, ten existing open work orders and five uncovered draft
+candidates. A subsequent identical-question execution returned a provider refusal
+before querying data, despite its execution audit confirming automatic attachment
+of both ontology-associated sources. Missing source authoring is therefore not
+established as the cause of the intermittent answer. These observations do not
+certify repeatable native execution or successful end-to-end draft staging.
+
+Keep the execution minimal: Supervisor selects capabilities, Sparky calls the
+original Fabric question without a wrapper-model round, and Fixer reviews requested
+drafts. Gauge is a separate governed-read/verification capability, not a mandatory
+second factual-answer writer. Sleuth is only needed for requested investigation;
+Gale is only needed for weather work. Do not remove those capabilities merely to
+conceal a handoff or source failure. An investigation does not veto an otherwise
+supported diagnostic draft, and no production work order is saved without approval.
+
 ## October 29 single Hydro Intelligence entry point
 
 The separate Direct Data Agent mode was a UI design mistake and has been
