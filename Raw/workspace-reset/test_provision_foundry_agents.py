@@ -132,7 +132,7 @@ class NativeToolboxProvisionTests(unittest.TestCase):
         "project_connection_id": "hydro-fabric-iq", "require_approval": "never",
     }]
 
-    def run_convergence(self, *, current=None, verify_only=False, broken_readback=False):
+    def run_convergence(self, *, current=None, verify_only=False, broken_readback=False, resource_suffix=""):
         saved = copy.deepcopy(current)
         calls = []
 
@@ -153,13 +153,20 @@ class NativeToolboxProvisionTests(unittest.TestCase):
 
         with patch.object(module, "request_with_read_retry", side_effect=request):
             version = module.ensure_native_toolbox("https://foundry.example/api/projects/hydro", {},
-                                                   verify_only=verify_only)
+                                                   verify_only=verify_only, resource_suffix=resource_suffix)
         return version, calls, saved
 
     def test_existing_verified_toolbox_is_read_only_reused(self):
         version, calls, _ = self.run_convergence(current={"version": "1", "tools": self.tools})
         self.assertEqual(version, "1")
         self.assertEqual([item[0] for item in calls], ["GET", "GET"])
+
+    def test_scoped_toolbox_creation_and_readback_use_only_its_workspace_connection(self):
+        suffix = "-" + "a" * 32
+        version, calls, saved = self.run_convergence(resource_suffix=suffix)
+        self.assertEqual(version, "2")
+        self.assertEqual(saved["tools"][0]["project_connection_id"], "hydro-fabric-iq" + suffix)
+        self.assertTrue(all("/toolboxes/hydro-fabric-iq-tools" + suffix in call[1] for call in calls))
 
     def test_missing_toolbox_is_created_promoted_and_read_back(self):
         version, calls, saved = self.run_convergence()
@@ -189,36 +196,65 @@ class NativeToolboxProvisionTests(unittest.TestCase):
 
 
 class IncrementalProvisionTests(unittest.TestCase):
-    def run_provision(self, *, drift=None, missing=None, broken_readback=False, denied=False):
+    def run_provision(
+        self, *, drift=None, missing=None, broken_readback=False, denied=False,
+        target_workspace=None, foreign_connections=False,
+    ):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
         endpoint = values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]
         ontology = values["RAYFIN_PUBLIC_ONTOLOGY_ID"]
         project_id = f"/subscriptions/{tenant}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/hydro/projects/hydro"
         selection = module.FoundrySelection(tenant, project_id, endpoint, "model")
+        if target_workspace:
+            workspace = target_workspace
+            values["RAYFIN_PUBLIC_WORKSPACE_ID"] = workspace
+        suffix = module.foundry_resource_suffix(workspace)
+        hosted["name"] += suffix
+        environment = hosted["versions"]["latest"]["definition"]["environment_variables"]
+        configuration = json.loads(environment["HYDRO_ORCHESTRATOR_CONFIG"])
+        configuration["source"].update({
+            "workspace_id": workspace,
+            "configuration_digest": module.source_configuration_digest(tenant, workspace, ontology, values),
+        })
+        configuration["native_binding"]["source"] = copy.deepcopy(configuration["source"])
+        configuration["native_binding"].update({
+            "connections": {"data-agent": "hydro-fabric-iq" + suffix},
+            "toolbox": "hydro-fabric-iq-tools" + suffix,
+            "agent_name_suffix": suffix,
+        })
+        environment["HYDRO_ORCHESTRATOR_CONFIG"] = json.dumps(configuration)
         expected = {
             f"hydro-{role}-agent": {"kind": "prompt", "model": "model", "instructions": role, "tools": []}
             for role in ("qa", "rca", "work-order", "fabric-iq", "weather")
         }
         live = {
-            name: {"version": "7", "definition": {**copy.deepcopy(spec), "server_default": None}}
+            name + suffix: {"version": "7", "definition": {**copy.deepcopy(spec), "server_default": None}}
             for name, spec in expected.items()
         }
         if missing:
-            del live[missing]
+            del live[missing + suffix]
         if drift in ("model", "instructions", "tools"):
-            live["hydro-qa-agent"]["definition"][drift] = ["old-tool"] if drift == "tools" else "old"
+            live["hydro-qa-agent" + suffix]["definition"][drift] = ["old-tool"] if drift == "tools" else "old"
         connections = {}
         for name, target in (
             ("hydro-fabric-iq", f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{workspace}/dataagents/data-agent/agent"),
             ("hydro-fabric-ontology", f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspace}/items/{ontology}/ontologyEndpoint"),
         ):
-            connections[name] = {
+            connections[name + suffix] = {
                 "category": "RemoteTool", "authType": "UserEntraToken", "target": target,
                 "audience": "https://api.fabric.microsoft.com", "isSharedToAll": False,
                 "metadata": {"type": "fabric_iq_preview"},
             }
         if drift == "connection":
-            connections["hydro-fabric-iq"]["target"] = "https://old.example/agent"
+            connections["hydro-fabric-iq" + suffix]["target"] = "https://old.example/agent"
+        untouched = {}
+        if foreign_connections:
+            for name in ("hydro-fabric-iq", "hydro-fabric-iq-" + "f" * 32):
+                untouched[name] = module.fabric_iq_connection_properties(
+                    "https://api.fabric.microsoft.com/v1/mcp/workspaces/"
+                    "ffffffff-ffff-ffff-ffff-ffffffffffff/dataagents/foreign/agent",
+                )
+            connections.update(copy.deepcopy(untouched))
         insights = {"name": "monitor", "properties": {
             "category": "AppInsights",
             "target": f"/subscriptions/{tenant}/resourceGroups/rg/providers/microsoft.insights/components/monitor",
@@ -239,7 +275,7 @@ class IncrementalProvisionTests(unittest.TestCase):
                 if "/versions/" in url:
                     body = {"tools": [{
                         "type": "fabric_iq_preview", "name": "hydro-data", "server_label": "fabriciq-data-agent",
-                        "project_connection_id": "hydro-fabric-iq", "require_approval": "never",
+                        "project_connection_id": "hydro-fabric-iq" + suffix, "require_approval": "never",
                     }]}
             elif url == f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview":
                 body = {"value": [
@@ -280,7 +316,33 @@ class IncrementalProvisionTests(unittest.TestCase):
             module.provision(deploy, tenant, workspace)
             resolve.assert_called_once_with(deploy, tenant, workspace, allow_create=True)
             hosted_module.ensure_hosted_agent.assert_called_once()
+            self.assertEqual(hosted_module.ensure_hosted_agent.call_args.kwargs["resource_suffix"], suffix)
+            updates = deploy._rebind_public_env.call_args.args[1]
+            self.assertEqual(updates["RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX"], suffix)
+            self.assertIn("/agents/hydro-orchestrator" + suffix + "/",
+                          updates["RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL"])
+            for name, properties in untouched.items():
+                self.assertEqual(connections[name], properties)
         return request.call_args_list
+
+    def test_three_workspaces_share_one_project_without_touching_foreign_or_legacy_resources(self):
+        projects = set()
+        namespaces = set()
+        for index in (1, 2, 3):
+            workspace = f"20000000-0000-0000-0000-00000000000{index}"
+            suffix = module.foundry_resource_suffix(workspace)
+            with self.subTest(workspace=workspace):
+                calls = self.run_provision(target_workspace=workspace, drift="connection", foreign_connections=True)
+                writes = [call for call in calls if call.args[0] != "GET"]
+                self.assertEqual(len(writes), 1)
+                self.assertIn("/connections/hydro-fabric-iq" + suffix + "?", writes[0].args[1])
+                projects.add(writes[0].args[1].split("/connections/")[0])
+                for call in calls:
+                    if "/agents/" in call.args[1] or "/toolboxes/" in call.args[1]:
+                        self.assertIn(suffix, call.args[1])
+                namespaces.add(suffix)
+        self.assertEqual(len(projects), 1)
+        self.assertEqual(len(namespaces), 3)
 
     def test_current_agents_with_server_defaults_and_connections_are_read_only(self):
         calls = self.run_provision()
@@ -296,20 +358,20 @@ class IncrementalProvisionTests(unittest.TestCase):
                 writes = [entry for entry in calls if entry.args[0] != "GET"]
                 self.assertEqual(len(writes), 1)
                 self.assertEqual(writes[0].args[0], "POST")
-                self.assertIn("/agents/hydro-qa-agent/versions?", writes[0].args[1])
+                self.assertRegex(writes[0].args[1], r"/agents/hydro-qa-agent-[0-9a-f]{32}/versions\?")
 
     def test_only_a_missing_agent_is_created(self):
         calls = self.run_provision(missing="hydro-weather-agent")
         writes = [entry for entry in calls if entry.args[0] != "GET"]
         self.assertEqual(len(writes), 1)
-        self.assertIn("/agents/hydro-weather-agent/versions?", writes[0].args[1])
+        self.assertRegex(writes[0].args[1], r"/agents/hydro-weather-agent-[0-9a-f]{32}/versions\?")
 
     def test_only_a_drifted_connection_is_updated(self):
         calls = self.run_provision(drift="connection")
         writes = [entry for entry in calls if entry.args[0] != "GET"]
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0].args[0], "PUT")
-        self.assertIn("/connections/hydro-fabric-iq?", writes[0].args[1])
+        self.assertRegex(writes[0].args[1], r"/connections/hydro-fabric-iq-[0-9a-f]{32}\?")
 
     def test_denied_reads_and_failed_readback_do_not_report_success(self):
         with self.assertRaisesRegex(RuntimeError, "Cannot read Foundry agent"):
@@ -673,6 +735,35 @@ class PreparedFoundryTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "GET"])
         self.assertEqual([call.args[:2] for call in deploy.az.call_args_list], [("account", "get-access-token")])
         self.assertNotIn("WARNING", str(output.call_args_list))
+
+    def test_shared_project_app_publication_reads_back_only_its_workspace_resources(self):
+        deploy, values, agent, tenant, workspace = self.prepared()
+        suffix = module.foundry_resource_suffix(workspace)
+        values["RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX"] = suffix
+        agent["name"] += suffix
+        environment = agent["versions"]["latest"]["definition"]["environment_variables"]
+        configuration = json.loads(environment["HYDRO_ORCHESTRATOR_CONFIG"])
+        configuration["native_binding"].update({
+            "connections": {"data-agent": "hydro-fabric-iq" + suffix},
+            "toolbox": "hydro-fabric-iq-tools" + suffix, "agent_name_suffix": suffix,
+        })
+        environment["HYDRO_ORCHESTRATOR_CONFIG"] = json.dumps(configuration)
+        values["RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL"] = module.hosted_invocations_url(
+            agent, values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"], resource_suffix=suffix,
+        )
+        responses = [
+            Mock(ok=True, json=lambda: {"versions": {"latest": {"definition": {"model": "model"}}}}),
+            Mock(ok=True, json=lambda: agent),
+        ]
+        with patch.object(module, "_load_sibling", return_value=Mock(source_fingerprint=lambda _: "code")), \
+                patch.object(module, "verify_prepared_connections"), \
+                patch.object(module, "request_with_read_retry", side_effect=responses) as request:
+            module.verify_existing(deploy, tenant, workspace)
+        self.assertTrue(all(call.args[0] == "GET" and suffix in call.args[1] for call in request.call_args_list))
+        with self.assertRaisesRegex(RuntimeError, "another workspace"):
+            module.saved_resource_suffix(deploy, {
+                "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX": "-" + "0" * 32,
+            }, workspace)
 
     def test_app_reuses_compatible_runtime_with_older_or_unknown_packaged_code(self):
         for code_digest in ("old", ""):

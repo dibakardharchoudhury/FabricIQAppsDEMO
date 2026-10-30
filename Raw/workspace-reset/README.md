@@ -94,6 +94,73 @@ as blocked and ontology graph materialization remain explicit operator prerequis
   App publication waits for both. Each completed component is checkpointed; the
   combined component reruns idempotently if either branch or publication fails.
 
+## Optional: up to three workspaces in parallel
+
+In the sidebar, enable **Deploy to multiple workspaces in parallel** and enter one,
+two or three workspace names/GUIDs in the same tenant. Empty slots are ignored,
+including an empty first slot. Full Deploy, GitHub Sync, Core setup, Energy setup,
+Foundry setup, Deploy app, Delete workspace items and connection tests fan out only
+to the populated targets. Every module button shows the selected workspace count.
+The Core setup forms, including Full Deploy, list every selected workspace on its
+own line. This is a read-only target preview; each worker supplies its own resolved
+workspace ID to the setup pipeline, not the combined display text.
+Deletion defaults to dry run. To actually delete items, repeat every selected
+workspace name/GUID, one per line in the displayed order; the backend rejects the
+entire batch unless all targets are confirmed. A failed deletion requires fresh
+confirmation of that target's canonical GUID before retrying. Retrying a failed
+dry run remains a dry run even if the form's checkbox has since changed.
+
+The form settings apply to every selected workspace. Tenant setup defaults remain
+available regardless of workspace name; explicit form values take precedence.
+To share an existing Foundry account and project, enter that project name or full
+resource ID and keep **Reuse the entered project** selected. Each workspace gets
+its own GUID-suffixed connections, native toolbox, five specialists and hosted
+orchestrator inside that project. Existing unsuffixed resources are left untouched,
+and each app saves its own hosted invocation URL. Shared model quota remains shared.
+App-only publication continues to verify existing legacy bindings without migrating them.
+
+Alternatively, choose **Separate projects (short workspace suffix)** and enter a
+project base name. A stable eight-character workspace suffix is appended, with
+names bounded to 64 characters. Missing projects are created only when the existing
+creation checkbox is explicitly approved. Blank project fields retain target-specific
+saved binding/convention discovery; a sole unrelated project is not a safe fallback.
+Parallel mode never approves billable creation.
+
+Each worker uses a separate checkout, Azure CLI cache, hosted-agent state and
+Rayfin deployment files. Private workspace state stays under
+`~/.fabric-demo/parallel-deployments/`; checkouts use the shorter private
+`~/.fabric-demo/parallel-checkouts/<unique-id>/` path so nested Windows native tools
+stay below the executable path limit. Workspace records retain the checkout identity.
+Only matching tenant/workspace state is reused, including state from older checkout
+locations; the main checkout's generated files are not changed. Workers use
+one committed source snapshot, so commit source changes first. Existing generated
+changes to `HydroOperationsApp/rayfin/rayfin.yml` need not be discarded. State and
+checkouts are retained, not deleted after completion.
+
+The deployer pins Node 24 for npm, lifecycle scripts and spawned build tools, even
+when another Node version is installed globally. Locked installs prefer cached
+packages without bypassing integrity checks. An overlong Windows native-tool path
+fails before installation; only file-lock/cleanup failures are retried once.
+Other failures report the underlying diagnostic instead of repeating an identical
+restore. After updating the launcher, resume a failed workspace to allocate a short
+checkout and retain successful Full Deploy checkpoints; do not repeat Git sync/Core
+solely to repair local npm installation.
+
+Each workspace has its own status, timings, live output and cancellation control.
+One failure does not stop the other workspaces. After the batch finishes, retry
+only the failed/cancelled workspace; Full Deploy retains its successful component
+checkpoints and requires explicit synchronization when definitions changed. A
+server interruption is not proof that remote Fabric jobs stopped: verify those
+jobs before starting another run. Cancellation stops owned local processes, not
+necessarily already-submitted remote Fabric jobs.
+
+Workspace names/GUID aliases are resolved before deployment; duplicate targets
+are rejected. Shared Entra mutations and Foundry bootstrap operations are locked
+across processes, and Entra redirects are reread inside the mutation lock to avoid
+losing another workspace's newly published origin. Workspace pipelines, builds and
+agent deployment work otherwise overlap. Fabric capacity, Spark concurrency and
+Azure quotas still apply; three targets do not imply three times the throughput.
+
 ## Easiest start — just launch it (no commands to type)
 
 One-time setup on the machine: install **[Python](https://www.python.org/downloads/)**
@@ -915,7 +982,10 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
   Existing state is not deleted.
    In the independent **Set up Foundry agents** module (or the combined CLI flow),
    the deployer converges the **Foundry** side: the
-   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
+   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent.
+   New setup scopes these resource names and the native toolbox with the workspace GUID (without hyphens),
+   allowing a shared project without overwriting another workspace's bindings. App-only deployment retains
+   compatibility with existing unsuffixed configurations. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
    Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,

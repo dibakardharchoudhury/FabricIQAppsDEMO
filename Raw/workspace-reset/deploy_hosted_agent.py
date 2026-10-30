@@ -1,4 +1,4 @@
-"""Publish the Hydro Supervisor as the Foundry Hosted Agent ``hydro-orchestrator``.
+"""Publish a workspace-scoped Hydro Supervisor in the selected Foundry project.
 
 Called by provision_foundry_agents.provision() immediately before it verifies the hosted agent; it is not a
 separate deployment path. It converges the agent on the current source and target:
@@ -42,7 +42,7 @@ def state_root() -> Path:
     return Path(os.environ.get("HYDRO_STATE_DIR", "").strip() or Path.home() / ".fabric-demo")
 
 
-def azd_project_dir(deploy, endpoint: str) -> Path:
+def azd_project_dir(deploy, endpoint: str, *, agent_name: str = AGENT_NAME) -> Path:
     """Generate isolated azd state for the verified project, never reuse repository-local target state."""
     root = deploy.REPO_ROOT
     text = (root / "azure.yaml").read_text(encoding="utf-8")
@@ -56,9 +56,20 @@ def azd_project_dir(deploy, endpoint: str) -> Path:
             or not re.fullmatch(r"/api/projects/[A-Za-z0-9_.-]+", parsed.path)):
         raise deploy.DeployError("The selected Foundry project endpoint is invalid.")
     label = re.sub(r"[^a-z0-9-]", "-", f"{(parsed.hostname or 'project').split('.')[0]}-{parsed.path.rsplit('/', 1)[-1]}".lower())
-    directory = state_root() / "hosted-agent" / f"{label}-{hashlib.sha256(wanted.encode()).hexdigest()[:12]}"
+    identity = wanted if agent_name == AGENT_NAME else wanted + "/" + agent_name
+    directory = state_root() / "hosted-agent" / f"{label}-{hashlib.sha256(identity.encode()).hexdigest()[:12]}"
     directory.mkdir(parents=True, exist_ok=True)
     generated = PINNED_ENDPOINT_RE.sub(lambda match: match["head"] + wanted, text, count=1)
+    if agent_name != AGENT_NAME:
+        if not re.fullmatch(re.escape(AGENT_NAME) + r"-[0-9a-f]{32}", agent_name):
+            raise deploy.DeployError("The hosted agent name must use the verified workspace suffix.")
+        for original, replacement in (
+            (f"    {AGENT_NAME}:", f"    {agent_name}:"),
+            (f"        name: {AGENT_NAME}", f"        name: {agent_name}"),
+        ):
+            if generated.splitlines().count(original) != 1:
+                raise deploy.DeployError("azure.yaml no longer declares exactly one Hydro hosted service.")
+            generated = generated.replace(original, replacement, 1)
     target = directory / "azure.yaml"
     if not target.exists() or target.read_text(encoding="utf-8") != generated:
         target.write_text(generated, encoding="utf-8", newline="\n")
@@ -104,8 +115,13 @@ def image_tag(repo_root: Path) -> str:
 def compose_runtime_configuration(
     *, tenant: str, workspace: str, ontology: str, spa_client_id: str, kusto_origin: str,
     project_endpoint: str, values: dict[str, str], source_digest: str, production_writes: bool,
+    resource_suffix: str = "",
 ) -> tuple[dict[str, object], dict[str, object]]:
     """The two JSON documents the runtime requires, built only from the verified deployment target."""
+    from deployment_locks import foundry_resource_suffix
+
+    if resource_suffix and resource_suffix != foundry_resource_suffix(workspace):
+        raise ValueError("Foundry resource names must use the verified workspace suffix.")
     kusto = kusto_origin.rstrip("/")
     source = {
         "tenant_id": tenant, "workspace_id": workspace, "ontology_id": ontology, "generation": 2,
@@ -125,8 +141,11 @@ def compose_runtime_configuration(
             },
         },
         "project_endpoint": project_endpoint.rstrip("/"),
-        "native_binding": {"source": source, "connections": {"data-agent": "hydro-fabric-iq"},
-                           "toolbox": "hydro-fabric-iq-tools"},
+        "native_binding": {
+            "source": source, "connections": {"data-agent": "hydro-fabric-iq" + resource_suffix},
+            "toolbox": "hydro-fabric-iq-tools" + resource_suffix,
+            **({"agent_name_suffix": resource_suffix} if resource_suffix else {}),
+        },
         "production_writes_enabled": production_writes,
     }
     fabric_source: dict[str, object] = {
@@ -233,6 +252,13 @@ def azd_bootstrap_values(
 
 
 def ensure_hosted_image(deploy, *, registry: str, subscription: str) -> tuple[str, str]:
+    from deployment_locks import resource_lock
+
+    with resource_lock(subscription, "foundry-image:" + registry + ":" + image_tag(deploy.REPO_ROOT)):
+        return _ensure_hosted_image(deploy, registry=registry, subscription=subscription)
+
+
+def _ensure_hosted_image(deploy, *, registry: str, subscription: str) -> tuple[str, str]:
     root = deploy.REPO_ROOT
     tag = image_tag(root)
     digest = _registry_digest(deploy, registry, subscription, tag)
@@ -266,12 +292,14 @@ def ensure_hosted_image(deploy, *, registry: str, subscription: str) -> tuple[st
 def ensure_hosted_agent(
     deploy, *, get_agent, endpoint: str, project_id: str, model: str, tenant: str, workspace: str, ontology: str,
     spa_client_id: str, values: dict[str, str], source_digest: str, kusto_origin: str, connections: list[dict],
+    resource_suffix: str = "",
     sleep=time.sleep,
 ) -> dict:
     """Return the active hosted agent after converging it on the current source and deployment target.
 
     ``values`` are the already-verified public deployment values (RAYFIN_PUBLIC_*), unquoted."""
     existing = get_agent()
+    agent_name = AGENT_NAME + resource_suffix
     _kind, _version, _digest, live_environment = hosted_state(existing)
     override = os.environ.get("HYDRO_ACR_NAME", "")
     try:
@@ -287,6 +315,7 @@ def ensure_hosted_agent(
     orchestrator, fabric_source = compose_runtime_configuration(
         tenant=tenant, workspace=workspace, ontology=ontology, spa_client_id=spa_client_id, kusto_origin=kusto_origin,
         project_endpoint=endpoint, values=values, source_digest=source_digest, production_writes=production_writes,
+        resource_suffix=resource_suffix,
     )
     environment = {
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": model,
@@ -298,11 +327,11 @@ def ensure_hosted_agent(
     tag, digest = ensure_hosted_image(deploy, registry=registry, subscription=subscription)
     reason = needs_publish(existing, image_digest=digest, environment=environment)
     if reason is None:
-        print(f"Hosted agent {AGENT_NAME} is current (image {tag}); nothing to publish.", flush=True)
+        print(f"Hosted agent {agent_name} is current (image {tag}); nothing to publish.", flush=True)
         return existing  # type: ignore[return-value]
-    print(f"Publishing Hosted Agent {AGENT_NAME}: {reason}.", flush=True)
+    print(f"Publishing Hosted Agent {agent_name}: {reason}.", flush=True)
 
-    project_dir = azd_project_dir(deploy, endpoint)
+    project_dir = azd_project_dir(deploy, endpoint, agent_name=agent_name)
     ensure_azd_ready(deploy, tenant)
     bootstrap = _configure_azd_environment(
         deploy, project_dir=project_dir, project_id=project_id, endpoint=endpoint, tenant=tenant,
@@ -314,7 +343,7 @@ def ensure_hosted_agent(
         "HYDRO_ORCHESTRATOR_IMAGE": f"{registry}.azurecr.io/{IMAGE_REPOSITORY}@{digest}",
     })
     deploy.run_stream(
-        deploy.command_argv("azd", "deploy", AGENT_NAME, "--environment", AZD_ENVIRONMENT, "--no-prompt"),
+        deploy.command_argv("azd", "deploy", agent_name, "--environment", AZD_ENVIRONMENT, "--no-prompt"),
         cwd=project_dir,
     )
 
@@ -323,11 +352,11 @@ def ensure_hosted_agent(
         agent = get_agent()
         reason = needs_publish(agent, image_digest=digest, environment=environment)
         if reason is None:
-            print(f"Hosted Agent {AGENT_NAME} version {hosted_state(agent)[1]} is active on {tag}.", flush=True)
+            print(f"Hosted Agent {agent_name} version {hosted_state(agent)[1]} is active on {tag}.", flush=True)
             return agent  # type: ignore[return-value]
         if time.monotonic() > deadline:
             raise deploy.DeployError(
-                f"Hosted Agent {AGENT_NAME} did not become active with the expected image and configuration "
+                f"Hosted Agent {agent_name} did not become active with the expected image and configuration "
                 f"within {ACTIVATION_TIMEOUT_S // 60} minutes: {reason}."
             )
         sleep(ACTIVATION_POLL_S)

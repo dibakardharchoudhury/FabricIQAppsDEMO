@@ -23,6 +23,44 @@ SPEC.loader.exec_module(DEPLOY)
 
 
 class CommandEncodingTests(unittest.TestCase):
+    def test_node_commands_pin_child_runtime_in_capture_and_stream(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            node = Path(temporary) / "node24" / ("node.exe" if os.name == "nt" else "node")
+            with patch.dict(os.environ, {"PATH": "global-toolchain"}), \
+                    patch.object(DEPLOY.subprocess, "run", return_value=Mock(
+                        returncode=0, stdout="captured", stderr="",
+                    )) as run:
+                self.assertEqual(DEPLOY.run_capture([str(node), "npm-cli.js"]), "captured")
+                self.assertEqual(run.call_args.kwargs["env"]["PATH"].split(os.pathsep)[0], str(node.parent))
+                self.assertEqual(os.environ["PATH"], "global-toolchain")
+            supplied = {"Path": "global-toolchain", "RAYFIN_TEST": "retained"}
+            process = Mock(stdout=iter(["streamed\n"]))
+            process.wait.return_value = 0
+            with patch.object(DEPLOY.subprocess, "Popen", return_value=process) as popen:
+                self.assertEqual(DEPLOY.run_stream([str(node), "npm-cli.js"], env=supplied), "streamed")
+            environment = popen.call_args.kwargs["env"]
+            self.assertEqual(environment["PATH"].split(os.pathsep)[0], str(node.parent))
+            self.assertEqual(environment["RAYFIN_TEST"], "retained")
+            self.assertEqual([key for key in environment if key.casefold() == "path"], ["PATH"])
+            self.assertEqual(supplied, {"Path": "global-toolchain", "RAYFIN_TEST": "retained"})
+
+    def test_stream_failure_retains_actionable_error_not_numeric_buffers(self):
+        lines = [
+            "npm warn cleanup Error: EPERM\n",
+            "npm error code 1\n",
+            "npm error Error: spawnSync esbuild.exe ENOENT\n",
+            *["npm error Buffer(2044) [110, 111, 100]\n"] * 20,
+        ]
+        process = Mock(stdout=iter(lines))
+        process.wait.return_value = 1
+        with patch.object(DEPLOY.subprocess, "Popen", return_value=process), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            with self.assertRaises(DEPLOY.DeployError) as failure:
+                DEPLOY.run_stream(["npm-ci"])
+        self.assertIn("spawnSync esbuild.exe ENOENT", str(failure.exception))
+        self.assertNotIn("Buffer", str(failure.exception))
+        self.assertNotIn("EPERM", str(failure.exception))
+
     def test_capture_child_can_print_unicode_even_with_legacy_parent_encoding(self):
         with patch.dict(os.environ, {"PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}):
             output = DEPLOY.run_capture([sys.executable, "-c", "print('\\u2501')"])
@@ -1045,6 +1083,31 @@ class DeployOrderTests(unittest.TestCase):
                 DEPLOY.ensure_deploy_dependencies()
 
         self.assertEqual(events, ["stop", "stop"])
+
+    def test_dependency_restore_does_not_repeat_nontransient_failures(self):
+        for error in ("spawnSync esbuild.exe ENOENT", "EACCES", "package-lock mismatch", "EPERM; ENOENT"):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(DEPLOY.shutil, "which", return_value="npx"), \
+                    patch.object(DEPLOY, "deploy_dependencies_ready", return_value=False), \
+                    patch.object(DEPLOY, "DEPENDENCY_STAMP", Path(temporary) / ".stamp"), \
+                    patch.object(DEPLOY, "stop_hydro_node_tooling"), \
+                    patch.object(DEPLOY, "npm24", return_value=["npm-ci"]), \
+                    patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError(error)) as run:
+                with self.assertRaisesRegex(DEPLOY.DeployError, error):
+                    DEPLOY.ensure_deploy_dependencies()
+                run.assert_called_once()
+                self.assertFalse(DEPLOY.DEPENDENCY_STAMP.exists())
+
+    def test_long_windows_native_path_fails_before_restoring_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(DEPLOY, "APP_DIR", Path(temporary) / ("x" * 200)), \
+                patch.object(DEPLOY.os, "name", "nt"), \
+                patch.object(DEPLOY, "deploy_dependencies_ready") as ready, \
+                patch.object(DEPLOY, "run_stream") as run:
+            with self.assertRaisesRegex(DEPLOY.DeployError, "path is too long"):
+                DEPLOY.ensure_deploy_dependencies()
+            ready.assert_not_called()
+            run.assert_not_called()
 
     def test_does_not_write_redirects_when_entra_snapshot_fails(self):
         args = argparse.Namespace(

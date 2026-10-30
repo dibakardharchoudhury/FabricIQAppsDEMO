@@ -285,11 +285,25 @@ def command_argv(executable: str, *args: str) -> list[str]:
     return [resolved, *args]
 
 
+def command_environment(argv: list[str], env: dict[str, str] | None = None) -> dict[str, str]:
+    environment = {**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    executable = Path(argv[0])
+    if executable.is_absolute() and executable.name.casefold() in {"node", "node.exe"}:
+        path_keys = [key for key in environment if key.casefold() == "path"]
+        previous = environment[path_keys[0]] if path_keys else ""
+        for key in path_keys:
+            del environment[key]
+        environment["PATH"] = os.pathsep.join(
+            [str(executable.parent)] + ([previous] if previous else [])
+        )
+    return environment
+
+
 def run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
     proc = subprocess.run(
         argv,
         cwd=str(cwd) if cwd else None,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        env=command_environment(argv),
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -312,7 +326,7 @@ def run_stream(
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd) if cwd else None,
-        env={**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        env=command_environment(argv, env),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -330,7 +344,15 @@ def run_stream(
     returncode = proc.wait()
     output = "\n".join(lines)
     if returncode != 0:
-        raise DeployError(f"Command failed with exit code {returncode}.")
+        diagnostics = [
+            line for line in lines
+            if not line.lstrip().startswith("npm warn") and re.search(
+                r"\b\w*Error:|\bnpm error (?:code|path|command)\b|"
+                r"\b(?:ENOENT|EPERM|ENOTEMPTY|EBUSY|EACCES|ENAMETOOLONG)\b", line
+            )
+        ]
+        detail = "\n".join(diagnostics[:8] or lines[-8:])[:4000]
+        raise DeployError(f"Command failed with exit code {returncode}." + (f"\n{detail}" if detail else ""))
     return output
 
 
@@ -507,6 +529,14 @@ def deploy_dependencies_ready() -> bool:
 
 def ensure_deploy_dependencies() -> None:
     """Restore the locked Node toolchain and verify the local Rayfin CLI."""
+    native_tool = (APP_DIR / "node_modules" / "@microsoft" / "rayfin-cli" / "node_modules"
+                   / "@esbuild" / "win32-x64" / "esbuild.exe")
+    if os.name == "nt" and len(str(native_tool)) >= 260:
+        raise DeployError(
+            f"Windows native-tool path is too long ({len(str(native_tool))} characters): {native_tool}. "
+            "Use a shorter repository path. Parallel retries through the updated launcher "
+            "allocate short isolated checkouts automatically; existing deployment state is retained."
+        )
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
     missing = [path.name for path in manifests if not path.is_file()]
     if missing:
@@ -532,12 +562,15 @@ def ensure_deploy_dependencies() -> None:
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
-        command = npm24("ci", "--no-audit", "--no-fund")
+        command = npm24("ci", "--no-audit", "--no-fund", "--prefer-offline")
         try:
             run_stream(command, cwd=APP_DIR)
-        except DeployError:
+        except DeployError as exc:
+            if (re.search(r"\b(?:ENOENT|ENAMETOOLONG|EACCES)\b", str(exc))
+                    or not re.search(r"\b(?:ENOTEMPTY|EPERM|EBUSY)\b", str(exc))):
+                raise
             print(
-                "The first npm restore failed; stopping app tooling again and retrying once...",
+                "npm reported a file-lock/cleanup error; stopping app tooling and retrying once...",
                 flush=True,
             )
             stop_hydro_node_tooling()
@@ -591,6 +624,9 @@ def ensure_azure_tenant(tenant: str) -> str:
 
 def isolated_azure_cli_config(tenant: str) -> Path:
     """Return the tenant-scoped cache used only for CAE reauthentication."""
+    parallel_cache = os.environ.get("HYDRO_PARALLEL_AZURE_CONFIG_DIR", "").strip()
+    if parallel_cache:
+        return Path(parallel_cache)
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
@@ -1011,15 +1047,19 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
     return app_id
 
 
-def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
+def read_rayfin_env(env_path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    env_path = RAYFIN_DIR / ".env"
     if env_path.exists():
         for raw in env_path.read_text(encoding="utf-8").splitlines():
             if "=" not in raw or raw.lstrip().startswith("#"):
                 continue
             key, value = raw.split("=", 1)
             values[key.strip()] = value.strip()
+    return values
+
+
+def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
+    values = read_rayfin_env(RAYFIN_DIR / ".env")
 
     state_path = RAYFIN_DIR / ".deployments.json"
     if not state_path.exists():
@@ -1621,6 +1661,7 @@ def prepare_rayfin_env(
         for key in (
             "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
             "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+            "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX",
         )
         if same_workspace and _public_config_value(values, key)
     }
@@ -1885,6 +1926,18 @@ def export_frontend_env() -> None:
 
 
 def run_rayfin_deployment(command: list[str], tenant: str) -> str:
+    from deployment_locks import resource_lock
+
+    with resource_lock(tenant, "entra-spa"):
+        if os.environ.get("HYDRO_PARALLEL_DEPLOY") == "1":
+            values, _ = current_rayfin_target()
+            client_id = _public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID")
+            redirects = read_entra_spa_redirects_with_reauth(client_id, tenant)
+            write_rayfin_redirects(_unique_redirect_uris(redirects, ["http://localhost:5173"]))
+        return _run_rayfin_deployment(command, tenant)
+
+
+def _run_rayfin_deployment(command: list[str], tenant: str) -> str:
     try:
         return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
     finally:
@@ -2543,7 +2596,10 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             raise DeployError(f"Feature bootstrap configuration failed: {exc}") from exc
 
     timings.stage(2, "Resolving the tenant SPA app registration")
-    client_id = resolve_spa(args.client_id, tenant_id)
+    from deployment_locks import resource_lock
+
+    with resource_lock(tenant_id, "entra-spa"):
+        client_id = resolve_spa(args.client_id, tenant_id)
     if not client_id:
         raise DeployError(
             "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
@@ -2690,15 +2746,16 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
         try:
-            run_with_azure_cli_reauthentication(
-                tenant_id,
-                "configuring browser sign-in",
-                lambda: run_stream(
-                    node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
-                    cwd=APP_DIR,
-                    env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
-                ),
-            )
+            with resource_lock(tenant_id, "entra-spa"):
+                run_with_azure_cli_reauthentication(
+                    tenant_id,
+                    "configuring browser sign-in",
+                    lambda: run_stream(
+                        node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
+                        cwd=APP_DIR,
+                        env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
+                    ),
+                )
         except DeployError as exc:
             if feature_workspace:
                 raise DeployError("Feature deployment stopped: browser sign-in setup failed.") from exc

@@ -22,6 +22,35 @@ Operations website.
 | Agent update | **Set up Foundry agents**, then **Deploy app** |
 | Energy data refresh | **Refresh energy sources** |
 
+**Multiple workspaces:** enable **Deploy to multiple workspaces in parallel** in
+the sidebar and fill up to three slots in the same tenant. Blank slots are ignored,
+even the first slot. Full Deploy and individual setup/deploy modules use the same
+form settings, but show separate workspace progress and logs. Delete and connection
+tests also use all populated targets. Deletion defaults to dry run; actual deletion
+requires confirming every selected workspace, one per line, in the displayed order.
+The backend rejects missing/partial confirmation before starting any worker.
+To share a Foundry account and project, enter the project name/resource ID and
+select **Reuse the entered project**. Workspace-specific agents, connections and
+invocation URLs prevent source retargeting. Alternatively, select **Separate
+projects (short workspace suffix)**: the entered base name receives a stable
+eight-character suffix per workspace. Blank project fields keep target-specific
+discovery. Creating missing resources still requires your explicit approval;
+sharing a model also shares its quota.
+Commit source changes first: workers use isolated committed checkouts and retain
+private per-workspace state, without overwriting this checkout's Rayfin files.
+Shared Entra writes are serialized to preserve all SPA redirects; other work can
+overlap subject to capacity/quota. A failed workspace does not stop the others.
+Use its retry control after the batch finishes to preserve completed Full Deploy
+stages. See [parallel execution and state](../Raw/workspace-reset/README.md#optional-up-to-three-workspaces-in-parallel).
+
+If parallel deployment fails during `npm ci` with `spawnSync ... esbuild.exe ENOENT`,
+update/restart the launcher and resume the failed workspace. Workers now use short
+private checkout paths; older deeply nested paths can exceed Windows' native
+executable limit. Node 24 is also propagated to npm lifecycle scripts and build-tool
+children, rather than falling back to a globally installed Node version. Existing
+workspace state and successful Git sync/Core checkpoints are retained. Do not delete
+deployment state, reimport the workspace or change Windows registry settings for this error.
+
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.
@@ -47,7 +76,7 @@ endings; do not recreate the ontology or change its source bindings for this err
 |---|---|
 | Tenant / workspace | Tenant may be remembered; workspace always starts empty |
 | Repository / branch | This checkout; confirm the branch is pushed |
-| Key Vault URI / Teams IDs | Saved for this target; unknown values stay blank |
+| Key Vault URI / Teams IDs | Reused within the tenant, with workspace overrides; unknown values stay blank |
 | Alert email | Signed-in user's email when the tenant matches; confirm the recipient |
 | Azure subscription | Active or sole subscription in the target tenant; otherwise choose |
 | Foundry project name / Model deployment name | Saved selection, target-named project, or unambiguous discovery |
@@ -55,8 +84,9 @@ endings; do not recreate the ontology or change its source bindings for this err
 
 Core/Full Deploy values autosave on this machine in gitignored
 [`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json).
-Wait for **Settings saved on this machine** before closing. Values are isolated by
-target; explicit clears persist. Foundry overrides and sidebar preferences use
+Wait for **Settings saved on this machine** before closing. Setup defaults are
+reused only within the same tenant; workspace overrides and explicit clears take
+precedence. Foundry overrides remain workspace-specific. Foundry choices and sidebar preferences use
 browser storage. PATs and credential values are never saved by these forms.
 
 Use **Hide sidebar** for more space. Connection tests run only when you click
@@ -445,6 +475,9 @@ price area also matched the independently queried imported source row.
 
 Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
 specialists and `hydro-orchestrator` against this checkout and the selected Fabric target.
+New setup appends the workspace GUID (without hyphens) to agents, connections and
+the toolbox so multiple workspaces can safely reuse one project. App-only deployment
+continues to verify existing unsuffixed configurations without renaming them.
 An existing project/model may still contain missing or older agents. Setup reuses matching
 connections and specialists, creates versions only for changed/missing agents, builds only
 missing source-fingerprinted images, and republishes the hosted coordinator only when its
