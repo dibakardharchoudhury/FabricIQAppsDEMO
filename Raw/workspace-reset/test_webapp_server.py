@@ -1512,6 +1512,61 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 self.assertEqual(self.client.post("/api/pipeline-params", json=payload).status_code, 400)
                 self.assertEqual(path.read_text(encoding="utf-8"), "{")
 
+    def test_core_workspace_preview_tracks_all_targets_without_submitting_display_text(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        code = (
+            page[page.index("function selectedWorkspaces("):page.index("function parallelPayload(")]
+            + page[page.index("function syncPipelineWorkspace("):page.index("async function loadPipelineParams(")]
+            + page[page.index("function collectPipelineParams("):page.index("function pipelineValid(")]
+        )
+        script = """
+const assert = require("node:assert/strict");
+const fields = new Map();
+const $ = id => fields.get(id);
+for (const [id,value] of [["workspace","One"],["workspace2","Two"],["workspace3","Three"]]) {
+  fields.set(id,{value});
+}
+fields.set("parallelDeploy",{checked:false});
+const pipelineSpec=[{name:"workspace_id"},{name:"env_suffix"}];
+for(const prefix of ["pp_","wf_pp_"]) {
+  const wrapper={classList:{toggle(name,value){wrapper[name]=value;}}};
+  fields.set(prefix+"workspace_id",{value:"",closest:()=>wrapper});
+  fields.set(prefix+"workspace_idLabel",{textContent:""});
+  fields.set(prefix+"workspace_idHelp",{textContent:""});
+  fields.set(prefix+"env_suffix",{value:"V20"});
+}
+""" + code + """
+function checkTargets(expected,parallel) {
+  syncPipelineWorkspace();
+  for(const prefix of ["pp_","wf_pp_"]) {
+    const field=$(prefix+"workspace_id");
+    assert.equal(field.value,expected.join("\\n"));
+    assert.equal(field.rows,Math.max(1,expected.length));
+    assert.equal(field.closest(".param").wide,parallel);
+    assert.equal($(prefix+"workspace_idLabel").textContent,
+      parallel ? "Target workspaces ("+expected.length+")" : "Workspace name or ID");
+    assert.match($(prefix+"workspace_idHelp").textContent,
+      parallel ? /each worker uses its own workspace ID/ : /From the sidebar/);
+    assert.deepEqual(collectPipelineParams(prefix),{env_suffix:"V20"});
+  }
+}
+$("parallelDeploy").checked=true;
+checkTargets(["One","Two","Three"],true);
+$("workspace2").value=" Updated ";
+checkTargets(["One","Updated","Three"],true);
+$("workspace").value=" ";
+$("workspace2").value="";
+checkTargets(["Three"],true);
+$("workspace3").value=" ";
+checkTargets([],true);
+$("workspace").value="Single";
+$("workspace2").value="Ignored";
+$("parallelDeploy").checked=false;
+checkTargets(["Single"],false);
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_browser_keeps_workspaces_blank_until_explicit_entry(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         function = page[page.index("async function loadPipelineParams("):page.index("function collectPipelineParams(")]
@@ -1649,6 +1704,9 @@ const escapeHtml=value=>String(value).replaceAll("&","&amp;").replaceAll('"',"&q
 """ + code + """
 for(const prefix of ["pp_","wf_pp_"]){
   const html=renderPipelineFields(prefix);
+  assert.ok(html.includes('<textarea id="'+prefix+'workspace_id" rows="1" readonly'));
+  assert.ok(html.includes('id="'+prefix+'workspace_idLabel"'));
+  assert.ok(html.includes('id="'+prefix+'workspace_idHelp"'));
   assert.equal(html.split(">Find ID</a>").length-1,2);
   assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
   const visible=html.split("<details")[0];
@@ -1933,6 +1991,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                             "tenant": "tenant.example", "workspace": "DEV",
                             "parameters": {**PIPELINE_PARAMS, "key_vault_uri": "https://mock.vault.azure.net/",
                                            "alert_email_to": "operations@example.test",
+                                           "workspace_id": "FEATURE\nDEV\nTEST",
                                            "ontology_data_agent_mode": "enabled",
                                            "ontology_operations_agent_mode": "enabled"},
                         })

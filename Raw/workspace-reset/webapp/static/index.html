@@ -1099,6 +1099,7 @@ function deployValid() {
 function refresh() {
   $("parallelWorkspaceFields").hidden = !$("parallelDeploy").checked;
   const targets = selectedWorkspaces();
+  syncPipelineWorkspace();
   const targetSummary = targets.join(", ");
   $("sidebarTarget").textContent = [$("tenant").value.trim(), targetSummary].filter(Boolean).join(" / ");
   $("sidebarTarget").title = targetSummary;
@@ -1632,10 +1633,13 @@ function renderPipelineFields(prefix) {
   const fields = pipelineSpec.map((p) => {
     const advanced = !["env_suffix", "workspace_id", ...requiredPipelineFields].includes(p.name);
     const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
+    const control = p.name === "workspace_id"
+      ? `<textarea id="${prefix}${p.name}" rows="1" readonly aria-describedby="${prefix}${p.name}Help">${escapeHtml(p.default || "")}</textarea>`
+      : `<input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />`;
     const html = `<div class="param${wide ? " wide" : ""}">
-      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
-      <span class="phelp">${escapeHtml(p.help)}${p.helpUrl ? ` <a href="${escapeHtml(p.helpUrl)}" target="_blank" rel="noopener noreferrer">Find ID</a>` : ""}</span>
-      <input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />
+      <label id="${prefix}${p.name}Label" for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
+      <span id="${prefix}${p.name}Help" class="phelp">${escapeHtml(p.help)}${p.helpUrl ? ` <a href="${escapeHtml(p.helpUrl)}" target="_blank" rel="noopener noreferrer">Find ID</a>` : ""}</span>
+      ${control}
     </div>`;
     return { advanced, html };
   });
@@ -1657,10 +1661,20 @@ function updatePipelineDefaultsSummary() {
   }
 }
 function syncPipelineWorkspace() {
-  ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
-    const field = $(id);
-    if (field) field.value = $("workspace").value;
-  });
+  const targets = selectedWorkspaces();
+  const parallel = $("parallelDeploy").checked;
+  for (const prefix of ["pp_", "wf_pp_"]) {
+    const field = $(prefix + "workspace_id");
+    if (!field) continue;
+    field.value = targets.join("\n");
+    field.rows = Math.max(1, targets.length);
+    field.closest(".param").classList.toggle("wide", parallel);
+    $(prefix + "workspace_idLabel").textContent = parallel
+      ? `Target workspaces (${targets.length})` : "Workspace name or ID";
+    $(prefix + "workspace_idHelp").textContent = parallel
+      ? "Settings apply to all targets; each worker uses its own workspace ID."
+      : "From the sidebar.";
+  }
 }
 async function loadPipelineParams() {
   const sequence = ++pipelineLoadSequence;
@@ -1746,7 +1760,11 @@ async function loadPipelineParams() {
 }
 function collectPipelineParams(prefix = "pp_") {
   const out = {};
-  pipelineSpec.forEach((p) => { const el = $(prefix + p.name); if (el) out[p.name] = el.value; });
+  pipelineSpec.forEach((p) => {
+    if (p.name === "workspace_id") return;
+    const el = $(prefix + p.name);
+    if (el) out[p.name] = el.value;
+  });
   return out;
 }
 function pipelineValid() {
@@ -1760,7 +1778,6 @@ function workflowPipelineValid() {
     && requiredPipelineFields.every(name => $("wf_pp_" + name)?.value.trim());
 }
 
-$("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });
 for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("input", () => {
     saveTargetSettings();

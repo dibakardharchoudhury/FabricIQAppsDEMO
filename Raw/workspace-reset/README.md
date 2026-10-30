@@ -101,6 +101,9 @@ two or three workspace names/GUIDs in the same tenant. Empty slots are ignored,
 including an empty first slot. Full Deploy, GitHub Sync, Core setup, Energy setup,
 Foundry setup, Deploy app, Delete workspace items and connection tests fan out only
 to the populated targets. Every module button shows the selected workspace count.
+The Core setup forms, including Full Deploy, list every selected workspace on its
+own line. This is a read-only target preview; each worker supplies its own resolved
+workspace ID to the setup pipeline, not the combined display text.
 Deletion defaults to dry run. To actually delete items, repeat every selected
 workspace name/GUID, one per line in the displayed order; the backend rejects the
 entire batch unless all targets are confirmed. A failed deletion requires fresh
