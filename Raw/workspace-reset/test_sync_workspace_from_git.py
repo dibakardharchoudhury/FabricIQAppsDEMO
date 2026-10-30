@@ -650,6 +650,47 @@ class WeatherProvisioningTests(unittest.TestCase):
                                       if method == "POST" and "/staging/publish" in url]), 1)
                 self.assertFalse(any("exportExternalLibraries" in url for _, url in fabric.requests))
 
+    def test_missing_published_libraries_publish_even_when_metadata_reports_success(self):
+        for git_updated in (True, False):
+            with self.subTest(git_updated=git_updated):
+                fabric = FakeFabric(publish_state="Success")
+                request = fabric.request
+                missing = FakeResponse(404, {
+                    "errorCode": "EnvironmentLibrariesNotFound",
+                    "message": "This environment does not have any published libraries. Please publish libraries.",
+                })
+                def respond(method, url, **kwargs):
+                    if url.endswith("/environment-id/libraries?beta=false"):
+                        return missing
+                    return request(method, url, **kwargs)
+                fabric.request = Mock(side_effect=respond)
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    configure_weather_assets(fabric, "workspace-id", git_updated=git_updated)
+                self.assertEqual(len([call for call in fabric.request.call_args_list
+                                      if call.args[0] == "POST" and "/staging/publish" in call.args[1]]), 1)
+                self.assertIn("no published libraries; a full publication is required", output.getvalue())
+                self.assertIn("Weather Environment publish completed", output.getvalue())
+
+    def test_other_library_read_errors_never_trigger_publication(self):
+        for status, body, staged in (
+            (403, {"errorCode": "Forbidden"}, False),
+            (404, {"errorCode": "ItemNotFound"}, False),
+            (500, {"errorCode": "EnvironmentLibrariesNotFound"}, False),
+            (404, {"errorCode": "EnvironmentLibrariesNotFound"}, True),
+        ):
+            with self.subTest(status=status, body=body, staged=staged):
+                fabric = FakeFabric()
+                request = fabric.request
+                path = "/staging/libraries?beta=false" if staged else "/environment-id/libraries?beta=false"
+                fabric.request = Mock(side_effect=lambda method, url, **kwargs: (
+                    FakeResponse(status, body, text=json.dumps(body)) if url.endswith(path)
+                    else request(method, url, **kwargs)
+                ))
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(SystemExit, "equivalence check failed"):
+                    configure_weather_assets(fabric, "workspace-id", git_updated=True)
+                self.assertFalse(any(call.args[0] == "POST" and "/staging/publish" in call.args[1]
+                                     for call in fabric.request.call_args_list))
+
     def test_paginated_inventory_cannot_prove_equivalence_from_only_the_first_page(self):
         fabric = FakeFabric()
         fabric.request = Mock(return_value=FakeResponse(200, {
