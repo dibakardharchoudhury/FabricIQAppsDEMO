@@ -771,6 +771,9 @@ reported as interrupted, not safe to retry automatically: check Fabric's Monitor
 hub before starting another run. The older five-stage checkpoint layout explicitly
 refuses automatic resume and retains its recorded completion information; its
 boundaries cannot safely certify completion of the new combined component.
+Reloading such a run displays **Previous deployment history**, including its recorded
+outcome and completed stages, without a new failure, live progress, or any deployment
+being started. Explicit resume still refuses the incompatible checkpoint.
 Older runs have no durable checkpoint. For an older
 Energy failure, use **Refresh energy sources**, then **Set up Foundry agents** and
 **Deploy app**, rather than repeating successful Core setup. Energy setup now compares

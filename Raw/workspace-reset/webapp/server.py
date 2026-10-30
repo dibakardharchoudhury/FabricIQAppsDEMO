@@ -324,6 +324,23 @@ def _save_workflow_checkpoints(*jobs: Job) -> None:
         _write_local_settings(settings)
 
 
+class LegacyWorkflowCheckpoint(ValueError):
+    def __init__(self, record: dict) -> None:
+        self.completed_steps = record.get("completed", [])
+        self.previous_status = record.get("status", "unknown")
+        stages = ["GitHub sync", "Setup pipeline", "Energy setup",
+                  "Foundry multi-agent setup", "Fabric app deploy"]
+        if (record.get("steps") != stages or not isinstance(self.completed_steps, list)
+                or self.completed_steps != stages[:len(self.completed_steps)]
+                or self.previous_status not in {"running", "succeeded", "failed", "cancelled", "interrupted"}):
+            raise ValueError("Invalid local legacy Full Deploy checkpoint.")
+        super().__init__(
+            "Legacy five-step Full Deploy checkpoint cannot be resumed by the combined workflow. "
+            f"Recorded completed stages: {self.completed_steps}. "
+            "Checkpoint retained; verify Fabric before explicitly starting a new Full Deploy."
+        )
+
+
 def _restore_workflow(job_id: str) -> Job | None:
     if not re.fullmatch(r"[a-f0-9]{32}", job_id):
         return None
@@ -338,11 +355,7 @@ def _restore_workflow(job_id: str) -> Job | None:
         if not record:
             return None
         if record.get("version") == 1:
-            raise ValueError(
-                "Legacy five-step Full Deploy checkpoint cannot be resumed by the combined workflow. "
-                f"Recorded completed stages: {record.get('completed', [])}. "
-                "Checkpoint retained; verify Fabric before explicitly starting a new Full Deploy."
-            )
+            raise LegacyWorkflowCheckpoint(record)
         names = WORKFLOW_STEPS
         completed = record.get("completed")
         if (record.get("version") != 2 or record.get("steps") != names or not isinstance(completed, list)
@@ -1496,6 +1509,22 @@ def api_full_workflow():
 def api_job(job_id: str):
     try:
         job = JOBS.get(job_id) or _restore_workflow(job_id)
+    except LegacyWorkflowCheckpoint as exc:
+        notice = (
+            "This previous deployment uses the older five-stage workflow. "
+            "Automatic resume is unavailable; the checkpoint is retained. "
+            "No new deployment has been started."
+        )
+        return jsonify(
+            status="historical", done=True, canResume=False,
+            previousStatus=exc.previous_status, completedSteps=exc.completed_steps,
+            resumeBlockedReason=notice,
+            lines=[
+                notice,
+                f"Recorded previous outcome: {exc.previous_status}.",
+                f"Recorded completed stages: {exc.completed_steps}.",
+            ],
+        )
     except (OSError, ValueError, TypeError, KeyError) as exc:
         return jsonify(error=f"Could not read local workflow checkpoint: {exc}"), 409
     if job is None:

@@ -603,11 +603,13 @@ function renderPanel(el, job) {
     : (job.endedAt || Date.now()) - job.startedAt);
   const statusCls = job.status === "succeeded" ? "ok"
     : job.status === "failed" ? "error"
+    : job.status === "historical" ? "history"
     : (job.status === "interrupted" || job.status === "cancelled") ? "warn"
     : "running";
   const total = Math.max(1, (job.phases ? job.phases.length : 1) - 1);
   const pct = job.status === "succeeded" ? 100 : Math.round(((job.phaseIndex || 0) / total) * 100);
   const label = job.status === "running" ? ((job.phase || "Working") + "\u2026")
+    : job.status === "historical" ? "Previous deployment history"
     : job.status === "succeeded" ? "Succeeded"
     : job.status === "cancelled" ? "Cancelled"
     : job.status === "interrupted" ? "Monitoring interrupted"
@@ -654,7 +656,9 @@ function renderPanel(el, job) {
   const out = el.querySelector(".output");
   const stick = out._following();
   const summary = el.querySelector(".progress-summary");
-  const summaryHtml =
+  const summaryHtml = job.status === "historical"
+    ? `<div class="progress-head"><span class="status history">${label}</span></div>`
+    :
     `<div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
        ${phaseProgress}`;
@@ -991,7 +995,7 @@ function refresh() {
   } else if (resumable) {
     $("workflowResumeBtn").textContent = `Retry from ${workflowCheckpoint.resumeComponent} and continue`;
     $("workflowResumeStatus").textContent = "Keeps completed steps and runs all remaining stages. Original target and non-secret settings must match. A partially completed failed step runs again.";
-  } else if (workflowCheckpoint?.status !== "interrupted") {
+  } else if (!["interrupted", "historical"].includes(workflowCheckpoint?.status)) {
     $("workflowResumeStatus").textContent = workflowBusy ? "Full Deploy is running. Reloading this page reconnects to this job." : "";
   }
   const pipeBtn = $("pipelineBtn");

@@ -204,6 +204,51 @@ class FullWorkflowResumeTests(unittest.TestCase):
         self.assertIsNone(job.resumed_by)
         start.assert_not_called()
 
+    def test_legacy_history_is_read_only_and_never_reported_as_a_new_failed_run(self):
+        job = self.fail_energy()
+        settings = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+        record = settings["workflowCheckpoints"][job.id]
+        stages = ["GitHub sync", "Setup pipeline", "Energy setup",
+                  "Foundry multi-agent setup", "Fabric app deploy"]
+        for previous_status, completed in (
+            ("succeeded", stages), ("failed", stages[:2]), ("running", stages[:1]),
+        ):
+            with self.subTest(previous_status=previous_status):
+                record.update(version=1, steps=stages, completed=completed, status=previous_status)
+                SERVER.PIPELINE_DEFAULTS_FILE.write_text(json.dumps(settings), encoding="utf-8")
+                before = SERVER.PIPELINE_DEFAULTS_FILE.read_bytes()
+                SERVER.JOBS.clear()
+                with patch.object(SERVER, "_start_workflow") as start:
+                    response = self.client.get(f"/api/jobs/{job.id}")
+                    self.assertEqual(response.status_code, 200)
+                    history = response.get_json()
+                    self.assertEqual(history["status"], "historical")
+                    self.assertEqual(history["previousStatus"], previous_status)
+                    self.assertEqual(history["completedSteps"], completed)
+                    self.assertTrue(history["done"])
+                    self.assertFalse(history["canResume"])
+                    self.assertIn("No new deployment has been started", history["resumeBlockedReason"])
+                    self.assertNotIn("error", history)
+                    self.assertNotIn(job.id, SERVER.JOBS)
+                    retry = self.client.post("/api/full-workflow", json={
+                        **self.target, "resumeJobId": job.id,
+                    })
+                    self.assertEqual(retry.status_code, 409)
+                    start.assert_not_called()
+                self.assertEqual(SERVER.PIPELINE_DEFAULTS_FILE.read_bytes(), before)
+
+    def test_malformed_legacy_history_remains_an_explicit_error(self):
+        job = self.fail_energy()
+        settings = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+        settings["workflowCheckpoints"][job.id].update(version=1, completed="invalid")
+        SERVER.PIPELINE_DEFAULTS_FILE.write_text(json.dumps(settings), encoding="utf-8")
+        before = SERVER.PIPELINE_DEFAULTS_FILE.read_bytes()
+        SERVER.JOBS.clear()
+        response = self.client.get(f"/api/jobs/{job.id}")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Invalid local legacy", response.get_json()["error"])
+        self.assertEqual(SERVER.PIPELINE_DEFAULTS_FILE.read_bytes(), before)
+
     def test_combined_source_change_retains_core_and_pending_combined_step(self):
         failed = self.fail_energy()
         original = dict(failed.source_keys)
@@ -472,6 +517,20 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(posts.at(-1).body.pat, "");
   assert.equal(stored.get("fabric-demo.full-workflow-job.v1"), "retry");
   assert.equal(execute("workflowCheckpoint.canResume"), false);
+  nextPoll = {
+    status:"historical", done:true, canResume:false,
+    resumeBlockedReason:"Previous deployment uses an older workflow. No new deployment has been started.",
+    lines:["Recorded previous outcome: succeeded."],
+  };
+  execute("restoreWorkflowJob()");
+  await flush();
+  assert.equal(execute("workflowCheckpoint.status"), "historical");
+  assert.equal(execute("workflowCheckpoint.canResume"), false);
+  assert.equal(execute("workflowBusy"), false);
+  assert.equal(renders.at(-1).status, "historical");
+  assert.equal(renders.at(-1).error, undefined);
+  assert.match($("workflowResumeStatus").textContent, /No new deployment has been started/);
+  assert.equal(posts.length, 4);
   missing = true;
   execute("restoreWorkflowJob()");
   await flush();
@@ -809,6 +868,11 @@ async function evaluate(expression) {
       timed.componentTimings[1].status="failed"; timed.phaseTimings[2].status="failed";
       renderPanel(workflow,timed);
       check(workflow.querySelector('[data-group="pipeline"] summary').textContent.includes("Failed · 01:11"), "Failure duration lost");
+      renderPanel(workflow,{status:"historical",lines:["Recorded previous outcome: succeeded."]});
+      check(workflow.querySelector(".status").textContent==="Previous deployment history", "Legacy history label lost");
+      check(!workflow.querySelector(".error"), "Legacy history must not be a new failure");
+      check(!workflow.querySelector(".bar") && !workflow.querySelector(".elapsed"), "Legacy history must not invent live progress");
+      check(workflow.querySelector(".output").textContent.includes("previous outcome: succeeded"), "Previous outcome lost");
       out.scrollTop=200;
       out.focus();
       check(document.activeElement===out, "Output must accept keyboard focus");
