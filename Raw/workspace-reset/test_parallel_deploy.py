@@ -25,6 +25,24 @@ WORKSPACES = [f"20000000-0000-0000-0000-00000000000{index}" for index in (1, 2, 
 
 
 class ParallelValidationTests(unittest.TestCase):
+    def test_progress_names_the_selected_action_instead_of_deploying_workspaces(self):
+        expected = {
+            "/api/sync": "Syncing from GitHub",
+            "/api/run-pipeline": "Running Core setup",
+            "/api/setup-energy": "Refreshing energy sources",
+            "/api/setup-foundry": "Setting up Foundry agents",
+            "/api/deploy-app": "Deploying apps",
+            "/api/full-workflow": "Running Full Deploy",
+            "/api/delete": "Deleting workspace items",
+            "/api/test-connection": "Testing GitHub connections",
+        }
+        self.assertEqual(set(expected), PARALLEL.ACTIONS)
+        for action, label in expected.items():
+            with self.subTest(action=action):
+                self.assertEqual(PARALLEL.action_phases(action), ["Resolving workspaces", label, "Done"])
+        self.assertEqual(PARALLEL.action_phases("/api/delete", True)[1], "Listing items (dry run)")
+        self.assertEqual(PARALLEL.action_phases("/api/delete", None)[1], "Processing item requests")
+
     def payload(self, **changes):
         return {
             "action": "/api/setup-energy", "workspaces": ["One", "", "  "],
@@ -171,6 +189,42 @@ class ParallelApiTests(unittest.TestCase):
                 })
                 self.assertEqual(response.status_code, 200, response.get_json())
                 self.assertEqual(start.call_args.kwargs["parallel_action"], action)
+                self.assertEqual(start.call_args.args[3], PARALLEL.action_phases(action, True))
+
+    def test_delete_progress_and_mode_survive_restart_before_workers_report(self):
+        for dry_run, label in ((True, "Listing items (dry run)"), (False, "Deleting workspace items")):
+            with self.subTest(dry_run=dry_run), patch.object(SERVER.threading, "Thread"):
+                SERVER.JOBS.clear()
+                response = self.client.post("/api/parallel", json={
+                    "action": "/api/delete", "workspaces": ["One", "Two"],
+                    "data": {"tenant": TENANT, "dryRun": dry_run,
+                             "confirmedWorkspaces": [] if dry_run else ["One", "Two"]},
+                })
+                self.assertEqual(response.status_code, 200, response.get_json())
+                job_id = response.get_json()["jobId"]
+                for restored in (False, True):
+                    if restored:
+                        SERVER.JOBS.clear()
+                    state = self.client.get(f"/api/jobs/{job_id}").get_json()
+                    self.assertEqual(state["phases"], ["Resolving workspaces", label, "Done"])
+                    self.assertIs(state["parallelDryRun"], dry_run)
+                    self.assertEqual(state["parallelAction"], "/api/delete")
+
+    def test_legacy_delete_history_uses_reported_mode_without_assuming_deletion(self):
+        for mode, label in ((True, "Listing items (dry run)"), (False, "Deleting workspace items"),
+                            (None, "Processing item requests")):
+            with self.subTest(mode=mode):
+                job = SERVER.Job(["Resolving workspaces", "Deploying workspaces", "Done"])
+                job.parallel_action = "/api/delete"
+                job.workspace_runs = {WORKSPACES[0]: {"workspace": WORKSPACES[0], "dryRun": mode}}
+                SERVER._save_parallel_checkpoint(job)
+                settings = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+                settings["parallelCheckpoints"][job.id].pop("dryRun")
+                SERVER.PIPELINE_DEFAULTS_FILE.write_text(json.dumps(settings), encoding="utf-8")
+                state = self.client.get(f"/api/jobs/{job.id}").get_json()
+                self.assertEqual(state["phases"][1], label)
+                self.assertIs(state["parallelDryRun"], mode)
+                self.assertNotIn("deployment record", "\n".join(state["lines"]))
 
     def test_parallel_jobs_remain_exclusive_against_unrelated_requests(self):
         with patch.object(SERVER.threading, "Thread"):
@@ -507,6 +561,11 @@ class ParallelIsolationTests(unittest.TestCase):
                 for record in records:
                     self.assertIn(expected, record["argv"])
                     self.assertNotIn(forbidden, record["argv"])
+                    self.assertEqual(Path(record["argv"][0]).name, "delete_workspace_items.py")
+                operation = "item preview" if settings["dryRun"] else "item deletion"
+                self.assertIn(f"Preparing isolated files and credentials for {operation}.", output.getvalue())
+                self.assertIn(f"Parallel {operation} completed:", output.getvalue())
+                self.assertNotIn("workspace-specific deployment files", output.getvalue())
             self.assertEqual((rayfin / "rayfin.yml").read_text(), "parent configuration")
             self.assertIn("2/3 workspaces succeeded", output.getvalue())
 

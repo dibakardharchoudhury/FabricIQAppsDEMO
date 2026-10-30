@@ -239,6 +239,7 @@ class Job:
         self.pending_notebook_sync: list[str] = []
         self.workspace_runs: dict[str, dict] = {}
         self.parallel_action: str | None = None
+        self.parallel_dry_run: bool | None = None
 
     def advance_phase(self, index: int) -> None:
         """Called under job.lock; omitted log markers have no invented duration."""
@@ -563,7 +564,7 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
                 except (OSError, ValueError, TypeError, KeyError) as exc:
                     monitoring_failed = True
                     with job.lock:
-                        job.lines.append(f"[parallel deployment monitoring failed: {exc}]")
+                        job.lines.append(f"[parallel action monitoring failed: {exc}]")
                     _terminate_owned_process(proc)
                     proc.wait()
                     break
@@ -851,9 +852,11 @@ def _start_workflow(
 
 def _start(argv: list[str], env_extra: dict[str, str] | None, timeout: int,
            phases: list[str], markers: list[tuple[int, tuple[str, ...]]],
-           python: bool = True, exclusive: bool = True, parallel_action: str | None = None) -> str | None:
+           python: bool = True, exclusive: bool = True, parallel_action: str | None = None,
+           parallel_dry_run: bool | None = None) -> str | None:
     job = Job(phases, exclusive=exclusive)
     job.parallel_action = parallel_action
+    job.parallel_dry_run = parallel_dry_run
     with JOBS_LOCK:
         running = [existing for existing in JOBS.values() if existing.status == "running"]
         if any(existing.exclusive for existing in running) or (exclusive and running):
@@ -880,7 +883,8 @@ def job_response(job_id: str | None):
 def _save_parallel_checkpoint(job: Job) -> None:
     with job.lock:
         record = {
-            "action": job.parallel_action, "status": job.status, "returncode": job.returncode,
+            "action": job.parallel_action, "dryRun": job.parallel_dry_run,
+            "status": job.status, "returncode": job.returncode,
             "elapsedSeconds": job.timing_snapshot()["elapsedSeconds"],
             "workspaceRuns": [{key: value for key, value in state.items() if key != "lines"}
                               for state in job.workspace_runs.values()],
@@ -898,13 +902,22 @@ def _restore_parallel(job_id: str) -> Job | None:
         record = json.loads(PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8")).get("parallelCheckpoints", {}).get(job_id)
     if not record:
         return None
-    job = Job(["Resolving workspaces", "Deploying workspaces", "Done"])
+    dry_run = record.get("dryRun")
+    if dry_run is None:
+        flags = [state.get("dryRun") for state in record["workspaceRuns"]]
+        if flags and all(flag is True for flag in flags):
+            dry_run = True
+        elif any(flag is False for flag in flags):
+            dry_run = False
+    job = Job(parallel_deploy.action_phases(record["action"], dry_run))
     job.id = job_id
     job.parallel_action = record["action"]
+    job.parallel_dry_run = dry_run
     job.status = "interrupted" if record["status"] == "running" else record["status"]
     job.returncode = record["returncode"]
     job.started -= record.get("elapsedSeconds", 0)
-    job.lines = ["Previous parallel deployment record. Live output is not persisted."]
+    operation = parallel_deploy.action_labels(job.parallel_action, dry_run)[0]
+    job.lines = [f"Previous parallel {operation.lower()} record. Live output is not persisted."]
     job.workspace_runs = {state["workspace"]: {**state, "lines": []} for state in record["workspaceRuns"]}
     if job.status == "interrupted":
         for state in job.workspace_runs.values():
@@ -941,11 +954,12 @@ def api_parallel():
         job_id = _start(
             [str(SCRIPT_DIR / "parallel_deploy.py")],
             {parallel_deploy.PAYLOAD_ENV: json.dumps(payload)}, timeout,
-            ["Resolving workspaces", "Deploying workspaces", "Done"], [],
+            parallel_deploy.action_phases(action, data.get("dryRun") is True), [],
             parallel_action=action,
+            parallel_dry_run=data.get("dryRun") is True if action == "/api/delete" else None,
         )
     except (OSError, ValueError, TypeError) as exc:
-        return jsonify(error=f"Could not save parallel deployment checkpoint: {exc}"), 409
+        return jsonify(error=f"Could not save parallel action checkpoint: {exc}"), 409
     return job_response(job_id)
 
 
@@ -1740,6 +1754,7 @@ def api_job(job_id: str):
         canResume=can_resume,
         resumeComponent=resume_component,
         parallelAction=job.parallel_action,
+        parallelDryRun=job.parallel_dry_run,
         workspaceRuns=workspace_runs,
         resumeBlockedReason=(
             "The local server stopped while this run was active. Verify remote Fabric jobs before "

@@ -109,6 +109,9 @@ workspace name/GUID, one per line in the displayed order; the backend rejects th
 entire batch unless all targets are confirmed. A failed deletion requires fresh
 confirmation of that target's canonical GUID before retrying. Retrying a failed
 dry run remains a dry run even if the form's checkbox has since changed.
+Progress identifies the selected action: deletion shows **Deleting workspace items**;
+dry runs show **Listing items (dry run)**. These actions delete or list items inside
+the selected existing workspaces; they do not deploy or create workspaces.
 
 The form settings apply to every selected workspace. Tenant setup defaults remain
 available regardless of workspace name; explicit form values take precedence.

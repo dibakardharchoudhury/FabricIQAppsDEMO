@@ -21,12 +21,31 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 EVENT_PREFIX = "PARALLEL_DEPLOY_EVENT "
 PAYLOAD_ENV = "FABRIC_PARALLEL_PAYLOAD"
-ACTIONS = {
-    "/api/sync", "/api/run-pipeline", "/api/setup-energy",
-    "/api/setup-foundry", "/api/deploy-app", "/api/full-workflow",
-    "/api/delete", "/api/test-connection",
+ACTION_LABELS = {
+    "/api/sync": ("GitHub sync", "Syncing from GitHub"),
+    "/api/run-pipeline": ("Core setup", "Running Core setup"),
+    "/api/setup-energy": ("Energy refresh", "Refreshing energy sources"),
+    "/api/setup-foundry": ("Foundry setup", "Setting up Foundry agents"),
+    "/api/deploy-app": ("App deployment", "Deploying apps"),
+    "/api/full-workflow": ("Full Deploy", "Running Full Deploy"),
+    "/api/delete": ("Item deletion", "Deleting workspace items"),
+    "/api/test-connection": ("Connection test", "Testing GitHub connections"),
 }
+ACTIONS = set(ACTION_LABELS)
 OUTPUT_LOCK = threading.Lock()
+
+
+def action_labels(action: str, dry_run: bool | None = False) -> tuple[str, str]:
+    if action == "/api/delete":
+        if dry_run is True:
+            return "Item preview", "Listing items (dry run)"
+        if dry_run is None:
+            return "Item cleanup", "Processing item requests"
+    return ACTION_LABELS[action]
+
+
+def action_phases(action: str, dry_run: bool | None = False) -> list[str]:
+    return ["Resolving workspaces", action_labels(action, dry_run)[1], "Done"]
 
 
 def save_state(path: Path, record: dict) -> None:
@@ -191,9 +210,10 @@ def worker() -> int:
     workspace, name = payload["workspace"], payload["name"]
     client = server.app.test_client()
     data = payload["data"]
+    operation = action_labels(payload["action"], data.get("dryRun") is True)[0]
     if (Path(payload["directory"]) / "cancel").exists():
         emit(workspace, name, status="cancelled", done=True, returncode=1,
-             canResume=bool(payload.get("resumeJobId")), lines=["Cancelled before starting a deployment module."])
+             canResume=bool(payload.get("resumeJobId")), lines=[f"Cancelled before starting {operation.lower()}."])
         return 1
     if payload["action"] == "/api/full-workflow" and payload.get("resumeJobId"):
         data["resumeJobId"] = payload["resumeJobId"]
@@ -240,9 +260,10 @@ def _run_target(deploy, directory: Path, commit: str, tenant: str, workspace: st
     cancel = directory / "cancel"
     if cancel.exists():
         cancel.unlink()
+    operation = action_labels(action, data.get("dryRun") is True)[0]
     emit(workspace, name, tenant=tenant, status="running", done=False, phases=["Preparing isolated checkout", "Done"],
          phaseIndex=0, dryRun=data.get("dryRun"),
-         lines=["Preparing workspace-specific deployment files and credentials."])
+         lines=[f"Preparing isolated files and credentials for {operation.lower()}."])
     try:
         checkout = prepare_checkout(deploy, directory, tenant, workspace, commit)
         latest = directory / "latest.json"
@@ -290,7 +311,7 @@ def _run_target(deploy, directory: Path, commit: str, tenant: str, workspace: st
         save_state(latest, record)
         return result
     except (OSError, ValueError, RuntimeError) as exc:
-        emit(workspace, name, status="failed", done=True, returncode=1, lines=[f"Deployment stopped: {exc}"])
+        emit(workspace, name, status="failed", done=True, returncode=1, lines=[f"{operation} stopped: {exc}"])
         return 1
 
 
@@ -328,7 +349,8 @@ def run_batch(payload: dict) -> int:
         ]
         results = [future.result() for future in futures]
     succeeded = sum(result == 0 for result in results)
-    print(f"Parallel deployment completed: {succeeded}/{len(results)} workspaces succeeded.", flush=True)
+    operation = action_labels(action, data.get("dryRun") is True)[0]
+    print(f"Parallel {operation.lower()} completed: {succeeded}/{len(results)} workspaces succeeded.", flush=True)
     return 0 if succeeded == len(results) else 1
 
 
@@ -343,7 +365,7 @@ def main() -> int:
             return worker()
         return run_batch(json.loads(os.environ.pop(PAYLOAD_ENV)))
     except (OSError, ValueError, RuntimeError, deploy.DeployError) as exc:
-        print(f"Parallel deployment stopped: {exc}", flush=True)
+        print(f"Parallel action stopped: {exc}", flush=True)
         return 1
 
 
