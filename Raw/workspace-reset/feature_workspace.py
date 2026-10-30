@@ -51,7 +51,11 @@ class FeatureConfig:
     vault_name: str
     location: str
     allow_public_api_group: bool
+    ops_agent_teams_team_id: str
+    ops_agent_teams_channel_id: str
+    alert_email_to: str
     state_path: Path
+    ops_agent_run_as_user: str = ""
     env_suffix: str = "V6"
     enable_energy_map: bool = False
     enable_map_chat: bool = False
@@ -62,16 +66,23 @@ class FeatureConfig:
         required = {
             "tenant_id", "workspace_id", "subscription_id", "resource_group",
             "vault_name", "location", "allow_public_api_group",
+            "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to",
         }
         if not isinstance(raw, dict) or not required.issubset(raw):
             raise FeatureWorkspaceError("Feature bootstrap config is missing required fields.")
-        if set(raw) - required - {"env_suffix", "enable_energy_map", "enable_map_chat"}:
+        if set(raw) - required - {
+            "ops_agent_run_as_user", "env_suffix", "enable_energy_map", "enable_map_chat",
+        }:
             raise FeatureWorkspaceError("Feature bootstrap config contains unsupported fields.")
         for key in ("tenant_id", "workspace_id", "subscription_id"):
             try:
                 raw[key] = str(UUID(raw[key]))
             except (ValueError, TypeError, AttributeError) as exc:
                 raise FeatureWorkspaceError(f"Invalid feature bootstrap {key}.") from exc
+        try:
+            raw["ops_agent_teams_team_id"] = str(UUID(raw["ops_agent_teams_team_id"]))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise FeatureWorkspaceError("Invalid feature bootstrap ops_agent_teams_team_id.") from exc
         if raw["tenant_id"] != tenant_id.lower() or raw["workspace_id"] != workspace_id.lower():
             raise FeatureWorkspaceError("Feature bootstrap config does not match the deployment target.")
         for key, pattern in (
@@ -91,6 +102,17 @@ class FeatureConfig:
             raise FeatureWorkspaceError("enable_map_chat must be a JSON boolean.")
         if raw.get("enable_map_chat") and not raw.get("enable_energy_map"):
             raise FeatureWorkspaceError("Map chat requires energy map provisioning.")
+        channel_id = raw["ops_agent_teams_channel_id"]
+        if not isinstance(channel_id, str) or not re.fullmatch(r"19:\S{1,480}@thread\.tacv2", channel_id):
+            raise FeatureWorkspaceError("Invalid feature bootstrap ops_agent_teams_channel_id.")
+        for key in ("alert_email_to", "ops_agent_run_as_user"):
+            value = raw.get(key, "")
+            if not isinstance(value, str) or (
+                value and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value)
+            ):
+                raise FeatureWorkspaceError(f"Invalid feature bootstrap {key}.")
+        if not raw["alert_email_to"]:
+            raise FeatureWorkspaceError("Feature bootstrap alert_email_to is required.")
         return cls(**raw, state_path=path.with_suffix(".state.json"))
 
 
@@ -508,8 +530,11 @@ class FeatureWorkspace:
             "key_vault_tenant_id_secret_name": "tenantid",
             "key_vault_client_id_secret_name": "clientid",
             "key_vault_client_secret_name": "clientsecret",
-            "ops_agent_teams_team_id": "", "ops_agent_teams_channel_id": "",
-            "ops_agent_run_as_user": "", "enable_weather_schedule": False,
+            "ops_agent_teams_team_id": self.config.ops_agent_teams_team_id,
+            "ops_agent_teams_channel_id": self.config.ops_agent_teams_channel_id,
+            "ops_agent_run_as_user": self.config.ops_agent_run_as_user,
+            "alert_email_to": self.config.alert_email_to,
+            "enable_weather_schedule": False,
             "enable_energy_map": self.config.enable_energy_map,
             "per_notebook_timeout_secs": 3600,
         }

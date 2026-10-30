@@ -438,6 +438,10 @@ See [the feature-workspace runbook](../../HydroOperationsApp/DEPLOY.md#optional-
 It imports local definitions with target-specific notebook references, creates
 approved dedicated prerequisites, and runs setup/seed/stream without introducing a
 second app deployment command. It does not copy source workspace data or credentials.
+The JSON configuration must include `ops_agent_teams_team_id`,
+`ops_agent_teams_channel_id`, and `alert_email_to`; `ops_agent_run_as_user` is optional.
+These values are passed unchanged to the setup pipeline so isolated bootstrap retains
+the mandatory Operations Agent Teams and delegated Outlook delivery configuration.
 Fabric setup runs before public artifact discovery and Foundry provisioning. The
 bootstrap verifies workspace Runtime 2.0 and rejects incompatible published
 Environment overrides before setup or Geo notebook execution. A confirmed terminal

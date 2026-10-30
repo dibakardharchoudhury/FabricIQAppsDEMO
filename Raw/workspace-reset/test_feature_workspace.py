@@ -18,6 +18,9 @@ ROOT = Path(__file__).resolve().parents[2]
 TENANT = "11111111-1111-4111-8111-111111111111"
 WORKSPACE = "22222222-2222-4222-8222-222222222222"
 SUBSCRIPTION = "33333333-3333-4333-8333-333333333333"
+TEAM_ID = "44444444-4444-4444-8444-444444444444"
+CHANNEL_ID = "19:feature-channel@thread.tacv2"
+ALERT_EMAIL = "operator@example.com"
 
 
 def config_dict():
@@ -25,6 +28,8 @@ def config_dict():
         "tenant_id": TENANT, "workspace_id": WORKSPACE, "subscription_id": SUBSCRIPTION,
         "resource_group": "rg-hydro-feature", "vault_name": "kv-hydro-feature",
         "location": "norwayeast", "allow_public_api_group": True,
+        "ops_agent_teams_team_id": TEAM_ID, "ops_agent_teams_channel_id": CHANNEL_ID,
+        "alert_email_to": ALERT_EMAIL,
     }
 
 
@@ -260,6 +265,9 @@ class FeatureWorkspaceTests(unittest.TestCase):
             config = feature.FeatureConfig.load(path, TENANT, WORKSPACE)
             self.assertEqual(config.env_suffix, "V6")
             self.assertEqual(config.state_path, path.with_suffix(".state.json"))
+            self.assertEqual(config.ops_agent_teams_team_id, TEAM_ID)
+            self.assertEqual(config.ops_agent_teams_channel_id, CHANNEL_ID)
+            self.assertEqual(config.alert_email_to, ALERT_EMAIL)
             with self.assertRaisesRegex(feature.FeatureWorkspaceError, "match"):
                 feature.FeatureConfig.load(path, TENANT, SUBSCRIPTION)
             for key, value in (
@@ -853,13 +861,17 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 patch.object(feature, "verify_environment_runtimes", side_effect=lambda *args: events.append("verify-environments")),
                 patch.object(feature, "ensure_key_vault_access", side_effect=lambda *args: events.append("private")),
                 patch.object(feature, "configure_weather_assets", side_effect=lambda *args, **kwargs: events.append("environment")),
-                patch.object(workspace, "_run", side_effect=lambda *args: events.append("setup")),
+                patch.object(workspace, "_run", side_effect=lambda *args: events.append("setup")) as run,
                 patch.object(workspace, "_verify_schedules_disabled"),
                 patch.object(workspace, "_item"),
             ):
                 workspace.prepare()
             self.assertEqual(events, ["runtime2", "private", "environment", "verify-environments", "setup", "environment"])
             self.assertTrue(workspace.state["private_connectivity_ready"])
+            parameters = run.call_args.args[2]["executionData"]["parameters"]
+            self.assertEqual(parameters["ops_agent_teams_team_id"], TEAM_ID)
+            self.assertEqual(parameters["ops_agent_teams_channel_id"], CHANNEL_ID)
+            self.assertEqual(parameters["alert_email_to"], ALERT_EMAIL)
 
     def test_private_endpoint_failure_blocks_setup(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
