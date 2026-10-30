@@ -39,15 +39,34 @@ class ParallelValidationTests(unittest.TestCase):
             with self.subTest(targets=targets):
                 self.assertEqual(PARALLEL.validate_request(self.payload(workspaces=targets))[1], expected)
 
-    def test_invalid_targets_and_destructive_actions_are_rejected(self):
+    def test_invalid_targets_and_unknown_actions_are_rejected(self):
         for change in (
             {"workspaces": []}, {"workspaces": ["", " "]}, {"workspaces": ["a", "A"]},
             {"workspaces": ["a", "b", "c", "d"]}, {"workspaces": "a"},
-            {"workspaces": ["a", None]}, {"action": "/api/delete"}, {"data": []},
+            {"workspaces": ["a", None]}, {"action": "/api/unknown"}, {"data": []},
             {"data": {"tenant": TENANT, "resumeJobId": "wrong-global-checkpoint"}},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 PARALLEL.validate_request(self.payload(**change))
+
+    def test_parallel_deletion_requires_explicit_mode_and_every_target_confirmation(self):
+        for data in (
+            {"tenant": TENANT},
+            {"tenant": TENANT, "dryRun": "true"},
+            {"tenant": TENANT, "dryRun": False},
+            {"tenant": TENANT, "dryRun": False, "confirmedWorkspaces": ["One"]},
+            {"tenant": TENANT, "dryRun": False, "confirmedWorkspaces": ["Two", "One"]},
+            {"tenant": TENANT, "dryRun": False, "confirmedWorkspaces": ["One", 2]},
+            {"tenant": TENANT, "dryRun": False, "confirmedWorkspaces": ["One", "Other"]},
+        ):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                PARALLEL.validate_request(self.payload(action="/api/delete", workspaces=["One", "", "Two"], data=data))
+        for dry_run in (True, False):
+            payload = self.payload(action="/api/delete", workspaces=["One", "", "Two"], data={
+                "tenant": TENANT, "dryRun": dry_run,
+                "confirmedWorkspaces": [] if dry_run else [" ONE ", "two"],
+            })
+            self.assertEqual(PARALLEL.validate_request(payload)[1], ["One", "Two"])
 
     def test_multi_target_foundry_cannot_share_one_explicit_project(self):
         for action in ("/api/setup-foundry", "/api/full-workflow"):
@@ -101,6 +120,29 @@ class ParallelApiTests(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 400)
         start.assert_not_called()
+
+    def test_partial_delete_confirmation_starts_no_workers(self):
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/parallel", json={
+                "action": "/api/delete", "workspaces": ["One", "Two", "Three"],
+                "data": {"tenant": TENANT, "dryRun": False, "confirmedWorkspaces": ["One", "Two"]},
+            })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("every selected workspace", response.get_json()["error"])
+        start.assert_not_called()
+
+    def test_all_modules_are_admitted_in_parallel_with_blank_slots_ignored(self):
+        for action in sorted(PARALLEL.ACTIONS):
+            with self.subTest(action=action), patch.object(SERVER, "_start", return_value="batch") as start:
+                response = self.client.post("/api/parallel", json={
+                    "action": action, "workspaces": ["", "Two", "Three"],
+                    "data": {
+                        "tenant": TENANT, "repository": "owner/repo", "connectionId": "yes",
+                        "parameters": PIPELINE_PARAMS, "dryRun": True,
+                    },
+                })
+                self.assertEqual(response.status_code, 200, response.get_json())
+                self.assertEqual(start.call_args.kwargs["parallel_action"], action)
 
     def test_parallel_jobs_remain_exclusive_against_unrelated_requests(self):
         with patch.object(SERVER.threading, "Thread"):
@@ -355,6 +397,16 @@ class ParallelIsolationTests(unittest.TestCase):
             self.assertEqual(events[3], events[2].replace("start ", "end "))
 
     def test_actual_workers_overlap_with_independent_files_and_partial_failure(self):
+        self.exercise_workers("/api/setup-energy", {})
+
+    def test_delete_workers_overlap_and_preserve_explicit_dry_run_or_confirmed_deletion(self):
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                self.exercise_workers("/api/delete", {
+                    "dryRun": dry_run, "confirmedWorkspaces": [] if dry_run else WORKSPACES,
+                })
+
+    def exercise_workers(self, action, settings):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = root / "source"
@@ -373,11 +425,12 @@ class ParallelIsolationTests(unittest.TestCase):
                 "assert len(list(gate.iterdir()))==3, 'Workers did not run concurrently'\n"
                 "start=time.time(); print('Energy: setup',flush=True)\n"
                 "time.sleep(1)\n"
-                "(root/'result.json').write_text(json.dumps({'workspace':workspace,'start':start,'end':time.time()}))\n"
+                "(root/'result.json').write_text(json.dumps({'workspace':workspace,'start':start,'end':time.time(),'argv':sys.argv}))\n"
                 "print('ENERGY_SETUP_SUCCESS',flush=True)\n"
                 f"sys.exit(1 if workspace=={WORKSPACES[2]!r} else 0)\n"
             )
             (scripts / "deploy_fabric_app.py").write_text(stub, encoding="utf-8")
+            (scripts / "delete_workspace_items.py").write_text(stub, encoding="utf-8")
             PARALLEL.checked(["git", "init", "--quiet", str(repository)])
             PARALLEL.checked(["git", "-C", str(repository), "add", "."])
             PARALLEL.checked([
@@ -404,8 +457,8 @@ class ParallelIsolationTests(unittest.TestCase):
                     patch.object(PARALLEL, "worker_environment", side_effect=environment), \
                     patch.object(SYNC, "Fabric", return_value=fabric), contextlib.redirect_stdout(output):
                 result = PARALLEL.run_batch({
-                    "action": "/api/setup-energy", "workspaces": WORKSPACES,
-                    "data": {"tenant": TENANT},
+                    "action": action, "workspaces": WORKSPACES,
+                    "data": {"tenant": TENANT, **settings},
                 })
             self.assertEqual(result, 1)
             records = [json.loads(path.read_text()) for path in root.glob(
@@ -413,6 +466,11 @@ class ParallelIsolationTests(unittest.TestCase):
             )]
             self.assertEqual({record["workspace"] for record in records}, set(WORKSPACES))
             self.assertLess(max(record["start"] for record in records), min(record["end"] for record in records))
+            if action == "/api/delete":
+                expected, forbidden = ("--dry-run", "--yes") if settings["dryRun"] else ("--yes", "--dry-run")
+                for record in records:
+                    self.assertIn(expected, record["argv"])
+                    self.assertNotIn(forbidden, record["argv"])
             self.assertEqual((rayfin / "rayfin.yml").read_text(), "parent configuration")
             self.assertIn("2/3 workspaces succeeded", output.getvalue())
 

@@ -329,7 +329,7 @@
             <input id="workspace2" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
           <label class="idfield"><span>Workspace 3 (optional)</span>
             <input id="workspace3" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
-          <p class="cardcap">Blank slots are ignored. Full Deploy and setup modules use the same form settings, with separate progress and files per workspace. Leave the Foundry project blank for automatic target-specific selection. Delete stays single-workspace.</p>
+          <p class="cardcap">Blank slots are ignored. All modules use the selected workspaces, with separate progress and files per workspace. Deletion requires confirming every target. Leave the Foundry project blank for automatic target-specific selection.</p>
         </div>
         <p id="targetSettingsStatus" class="cardcap" role="status"></p>
       </div>
@@ -500,8 +500,10 @@
       </div>
       <p class="hint"><strong>Deletes every workspace item.</strong> Preview with dry run first. Not needed for app updates.</p>
       <label class="check"><input id="dryRun" type="checkbox" checked /> Dry run (list only, delete nothing)</label>
-      <label id="confirmWrap" style="display:none">Type the workspace to confirm deletion
-        <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" /></label>
+      <p id="deleteTargets" class="hint" style="white-space:pre-line"></p>
+      <label id="confirmWrap" style="display:none"><span id="deleteConfirmLabel">Type the workspace to confirm deletion</span>
+        <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" />
+        <textarea id="parallelConfirmText" rows="3" hidden placeholder="Repeat each selected workspace exactly, one per line, in the order shown"></textarea></label>
       <button id="deleteBtn" class="primary" disabled>List items (dry run)</button>
       <div id="deletePanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
@@ -610,6 +612,7 @@ async function postJson(url, body) {
 const parallelActions = new Set([
   "/api/sync", "/api/run-pipeline", "/api/setup-energy",
   "/api/setup-foundry", "/api/deploy-app", "/api/full-workflow",
+  "/api/delete", "/api/test-connection",
 ]);
 function selectedWorkspaces() {
   const ids = $("parallelDeploy")?.checked ? ["workspace", "workspace2", "workspace3"] : ["workspace"];
@@ -618,7 +621,11 @@ function selectedWorkspaces() {
 function parallelPayload(action) {
   if (action === "/api/full-workflow") return workflowPayload();
   const common = { tenant: $("tenant").value, workspace: $("workspace").value };
-  if (action === "/api/sync") return {
+  if (action === "/api/delete") return {
+    ...common, dryRun: $("dryRun").checked, confirmedWorkspaces: deletionConfirmations(),
+  };
+  if (action === "/api/test-connection" && $("paneWorkflow").classList.contains("active")) return workflowPayload();
+  if (action === "/api/sync" || action === "/api/test-connection") return {
     ...common, repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
     connectionId: connValue(), keepConnected: $("keepConnected").checked, pat: $("pat").value,
   };
@@ -648,7 +655,7 @@ function renderParallelRuns(el, job) {
       details.id = id;
       details.className = "workflow-phase-group";
       details.open = true;
-      details.innerHTML = '<summary></summary><div class="workspace-panel"></div><button type="button" class="ghost workspace-action"></button>';
+      details.innerHTML = '<summary></summary><div class="workspace-panel"></div><label class="workspace-delete-confirm" hidden>Confirm this workspace GUID again to retry deletion<input type="text" autocomplete="off"></label><button type="button" class="ghost workspace-action"></button>';
       container.appendChild(details);
     }
     details.querySelector("summary").textContent = `${state.name} \u00b7 ${state.status}`;
@@ -658,8 +665,18 @@ function renderParallelRuns(el, job) {
     const button = details.querySelector(".workspace-action");
     const retry = state.done && ["failed", "cancelled"].includes(state.status);
     const canRetry = retry && job.status !== "running";
+    const destructiveRetry = retry && job.parallelAction === "/api/delete" && state.dryRun !== true;
+    const confirmation = details.querySelector(".workspace-delete-confirm");
+    const confirmationInput = confirmation.querySelector("input");
+    confirmation.hidden = !destructiveRetry;
+    confirmationInput.placeholder = state.workspace;
+    const updateButton = () => {
+      button.disabled = (retry && !canRetry) || (destructiveRetry
+        && confirmationInput.value.trim().toLowerCase() !== state.workspace.toLowerCase());
+    };
+    confirmationInput.oninput = updateButton;
     button.hidden = state.done && !retry;
-    button.disabled = retry && !canRetry;
+    updateButton();
     button.textContent = !state.done ? "Cancel this workspace"
       : state.requiresSync ? "Sync changes and retry this workspace"
       : state.canResume ? "Resume this workspace" : "Retry this workspace";
@@ -680,9 +697,23 @@ function renderParallelRuns(el, job) {
       }
       const fullWorkflow = job.parallelAction === "/api/full-workflow";
       if (fullWorkflow) { workflowBusy = true; refresh(); }
+      let data;
+      if (job.parallelAction === "/api/delete") {
+        if (destructiveRetry && confirmationInput.value.trim().toLowerCase() !== state.workspace.toLowerCase()) {
+          updateButton();
+          return;
+        }
+        data = {
+          tenant: state.tenant, workspace: state.workspace, dryRun: state.dryRun === true,
+          confirmedWorkspaces: destructiveRetry ? [confirmationInput.value.trim()] : [],
+        };
+        confirmationInput.value = "";
+      } else {
+        data = parallelPayload(job.parallelAction);
+      }
       await runJob("/api/parallel", {
         action: job.parallelAction, workspaces: [state.workspace],
-        data: parallelPayload(job.parallelAction),
+        data,
         resume: job.parallelAction === "/api/full-workflow" && !!state.canResume,
         syncLatest: !!state.requiresSync,
       }, panel, () => fullWorkflow ? workflowDone() : refresh());
@@ -1040,15 +1071,25 @@ function workflowSyncValid() {
   return !!$("workflowPat").value.trim();
 }
 function testValid() {
-  return $("workspace").value.trim() && baseValid() && (reuseChecked() || $("pat").value.trim());
+  return baseValid() && (reuseChecked() || $("pat").value.trim());
 }
 function workflowTestValid() {
-  return $("workspace").value.trim() && workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
+  return workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
+}
+function deletionConfirmations() {
+  return $("parallelConfirmText").value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
 }
 function deleteValid() {
   const dry = $("dryRun").checked;
-  return $("tenant").value.trim() && $("workspace").value.trim() &&
-    (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
+  if (!deployValid()) return false;
+  if (dry) return true;
+  if (!$("parallelDeploy").checked) {
+    return $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase();
+  }
+  const targets = selectedWorkspaces();
+  const confirmations = deletionConfirmations();
+  return targets.length === confirmations.length
+    && targets.every((target, index) => target.toLowerCase() === confirmations[index].toLowerCase());
 }
 function deployValid() {
   const targets = selectedWorkspaces();
@@ -1057,7 +1098,18 @@ function deployValid() {
 }
 function refresh() {
   $("parallelWorkspaceFields").hidden = !$("parallelDeploy").checked;
-  $("sidebarTarget").textContent = [$("tenant").value.trim(), $("workspace").value.trim()].filter(Boolean).join(" / ");
+  const targets = selectedWorkspaces();
+  const targetSummary = targets.join(", ");
+  $("sidebarTarget").textContent = [$("tenant").value.trim(), targetSummary].filter(Boolean).join(" / ");
+  $("sidebarTarget").title = targetSummary;
+  for (const [id, label] of [
+    ["workflowBtn", "Run Full Deploy"], ["syncBtn", "Run sync"], ["pipelineBtn", "Run core setup"],
+    ["energyBtn", "Refresh energy sources"], ["foundryBtn", "Set up Foundry agents"],
+    ["deployBtn", "Deploy Fabric app"], ["testBtn", "Test connection"], ["workflowTestBtn", "Test connection"],
+  ]) {
+    $(id).textContent = $("parallelDeploy").checked
+      ? `${label} (${targets.length} workspace${targets.length === 1 ? "" : "s"})` : label;
+  }
   // The PAT only exists to CREATE a new connection, so reveal it only when one is
   // needed: reuse is off (create a saved connection) or a reuse test just failed.
   const needPat = !reuseChecked() || connTestState === "fail";
@@ -1081,8 +1133,20 @@ function refresh() {
     $("workflowPatNote").textContent = "";
   }
   const dry = $("dryRun").checked;
+  const parallel = $("parallelDeploy").checked;
+  const deleteTargets = selectedWorkspaces();
   $("confirmWrap").style.display = dry ? "none" : "flex";
-  $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
+  $("confirmText").hidden = parallel;
+  $("parallelConfirmText").hidden = !parallel;
+  $("deleteConfirmLabel").textContent = parallel
+    ? "Confirm every selected workspace, one per line, in the order shown"
+    : "Type the workspace to confirm deletion";
+  $("deleteTargets").textContent = deleteTargets.length
+    ? "Targets:\n" + deleteTargets.map((target, index) => `${index + 1}. ${target}`).join("\n")
+    : "Enter at least one target workspace.";
+  $("deleteBtn").textContent = parallel
+    ? `${dry ? "List items (dry run)" : "Delete all items"} in ${deleteTargets.length} workspace${deleteTargets.length === 1 ? "" : "s"}`
+    : dry ? "List items (dry run)" : "Delete everything";
   $("deleteBtn").className = dry ? "primary" : "destructive";
   $("syncBtn").disabled = !syncValid();
   $("testBtn").disabled = testing || !testValid();
@@ -1113,6 +1177,7 @@ function refresh() {
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
 document.querySelectorAll("input").forEach((el) => el.addEventListener("input", refresh));
+$("parallelConfirmText").addEventListener("input", refresh);
 document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventListener("change", refresh));
 // Any change to a connection-affecting field invalidates the previous test result.
 ["repository", "branch", "directory", "tenant", "workspace", "pat"].forEach((id) =>
@@ -1177,7 +1242,8 @@ $("deleteBtn").addEventListener("click", async () => {
   $("deleteBtn").disabled = true;
   await runJob("/api/delete", {
     tenant: $("tenant").value, workspace: $("workspace").value, dryRun: $("dryRun").checked,
-  }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
+    confirmedWorkspaces: deletionConfirmations(),
+  }, $("deletePanel"), () => { $("confirmText").value = ""; $("parallelConfirmText").value = ""; refresh(); });
 });
 
 // Standalone Foundry controls retain the deploy-prefixed IDs.

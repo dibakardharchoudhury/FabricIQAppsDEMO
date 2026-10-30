@@ -923,7 +923,7 @@ def api_parallel():
         action, workspaces, data = parallel_deploy.validate_request(payload)
         representative = {**data, "workspace": workspaces[0]}
         _deploy_invocation({**representative, "energyMap": "keep"})
-        if action in {"/api/sync", "/api/full-workflow"}:
+        if action in {"/api/sync", "/api/full-workflow", "/api/test-connection"}:
             _sync_invocation(representative, require_credentials=not bool(payload.get("resume")))
         if action in {"/api/run-pipeline", "/api/full-workflow"}:
             _pipeline_invocation(representative)

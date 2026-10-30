@@ -22,6 +22,7 @@ PAYLOAD_ENV = "FABRIC_PARALLEL_PAYLOAD"
 ACTIONS = {
     "/api/sync", "/api/run-pipeline", "/api/setup-energy",
     "/api/setup-foundry", "/api/deploy-app", "/api/full-workflow",
+    "/api/delete", "/api/test-connection",
 }
 OUTPUT_LOCK = threading.Lock()
 
@@ -40,7 +41,7 @@ def validate_request(value: object) -> tuple[str, list[str], dict]:
         raise ValueError("Parallel deployment requires a JSON object.")
     action = value.get("action")
     if not isinstance(action, str) or action not in ACTIONS:
-        raise ValueError("Parallel mode supports Full Deploy and non-destructive deployment modules only.")
+        raise ValueError("Parallel mode supports Full Deploy, deployment modules, deletion and connection tests.")
     raw = value.get("workspaces")
     if not isinstance(raw, list) or not 1 <= len(raw) <= 3 or any(not isinstance(item, str) for item in raw):
         raise ValueError("Provide up to three workspace slots as strings.")
@@ -56,6 +57,16 @@ def validate_request(value: object) -> tuple[str, list[str], dict]:
         raise ValueError("A tenant is required.")
     if data.get("resumeJobId"):
         raise ValueError("Use the workspace's retry control to resume a parallel Full Deploy.")
+    if action == "/api/delete":
+        if type(data.get("dryRun")) is not bool:
+            raise ValueError("Deletion requires an explicit boolean dryRun setting.")
+        if not data["dryRun"]:
+            confirmations = data.get("confirmedWorkspaces")
+            if (not isinstance(confirmations, list)
+                    or any(not isinstance(item, str) for item in confirmations)
+                    or [item.strip().casefold() for item in confirmations]
+                    != [item.casefold() for item in workspaces]):
+                raise ValueError("Confirm every selected workspace, in order, before deleting any items.")
     if len(workspaces) > 1 and action in {"/api/setup-foundry", "/api/full-workflow"}:
         if any(data.get(key) for key in (
             "foundryProjectName", "foundryProjectResourceId", "foundryEndpoint", "foundryNewProjectName",
@@ -214,7 +225,8 @@ def _run_target(deploy, directory: Path, commit: str, tenant: str, workspace: st
     if cancel.exists():
         cancel.unlink()
     emit(workspace, name, tenant=tenant, status="running", done=False, phases=["Preparing isolated checkout", "Done"],
-         phaseIndex=0, lines=["Preparing workspace-specific deployment files and credentials."])
+         phaseIndex=0, dryRun=data.get("dryRun"),
+         lines=["Preparing workspace-specific deployment files and credentials."])
     try:
         checkout = prepare_checkout(deploy, directory, tenant, workspace, commit)
         latest = directory / "latest.json"

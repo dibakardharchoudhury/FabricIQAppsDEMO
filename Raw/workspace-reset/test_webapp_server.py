@@ -785,10 +785,11 @@ async function evaluate(expression) {
     const html = fs.readFileSync(htmlPath, "utf8");
     const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
     const renderer = html.slice(html.indexOf("async function postJson("), html.indexOf("let subscriptionLoad"));
+    const validation = html.slice(html.indexOf("function deletionConfirmations("), html.indexOf("function refresh("));
     const helpers = html.slice(html.indexOf("const WORKFLOW_PHASE_GROUPS"), html.indexOf("// Starts a job"));
     await evaluate(`document.head.innerHTML = ${JSON.stringify("<style>"+style+"</style>")};
       document.body.innerHTML = '<div id="deployPanel"></div><div id="energyPanel"></div><div id="workflowPanel"></div>';
-      ${helpers}\n${renderer}
+      ${helpers}\n${renderer}\n${validation}
       var panel = document.getElementById("deployPanel");
       var job = {status:"running", phases:["Start","Deploy"], phaseIndex:0,
         lines:Array.from({length:160}, (_,i) => "Output line "+i+" <safe & literal>")};
@@ -924,23 +925,63 @@ async function evaluate(expression) {
       check(cards[1].querySelector(".workspace-action").disabled,"Wait for other targets before retrying");
       check(cards[2].querySelector(".workspace-action").textContent==="Cancel this workspace","Individual cancel lost");
       var targetInputs=document.createElement("div");
-      targetInputs.innerHTML='<input id="parallelDeploy" type="checkbox" checked><input id="workspace" value=""><input id="workspace2" value=" Two "><input id="workspace3" value="">';
+      targetInputs.innerHTML='<input id="parallelDeploy" type="checkbox" checked><input id="tenant" value="tenant.example"><input id="workspace" value=""><input id="workspace2" value=" Two "><input id="workspace3" value=""><input id="dryRun" type="checkbox" checked><input id="confirmText"><textarea id="parallelConfirmText"></textarea>';
       document.body.appendChild(targetInputs);
       var $=id=>document.getElementById(id);
       check(JSON.stringify(selectedWorkspaces())==='["Two"]',"Blank target slots must be ignored");
+      check(deleteValid(),"Dry run must support an empty first slot");
+      $("workspace3").value="Three";
+      $("dryRun").checked=false;
+      $("parallelConfirmText").value="Two";
+      check(!deleteValid(),"Partial confirmation must not enable deletion");
+      $("parallelConfirmText").value="two\\nTHREE";
+      check(deleteValid(),"Every selected workspace must be confirmable");
+      $("workspace2").value="Changed";
+      check(!deleteValid(),"Changing a target invalidates its previous confirmation");
+      $("workspace2").value="Two";
       var requests=[];
       window.fetch=async (url,options)=>{requests.push({url,body:JSON.parse(options.body)});
         return {ok:true,status:200,json:async()=>({jobId:"test"})};};
     `);
     await evaluate(`(async()=>{
-      await postJson("/api/setup-energy",{tenant:"tenant",workspace:""});
-      check(requests[0].url==="/api/parallel" && requests[0].body.workspaces.length===1
-        && requests[0].body.workspaces[0]==="Two","Module was not routed to the selected nonblank target");
-      await postJson("/api/delete",{tenant:"tenant",workspace:"One"});
-      check(requests[1].url==="/api/delete","Delete must never fan out");
+      var actions=["/api/full-workflow","/api/sync","/api/run-pipeline","/api/setup-energy",
+        "/api/setup-foundry","/api/deploy-app","/api/delete","/api/test-connection"];
+      for (var action of actions) {
+        await postJson(action,{tenant:"tenant",workspace:"",dryRun:true});
+        check(requests.at(-1).url==="/api/parallel" && requests.at(-1).body.action===action
+          && JSON.stringify(requests.at(-1).body.workspaces)==='["Two","Three"]',"Module did not fan out: "+action);
+      }
       $("parallelDeploy").checked=false;
-      await postJson("/api/setup-energy",{tenant:"tenant",workspace:"One"});
-      check(requests[2].url==="/api/setup-energy","Checkbox off must preserve single-target behavior");
+      $("workspace").value="Single";
+      $("confirmText").value="single";
+      check(deleteValid(),"Single-workspace deletion confirmation must still work");
+      for (var action of actions) {
+        await postJson(action,{tenant:"tenant",workspace:"One",dryRun:true});
+        check(requests.at(-1).url===action,"Checkbox off must preserve single-target behavior: "+action);
+      }
+      var deletePanel=document.createElement("div"); deletePanel.id="deleteFixture"; document.body.appendChild(deletePanel);
+      var deletion={status:"failed",parallelAction:"/api/delete",lines:[],workspaceRuns:[
+        {workspace:"one",name:"One",tenant:"tenant",status:"failed",done:true,dryRun:false,lines:[]}]};
+      renderPanel(deletePanel,deletion);
+      var retryButton=deletePanel.querySelector(".workspace-action");
+      var retryInput=deletePanel.querySelector(".workspace-delete-confirm input");
+      check(retryButton.disabled,"Destructive retry must require fresh confirmation");
+      retryInput.value="wrong"; retryInput.dispatchEvent(new Event("input"));
+      check(retryButton.disabled,"Wrong confirmation must not authorize deletion");
+      retryInput.value="one"; retryInput.dispatchEvent(new Event("input"));
+      check(!retryButton.disabled,"Canonical target confirmation should enable retry");
+      var retryCalls=[]; globalThis.runJob=async(url,body)=>{retryCalls.push(body);};
+      await retryButton.onclick();
+      check(retryCalls.length===1 && retryCalls[0].data.dryRun===false
+        && retryCalls[0].data.confirmedWorkspaces[0]==="one","Destructive retry target was not explicitly scoped");
+      check(retryInput.value==="","Delete confirmation must be consumed");
+      await retryButton.onclick();
+      check(retryCalls.length===1,"Consumed confirmation must not authorize another retry");
+      deletion.workspaceRuns[0].dryRun=true;
+      renderPanel(deletePanel,deletion);
+      await retryButton.onclick();
+      check(retryCalls.length===2 && retryCalls[1].data.dryRun===true,
+        "Retrying a preview must never upgrade to destructive mode when the form changed");
     })()`);
     console.log("PASS: streaming, manual/near-tail scroll, selection, wheel, PageDown, keyboard jump, module groups, parallel targets and completion");
   } finally {

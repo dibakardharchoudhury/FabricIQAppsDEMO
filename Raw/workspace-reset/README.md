@@ -99,8 +99,13 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 In the sidebar, enable **Deploy to multiple workspaces in parallel** and enter one,
 two or three workspace names/GUIDs in the same tenant. Empty slots are ignored,
 including an empty first slot. Full Deploy, GitHub Sync, Core setup, Energy setup,
-Foundry setup and Deploy app fan out only to the populated targets. **Delete never
-fans out.** Connection tests still check the first workspace only.
+Foundry setup, Deploy app, Delete workspace items and connection tests fan out only
+to the populated targets. Every module button shows the selected workspace count.
+Deletion defaults to dry run. To actually delete items, repeat every selected
+workspace name/GUID, one per line in the displayed order; the backend rejects the
+entire batch unless all targets are confirmed. A failed deletion requires fresh
+confirmation of that target's canonical GUID before retrying. Retrying a failed
+dry run remains a dry run even if the form's checkbox has since changed.
 
 The form settings apply to every selected workspace. Tenant setup defaults remain
 available regardless of workspace name; explicit form values take precedence.

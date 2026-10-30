@@ -25,8 +25,11 @@ Operations website.
 **Multiple workspaces:** enable **Deploy to multiple workspaces in parallel** in
 the sidebar and fill up to three slots in the same tenant. Blank slots are ignored,
 even the first slot. Full Deploy and individual setup/deploy modules use the same
-form settings, but show separate workspace progress and logs. Delete remains
-single-workspace. Leave the shared Foundry project field blank for target-specific
+form settings, but show separate workspace progress and logs. Delete and connection
+tests also use all populated targets. Deletion defaults to dry run; actual deletion
+requires confirming every selected workspace, one per line, in the displayed order.
+The backend rejects missing/partial confirmation before starting any worker.
+Leave the shared Foundry project field blank for target-specific
 selection; creating missing resources still requires your explicit approval.
 Commit source changes first: workers use isolated committed checkouts and retain
 private per-workspace state, without overwriting this checkout's Rayfin files.
