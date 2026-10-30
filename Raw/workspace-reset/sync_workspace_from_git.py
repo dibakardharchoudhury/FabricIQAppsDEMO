@@ -801,9 +801,18 @@ def verify_environment_runtimes(
 def weather_environment_unchanged(fab: Fabric, workspace_id: str, environment_id: str) -> bool:
     """Prove equivalence from published/staged APIs, not the repository's commit."""
     base = f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/{environment_id}"
+    published_inventory = fab.request("GET", f"{base}/libraries?beta=false")
+    if published_inventory.status_code == 404:
+        try:
+            error = published_inventory.json()
+        except ValueError:
+            error = None
+        if isinstance(error, dict) and error.get("errorCode") == "EnvironmentLibrariesNotFound":
+            print("Weather Environment has no published libraries; a full publication is required.")
+            return False
 
     def read(path: str):
-        response = fab.request("GET", f"{base}/{path}")
+        response = published_inventory if path == "libraries?beta=false" else fab.request("GET", f"{base}/{path}")
         if response.status_code != 200:
             raise SystemExit(
                 f"Weather Environment equivalence check failed for {path}: "
@@ -927,7 +936,7 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
         metadata.json().get("properties", {}).get("publishDetails", {}).get("state")
     )
     publish_required = publish_state != "Success"
-    if git_updated and not publish_required:
+    if not publish_required:
         print("Checking published/staged Weather libraries and Spark compute before rebuilding...")
         publish_required = not weather_environment_unchanged(fab, workspace_id, environment_id)
         if not publish_required:

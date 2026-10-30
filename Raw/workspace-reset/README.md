@@ -242,7 +242,10 @@ Core setup 1381.391s, energy finalization 540.922s, Foundry 932.890s and app
 publication 702.407s. Git sync now avoids an unchanged Weather Environment rebuild
 only after comparing its authoritative published/staged library inventories,
 compute settings and external-library exports. Fresh/changed Environments still
-publish; comparison read failures stop the sync. The current engine also overlaps
+publish. Fabric's exact HTTP 404 `EnvironmentLibrariesNotFound` response from the
+published library inventory also requires publication, even if Environment metadata
+reports `Success` and Git has no new changes. Other comparison read failures stop
+the sync. The current engine also overlaps
 Energy finalization with Foundry in one post-Core process, eliminating three serial
 orchestrator launches and their repeated target/SPA/configuration preflight. It reuses
 the freshly verified backend for static publication, but still reapplies backend
