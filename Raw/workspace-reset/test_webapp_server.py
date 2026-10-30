@@ -2580,6 +2580,45 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.match($(prefix+"FoundryCreationStatus").textContent, /project base name/);
   $(prefix+"FoundryProjectMode").value = "";
   assert.equal(foundryValid(prefix), true);
+  $(prefix+"FoundryProjectMode").value = "separate";
+  fields.parallelDeploy.checked = false;
+  $(prefix+"FoundryProjectName").value = "single-project";
+  $(prefix+"FoundryCreate").checked = true;
+  assert.equal(foundryValid(prefix), true);
+  assert.equal(foundryPayload(prefix).separateFoundryProjects, false);
+  assert.equal(foundryPayload(prefix).foundryNewProjectName, "single-project");
+  assert.equal($(prefix+"FoundryProjectMode").value, "separate");
+  fields.parallelDeploy.checked = true;
+  assert.equal(foundryPayload(prefix).separateFoundryProjects, true);
+  assert.equal(Object.hasOwn(foundryPayload(prefix), "foundryNewProjectName"), false);
+}
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_parallel_project_usage_tracks_checkbox_in_both_forms(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertIn('<label id="${prefix}FoundryProjectModeField" hidden>', page)
+        self.assertIn('<select id="${prefix}FoundryProjectMode" disabled>', page)
+        start = page.index("function refresh()")
+        visibility = page[start:page.index("  const targets =", start)] + "}"
+        script = """
+const assert = require("node:assert/strict");
+const fields = {parallelDeploy: {checked:false}, parallelWorkspaceFields: {}};
+const $ = id => fields[id];
+for (const prefix of ["deploy", "workflow"]) {
+  fields[prefix+"FoundryProjectModeField"] = {};
+  fields[prefix+"FoundryProjectMode"] = {value:"separate"};
+}
+""" + visibility + """
+for (const enabled of [false, true, false, true]) {
+  fields.parallelDeploy.checked = enabled;
+  refresh();
+  for (const prefix of ["deploy", "workflow"]) {
+    assert.equal(fields[prefix+"FoundryProjectModeField"].hidden, !enabled);
+    assert.equal(fields[prefix+"FoundryProjectMode"].disabled, !enabled);
+    assert.equal(fields[prefix+"FoundryProjectMode"].value, "separate");
+  }
 }
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)

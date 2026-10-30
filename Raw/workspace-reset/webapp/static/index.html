@@ -594,8 +594,8 @@ function renderFoundryFields(prefix, clientId) {
         <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or automatic discovery" /></label>
       <label>Model deployment name
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
-      <label>Parallel project usage
-        <select id="${prefix}FoundryProjectMode">
+      <label id="${prefix}FoundryProjectModeField" hidden>Parallel project usage
+        <select id="${prefix}FoundryProjectMode" disabled>
           <option value="">Reuse the entered project</option>
           <option value="separate">Separate projects (short workspace suffix)</option>
         </select></label>
@@ -1117,6 +1117,10 @@ function deployValid() {
 }
 function refresh() {
   $("parallelWorkspaceFields").hidden = !$("parallelDeploy").checked;
+  for (const prefix of ["deploy", "workflow"]) {
+    $(prefix + "FoundryProjectModeField").hidden = !$("parallelDeploy").checked;
+    $(prefix + "FoundryProjectMode").disabled = !$("parallelDeploy").checked;
+  }
   const targets = selectedWorkspaces();
   syncPipelineWorkspace();
   const targetSummary = targets.join(", ");
@@ -1274,6 +1278,8 @@ function foundryPayload(prefix) {
   const creating = $(prefix + "FoundryCreate").checked;
   const project = value("FoundryProjectName");
   const resourceId = /^\/subscriptions\//i.test(project);
+  const separate = $("parallelDeploy")?.checked === true
+    && $(prefix + "FoundryProjectMode")?.value === "separate";
   return {
     azureSubscriptionId: value("AzureSubscriptionId"),
     foundryAccountName: value("FoundryAccountName"),
@@ -1281,9 +1287,8 @@ function foundryPayload(prefix) {
     foundryProjectName: resourceId ? "" : project,
     foundryModel: value("FoundryModel"),
     createFoundry: creating,
-    separateFoundryProjects: $("parallelDeploy")?.checked === true
-      && $(prefix + "FoundryProjectMode")?.value === "separate",
-    ...(creating && !resourceId && project && $(prefix + "FoundryProjectMode")?.value !== "separate"
+    separateFoundryProjects: separate,
+    ...(creating && !resourceId && project && !separate
       ? {foundryNewProjectName: project} : {}),
   };
 }
