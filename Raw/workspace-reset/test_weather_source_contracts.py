@@ -267,6 +267,9 @@ class WeatherSourceContractTests(unittest.TestCase):
         libraries = (environment / "Libraries/PublicLibraries/environment.yml").read_text(encoding="utf-8")
         self.assertIn("runtime_version: '2.0'", compute)
         self.assertNotIn("instance_pool_id:", compute)
+        self.assertIn("driver_cores: 8", compute)
+        self.assertIn("executor_cores: 8", compute)
+        self.assertIn("max_executors: 2", compute)
         for package in ("numpy=2.4.1", "pandas=2.3.3", "xarray=2025.10.1",
                         "shapely=2.1.2", "pyproj=3.7.2", "adlfs==2025.8.0",
                         "zarr==2.18.7", "numcodecs==0.15.1"):
