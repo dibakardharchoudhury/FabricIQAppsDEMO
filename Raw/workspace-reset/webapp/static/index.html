@@ -329,7 +329,7 @@
             <input id="workspace2" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
           <label class="idfield"><span>Workspace 3 (optional)</span>
             <input id="workspace3" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
-          <p class="cardcap">Blank slots are ignored. All modules use the selected workspaces, with separate progress and files per workspace. Deletion requires confirming every target. Leave the Foundry project blank for automatic target-specific selection.</p>
+          <p class="cardcap">Blank slots are ignored. All modules use the selected workspaces, with separate progress and files per workspace. Deletion requires confirming every target. Foundry projects can be shared or separate.</p>
         </div>
         <p id="targetSettingsStatus" class="cardcap" role="status"></p>
       </div>
@@ -587,7 +587,13 @@ function renderFoundryFields(prefix, clientId) {
         <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or automatic discovery" /></label>
       <label>Model deployment name
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
+      <label>Project usage for parallel deployment
+        <select id="${prefix}FoundryProjectMode">
+          <option value="">Reuse the entered project</option>
+          <option value="separate">Separate projects (short workspace suffix)</option>
+        </select></label>
     </div>
+    <p class="phelp">A shared project uses workspace-specific agents and connections. Separate projects append a stable eight-character workspace suffix to the entered project base name. Creation still requires your approval below.</p>
     <p class="hint">A Foundry account is the parent Azure resource; projects live inside it. Blank keeps automatic account naming/discovery. Setup prepares the Fabric backend gateway, five Foundry specialist agents, connections and hosted orchestrator. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
       <span>Check this box if you want to create a new Foundry project with the multi-agent setup.</span></label>
@@ -1154,10 +1160,12 @@ function refresh() {
   $("workflowTestBtn").disabled = testing || !workflowTestValid();
   $("deleteBtn").disabled = !deleteValid();
   for (const clientId of spaClientIds) updateSpaChoice(clientId);
+  const foundryReady = foundryValid("deploy");
+  const workflowFoundryReady = foundryValid("workflow");
   $("deployBtn").disabled = !(deployValid() && spaClientValid("deployClientId"));
-  $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy") && spaClientValid("foundryClientId"));
+  $("foundryBtn").disabled = !(deployValid() && foundryReady && spaClientValid("foundryClientId"));
   $("energyBtn").disabled = !deployValid();
-  $("workflowBtn").disabled = workflowBusy || !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
+  $("workflowBtn").disabled = workflowBusy || !(workflowSyncValid() && workflowPipelineValid() && deployValid() && workflowFoundryReady && spaClientValid("workflowDeployClientId"));
   const resumable = !!workflowCheckpoint?.canResume && !$("parallelDeploy").checked;
   $("workflowResumeBtn").hidden = !resumable;
   $("workflowResumeBtn").disabled = workflowBusy || !deployValid() || !!workflowCheckpoint?.requiresSync;
@@ -1260,14 +1268,19 @@ function foundryPayload(prefix) {
     foundryProjectName: resourceId ? "" : project,
     foundryModel: value("FoundryModel"),
     createFoundry: creating,
+    separateFoundryProjects: $("parallelDeploy")?.checked === true
+      && $(prefix + "FoundryProjectMode")?.value === "separate",
+    ...(creating && !resourceId && project && $(prefix + "FoundryProjectMode")?.value !== "separate"
+      ? {foundryNewProjectName: project} : {}),
   };
 }
 function foundryValid(prefix) {
   const account = $(prefix + "FoundryAccountName").value.trim();
   const project = $(prefix + "FoundryProjectName").value.trim();
-  if ($("parallelDeploy")?.checked && selectedWorkspaces().length > 1 && project) {
+  const separate = $("parallelDeploy")?.checked && $(prefix + "FoundryProjectMode")?.value === "separate";
+  if (separate && project && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(project)) {
     $(prefix + "FoundryCreationStatus").textContent =
-      "Leave the project blank for multiple workspaces. Each workspace needs its own project; the account and model can be shared.";
+      "For separate projects, enter a project base name, not a resource ID. Each workspace gets a stable short suffix.";
     return false;
   }
   if (account && !/^[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]$/.test(account)) {
@@ -1276,11 +1289,15 @@ function foundryValid(prefix) {
     return false;
   }
   if (!$(prefix + "FoundryCreate").checked) {
-    $(prefix + "FoundryCreationStatus").textContent = "";
+    $(prefix + "FoundryCreationStatus").textContent = separate
+      ? "Separate workspace-suffixed projects will be reused. Missing projects require creation approval."
+      : project && $("parallelDeploy")?.checked
+        ? "The selected project is shared. Each workspace uses its own agents and connections; model quota is shared."
+        : "";
     return true;
   }
   const model = $(prefix + "FoundryModel").value.trim();
-  const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
+  const valid = (separate || !project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
     ? "Existing resources are reused. A missing project uses these names and automatic model defaults; Azure checks quota."
@@ -1458,7 +1475,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName", "FoundryModel",
+  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName", "FoundryModel", "FoundryProjectMode",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
 function restoreTargetSettings() {

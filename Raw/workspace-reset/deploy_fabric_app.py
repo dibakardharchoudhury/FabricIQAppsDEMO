@@ -1628,6 +1628,7 @@ def prepare_rayfin_env(
         for key in (
             "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
             "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+            "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX",
         )
         if same_workspace and _public_config_value(values, key)
     }

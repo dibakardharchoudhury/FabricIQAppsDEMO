@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import errno
-import json
 import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import UUID
 
 
 def lock_directory() -> Path:
@@ -57,18 +57,6 @@ def resource_lock(tenant: str, resource: str, *, timeout: float = 3 * 3600):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def claim_foundry_project(tenant: str, workspace: str, project: str) -> None:
-    """A parallel worker must never retarget another workspace's project."""
-    resource = "foundry:" + project
-    with resource_lock(tenant, resource):
-        key = hashlib.sha256(f"{tenant.casefold()}:{resource.casefold()}".encode()).hexdigest()
-        path = lock_directory() / f"{key}.json"
-        if path.exists():
-            saved = json.loads(path.read_text(encoding="utf-8"))
-            if saved.get("workspace", "").casefold() != workspace.casefold():
-                raise ValueError(
-                    "This Foundry project is already bound to another parallel deployment target. "
-                    "Use a separate workspace-specific project; no agents or connections were retargeted."
-                )
-        else:
-            path.write_text(json.dumps({"workspace": workspace, "project": project}), encoding="utf-8")
+def foundry_resource_suffix(workspace: str) -> str:
+    """Keep workspace-bound resources distinct even inside one shared project."""
+    return "-" + UUID(workspace).hex

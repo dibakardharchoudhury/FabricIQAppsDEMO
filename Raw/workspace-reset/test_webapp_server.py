@@ -2506,9 +2506,10 @@ const fields = {};
 const $ = id => fields[id];
 const suffixes = [
   "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName",
-  "FoundryModel", "FoundryCreate",
+  "FoundryModel", "FoundryCreate", "FoundryProjectMode",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
+fields.parallelDeploy = {checked:true};
 """ + functions + """
 for (const prefix of ["deploy", "workflow"]) {
   for (const suffix of suffixes) {
@@ -2546,7 +2547,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(creating.foundryModel, "existing-model");
   assert.equal(creating.foundryProjectResourceId, "");
   assert.equal(creating.foundryProjectName, "existing-project-name");
-  assert.equal(Object.hasOwn(creating, "foundryNewProjectName"), false);
+  assert.equal(creating.foundryNewProjectName, "existing-project-name");
   for (const key of ["foundryModelVersion", "foundryModelSku", "foundryModelCapacity",
                      "foundryLocation", "foundryModelName"]) assert.equal(Object.hasOwn(creating, key), false);
   assert.equal(Object.hasOwn(creating, "productionWrites"), false);
@@ -2558,6 +2559,15 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(reused.foundryProjectResourceId, "");
   assert.equal(reused.foundryProjectName, "existing-project-name");
   assert.equal(Object.hasOwn(reused, "foundryNewProjectName"), false);
+  assert.equal(reused.separateFoundryProjects, false);
+  $(prefix+"FoundryProjectMode").value = "separate";
+  assert.equal(foundryValid(prefix), true);
+  assert.equal(foundryPayload(prefix).separateFoundryProjects, true);
+  $(prefix+"FoundryProjectName").value = projectId;
+  assert.equal(foundryValid(prefix), false);
+  assert.match($(prefix+"FoundryCreationStatus").textContent, /project base name/);
+  $(prefix+"FoundryProjectMode").value = "";
+  assert.equal(foundryValid(prefix), true);
 }
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)

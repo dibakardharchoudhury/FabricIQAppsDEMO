@@ -112,10 +112,19 @@ dry run remains a dry run even if the form's checkbox has since changed.
 
 The form settings apply to every selected workspace. Tenant setup defaults remain
 available regardless of workspace name; explicit form values take precedence.
-For multiple targets, leave the shared Foundry project field blank: each workspace
-uses its own saved binding or convention-named project. A sole unrelated project
-is not a safe fallback. Creating missing Foundry resources still requires the
-existing explicit creation checkbox; parallel mode does not approve billable creation.
+To share an existing Foundry account and project, enter that project name or full
+resource ID and keep **Reuse the entered project** selected. Each workspace gets
+its own GUID-suffixed connections, native toolbox, five specialists and hosted
+orchestrator inside that project. Existing unsuffixed resources are left untouched,
+and each app saves its own hosted invocation URL. Shared model quota remains shared.
+App-only publication continues to verify existing legacy bindings without migrating them.
+
+Alternatively, choose **Separate projects (short workspace suffix)** and enter a
+project base name. A stable eight-character workspace suffix is appended, with
+names bounded to 64 characters. Missing projects are created only when the existing
+creation checkbox is explicitly approved. Blank project fields retain target-specific
+saved binding/convention discovery; a sole unrelated project is not a safe fallback.
+Parallel mode never approves billable creation.
 
 Each worker uses a separate checkout, Azure CLI cache, hosted-agent state and
 Rayfin deployment files under the current user's private
@@ -957,7 +966,10 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
   Existing state is not deleted.
    In the independent **Set up Foundry agents** module (or the combined CLI flow),
    the deployer converges the **Foundry** side: the
-   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
+   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent.
+   New setup scopes these resource names and the native toolbox with the workspace GUID (without hyphens),
+   allowing a shared project without overwriting another workspace's bindings. App-only deployment retains
+   compatibility with existing unsuffixed configurations. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
    Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,

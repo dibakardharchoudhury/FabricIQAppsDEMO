@@ -29,8 +29,13 @@ form settings, but show separate workspace progress and logs. Delete and connect
 tests also use all populated targets. Deletion defaults to dry run; actual deletion
 requires confirming every selected workspace, one per line, in the displayed order.
 The backend rejects missing/partial confirmation before starting any worker.
-Leave the shared Foundry project field blank for target-specific
-selection; creating missing resources still requires your explicit approval.
+To share a Foundry account and project, enter the project name/resource ID and
+select **Reuse the entered project**. Workspace-specific agents, connections and
+invocation URLs prevent source retargeting. Alternatively, select **Separate
+projects (short workspace suffix)**: the entered base name receives a stable
+eight-character suffix per workspace. Blank project fields keep target-specific
+discovery. Creating missing resources still requires your explicit approval;
+sharing a model also shares its quota.
 Commit source changes first: workers use isolated committed checkouts and retain
 private per-workspace state, without overwriting this checkout's Rayfin files.
 Shared Entra writes are serialized to preserve all SPA redirects; other work can
@@ -462,6 +467,9 @@ price area also matched the independently queried imported source row.
 
 Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
 specialists and `hydro-orchestrator` against this checkout and the selected Fabric target.
+New setup appends the workspace GUID (without hyphens) to agents, connections and
+the toolbox so multiple workspaces can safely reuse one project. App-only deployment
+continues to verify existing unsuffixed configurations without renaming them.
 An existing project/model may still contain missing or older agents. Setup reuses matching
 connections and specialists, creates versions only for changed/missing agents, builds only
 missing source-fingerprinted images, and republishes the hosted coordinator only when its

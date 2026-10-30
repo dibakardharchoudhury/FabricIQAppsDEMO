@@ -68,13 +68,41 @@ class ParallelValidationTests(unittest.TestCase):
             })
             self.assertEqual(PARALLEL.validate_request(payload)[1], ["One", "Two"])
 
-    def test_multi_target_foundry_cannot_share_one_explicit_project(self):
+    def test_multi_target_foundry_accepts_a_shared_project_without_changing_it(self):
         for action in ("/api/setup-foundry", "/api/full-workflow"):
             for key in ("foundryProjectName", "foundryProjectResourceId", "foundryEndpoint", "foundryNewProjectName"):
-                with self.subTest(action=action, key=key), self.assertRaisesRegex(ValueError, "own project"):
-                    PARALLEL.validate_request(self.payload(
+                with self.subTest(action=action, key=key):
+                    _, _, data = PARALLEL.validate_request(self.payload(
                         action=action, workspaces=["a", "b"], data={"tenant": TENANT, key: "shared-project"},
                     ))
+                    for workspace in WORKSPACES:
+                        self.assertEqual(PARALLEL.target_settings(data, workspace)[key], "shared-project")
+
+    def test_separate_project_names_are_stable_short_bounded_and_do_not_approve_creation(self):
+        names = []
+        for workspace in WORKSPACES:
+            data = {"tenant": TENANT, "separateFoundryProjects": True,
+                    "foundryProjectName": "shared-base", "createFoundry": False}
+            result = PARALLEL.target_settings(data, workspace)
+            name = result["foundryProjectName"]
+            self.assertRegex(name, r"^shared-base-[0-9a-f]{8}$")
+            self.assertEqual(result, PARALLEL.target_settings(data, workspace))
+            self.assertFalse(result["createFoundry"])
+            self.assertEqual(result["foundryNewProjectName"], "")
+            self.assertNotIn("separateFoundryProjects", result)
+            names.append(name)
+            creating = PARALLEL.target_settings({**data, "createFoundry": True}, workspace)
+            self.assertEqual(creating["foundryNewProjectName"], name)
+        self.assertEqual(len(set(names)), 3)
+        result = PARALLEL.target_settings({
+            "separateFoundryProjects": True, "foundryProjectName": "a" * 128,
+        }, WORKSPACES[0])
+        self.assertEqual(len(result["foundryProjectName"]), 64)
+        for settings in ({"separateFoundryProjects": "true"},
+                         {"separateFoundryProjects": True, "foundryProjectResourceId": "/project"},
+                         {"separateFoundryProjects": True, "foundryProjectName": "has spaces"}):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                PARALLEL.validate_request(self.payload(data={"tenant": TENANT, **settings}))
 
     def test_name_and_id_aliases_stop_the_entire_batch_before_any_worker(self):
         fabric = Mock()
@@ -311,22 +339,6 @@ class ParallelIsolationTests(unittest.TestCase):
             FOUNDRY.resolve_project(deploy, TENANT, WORKSPACES[0])
         deploy.run_stream.assert_not_called()
 
-    def test_parallel_foundry_will_not_retarget_live_hydro_connections(self):
-        deploy = Mock(DeployError=RuntimeError)
-        deploy.run_capture.return_value = "token"
-        deploy.current_rayfin_target.return_value = ({}, None)
-        selection = FOUNDRY.FoundrySelection("sub", "project", "endpoint", "model", None)
-        connection = {
-            "name": "hydro-fabric-iq",
-            "properties": {"target": f"https://api.fabric.microsoft.com/v1/mcp/workspaces/{WORKSPACES[1]}/dataagents/agent/agent"},
-        }
-        with patch.dict(os.environ, {"HYDRO_PARALLEL_DEPLOY": "1"}), \
-                patch.object(FOUNDRY, "read_project_connections", return_value=[connection]), \
-                patch.object(FOUNDRY, "request_with_read_retry") as request, \
-                self.assertRaisesRegex(RuntimeError, "will not retarget"):
-            FOUNDRY.provision(deploy, TENANT, WORKSPACES[0], selection=selection)
-        request.assert_not_called()
-
     def test_seed_only_matching_target_and_do_not_replace_source_yaml(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -368,12 +380,14 @@ class ParallelIsolationTests(unittest.TestCase):
             self.assertEqual(len({environment["AZURE_CONFIG_DIR"] for environment in environments}), 3)
             self.assertEqual(len({environment["HYDRO_STATE_DIR"] for environment in environments}), 3)
 
-    def test_shared_project_cannot_be_claimed_by_two_workspaces(self):
-        with TemporaryDirectory() as temporary, patch.object(LOCKS, "lock_directory", return_value=Path(temporary)):
-            LOCKS.claim_foundry_project(TENANT, WORKSPACES[0], "/subscriptions/sub/projects/project")
-            LOCKS.claim_foundry_project(TENANT, WORKSPACES[0], "/subscriptions/sub/projects/project")
-            with self.assertRaisesRegex(ValueError, "another parallel deployment"):
-                LOCKS.claim_foundry_project(TENANT, WORKSPACES[1], "/subscriptions/sub/projects/project")
+    def test_shared_project_resources_have_disjoint_stable_workspace_names(self):
+        suffixes = [LOCKS.foundry_resource_suffix(workspace) for workspace in WORKSPACES]
+        self.assertEqual(len(set(suffixes)), 3)
+        for workspace, suffix in zip(WORKSPACES, suffixes):
+            self.assertEqual(suffix, LOCKS.foundry_resource_suffix(workspace.upper()))
+            self.assertLessEqual(len("hydro-work-order-agent" + suffix), 63)
+        with self.assertRaises(ValueError):
+            LOCKS.foundry_resource_suffix("not-a-workspace-guid")
 
     def test_resource_guard_serializes_processes_not_the_entire_batch(self):
         with TemporaryDirectory() as temporary:

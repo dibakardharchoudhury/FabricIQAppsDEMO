@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -67,17 +69,30 @@ def validate_request(value: object) -> tuple[str, list[str], dict]:
                     or [item.strip().casefold() for item in confirmations]
                     != [item.casefold() for item in workspaces]):
                 raise ValueError("Confirm every selected workspace, in order, before deleting any items.")
-    if len(workspaces) > 1 and action in {"/api/setup-foundry", "/api/full-workflow"}:
-        if any(data.get(key) for key in (
-            "foundryProjectName", "foundryProjectResourceId", "foundryEndpoint", "foundryNewProjectName",
-        )):
-            raise ValueError(
-                "Leave the shared Foundry project field blank for multiple workspaces. "
-                "Each target requires its own project; the account and model can be shared."
-            )
+    if "separateFoundryProjects" in data and type(data["separateFoundryProjects"]) is not bool:
+        raise ValueError("Separate Foundry projects must be an explicit boolean.")
+    if data.get("separateFoundryProjects"):
+        if data.get("foundryProjectResourceId") or data.get("foundryEndpoint"):
+            raise ValueError("For separate projects, enter a project base name, not a resource ID or endpoint.")
+        base = data.get("foundryProjectName") or data.get("foundryNewProjectName") or "ai-project"
+        if not isinstance(base, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", base.strip()):
+            raise ValueError("Enter a valid Foundry project base name for separate projects.")
     if len(workspaces) > 1 and data.get("ontologyGraphBinding"):
         raise ValueError("A native graph binding belongs to one workspace and cannot be shared across parallel targets.")
     return action, workspaces, dict(data)
+
+
+def target_settings(data: dict, workspace: str) -> dict:
+    settings = dict(data)
+    if settings.get("separateFoundryProjects"):
+        base = (settings.get("foundryProjectName") or settings.get("foundryNewProjectName") or "ai-project").strip()
+        suffix = hashlib.sha256((workspace.casefold() + "\0" + base.casefold()).encode()).hexdigest()[:8]
+        name = base[:55].rstrip("._-") + "-" + suffix
+        settings["foundryProjectName"] = name
+        settings["foundryNewProjectName"] = name if settings.get("createFoundry") is True else ""
+    # The worker receives a concrete project selection, not the parent batch's naming policy.
+    settings.pop("separateFoundryProjects", None)
+    return settings
 
 
 def emit(workspace: str, name: str, **state) -> None:
@@ -233,7 +248,7 @@ def _run_target(deploy, directory: Path, commit: str, tenant: str, workspace: st
         previous = json.loads(latest.read_text(encoding="utf-8")) if latest.exists() else {}
         payload = {
             "workspace": workspace, "name": name, "directory": str(directory), "action": action,
-            "data": {**data, "tenant": tenant, "workspace": workspace},
+            "data": {**target_settings(data, workspace), "tenant": tenant, "workspace": workspace},
         }
         if resume:
             if previous.get("action") != action or not previous.get("jobId"):
@@ -290,6 +305,11 @@ def run_batch(payload: dict) -> int:
                 for workspace, name in (fabric.resolve_workspace_id(target) for target in targets)]
     if len({workspace.casefold() for workspace, _ in resolved}) != len(resolved):
         raise ValueError("Two entries identify the same Fabric workspace. No deployment was started.")
+    if data.get("separateFoundryProjects"):
+        projects = [target_settings(data, workspace)["foundryProjectName"].casefold()
+                    for workspace, _ in resolved]
+        if len(set(projects)) != len(projects):
+            raise ValueError("Separate project names collided. Change the project base name; no deployment was started.")
     root = Path.home() / ".fabric-demo" / "parallel-deployments" / tenant
     deploy.secure_private_directory(root)
     dirty = checked(["git", "-C", str(REPO_ROOT), "diff", "--name-only", "HEAD"]).splitlines()
