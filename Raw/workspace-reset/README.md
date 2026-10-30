@@ -89,9 +89,10 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
   workflows and streams live progress.
-- **Full Deploy** — the local web UI runs GitHub sync, core setup (`01_Pipe_Setup`
-  followed by energy preparation), independent Foundry setup, then final app publication in one
-  monitored serial job. Each component has its own progress and failure boundary.
+- **Full Deploy** — the local web UI runs GitHub sync, then `01_Pipe_Setup`, then one
+  canonical deployment process that overlaps Energy finalization with Foundry setup.
+  App publication waits for both. Each completed component is checkpointed; the
+  combined component reruns idempotently if either branch or publication fails.
 
 ## Easiest start — just launch it (no commands to type)
 
@@ -237,6 +238,10 @@ publication 702.407s. Git sync now avoids an unchanged Weather Environment rebui
 only after comparing its authoritative published/staged library inventories,
 compute settings and external-library exports. Fresh/changed Environments still
 publish; comparison read failures stop the sync. The current engine also overlaps
+Energy finalization with Foundry in one post-Core process, eliminating three serial
+orchestrator launches and their repeated target/SPA/configuration preflight. It reuses
+the freshly verified backend for static publication, but still reapplies backend
+runtime/CORS/database settings and runs all endpoint/authentication checks. It also overlaps
 immutable image preparation with fresh backend provisioning, batches connector application with individual receipt
 validation, and avoids duplicate definition/token reads inside read-only Foundry
 verification. Energy setup consolidates serving queries and redundant notebook
@@ -688,10 +693,12 @@ core and Foundry settings with the individual modules.
 
 1. **Sync from GitHub** using its own repository, branch, directory, reusable
    connection/PAT settings, and connection test.
-2. **Core setup** runs `01_Pipe_Setup`, then energy preparation once.
-3. **Foundry agent setup** remains separate from core setup and website publication.
-4. **Deploy the Fabric app** using `deploy_fabric_app.py` and its own optional
-   SPA client ID.
+2. **Core setup** runs `01_Pipe_Setup`, including the existing parallel Core/Weather
+   and Geo_001 branches.
+3. **Energy + Foundry + app deployment** uses one `deploy_fabric_app.py` process.
+   Energy publishes/verifies the completed Core import while Foundry sets up independently;
+   website publication waits for both. Core/Geo_001 are not rerun. Target/SPA and
+   dependency preflight run once; only the parent writes Rayfin configuration.
 
 The individual actions remain available for running or troubleshooting a single
 component. **Refresh energy sources** updates only energy data without rerunning
@@ -734,8 +741,8 @@ Sync, Pipeline, and Deploy subphases, and **Cancel running jobs** terminates the
 currently active child process.
 
 After a failed or cancelled **Full Deploy**, use **Retry from … and continue**.
-For example, an **Energy setup** failure retains successful GitHub sync and
-`01_Pipe_Setup`, retries Energy setup, then runs Foundry setup and app publication.
+For example, an Energy or Foundry failure retains successful GitHub sync and
+`01_Pipe_Setup`, then retries the combined Energy/Foundry/app component.
 Only whole, successfully completed components are retained; a partially completed
 failed/cancelled component runs again through its existing idempotent command.
 Completed component/subphase timings remain visible; the overall timer measures
@@ -754,7 +761,10 @@ prefix, status, timings and input/source hashes are saved, never PATs, child
 environments or live logs. Failed/cancelled runs can resume after restarting the
 local server. A checkpoint that was still running when the server stopped is
 reported as interrupted, not safe to retry automatically: check Fabric's Monitoring
-hub before starting another run. Older runs have no durable checkpoint. For an older
+hub before starting another run. The older five-stage checkpoint layout explicitly
+refuses automatic resume and retains its recorded completion information; its
+boundaries cannot safely certify completion of the new combined component.
+Older runs have no durable checkpoint. For an older
 Energy failure, use **Refresh energy sources**, then **Set up Foundry agents** and
 **Deploy app**, rather than repeating successful Core setup. Energy setup now compares
 the Git-managed Geo notebooks with this checkout and updates changed code only,

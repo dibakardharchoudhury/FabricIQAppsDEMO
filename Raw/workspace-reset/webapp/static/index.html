@@ -359,7 +359,7 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>Full Deploy</h2>
       </div>
-      <p class="hint">For a new workspace. Runs each step in order; stops on failure.</p>
+      <p class="hint">For a new workspace. Syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure.</p>
       <aside class="notice">
         <strong>Updating an existing app?</strong> Use <strong>Deploy app</strong>, not Full Deploy.
         <a href="/deploy-guide" target="_blank" rel="noopener">Prerequisites &amp; guide</a>
@@ -390,11 +390,11 @@
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Foundry agents</strong></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Energy + Foundry concurrently</strong><span>Finalizes map read models and provisions Foundry together; does not repeat Core or provider ingestion.</span></div></div>
           <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
-          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>Publishes the app and checks authentication and connectors.</span></div></div>
+          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>After both branches succeed, publishes the app and checks authentication and connectors.</span></div></div>
         </section>
       </div>
       <aside class="notice">
@@ -738,6 +738,7 @@ const WORKFLOW_PHASE_GROUPS = [
       "Energy \u00b7 Preparing energy sources": "Publishing map read models",
     } },
   { key: "foundry", title: "Foundry Multi-agent Setup", prefixes: ["Foundry \u00b7"], components: ["Foundry multi-agent setup"] },
+  { key: "combined", title: "Energy + Foundry + App Deployment", prefixes: ["Combined \u00b7"], components: ["Energy + Foundry + app deployment"] },
   { key: "deploy", title: "Fabric App Deployment", prefixes: ["Deploy \u00b7"], components: ["Fabric app deploy"] },
 ];
 

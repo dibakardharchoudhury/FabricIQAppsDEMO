@@ -2428,6 +2428,32 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
     foundry.provision(sys.modules[__name__], tenant, workspace_id, selection=selection)
 
 
+def prepare_energy_and_foundry(
+    tenant: str, workspace_id: str, *, publish_energy: Callable[[], None] | None = None,
+) -> None:
+    from feature_workspace import FeatureWorkspaceError
+
+    publish_energy = publish_energy or energy_workspace(tenant, workspace_id).publish_energy
+
+    def finish_energy() -> None:
+        with timed_operation("Full Deploy energy finalization (parallel with Foundry)"):
+            try:
+                publish_energy()
+            except FeatureWorkspaceError as error:
+                raise DeployError(f"Energy finalization failed: {error}") from error
+
+    print(
+        "Full Deploy: Energy finalization and Foundry setup run concurrently. "
+        "App publication waits for both; only this process updates app configuration.",
+        flush=True,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        energy_job = pool.submit(finish_energy)
+        with timed_operation("Full Deploy Foundry setup (parallel with Energy)"):
+            provision_foundry_agents(tenant, workspace_id)
+        energy_job.result()
+
+
 def verify_foundry_agents(tenant: str, workspace_id: str) -> None:
     from provision_foundry_agents import verify_existing
 
@@ -2473,6 +2499,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
 
     stage = getattr(args, "stage", "all")
     energy_setting = getattr(args, "energy_map", "keep")
+    core_prepared = getattr(args, "energy_read_models_only", False)
+    if core_prepared and (stage not in ("energy", "all")
+                          or stage == "all" and energy_setting != "enabled"):
+        raise DeployError(
+            "--energy-read-models-only requires --stage energy, or --stage all --energy-map enabled "
+            "after successful Core setup."
+        )
     if stage == "energy":
         from feature_workspace import FeatureWorkspaceError
 
@@ -2540,14 +2573,14 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         _unique_redirect_uris(original_entra_redirects, ["http://localhost:5173"])
     )
 
-    if feature_workspace and stage == "all":
+    if feature_workspace and stage == "all" and not core_prepared:
         try:
             feature_workspace.prepare()
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
 
     timings.stage(3, "Preparing target configuration and checking deployment prerequisites")
-    if stage == "all" and energy_setting == "enabled" and not feature_workspace:
+    if stage == "all" and energy_setting == "enabled" and not feature_workspace and not core_prepared:
         from feature_workspace import FeatureWorkspaceError
 
         try:
@@ -2562,7 +2595,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         client_id,
         enable_energy_map=enable_energy_map,
     )
-    if feature_workspace:
+    if feature_workspace and not core_prepared:
         feature_workspace.configure_app(RAYFIN_DIR / ".env")
     values, _ = current_rayfin_target()
     configure_geo_connector(
@@ -2575,7 +2608,16 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             raise DeployError("Run the local Foundry setup module first to prepare this target's AppBackend and agents.")
         verify_foundry_agents(tenant_id, workspace_id)
     else:
-        provision_foundry_agents(tenant_id, workspace_id)
+        if stage == "all" and core_prepared:
+            prepare_energy_and_foundry(
+                tenant_id, workspace_id,
+                publish_energy=feature_workspace.publish_energy if feature_workspace else None,
+            )
+            reuse_deployment = appbackend_identity_present()
+            if not reuse_deployment:
+                raise DeployError("Combined setup did not retain the verified AppBackend identity; no app was published.")
+        else:
+            provision_foundry_agents(tenant_id, workspace_id)
         if stage == "foundry":
             print(
                 "FOUNDRY_SETUP_SUCCESS (backend identity and multi-agent configuration readback verified; "
@@ -2719,7 +2761,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--energy-map", choices=("keep", "enabled", "disabled"), default="keep",
                         help="Keep this target's visibility setting, or explicitly enable/disable energy navigation.")
     parser.add_argument("--energy-read-models-only", action="store_true",
-                        help="With --stage energy, publish/verify Core's completed parallel import without rerunning it.")
+                        help="After Core setup, finalize energy without reingestion; with --stage all, "
+                             "overlap Energy/Foundry and publish the app only after both succeed.")
     parser.add_argument(
         "--push-config",
         action="store_true",

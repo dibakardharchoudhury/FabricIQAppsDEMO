@@ -69,12 +69,12 @@ class FullWorkflowResumeTests(unittest.TestCase):
             SERVER._workflow_worker(job, self.steps())
         return job
 
-    def test_energy_retry_retains_sync_core_then_runs_energy_foundry_and_app(self):
+    def test_combined_retry_retains_sync_core_then_runs_combined_engine(self):
         failed = self.fail_energy()
         original = self.client.get(f"/api/jobs/{failed.id}").get_json()
         self.assertEqual(original["completedSteps"], ["GitHub sync", "Setup pipeline"])
         self.assertTrue(original["canResume"])
-        self.assertEqual(original["resumeComponent"], "Energy setup")
+        self.assertEqual(original["resumeComponent"], SERVER.COMBINED_STEP)
         # A completed Git sync does not require the PAT again.
         resumed = self.start({**self.target, "pat": "", "resumeJobId": failed.id})
         self.assertEqual(resumed.completed_steps, failed.completed_steps)
@@ -83,7 +83,7 @@ class FullWorkflowResumeTests(unittest.TestCase):
         with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
             SERVER._workflow_worker(resumed, self.steps())
         self.assertEqual([call.args[1] for call in run.call_args_list],
-                         ["Energy setup", "Foundry multi-agent setup", "Fabric app deploy"])
+                         [SERVER.COMBINED_STEP])
         self.assertEqual(resumed.status, "succeeded")
         self.assertEqual(resumed.completed_steps, resumed.workflow_steps)
         self.assertFalse(self.client.get(f"/api/jobs/{resumed.id}").get_json()["canResume"])
@@ -117,17 +117,17 @@ class FullWorkflowResumeTests(unittest.TestCase):
         self.assertIsNone(failed.resumed_by)
         busy.status = "succeeded"
         resumed = self.start({**self.target, "resumeJobId": failed.id})
-        with patch.object(SERVER, "_run_workflow_step", side_effect=[0, RuntimeError("monitor lost")]):
+        with patch.object(SERVER, "_run_workflow_step", side_effect=RuntimeError("monitor lost")):
             SERVER._workflow_worker(resumed, self.steps())
-        self.assertEqual(resumed.completed_steps, ["GitHub sync", "Setup pipeline", "Energy setup"])
-        self.assertEqual(resumed.failed_component, "Foundry multi-agent setup")
+        self.assertEqual(resumed.completed_steps, ["GitHub sync", "Setup pipeline"])
+        self.assertEqual(resumed.failed_component, SERVER.COMBINED_STEP)
         repeated = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": failed.id})
         self.assertEqual(repeated.status_code, 409)
         retry = self.start({**self.target, "resumeJobId": resumed.id})
         with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
             SERVER._workflow_worker(retry, self.steps())
         self.assertEqual([call.args[1] for call in run.call_args_list],
-                         ["Foundry multi-agent setup", "Fabric app deploy"])
+                         [SERVER.COMBINED_STEP])
 
     def test_cancellation_retries_current_step_even_if_child_returns_zero(self):
         job = self.start()
@@ -143,7 +143,105 @@ class FullWorkflowResumeTests(unittest.TestCase):
         self.assertEqual(retry.completed_steps, [])
         with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
             SERVER._workflow_worker(retry, self.steps())
-        self.assertEqual(run.call_count, 5)
+        self.assertEqual(run.call_count, 3)
+
+    def test_combined_cancellation_keeps_only_verified_git_and_core(self):
+        job = self.start()
+        def cancel_combined(current, name, *args):
+            if name == SERVER.COMBINED_STEP:
+                current.cancel_requested = True
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=cancel_combined) as run:
+            SERVER._workflow_worker(job, self.steps())
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(job.status, "cancelled")
+        self.assertEqual(job.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        retry = self.start({**self.target, "resumeJobId": job.id})
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(retry, self.steps())
+        self.assertEqual([call.args[1] for call in run.call_args_list], [SERVER.COMBINED_STEP])
+
+    def test_combined_failure_does_not_checkpoint_partial_branch_or_publication_success(self):
+        failed = self.fail_energy()
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.returncode, 23)
+        self.assertEqual(failed.failed_component, SERVER.COMBINED_STEP)
+        self.assertEqual(failed.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        self.assertEqual(failed.component_timings[SERVER.COMBINED_STEP]["status"], "failed")
+        self.assertTrue(all(
+            timing["status"] != "succeeded"
+            for timing in failed.phase_timings
+            if timing["name"].startswith("Combined · App publication")
+        ))
+
+    def test_legacy_checkpoint_is_rejected_without_overwriting_completed_stage_information(self):
+        job = self.fail_energy()
+        settings = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+        record = settings["workflowCheckpoints"][job.id]
+        record.update(version=1, steps=[
+            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+        ], completed=["GitHub sync", "Setup pipeline", "Energy setup"])
+        SERVER.PIPELINE_DEFAULTS_FILE.write_text(json.dumps(settings), encoding="utf-8")
+        before = SERVER.PIPELINE_DEFAULTS_FILE.read_bytes()
+        SERVER.JOBS.clear()
+        with patch.object(SERVER, "_start_workflow") as start:
+            response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": job.id})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Legacy five-step", response.get_json()["error"])
+        self.assertIn("Energy setup", response.get_json()["error"])
+        self.assertIn("No steps were started", response.get_json()["error"])
+        self.assertEqual(SERVER.PIPELINE_DEFAULTS_FILE.read_bytes(), before)
+        start.assert_not_called()
+
+    def test_in_memory_legacy_layout_is_rejected_before_credentials_or_execution(self):
+        job = self.fail_energy()
+        job.workflow_steps = ["GitHub sync", "Setup pipeline", "Energy setup",
+                              "Foundry multi-agent setup", "Fabric app deploy"]
+        with patch.object(SERVER, "_start_workflow") as start:
+            response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": job.id})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("incompatible", response.get_json()["error"])
+        self.assertIsNone(job.resumed_by)
+        start.assert_not_called()
+
+    def test_combined_source_change_retains_core_and_pending_combined_step(self):
+        failed = self.fail_energy()
+        original = dict(failed.source_keys)
+        self.assertIn(SERVER.COMBINED_STEP, original)
+        self.assertIn("Energy setup", original)
+        self.assertIn("Foundry multi-agent setup", original)
+        with patch.object(SERVER, "_workflow_source_keys",
+                          return_value={**original, SERVER.COMBINED_STEP: "changed-engine"}):
+            retry = self.start({**self.target, "resumeJobId": failed.id})
+        self.assertEqual(retry.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        self.assertEqual(retry.source_keys[SERVER.COMBINED_STEP], "changed-engine")
+
+    def test_combined_timeout_terminates_owned_process_and_fails_checkpoint(self):
+        job = self.start()
+        steps = self.steps()
+        run_step = SERVER._run_workflow_step
+        process = Mock(returncode=-9)
+        process.poll.return_value = None
+        process.stdout = io.StringIO("[3/8] concurrent preparation\n")
+        timer = Mock()
+        def timer_factory(timeout, callback):
+            self.assertEqual(timeout, SERVER.COMBINED_TIMEOUT_S)
+            timer.start.side_effect = callback
+            return timer
+        def run(current, name, *args):
+            return run_step(current, name, *args) if name == SERVER.COMBINED_STEP else 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=run), \
+                patch.object(SERVER.subprocess, "Popen", return_value=process), \
+                patch.object(SERVER.threading, "Timer", side_effect=timer_factory), \
+                patch.object(SERVER, "_terminate_owned_process") as terminate:
+            SERVER._workflow_worker(job, steps)
+        terminate.assert_called_once_with(process)
+        timer.cancel.assert_called_once()
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        self.assertEqual(job.failed_component, SERVER.COMBINED_STEP)
+        self.assertIsNone(job.process)
+        self.assertIn(f"timed out after {SERVER.COMBINED_TIMEOUT_S}", "\n".join(job.lines))
 
     def test_failed_checkpoint_survives_restart_without_persisting_credentials_or_output(self):
         failed = self.fail_energy()
@@ -159,7 +257,7 @@ class FullWorkflowResumeTests(unittest.TestCase):
         with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
             SERVER._workflow_worker(resumed, self.steps())
         self.assertEqual([call.args[1] for call in run.call_args_list],
-                         ["Energy setup", "Foundry multi-agent setup", "Fabric app deploy"])
+                         [SERVER.COMBINED_STEP])
         SERVER.JOBS.clear()
         old = self.client.get(f"/api/jobs/{failed.id}").get_json()
         self.assertFalse(old["canResume"])
@@ -179,7 +277,7 @@ class FullWorkflowResumeTests(unittest.TestCase):
         with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
             SERVER._workflow_worker(resumed, self.steps())
         self.assertEqual([call.args[1] for call in run.call_args_list], [
-            "Changed notebook sync", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+            "Changed notebook sync", SERVER.COMBINED_STEP,
         ])
         self.assertIn("--update-notebook", run.call_args_list[0].args[2])
         self.assertEqual(resumed.pending_notebook_sync, [])
@@ -197,7 +295,7 @@ class FullWorkflowResumeTests(unittest.TestCase):
         self.assertEqual(retry.completed_steps, ["GitHub sync"])
         with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
             SERVER._workflow_worker(retry, self.steps())
-        self.assertEqual(run.call_count, 5)
+        self.assertEqual(run.call_count, 3)
         self.assertEqual(run.call_args_list[0].args[1], "Changed notebook sync")
         self.assertEqual(run.call_args_list[1].args[1], "Setup pipeline")
 
@@ -249,6 +347,11 @@ class FullWorkflowResumeTests(unittest.TestCase):
         geo.parent.mkdir(parents=True)
         notebook.write_text("core", encoding="utf-8")
         geo.write_text("energy", encoding="utf-8")
+        app_source = root / "HydroOperationsApp" / "src" / "app.ts"
+        app_source.parent.mkdir(parents=True)
+        app_source.write_text("original app", encoding="utf-8")
+        foundry = root / "provision_foundry_agents.py"
+        foundry.write_text("original foundry", encoding="utf-8")
         with patch.object(SERVER, "REPO_ROOT", root), \
                 patch.object(SERVER, "SCRIPT_DIR", root), \
                 patch.object(SERVER, "PIPELINE_SCRIPT", root / "run_pipeline.py"), \
@@ -260,6 +363,15 @@ class FullWorkflowResumeTests(unittest.TestCase):
             energy_change = SERVER._workflow_source_keys()
             self.assertEqual(energy_change["Setup pipeline"], initial["Setup pipeline"])
             self.assertNotEqual(energy_change["Energy setup"], initial["Energy setup"])
+            self.assertNotEqual(energy_change[SERVER.COMBINED_STEP], initial[SERVER.COMBINED_STEP])
+            app_source.write_text("updated app", encoding="utf-8")
+            app_change = SERVER._workflow_source_keys()
+            self.assertNotEqual(app_change[SERVER.COMBINED_STEP], energy_change[SERVER.COMBINED_STEP])
+            self.assertEqual(app_change["Setup pipeline"], initial["Setup pipeline"])
+            foundry.write_text("updated foundry", encoding="utf-8")
+            foundry_change = SERVER._workflow_source_keys()
+            self.assertNotEqual(foundry_change[SERVER.COMBINED_STEP], app_change[SERVER.COMBINED_STEP])
+            self.assertEqual(foundry_change["Setup pipeline"], initial["Setup pipeline"])
             notebook.write_text("updated core", encoding="utf-8")
             self.assertNotEqual(SERVER._workflow_source_keys()["Setup pipeline"], initial["Setup pipeline"])
 
@@ -411,7 +523,7 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertIn("five Foundry specialist agents", html)
         self.assertIn("Foundry account is the parent Azure resource", html)
         self.assertIn("renderSectionDuration", html)
-        self.assertIn("Foundry · Fabric backend gateway", SERVER.WORKFLOW_PHASES)
+        self.assertIn("Combined · Energy + Foundry concurrently", SERVER.WORKFLOW_PHASES)
 
     def test_full_workflow_prepares_energy_and_foundry_before_final_app(self):
         target = {
@@ -424,12 +536,10 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
         self.assertEqual([step["name"] for step in steps], [
-            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+            "GitHub sync", "Setup pipeline", SERVER.COMBINED_STEP,
         ])
-        self.assertEqual(steps[3]["env"], {"HYDRO_FOUNDRY_CREATE": "false"})
-        self.assertIsNone(steps[4]["env"])
-        for step, stage in zip(steps[2:], ("energy", "foundry", "app")):
-            self.assertEqual(step["argv"][step["argv"].index("--stage") + 1], stage)
+        self.assertEqual(steps[2]["env"], {"HYDRO_FOUNDRY_CREATE": "false"})
+        self.assertEqual(steps[2]["argv"][steps[2]["argv"].index("--stage") + 1], "all")
         self.assertEqual([step["phase_offset"] for step in steps],
                          sorted({step["phase_offset"] for step in steps}))
 
@@ -814,7 +924,7 @@ async function evaluate(expression) {
                 **target, "repository": "owner/repo", "connectionId": "yes", "energyMap": "keep",
             })
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([step["name"] for step in start.call_args.args[0]].count("Energy setup"), 1)
+        self.assertEqual([step["name"] for step in start.call_args.args[0]], SERVER.WORKFLOW_STEPS)
 
     def test_full_deploy_is_outside_collapsible_actions_and_all_actions_have_icons(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -1908,7 +2018,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                 "connectionId": "connection", "parameters": PIPELINE_PARAMS, **settings,
             })
         self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertEqual(start.call_args.args[0][3]["env"], expected)
+        self.assertEqual(start.call_args.args[0][2]["env"], expected)
         for invalid in ("bad name", "../project", "-invalid", "x" * 65):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "New Foundry project name"):
                 SERVER._deploy_environment({**settings, "foundryNewProjectName": invalid})
@@ -1932,7 +2042,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         start.assert_not_called()
         workflow.assert_not_called()
 
-    def test_full_workflow_gives_foundry_settings_to_the_deploy_step_only(self):
+    def test_full_workflow_gives_foundry_settings_to_the_combined_step_only(self):
         payload = {
             "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes", "pat": "x",
             "parameters": PIPELINE_PARAMS,
@@ -1942,9 +2052,55 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             response = self.client.post("/api/full-workflow", json=payload)
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
-        self.assertEqual(steps[3]["env"], {"HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_LOCATION": "swedencentral"})
-        for step in steps[:3]:
+        self.assertEqual(steps[2]["env"], {"HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_LOCATION": "swedencentral"})
+        for step in steps[:2]:
             self.assertNotIn("HYDRO_FOUNDRY_CREATE", step["env"] or {})
+
+    def test_combined_invocation_forwards_entire_validated_deployment_environment(self):
+        guid = "11111111-1111-1111-1111-111111111111"
+        graph = {"workspaceId": guid, "ontologyId": guid, "graphModelId": guid}
+        payload = {
+            "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes",
+            "parameters": PIPELINE_PARAMS, "ontologyGraphBinding": json.dumps(graph),
+            "azureSubscriptionId": guid,
+            "foundryEndpoint": "https://demo.services.ai.azure.com/api/projects/project",
+            "foundryProjectResourceId": f"/subscriptions/{guid}/resourceGroups/rg/providers/"
+                                       "Microsoft.CognitiveServices/accounts/account/projects/project",
+            "foundryAccountName": "account", "foundryProjectName": "project",
+            "foundryNewProjectName": "new-project", "foundryModel": "deployment",
+            "foundryModelName": "gpt-4.1", "foundryModelVersion": "2025-04-14",
+            "foundryModelSku": "GlobalStandard", "foundryModelCapacity": 75,
+            "acrName": "demoregistry", "foundryLocation": "swedencentral",
+            "createFoundry": True, "productionWrites": "false",
+        }
+        expected = SERVER._deploy_environment(payload)
+        self.assertEqual(len(expected), 16)
+        with patch.object(SERVER, "_start_workflow", return_value="id") as start:
+            response = self.client.post("/api/full-workflow", json=payload)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        steps = start.call_args.args[0]
+        self.assertEqual(steps[2]["env"], expected)
+        self.assertTrue(all(not key.startswith("HYDRO_")
+                            for step in steps[:2] for key in step["env"]))
+        self.assertNotIn("demoregistry", " ".join(steps[2]["argv"]))
+
+    def test_combined_progress_treats_parallel_branches_as_one_interval(self):
+        job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
+        offset = len(SERVER.SYNC_PHASES) - 1 + len(SERVER.PIPELINE_PHASES) - 2
+        job.advance_phase(offset)
+        for line in ("[1/8] prerequisites", "[2/8] SPA", "[3/8] source preparation",
+                     "Energy: setup", "Foundry: agents", "Energy map read models are ready",
+                     "Foundry: Hosted Agent"):
+            for index, markers in SERVER.COMBINED_MARKERS:
+                if any(marker in line for marker in markers):
+                    job.advance_phase(offset + index - 1)
+        self.assertEqual(job.phases[job.phase_index], "Combined · Energy + Foundry concurrently")
+        for index, markers in SERVER.COMBINED_MARKERS:
+            if any(marker in "[4/8] signing in" for marker in markers):
+                job.advance_phase(offset + index - 1)
+        self.assertEqual(job.phases[job.phase_index], "Combined · App publication · Signing in")
+        self.assertFalse(any(phase.startswith(("Energy ·", "Foundry ·"))
+                             for phase in SERVER.WORKFLOW_PHASES))
 
     def test_both_deploy_forms_explain_reuse_and_confirm_resource_creation(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -2209,7 +2365,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_full_workflow_builds_existing_commands_in_serial_order(self):
+    def test_full_workflow_builds_three_commands_without_duplicate_core_or_providers(self):
         payload = {
             "tenant": "tenant.example",
             "workspace": "Demo Workspace",
@@ -2232,7 +2388,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
         self.assertEqual([step["name"] for step in steps], [
-            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+            "GitHub sync", "Setup pipeline", SERVER.COMBINED_STEP,
         ])
         self.assertEqual(Path(steps[0]["argv"][0]).name, "sync_workspace_from_git.py")
         self.assertEqual(Path(steps[1]["argv"][0]).name, "run_pipeline.py")
@@ -2246,6 +2402,15 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         self.assertEqual(steps[2]["argv"][-2:], [
             "--client-id", "11111111-1111-1111-1111-111111111111",
         ])
+        self.assertEqual(steps[2]["argv"].count("--energy-read-models-only"), 1)
+        self.assertEqual(steps[2]["argv"][steps[2]["argv"].index("--stage") + 1], "all")
+        self.assertEqual(steps[2]["argv"][steps[2]["argv"].index("--energy-map") + 1], "enabled")
+        self.assertIn("--require-parallel-energy", steps[1]["argv"])
+        self.assertEqual(steps[2]["timeout"], max(SERVER.ENERGY_TIMEOUT_S, SERVER.FOUNDRY_TIMEOUT_S)
+                         + SERVER.DEPLOY_TIMEOUT_S)
+        self.assertEqual([step["phase_offset"] for step in steps], [1, 6, 10])
+        self.assertEqual(len(SERVER.WORKFLOW_PHASES), 19)
+        self.assertEqual(steps[2]["markers"], SERVER.DEPLOY_MARKERS)
 
     def test_full_workflow_stops_at_failed_component_and_reports_it(self):
         job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
@@ -2379,7 +2544,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="workflowBtn"', page)
         self.assertIn('"/api/full-workflow"', page)
-        self.assertIn("Runs each step in order; stops on failure.", page)
+        self.assertIn("finishes Energy and Foundry concurrently before app publication; stops on failure.", page)
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="deploymentActions"'))
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="tabDelete"'))
 
@@ -2487,7 +2652,7 @@ class PreparedEnergyPublicationTests(unittest.TestCase):
         self.assertNotIn("appEnergyMap", page)
         self.assertNotIn("Energy-map navigation", page)
 
-    def test_full_workflow_enables_energy_before_preserving_it_for_publication(self):
+    def test_full_workflow_combined_engine_enables_energy(self):
         target = {
             "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo",
             "connectionId": "yes", "parameters": PIPELINE_PARAMS, "energyMap": "enabled",
@@ -2496,10 +2661,9 @@ class PreparedEnergyPublicationTests(unittest.TestCase):
             response = SERVER.app.test_client().post("/api/full-workflow", json=target)
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
-        energy = next(step for step in steps if step["name"] == "Energy setup")["argv"]
-        publish = steps[-1]["argv"]
+        energy = next(step for step in steps if step["name"] == SERVER.COMBINED_STEP)["argv"]
         self.assertEqual(energy[energy.index("--energy-map") + 1], "enabled")
-        self.assertEqual(publish[publish.index("--energy-map") + 1], "keep")
+        self.assertIn("--energy-read-models-only", energy)
 
 
 if __name__ == "__main__":
