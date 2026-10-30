@@ -34,7 +34,8 @@
 #
 # Fresh creation explicitly supplies the required `.platform` manifest plus
 # `database.tmdl`, `model.tmdl`, and `namespaces/default.tmdl`; entities and
-# relationships are emitted as TMDL.
+# relationships are emitted as TMDL. The Ontology create request stays at the
+# workspace root, then the verified item is moved into the configured folder.
 # The live resource must report integer `properties.generation == 2`. Existing v1
 # items are rejected, not migrated or deleted; use a separate v2 target.
 # REST `/v1` and deployment suffixes such as `_V9` are not ontology generation.
@@ -3182,7 +3183,7 @@ def find_ontology_by_name(
 
 
 def create_ontology(display_name: str, description: str = "", folder_id: Optional[str] = None) -> dict:
-    """Select v2 explicitly through TMDL, then verify live generation metadata."""
+    """Create v2 from TMDL, verify it, then place the exact item in its folder."""
     url = f"{FABRIC_API_BASE}/{FABRIC_API_VERSION}/workspaces/{workspace_id}/ontologies"
     platform = {
         "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
@@ -3200,8 +3201,6 @@ def create_ontology(display_name: str, description: str = "", folder_id: Optiona
         ]},
     }
     folder = target_folder_id if folder_id is None else folder_id
-    if folder:
-        data["folderId"] = folder
     response = api_request("POST", url, data=data)
     if response.status_code == 201:
         created = response.json()
@@ -3213,6 +3212,20 @@ def create_ontology(display_name: str, description: str = "", folder_id: Optiona
         raise RuntimeError("Create ontology returned no item ID")
     details = get_ontology(created["id"])
     _require_v2_ontology(details)
+    if folder:
+        move_url = (
+            f"{FABRIC_API_BASE}/{FABRIC_API_VERSION}/workspaces/{workspace_id}"
+            f"/items/{created['id']}/move"
+        )
+        move = api_request("POST", move_url, data={"targetFolderId": folder})
+        if move.status_code != 200:
+            raise RuntimeError(
+                f"Move v2 ontology into target folder failed: HTTP {move.status_code}"
+            )
+        details = get_ontology(created["id"])
+        _require_v2_ontology(details)
+        if details.get("folderId") != folder:
+            raise RuntimeError("Ontology folder placement did not verify after move")
     return details
 
 

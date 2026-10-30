@@ -74,7 +74,7 @@ reads; names and guessed foreign keys never create topology. See [the graph cont
 
 | V2 definition part | Purpose |
 | --- | --- |
-| `.platform` | Required Fabric item manifest with Ontology type, display name, version `2.0`, and a logical ID. |
+| `.platform` | Required Fabric item manifest with Ontology type, display name, version `2.0`, and a logical ID. The specialized create payload stays folder-neutral; after generation-2 readback, the exact item is moved with the core item API. |
 | `database.tmdl` | Root with `compatibilityLevel: 1000000`. |
 | `model.tmdl`, `namespaces/default.tmdl` | Model and required default namespace; fresh creation submits both alongside the database root. |
 | `entities/*.tmdl` | Entity keys, scalar/time-series properties, and backing configurations. |

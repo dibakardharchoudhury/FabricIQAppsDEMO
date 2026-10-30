@@ -306,7 +306,7 @@ class GenerationPersistenceTests(unittest.TestCase):
         ns = functions("004", ["create_ontology", "ensure_ontology"])
         existing = {"id": "legacy", "properties": {"generation": 1}}
         ns.update(
-            target_folder_id="folder", workspace_id="workspace",
+            target_folder_id=None, workspace_id="workspace",
             FABRIC_API_BASE="https://api.fabric.microsoft.com", FABRIC_API_VERSION="v1",
             display=Mock(), Markdown=lambda value: value,
             find_ontology_by_name=Mock(return_value=existing),
@@ -333,25 +333,34 @@ class GenerationPersistenceTests(unittest.TestCase):
                 ns = functions("004", ["create_ontology"])
                 created = {"id": "fresh"}
                 details = dict(created, properties={"generation": 2})
+                placed = dict(details, folderId="folder")
+                create_response = SimpleNamespace(
+                    status_code=status,
+                    json=lambda: created,
+                    headers={"x-ms-operation-id": "operation-id"},
+                )
                 ns.update(
                     target_folder_id="folder", workspace_id="workspace",
                     FABRIC_API_BASE="https://api.fabric.microsoft.com", FABRIC_API_VERSION="v1",
-                    api_request=Mock(return_value=SimpleNamespace(
-                        status_code=status, json=lambda: created,
-                        headers={"x-ms-operation-id": "operation-id"})),
+                    api_request=Mock(side_effect=[
+                        create_response,
+                        SimpleNamespace(status_code=200),
+                    ]),
                     _created_item_result=Mock(return_value=created),
-                    get_ontology=Mock(return_value=details),
+                    get_ontology=Mock(side_effect=[details, placed]),
                 )
-                self.assertEqual(ns["create_ontology"]("demo", "description"), details)
-                ns["get_ontology"].assert_called_once_with("fresh")
-                request = ns["api_request"].call_args
+                self.assertEqual(ns["create_ontology"]("demo", "description"), placed)
+                self.assertEqual(
+                    [call.args for call in ns["get_ontology"].call_args_list],
+                    [("fresh",), ("fresh",)],
+                )
+                request = ns["api_request"].call_args_list[0]
                 self.assertEqual(request.args, (
                     "POST", "https://api.fabric.microsoft.com/v1/workspaces/workspace/ontologies"))
                 payload = request.kwargs["data"]
-                self.assertEqual(set(payload), {"displayName", "description", "folderId", "definition"})
+                self.assertEqual(set(payload), {"displayName", "description", "definition"})
                 self.assertEqual(payload["displayName"], "demo")
                 self.assertEqual(payload["description"], "description")
-                self.assertEqual(payload["folderId"], "folder")
                 self.assertEqual(set(payload["definition"]), {"parts"})
                 parts = payload["definition"]["parts"]
                 self.assertEqual(len(parts), 4)
@@ -387,9 +396,36 @@ class GenerationPersistenceTests(unittest.TestCase):
                         "https://api.fabric.microsoft.com/v1/operations/operation-id")
                 else:
                     ns["_created_item_result"].assert_not_called()
-                ns["get_ontology"].return_value = dict(created, properties={"generation": 1})
+                move = ns["api_request"].call_args_list[1]
+                self.assertEqual(move.args, (
+                    "POST",
+                    "https://api.fabric.microsoft.com/v1/workspaces/workspace/items/fresh/move",
+                ))
+                self.assertEqual(move.kwargs["data"], {"targetFolderId": "folder"})
+                ns["api_request"].reset_mock()
+                ns["api_request"].side_effect = [create_response]
+                ns["get_ontology"].reset_mock()
+                ns["get_ontology"].side_effect = [
+                    dict(created, properties={"generation": 1}),
+                ]
                 with self.assertRaisesRegex(RuntimeError, "Replacement required"):
                     ns["create_ontology"]("demo")
+
+    def test_create_rejects_unverified_folder_placement(self):
+        ns = functions("004", ["create_ontology"])
+        created = {"id": "fresh"}
+        details = dict(created, properties={"generation": 2})
+        ns.update(
+            target_folder_id="folder", workspace_id="workspace",
+            FABRIC_API_BASE="https://api.fabric.microsoft.com", FABRIC_API_VERSION="v1",
+            api_request=Mock(side_effect=[
+                SimpleNamespace(status_code=201, json=lambda: created),
+                SimpleNamespace(status_code=200),
+            ]),
+            get_ontology=Mock(side_effect=[details, details]),
+        )
+        with self.assertRaisesRegex(RuntimeError, "folder placement did not verify"):
+            ns["create_ontology"]("demo")
 
     def test_failed_explicit_create_never_retries_without_definition(self):
         ns = functions("004", ["create_ontology"])
