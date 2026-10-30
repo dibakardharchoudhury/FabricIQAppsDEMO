@@ -127,12 +127,24 @@ saved binding/convention discovery; a sole unrelated project is not a safe fallb
 Parallel mode never approves billable creation.
 
 Each worker uses a separate checkout, Azure CLI cache, hosted-agent state and
-Rayfin deployment files under the current user's private
-`~/.fabric-demo/parallel-deployments/` directory. Only matching tenant/workspace
-state is reused; the main checkout's generated files are not changed. Workers use
+Rayfin deployment files. Private workspace state stays under
+`~/.fabric-demo/parallel-deployments/`; checkouts use the shorter private
+`~/.fabric-demo/parallel-checkouts/<unique-id>/` path so nested Windows native tools
+stay below the executable path limit. Workspace records retain the checkout identity.
+Only matching tenant/workspace state is reused, including state from older checkout
+locations; the main checkout's generated files are not changed. Workers use
 one committed source snapshot, so commit source changes first. Existing generated
 changes to `HydroOperationsApp/rayfin/rayfin.yml` need not be discarded. State and
 checkouts are retained, not deleted after completion.
+
+The deployer pins Node 24 for npm, lifecycle scripts and spawned build tools, even
+when another Node version is installed globally. Locked installs prefer cached
+packages without bypassing integrity checks. An overlong Windows native-tool path
+fails before installation; only file-lock/cleanup failures are retried once.
+Other failures report the underlying diagnostic instead of repeating an identical
+restore. After updating the launcher, resume a failed workspace to allocate a short
+checkout and retain successful Full Deploy checkpoints; do not repeat Git sync/Core
+solely to repair local npm installation.
 
 Each workspace has its own status, timings, live output and cancellation control.
 One failure does not stop the other workspaces. After the batch finishes, retry

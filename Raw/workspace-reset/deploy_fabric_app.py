@@ -285,11 +285,25 @@ def command_argv(executable: str, *args: str) -> list[str]:
     return [resolved, *args]
 
 
+def command_environment(argv: list[str], env: dict[str, str] | None = None) -> dict[str, str]:
+    environment = {**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    executable = Path(argv[0])
+    if executable.is_absolute() and executable.name.casefold() in {"node", "node.exe"}:
+        path_keys = [key for key in environment if key.casefold() == "path"]
+        previous = environment[path_keys[0]] if path_keys else ""
+        for key in path_keys:
+            del environment[key]
+        environment["PATH"] = os.pathsep.join(
+            [str(executable.parent)] + ([previous] if previous else [])
+        )
+    return environment
+
+
 def run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
     proc = subprocess.run(
         argv,
         cwd=str(cwd) if cwd else None,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        env=command_environment(argv),
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -312,7 +326,7 @@ def run_stream(
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd) if cwd else None,
-        env={**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        env=command_environment(argv, env),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -330,7 +344,15 @@ def run_stream(
     returncode = proc.wait()
     output = "\n".join(lines)
     if returncode != 0:
-        raise DeployError(f"Command failed with exit code {returncode}.")
+        diagnostics = [
+            line for line in lines
+            if not line.lstrip().startswith("npm warn") and re.search(
+                r"\b\w*Error:|\bnpm error (?:code|path|command)\b|"
+                r"\b(?:ENOENT|EPERM|ENOTEMPTY|EBUSY|EACCES|ENAMETOOLONG)\b", line
+            )
+        ]
+        detail = "\n".join(diagnostics[:8] or lines[-8:])[:4000]
+        raise DeployError(f"Command failed with exit code {returncode}." + (f"\n{detail}" if detail else ""))
     return output
 
 
@@ -507,6 +529,14 @@ def deploy_dependencies_ready() -> bool:
 
 def ensure_deploy_dependencies() -> None:
     """Restore the locked Node toolchain and verify the local Rayfin CLI."""
+    native_tool = (APP_DIR / "node_modules" / "@microsoft" / "rayfin-cli" / "node_modules"
+                   / "@esbuild" / "win32-x64" / "esbuild.exe")
+    if os.name == "nt" and len(str(native_tool)) >= 260:
+        raise DeployError(
+            f"Windows native-tool path is too long ({len(str(native_tool))} characters): {native_tool}. "
+            "Use a shorter repository path. Parallel retries through the updated launcher "
+            "allocate short isolated checkouts automatically; existing deployment state is retained."
+        )
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
     missing = [path.name for path in manifests if not path.is_file()]
     if missing:
@@ -532,12 +562,15 @@ def ensure_deploy_dependencies() -> None:
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
-        command = npm24("ci", "--no-audit", "--no-fund")
+        command = npm24("ci", "--no-audit", "--no-fund", "--prefer-offline")
         try:
             run_stream(command, cwd=APP_DIR)
-        except DeployError:
+        except DeployError as exc:
+            if (re.search(r"\b(?:ENOENT|ENAMETOOLONG|EACCES)\b", str(exc))
+                    or not re.search(r"\b(?:ENOTEMPTY|EPERM|EBUSY)\b", str(exc))):
+                raise
             print(
-                "The first npm restore failed; stopping app tooling again and retrying once...",
+                "npm reported a file-lock/cleanup error; stopping app tooling and retrying once...",
                 flush=True,
             )
             stop_hydro_node_tooling()

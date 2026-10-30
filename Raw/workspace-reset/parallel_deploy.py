@@ -138,8 +138,9 @@ def seed_rayfin(deploy, source: Path, destination: Path, tenant: str, workspace:
 
 
 def prepare_checkout(deploy, directory: Path, tenant: str, workspace: str, commit: str) -> Path:
-    checkout = directory / "checkouts" / uuid.uuid4().hex
-    checkout.parent.mkdir(parents=True, exist_ok=True)
+    checkout_root = Path.home() / ".fabric-demo" / "parallel-checkouts"
+    deploy.secure_private_directory(checkout_root)
+    checkout = checkout_root / uuid.uuid4().hex
     checked(["git", "clone", "--config", "core.longpaths=true", "--quiet", "--shared",
              "--no-checkout", str(REPO_ROOT), str(checkout)])
     checked(["git", "-C", str(checkout), "checkout", "--quiet", "--detach", commit])

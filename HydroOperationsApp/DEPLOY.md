@@ -43,6 +43,14 @@ overlap subject to capacity/quota. A failed workspace does not stop the others.
 Use its retry control after the batch finishes to preserve completed Full Deploy
 stages. See [parallel execution and state](../Raw/workspace-reset/README.md#optional-up-to-three-workspaces-in-parallel).
 
+If parallel deployment fails during `npm ci` with `spawnSync ... esbuild.exe ENOENT`,
+update/restart the launcher and resume the failed workspace. Workers now use short
+private checkout paths; older deeply nested paths can exceed Windows' native
+executable limit. Node 24 is also propagated to npm lifecycle scripts and build-tool
+children, rather than falling back to a globally installed Node version. Existing
+workspace state and successful Git sync/Core checkpoints are retained. Do not delete
+deployment state, reimport the workspace or change Windows registry settings for this error.
+
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.

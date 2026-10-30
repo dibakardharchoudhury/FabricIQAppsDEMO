@@ -265,6 +265,27 @@ class ParallelApiTests(unittest.TestCase):
 
 
 class ParallelIsolationTests(unittest.TestCase):
+    def test_short_checkout_preserves_previous_workspace_state_for_seeding(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "parallel-deployments" / TENANT / WORKSPACES[0]
+            directory.mkdir(parents=True)
+            previous = directory / "checkouts" / "previous"
+            saved = json.dumps({"checkout": str(previous)})
+            (directory / "latest.json").write_text(saved, encoding="utf-8")
+            deploy = Mock()
+            deploy.secure_private_directory.side_effect = lambda path: path.mkdir(parents=True, exist_ok=True)
+            with patch.object(Path, "home", return_value=root), \
+                    patch.object(PARALLEL, "checked") as checked, \
+                    patch.object(PARALLEL, "seed_rayfin", return_value=True) as seed:
+                checkout = PARALLEL.prepare_checkout(deploy, directory, TENANT, WORKSPACES[0], "commit")
+            self.assertEqual(checkout.parent, root / ".fabric-demo" / "parallel-checkouts")
+            self.assertNotIn(TENANT, str(checkout))
+            self.assertEqual(len(checkout.name), 32)
+            self.assertEqual(checked.call_args_list[-1].args[0][-1], "commit")
+            seed.assert_called_once_with(deploy, previous, checkout, TENANT, WORKSPACES[0])
+            self.assertEqual((directory / "latest.json").read_text(encoding="utf-8"), saved)
+
     def test_preparation_cancellation_does_not_start_a_module(self):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -467,7 +488,8 @@ class ParallelIsolationTests(unittest.TestCase):
             output = io.StringIO()
             with patch.object(PARALLEL, "REPO_ROOT", repository), \
                     patch.object(Path, "home", return_value=root), \
-                    patch.object(DEPLOY, "secure_private_directory"), \
+                    patch.object(DEPLOY, "secure_private_directory", side_effect=lambda path, **_:
+                                 path.mkdir(parents=True, exist_ok=True)), \
                     patch.object(PARALLEL, "worker_environment", side_effect=environment), \
                     patch.object(SYNC, "Fabric", return_value=fabric), contextlib.redirect_stdout(output):
                 result = PARALLEL.run_batch({
@@ -476,7 +498,7 @@ class ParallelIsolationTests(unittest.TestCase):
                 })
             self.assertEqual(result, 1)
             records = [json.loads(path.read_text()) for path in root.glob(
-                f".fabric-demo/parallel-deployments/{TENANT}/*/checkouts/*/result.json",
+                ".fabric-demo/parallel-checkouts/*/result.json",
             )]
             self.assertEqual({record["workspace"] for record in records}, set(WORKSPACES))
             self.assertLess(max(record["start"] for record in records), min(record["end"] for record in records))
