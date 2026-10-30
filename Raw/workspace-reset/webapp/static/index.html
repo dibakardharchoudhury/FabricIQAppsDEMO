@@ -60,11 +60,17 @@
   .card.danger .card-head .ico { background:rgba(239,68,68,.16); color:#fda4a4; }
   .card-head .ico svg { width:19px; height:19px; }
   .card h2 { margin:0; font-size:1.12rem; font-weight:680; letter-spacing:-.01em; }
-  .card .hint { color:var(--muted); font-size:.82rem; margin:.35rem 0 1.2rem calc(34px + .7rem); }
+  .hint { color:var(--muted); font-size:.82rem; margin:.35rem 0 .85rem; line-height:1.45; }
+  .card > .card-head + .hint { margin-left:calc(34px + .7rem); }
+  .phelp { color:var(--muted); font-size:.78rem; line-height:1.45; margin:.5rem 0; }
+  .hint:empty, .phelp:empty, .cardcap:empty { display:none; }
+  .form-details { margin:.75rem 0; color:var(--muted); font-size:.78rem; }
+  .form-details > summary { cursor:pointer; font-weight:600; }
 
   .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:1.05rem 1.15rem; }
   label { display:flex; flex-direction:column; font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); gap:.42rem; }
   label.check { flex-direction:row; align-items:center; gap:.6rem; color:var(--text); text-transform:none; letter-spacing:normal; font-weight:500; font-size:.9rem; }
+  label.check input[type=checkbox] { flex-shrink:0; margin:0; }
   #patNote { text-transform:none; letter-spacing:normal; font-weight:500; color:#7c8ab0; }
   input[type=text],input[type=password],input[type=number],input:not([type]),textarea { background:var(--field); border:1px solid var(--border); color:var(--text);
     border-radius:10px; padding:.62rem .78rem; font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal;
@@ -211,8 +217,10 @@
 
   /* target card: clearly a form, not part of the nav below it */
   .side-card.target { border-color:rgba(59,130,246,.22); }
+  .side-card.target label.check { align-items:flex-start; font-size:.78rem; line-height:1.4; }
+  #parallelWorkspaceFields { display:grid; gap:.85rem; }
   .side-card .cardcap { font-size:.66rem; color:#7c8ab0; font-weight:400; text-transform:none; letter-spacing:normal;
-    margin:-.5rem 0 .1rem; line-height:1.4; }
+    margin:0; line-height:1.4; }
 
   /* vertical list nav — flat, browser-style grouped tabs */
   .nav { display:flex; flex-direction:column; gap:.16rem; }
@@ -323,13 +331,13 @@
           <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
         <label class="idfield"><span>Workspace (GUID or name)</span>
           <input id="workspace" type="text" autocomplete="off" placeholder="ws-… or a display name" /></label>
-        <label><input id="parallelDeploy" type="checkbox" /> Deploy to multiple workspaces in parallel</label>
+        <label class="check"><input id="parallelDeploy" type="checkbox" /><span>Parallel deployment (up to 3)</span></label>
         <div id="parallelWorkspaceFields" hidden>
           <label class="idfield"><span>Workspace 2 (optional)</span>
             <input id="workspace2" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
           <label class="idfield"><span>Workspace 3 (optional)</span>
             <input id="workspace3" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
-          <p class="cardcap">Blank slots are ignored. All modules use the selected workspaces, with separate progress and files per workspace. Deletion requires confirming every target. Foundry projects can be shared or separate.</p>
+          <p class="cardcap">All actions use these targets. Blank slots are ignored.</p>
         </div>
         <p id="targetSettingsStatus" class="cardcap" role="status"></p>
       </div>
@@ -367,7 +375,7 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>Full Deploy</h2>
       </div>
-      <p class="hint">For a new workspace. Syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure.</p>
+      <p class="hint">New workspace: sync, configure, then publish. Stops on failure.</p>
       <aside class="notice">
         <strong>Updating an existing app?</strong> Use <strong>Deploy app</strong>, not Full Deploy.
         <a href="/deploy-guide" target="_blank" rel="noopener">Prerequisites &amp; guide</a>
@@ -394,20 +402,20 @@
           <div id="workflowTestPanel"></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
-          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Core bindings and initial UKMet ingestion build the complete ontology before either Fabric agent; energy ingestion runs alongside.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Weather and energy ingestion; complete ontology before either Fabric agent.</span></div></div>
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Energy + Foundry concurrently</strong><span>Finalizes map read models and provisions Foundry together; does not repeat Core or provider ingestion.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Energy + Foundry concurrently</strong><span>Prepare energy maps and workspace-scoped agents.</span></div></div>
           <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
-          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>After both branches succeed, publishes the app and checks authentication and connectors.</span></div></div>
+          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>Publish after both branches succeed; verify authentication and connectors.</span></div></div>
         </section>
       </div>
-      <aside class="notice">
+      <p class="phelp">
         Settings stay on this machine. GitHub PATs are never saved.
-      </aside>
+      </p>
       <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Run Full Deploy</button>
       <button id="workflowResumeBtn" class="ghost" hidden disabled>Retry failed step and continue</button>
       <button id="workflowSyncResumeBtn" class="ghost" hidden disabled>Sync updated definitions and resume</button>
@@ -451,7 +459,7 @@
         <span class="ico" style="background:rgba(139,92,246,.16);color:#c4b5fd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg></span>
         <h2>Core setup</h2>
       </div>
-      <p class="hint">Requires both UKMet API keys in Key Vault. Core bindings, initial weather ingestion and SQL/weather relationship validation complete the ontology before either Fabric agent is published. Energy ingestion runs in parallel. Foundry follows successful Core setup.</p>
+      <p class="hint">Requires both UKMet API keys in Key Vault. Builds the complete ontology before either Fabric agent; ingests energy in parallel.</p>
       <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
       <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run core setup</button>
       <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
@@ -473,10 +481,10 @@
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
         <h2>Set up Foundry agents</h2>
       </div>
-      <p class="hint">Run Core setup first; native graph materialization is not required. Creates or reuses the Fabric backend gateway (AppBackend with SQL/GraphQL dependencies) required by the Hosted Agent, then configures the Foundry multi-agent setup. Prefers 75,000 TPM for a new model where quota permits; lower allocations remain supported. Does not publish the website.</p>
+      <p class="hint">Run Core setup first. Prepares backend and agents, not the website. Native graph materialization is not required.</p>
       <div id="deployFoundryFields"></div>
       <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
-      <p class="hint">After Foundry setup succeeds, <strong>Deploy app</strong> publishes the website using the prepared backend. A Fabric App item can already appear during backend setup. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
+      <p class="hint">Then use <strong>Deploy app</strong> to publish the website. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
       <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
     </div>
   </section>
@@ -484,9 +492,9 @@
   <section id="paneDeploy" class="pane">
     <div class="card">
       <div class="card-head"><h2>Deploy Fabric app last</h2></div>
-      <p class="hint">Publishes the prepared app and verifies authentication, CORS and connectors. Does not rerun data or agent setup.</p>
+      <p class="hint">Publishes the app and checks authentication, CORS and connectors. Does not rerun setup. Prepare energy maps first if enabled.</p>
+      <p class="phelp">Graph view: materialize the ontology graph first in Fabric.</p>
       <div id="deployAuthenticationFields"></div>
-      <p class="hint">Uses the energy-map setting already prepared for this target. Run Energy setup to prepare map data before publication.</p>
       <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
@@ -545,7 +553,7 @@ const spaClientIds = ["deployClientId", "foundryClientId", "workflowDeployClient
 function renderSpaFields(clientId) {
   return `<details class="foundry-block">
     <summary>Fabric App authentication</summary>
-    <p class="hint">Setup automatically reuses or creates an app registration in the target tenant. Select this only to use a specific registration prepared by your administrator.</p>
+    <p class="hint">App registration is automatic. Override only with an administrator-prepared client ID.</p>
     <label class="check"><input id="${clientId}UseExisting" type="checkbox" />
       <span>Use a pre-created app registration</span></label>
     <div id="${clientId}Fields" hidden>
@@ -575,11 +583,10 @@ function updateSpaChoice(clientId) {
 }
 
 function renderFoundryFields(prefix, clientId) {
-  return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Automatic multi-agent setup.</strong></p>
-    <label>Azure subscription
+  return `<label>Azure subscription
       <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
     <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
-    <p id="${prefix}FoundryStatus" class="phelp" role="status">Subscription is selected before the project and model are verified.</p>
+    <p id="${prefix}FoundryStatus" class="phelp" role="status"></p>
     <div class="grid">
       <label>Foundry account name (optional)
         <input id="${prefix}FoundryAccountName" type="text" maxlength="64" placeholder="Existing parent account or exact name to create" /></label>
@@ -587,18 +594,24 @@ function renderFoundryFields(prefix, clientId) {
         <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or automatic discovery" /></label>
       <label>Model deployment name
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
-      <label>Project usage for parallel deployment
+      <label>Parallel project usage
         <select id="${prefix}FoundryProjectMode">
           <option value="">Reuse the entered project</option>
           <option value="separate">Separate projects (short workspace suffix)</option>
         </select></label>
     </div>
-    <p class="phelp">A shared project uses workspace-specific agents and connections. Separate projects append a stable eight-character workspace suffix to the entered project base name. Creation still requires your approval below.</p>
-    <p class="hint">A Foundry account is the parent Azure resource; projects live inside it. Blank keeps automatic account naming/discovery. Setup prepares the Fabric backend gateway, five Foundry specialist agents, connections and hosted orchestrator. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
-      <span>Check this box if you want to create a new Foundry project with the multi-agent setup.</span></label>
-    <p id="${prefix}FoundryCreateHelp" class="hint">Creating resources is billable; global inference may apply. Existing projects are reused.</p>
+      <span>Allow project creation (billable)</span></label>
+    <p id="${prefix}FoundryCreateHelp" class="hint">Global inference may apply. Existing projects are reused.</p>
     <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
+    <details class="form-details">
+      <summary>Setup details</summary>
+      <p id="${prefix}FoundryModeSummary" class="phelp">Automatic multi-agent setup.</p>
+      <p class="phelp">A Foundry account is the parent Azure resource; projects live inside it. Blank uses automatic discovery.</p>
+      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents, workspace-bound connections and hosted orchestrator. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
+      <p class="phelp">Shared projects isolate workspace agents. Separate projects add a stable eight-character workspace suffix. Model quota is shared within an account.</p>
+      <p class="phelp">New models prefer 75,000 TPM where quota permits; lower allocations remain supported.</p>
+    </details>
     ${renderSpaFields(clientId)}`;
 }
 $("workflowFoundryFields").innerHTML = renderFoundryFields("workflow", "workflowDeployClientId");
@@ -1290,9 +1303,9 @@ function foundryValid(prefix) {
   }
   if (!$(prefix + "FoundryCreate").checked) {
     $(prefix + "FoundryCreationStatus").textContent = separate
-      ? "Separate workspace-suffixed projects will be reused. Missing projects require creation approval."
+      ? "Reuses suffixed projects. Enable creation if missing."
       : project && $("parallelDeploy")?.checked
-        ? "The selected project is shared. Each workspace uses its own agents and connections; model quota is shared."
+        ? "Shared project; workspace-isolated agents. Model quota is shared."
         : "";
     return true;
   }
@@ -1300,7 +1313,7 @@ function foundryValid(prefix) {
   const valid = (separate || !project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Existing resources are reused. A missing project uses these names and automatic model defaults; Azure checks quota."
+    ? "Reuses existing resources; creates missing projects after quota checks."
     : "Enter a valid model deployment name above. Names use up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit.";
   return valid;
 }
@@ -1308,8 +1321,8 @@ function updateFoundryMode(prefix) {
   const creating = $(prefix + "FoundryCreate").checked;
   if (!creating) $(prefix + "FoundryCreationStatus").textContent = "";
   $(prefix + "FoundryModeSummary").textContent = creating
-    ? "Automatic multi-agent setup. Create only if missing, using the names above."
-    : "Automatic multi-agent setup. Reuse existing resources.";
+    ? "Create only if missing."
+    : "Reuse existing resources.";
 }
 for (const prefix of ["deploy", "workflow"]) {
   const create = $(prefix + "FoundryCreate");
