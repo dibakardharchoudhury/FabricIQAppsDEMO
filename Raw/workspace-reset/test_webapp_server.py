@@ -1150,7 +1150,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
         })
         self.assertEqual(json.loads(env["FABRIC_PIPELINE_PARAMS"])["ops_agent_run_as_user"], "")
 
-    def test_parameter_defaults_are_target_scoped_and_allowlisted(self):
+    def test_parameter_defaults_are_tenant_scoped_and_allowlisted(self):
         config = {
             "FABRIC_TENANT": "tenant.example",
             "FABRIC_WORKSPACE": "Demo",
@@ -1163,7 +1163,8 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
             for target, expected in (
                 ("?tenant=TENANT.example&workspace=demo", "V12"),
                 ("?tenant=other.example&workspace=Demo", "V6"),
-                ("?tenant=tenant.example&workspace=Other", "V6"),
+                ("?tenant=tenant.example&workspace=Other", "V12"),
+                ("?tenant=tenant.example", "V12"),
                 ("", "V6"),
             ):
                 with self.subTest(target=target):
@@ -1264,7 +1265,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 with patch.object(SERVER, "RAYFIN_TARGET_FILE", Path(directory) / "unresolved.env"):
                     response = self.client.get("/api/pipeline-params", query_string={"tenant": tenant, "workspace": workspace_id})
                     specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
-                    self.assertEqual(specs["key_vault_uri"]["default"], "")
+                    self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
                 response = self.client.get("/api/pipeline-params", query_string={"tenant": tenant, "workspace": workspace_id})
                 specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
                 self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
@@ -1290,14 +1291,27 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                     self.assertEqual(specs["key_vault_uri"]["source"], "saved local settings")
                 for target in (
                     {"tenant": "unseen-tenant", "workspace": "Demo"},
-                    {"tenant": "other-tenant", "workspace": workspace_id},
-                    {"tenant": tenant, "workspace": "Unknown"},
                 ):
                     response = self.client.get("/api/pipeline-params", query_string=target)
                     specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
                     self.assertEqual(specs["key_vault_uri"]["default"], "")
                     self.assertEqual(specs["ops_agent_teams_team_id"]["default"], "")
                     self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], "")
+                for workspace in ("Unknown", "", "brand-new-workspace"):
+                    response = self.client.get("/api/pipeline-params", query_string={
+                        "tenant": tenant, "workspace": workspace,
+                    })
+                    specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                    self.assertEqual(specs["key_vault_uri"]["default"], "https://last.vault.azure.net/")
+                    self.assertEqual(specs["ops_agent_teams_team_id"]["default"], "other-team")
+                    self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_channel_id"])
+                    self.assertEqual(specs["workspace_id"]["default"], "")
+                response = self.client.get("/api/pipeline-params", query_string={
+                    "tenant": "other-tenant", "workspace": workspace_id,
+                })
+                specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], "other-channel")
                 start.assert_not_called()
                 process.assert_not_called()
                 self.assertEqual(list(Path(directory).glob(".pipeline-defaults-*.tmp")), [])
@@ -1320,7 +1334,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
             self.assertEqual(specs["per_notebook_timeout_secs"]["default"], "")
             self.assertEqual(specs["ops_agent_teams_team_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_team_id"])
 
-    def test_workspace_defaults_require_an_explicit_workspace_even_at_startup(self):
+    def test_tenant_defaults_load_before_workspace_entry_without_restoring_workspace_identity(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "defaults.json"
             path.write_text(json.dumps({
@@ -1343,7 +1357,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 self.assertIsNone(data.get("restoredTarget"))
                 specs = {spec["name"]: spec for spec in data["parameters"]}
                 self.assertEqual(specs["workspace_id"]["default"], "")
-                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
                 data = self.client.get("/api/pipeline-params", query_string={
                     "tenant": "TENANT.example", "workspace": "Demo",
                 }).get_json()
@@ -1354,14 +1368,20 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 for query in (
                     {"tenant": "other-tenant", "workspace": "", "restoreTarget": "1"},
                     {"tenant": "", "workspace": "", "restoreTarget": "1"},
-                    {"tenant": "tenant.example", "workspace": "Other", "restoreTarget": "1"},
-                    {"tenant": "tenant.example", "workspace": ""},
                 ):
                     with self.subTest(query=query):
                         data = self.client.get("/api/pipeline-params", query_string=query).get_json()
                         self.assertIsNone(data.get("restoredTarget"))
                         specs = {spec["name"]: spec for spec in data["parameters"]}
                         self.assertEqual(specs["key_vault_uri"]["default"], "")
+                for workspace in ("Other", ""):
+                    data = self.client.get("/api/pipeline-params", query_string={
+                        "tenant": "tenant.example", "workspace": workspace,
+                    }).get_json()
+                    specs = {spec["name"]: spec for spec in data["parameters"]}
+                    self.assertEqual(specs["env_suffix"]["default"], "V12")
+                    self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
+                    self.assertEqual(specs["workspace_id"]["default"], "")
                 stored = json.loads(path.read_text(encoding="utf-8"))
                 stored["targets"].append({
                     "tenant": "tenant.example", "workspace": "Second",
@@ -1374,7 +1394,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 self.assertIsNone(data.get("restoredTarget"))
                 specs = {spec["name"]: spec for spec in data["parameters"]}
                 self.assertEqual(specs["workspace_id"]["default"], "")
-                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
                 start.assert_not_called()
                 process.assert_not_called()
 
@@ -1454,7 +1474,7 @@ global.fetch = async url => {
   const query = new URL(url,"http://localhost").searchParams;
   assert.equal(query.get("workspace"),"");
   assert.equal(query.has("restoreTarget"),false);
-  return {ok:true,json:async()=>blank};
+  return {ok:true,json:async()=>saved};
 };
 """ + function + """
 (async()=>{
@@ -1464,6 +1484,11 @@ global.fetch = async url => {
   assert.equal($("workspace").value,"");
   assert.equal($("pp_workspace_id").value,"");
   assert.equal($("wf_pp_workspace_id").value,"");
+  for(const prefix of ["pp_","wf_pp_"]) {
+    for(const name of ["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id"]) {
+      assert.equal($(prefix+name).value,specs.find(spec=>spec.name===name).default);
+    }
+  }
   assert.equal(requests.length,1);
   $("workspace").value="Demo";
   global.fetch=async url=>{
@@ -1478,6 +1503,17 @@ global.fetch = async url => {
     for(const name of ["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id"]) {
       assert.equal($(prefix+name).value,specs.find(spec=>spec.name===name).default);
     }
+  }
+  $("workspace").value="Brand new workspace";
+  global.fetch=async url=>{
+    assert.equal(new URL(url,"http://localhost").searchParams.get("workspace"),"Brand new workspace");
+    return {ok:true,json:async()=>saved};
+  };
+  await loadPipelineParams();
+  for(const prefix of ["pp_","wf_pp_"]) {
+    assert.equal($(prefix+"workspace_id").value,"Brand new workspace");
+    assert.equal($(prefix+"key_vault_uri").value,specs.find(spec=>spec.name==="key_vault_uri").default);
+    assert.equal($(prefix+"ops_agent_teams_team_id").value,specs.find(spec=>spec.name==="ops_agent_teams_team_id").default);
   }
   // A user editing the target during startup must win over the delayed response.
   $("workspace").value="";

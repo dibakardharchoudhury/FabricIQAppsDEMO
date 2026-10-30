@@ -1026,13 +1026,13 @@ def _pipeline_target_matches(target: dict, tenant: str, aliases: set[str]) -> bo
     return target["tenant"].strip().casefold() == tenant.strip().casefold() and bool(known & aliases)
 
 
-def _pipeline_configurations(targets: list[dict]) -> list[tuple[dict, str]]:
+def _pipeline_configurations(targets: list[dict], tenant: str, aliases: set[str]) -> list[tuple[dict, str]]:
     configured = os.environ.get("FABRIC_PIPELINE_PARAMS", "").strip()
-    tenant = os.environ.get("FABRIC_TENANT", "").strip()
+    configured_tenant = os.environ.get("FABRIC_TENANT", "").strip()
     workspace = os.environ.get("FABRIC_WORKSPACE", "").strip()
     configurations = [(target, "local configuration") for target in targets if not target.get("saved")]
     if configured:
-        if not tenant or not workspace:
+        if not configured_tenant or not workspace:
             raise ValueError("Pipeline defaults require a tenant and workspace (FABRIC_TENANT and FABRIC_WORKSPACE for environment defaults).")
         try:
             values = json.loads(configured)
@@ -1040,23 +1040,24 @@ def _pipeline_configurations(targets: list[dict]) -> list[tuple[dict, str]]:
             raise ValueError("FABRIC_PIPELINE_PARAMS must be a JSON object.") from exc
         if not isinstance(values, dict):
             raise ValueError("FABRIC_PIPELINE_PARAMS must be a JSON object.")
-        configurations.append(({"tenant": tenant, "workspace": workspace, "parameters": _pipeline_values(values)}, "server configuration"))
+        configurations.append(({"tenant": configured_tenant, "workspace": workspace, "parameters": _pipeline_values(values)}, "server configuration"))
     configurations.extend((target, "saved local settings") for target in targets if target.get("saved"))
-    return configurations
+    return sorted(
+        (entry for entry in configurations if entry[0]["tenant"].strip().casefold() == tenant.casefold()),
+        key=lambda entry: _pipeline_target_matches(entry[0], tenant, aliases),
+    )
 
 
 @app.get("/api/pipeline-params")
 def api_pipeline_params():
-    """Expose target-specific defaults without authentication or connection jobs."""
+    """Expose reusable tenant defaults with explicit workspace overrides."""
     parameters = [dict(spec) for spec in PIPELINE_PARAM_SPEC]
     try:
         tenant = request.args.get("tenant", "").strip()
         workspace = request.args.get("workspace", "").strip()
-        configurations = _pipeline_configurations(_local_pipeline_targets())
         aliases = _pipeline_workspace_aliases(tenant, workspace)
+        configurations = _pipeline_configurations(_local_pipeline_targets(), tenant, aliases)
         for target, source in configurations:
-            if not _pipeline_target_matches(target, tenant, aliases):
-                continue
             for spec in parameters:
                 value = target["parameters"].get(spec["name"])
                 if value is None:
@@ -1088,9 +1089,9 @@ def api_save_pipeline_params():
             targets = _local_pipeline_targets()
             aliases = _pipeline_workspace_aliases(tenant, workspace)
             values = {}
-            for target, _ in _pipeline_configurations(targets):
+            for target, _ in _pipeline_configurations(targets, tenant, aliases):
+                values.update(target["parameters"])
                 if _pipeline_target_matches(target, tenant, aliases):
-                    values.update(target["parameters"])
                     aliases.update(alias.casefold() for alias in target.get("workspaceAliases", []))
                     aliases.add(target["workspace"].strip().casefold())
             values.update(incoming)

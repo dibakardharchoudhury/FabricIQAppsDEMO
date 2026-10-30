@@ -130,12 +130,16 @@ it owns project/model/registry settings and explicitly billable first-time
 provisioning. Blank overrides use verified discovery, never another tenant's saved target.
 
 The **Core setup** and **Full Deploy** setup forms share non-secret parameter
-values and remember edits in this browser, separately for each tenant/workspace
-pair. This includes the environment suffix, Key Vault URI and secret *names*,
+values and remember workspace overrides in this browser. Reusable defaults from
+the same tenant populate even before a workspace is entered or when a new workspace
+name is selected; an existing workspace's explicit overrides take precedence.
+This includes the environment suffix, Key Vault URI and secret *names*,
 Teams destinations, alert recipient, run-as guard, and timeout. It never saves
-PATs, tokens, or secret values. Changing targets clears the previous target's
-fields; returning restores that target's entries, including intentionally blank
-values. The workspace field always follows the sidebar. Clearing this site's
+PATs, tokens, or secret values. Changing workspace names keeps the setup fields
+visible while loading defaults; changing tenants does not reuse the previous
+tenant's values. Returning restores explicit overrides, including intentionally
+blank values. The workspace field always follows the sidebar and is never inherited
+from defaults. Clearing this site's
 browser storage removes remembered values.
 
 When the target tenant GUID matches the signed-in user, an otherwise unset alert
@@ -146,15 +150,16 @@ remain blank rather than being guessed.
 For preconfigured local installations, start the server with `FABRIC_TENANT`,
 `FABRIC_WORKSPACE`, and `FABRIC_PIPELINE_PARAMS` (a JSON object using the pipeline
 parameter names). Only declared non-secret parameters are exposed, and these
-defaults apply only when both target fields match the configured values
-(case-insensitively). Saved browser edits take precedence. Invalid configured
+defaults are available to all workspace names in the configured tenant
+(case-insensitively), with matching-workspace overrides taking precedence.
+Saved browser edits take precedence. Invalid configured
 defaults produce a visible error, not a silently empty form. Restart the server
 after changing its environment.
 
 This machine can also keep non-secret defaults in the gitignored
 `webapp/pipeline-defaults.local.json`, with `tenant`, `workspace`, and a
-`parameters` object using the pipeline parameter names. These values apply only
-to the matching target, across browsers and server restarts. Environment
+`parameters` object using the pipeline parameter names. These values supply defaults
+within that tenant, across workspace names, browsers and server restarts. Environment
 `FABRIC_PIPELINE_PARAMS` configuration takes precedence; browser edits still
 override defaults. Never put tokens, PATs or credential secret values in this file.
 Invalid local configuration produces a visible error. The Teams ID fields link

@@ -1518,8 +1518,8 @@ async function loadPipelineParams() {
     status.className = "phelp";
     status.setAttribute("role", "status");
     status.textContent = target
-      ? "Settings autosave for this target. Check alert destinations."
-      : "Enter a workspace to load saved settings.";
+      ? "Tenant defaults loaded; workspace overrides autosave. Check alert destinations."
+      : "Tenant defaults loaded. Enter a workspace to deploy.";
     $(container).prepend(status);
   }
   pipelineSavedValues = readPipelineSettings();
@@ -1583,7 +1583,7 @@ for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("input", () => {
     saveTargetSettings();
     restoreFoundrySettings();
-    if (pipelineTarget !== pipelineTargetKey()) {
+    if (id === "tenant" && pipelineTarget !== pipelineTargetKey()) {
       pipelineSpec = [];
       for (const container of ["pipelineFields", "workflowPipelineFields"]) {
         $(container).innerHTML = '<p class="phelp">Finish entering the target to load its setup parameters.</p>';
