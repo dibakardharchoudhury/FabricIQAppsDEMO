@@ -251,6 +251,13 @@ See the linked speed section for the complete substep audit and remaining
 service-bound waits. These are regression-tested mechanical reductions, not a
 measured new fresh-workspace deployment duration.
 
+Live verification of the new **combined post-Core stage** succeeded on the prepared
+FEATURE target in **14m 05.266s**: Energy 284.921s and Foundry 79.671s ran concurrently,
+then app publication and all required runtime/CORS/connector/authentication checks
+completed. All 45 registered redirects were retained. This did not repeat Git/Core,
+create a backend or rebuild the unchanged image, so it is **not** a fresh Full Deploy
+benchmark. See the deployment guide's live-measurement table for the exact scope.
+
 ## What manual sync this replaces
 
 In the Fabric portal the manual flow is:

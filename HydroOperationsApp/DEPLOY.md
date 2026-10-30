@@ -764,6 +764,29 @@ Read-only checks against the existing FEATURE target verified Weather equivalenc
 in **16.110s** and complete prepared-Foundry configuration in **46.125s**. These
 isolated checks changed no cloud resources and are not directly comparable to an
 entire historical deployment section.
+
+#### Live combined-stage verification
+
+The canonical post-Core command completed successfully against the prepared FEATURE
+workspace on October 30 in **14m 05.266s**. It did not reimport Git, repeat Core/Geo_001,
+create a fresh backend, or rebuild the unchanged hosted image.
+
+| Measured work | Duration |
+|---|---:|
+| Energy finalization, including Geo_002 and verified serving readback | 4m 44.921s |
+| Foundry setup, concurrently with Energy | 1m 19.671s |
+| Static build/publication | 2m 24.828s |
+| Mandatory backend runtime/CORS/database reapplication | 2m 54.031s |
+| All connector generation/application and individual receipt checks | 19.328s |
+| Final endpoint/browser-equivalent CORS/POST readiness | 12.578s |
+
+Both setup branches completed before static publication. All 45 registered SPA
+redirects were preserved, and final deployment/permission/consent checks passed.
+This proves live overlap and end-to-end execution of the **combined post-Core
+stage**, not a fresh 70-minute Full Deploy comparison. Fresh Git import, Environment
+build, Spark startup and Core ingestion were not remeasured; no new full-deployment
+duration is certified. Hosting was protected by sign-in; interactive source/agent
+execution acceptance remains separate.
 The consolidated energy verifier was also executed against live serving data:
 **one query POST, 1.289s**; all validation took **7.713s**, or **11.460s** including
 discovery. It verified 12 ready layers, nine reservoir areas, 79 links, foreign-value
