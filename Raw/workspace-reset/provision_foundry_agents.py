@@ -664,6 +664,12 @@ def resolve_project(
             print(f"Foundry: reusing this target's convention-named project {expected_name}.", flush=True)
         elif project_module.enabled():
             candidates = []
+        elif os.environ.get("HYDRO_PARALLEL_DEPLOY") == "1":
+            raise deploy.DeployError(
+                f"Parallel deployment requires the workspace-specific Foundry project '{expected_name}'. "
+                "A sole unrelated project is not safe to reuse. Prepare this target's Foundry binding "
+                "or explicitly approve creating a missing project."
+            )
     if project_name and not candidates and not new_project_name:
         raise deploy.DeployError(
             f"Existing Foundry project '{project_name}' was not found in the selected subscription. "
@@ -697,10 +703,13 @@ def resolve_project(
         settings = creation_settings or project_module.model_defaults(
             deploy, subscription=subscription, location=location, model=model,
         )
-        created = project_module.ensure_foundry_project(
-            deploy, hosted_module, tenant=tenant, workspace=workspace, subscription=subscription,
-            location=location, model=model, check_access=agent_access, model_settings=settings,
-        )
+        from deployment_locks import resource_lock
+
+        with resource_lock(tenant, "foundry-project-bootstrap"):
+            created = project_module.ensure_foundry_project(
+                deploy, hosted_module, tenant=tenant, workspace=workspace, subscription=subscription,
+                location=location, model=model, check_access=agent_access, model_settings=settings,
+            )
         candidates = discover(created)
     if len(candidates) != 1:
         choices = "\n".join(f"  - {identity.rsplit('/', 1)[-1]} ({identity})" for identity, _ in candidates)
@@ -843,6 +852,22 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
     print(f"Foundry: using verified model deployment {model}.", flush=True)
 
     connections = read_project_connections(deploy, project_id, arm_headers)
+    if os.environ.get("HYDRO_PARALLEL_DEPLOY") == "1":
+        from deployment_locks import claim_foundry_project
+
+        for connection in connections:
+            if connection.get("name") in {"hydro-fabric-iq", "hydro-fabric-ontology"}:
+                target = str(connection.get("properties", {}).get("target") or "")
+                scope = re.search(r"/workspaces/([0-9a-f-]{36})/", urlparse(target).path, re.IGNORECASE)
+                if not scope or scope[1].casefold() != workspace.casefold():
+                    raise deploy.DeployError(
+                        "The selected Foundry project's Hydro connections belong to another or unverified "
+                        "workspace. Parallel deployment will not retarget them."
+                    )
+        try:
+            claim_foundry_project(tenant, workspace, project_id)
+        except ValueError as exc:
+            raise deploy.DeployError(str(exc)) from exc
     try:
         insights_id = linked_application_insights(connections)
     except RuntimeError as error:

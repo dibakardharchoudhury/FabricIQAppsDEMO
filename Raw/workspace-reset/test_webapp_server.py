@@ -455,6 +455,7 @@ const elements = new Map();
 const $ = id => {
   if (!elements.has(id)) elements.set(id, {
     id, value:id === "workflowPat" ? "secret-pat" : id, checked:false,
+    querySelector() { return null; },
     addEventListener(event, handler) { this[event] = handler; },
   });
   return elements.get(id);
@@ -783,7 +784,7 @@ async function evaluate(expression) {
     await call("Emulation.setDeviceMetricsOverride", {width:1000, height:900, deviceScaleFactor:1, mobile:false});
     const html = fs.readFileSync(htmlPath, "utf8");
     const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
-    const renderer = html.slice(html.indexOf("function renderPanel("), html.indexOf("let subscriptionLoad"));
+    const renderer = html.slice(html.indexOf("async function postJson("), html.indexOf("let subscriptionLoad"));
     const helpers = html.slice(html.indexOf("const WORKFLOW_PHASE_GROUPS"), html.indexOf("// Starts a job"));
     await evaluate(`document.head.innerHTML = ${JSON.stringify("<style>"+style+"</style>")};
       document.body.innerHTML = '<div id="deployPanel"></div><div id="energyPanel"></div><div id="workflowPanel"></div>';
@@ -903,13 +904,54 @@ async function evaluate(expression) {
       check(out===original && bottom(), "Completion should keep the scroll surface and follow tail");
       check(out.classList.contains("error") && out.textContent.endsWith("exit code: 1"), "Completion output lost");
       check(out.textContent.includes("[error] Final failure"), "Error output lost");`);
-    console.log("PASS: streaming, manual/near-tail scroll, selection, wheel, PageDown, keyboard jump, module groups and completion");
+    await evaluate(`
+      var batch={
+        status:"running",jobId:"batch",parallelAction:"/api/full-workflow",lines:["Workspace progress"],
+        workspaceRuns:[
+          {workspace:"one",name:"One <literal>",status:"succeeded",done:true,lines:["one-only"]},
+          {workspace:"two",name:"Two",status:"failed",done:true,lines:["two-only"],canResume:true},
+          {workspace:"three",name:"Three",status:"running",done:false,lines:["three-only"]}
+        ]
+      };
+      renderPanel(other,batch);
+      check(other.querySelectorAll(".parallel-runs > details").length===3,"Every workspace needs its own panel");
+      var cards=other.querySelectorAll(".parallel-runs > details");
+      check(cards[0].querySelector("summary").textContent==="One <literal> · succeeded","Workspace name must remain literal");
+      check(cards[0].querySelector(".output").textContent.includes("one-only")
+        && !cards[0].querySelector(".output").textContent.includes("two-only"),"Workspace logs mixed");
+      check(cards[0].querySelector(".workspace-action").hidden,"Successful workspace must not offer a retry");
+      check(cards[1].querySelector(".workspace-action").textContent==="Resume this workspace","Full checkpoint control lost");
+      check(cards[1].querySelector(".workspace-action").disabled,"Wait for other targets before retrying");
+      check(cards[2].querySelector(".workspace-action").textContent==="Cancel this workspace","Individual cancel lost");
+      var targetInputs=document.createElement("div");
+      targetInputs.innerHTML='<input id="parallelDeploy" type="checkbox" checked><input id="workspace" value=""><input id="workspace2" value=" Two "><input id="workspace3" value="">';
+      document.body.appendChild(targetInputs);
+      var $=id=>document.getElementById(id);
+      check(JSON.stringify(selectedWorkspaces())==='["Two"]',"Blank target slots must be ignored");
+      var requests=[];
+      window.fetch=async (url,options)=>{requests.push({url,body:JSON.parse(options.body)});
+        return {ok:true,status:200,json:async()=>({jobId:"test"})};};
+    `);
+    await evaluate(`(async()=>{
+      await postJson("/api/setup-energy",{tenant:"tenant",workspace:""});
+      check(requests[0].url==="/api/parallel" && requests[0].body.workspaces.length===1
+        && requests[0].body.workspaces[0]==="Two","Module was not routed to the selected nonblank target");
+      await postJson("/api/delete",{tenant:"tenant",workspace:"One"});
+      check(requests[1].url==="/api/delete","Delete must never fan out");
+      $("parallelDeploy").checked=false;
+      await postJson("/api/setup-energy",{tenant:"tenant",workspace:"One"});
+      check(requests[2].url==="/api/setup-energy","Checkbox off must preserve single-target behavior");
+    })()`);
+    console.log("PASS: streaming, manual/near-tail scroll, selection, wheel, PageDown, keyboard jump, module groups, parallel targets and completion");
   } finally {
+    const exited = browser.exitCode !== null ? Promise.resolve()
+      : new Promise(resolve => browser.once("close", resolve));
     if (socket && socket.readyState === WebSocket.OPEN) {
       try {await call("Browser.close");} catch {}
       socket.close();
     }
     browser.kill();
+    await exited;
     clearTimeout(watchdog);
   }
 })().catch(error => {console.error(error); process.exitCode=1;});
@@ -921,7 +963,7 @@ async function evaluate(expression) {
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         finally:
-            shutil.rmtree(profile)
+            shutil.rmtree("\\\\?\\" + str(profile.resolve()) if os.name == "nt" else profile)
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
         starter = "_start_workflow" if endpoint in ("/api/full-workflow", "/api/run-pipeline") else "_start"

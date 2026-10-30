@@ -94,6 +94,44 @@ as blocked and ontology graph materialization remain explicit operator prerequis
   App publication waits for both. Each completed component is checkpointed; the
   combined component reruns idempotently if either branch or publication fails.
 
+## Optional: up to three workspaces in parallel
+
+In the sidebar, enable **Deploy to multiple workspaces in parallel** and enter one,
+two or three workspace names/GUIDs in the same tenant. Empty slots are ignored,
+including an empty first slot. Full Deploy, GitHub Sync, Core setup, Energy setup,
+Foundry setup and Deploy app fan out only to the populated targets. **Delete never
+fans out.** Connection tests still check the first workspace only.
+
+The form settings apply to every selected workspace. Tenant setup defaults remain
+available regardless of workspace name; explicit form values take precedence.
+For multiple targets, leave the shared Foundry project field blank: each workspace
+uses its own saved binding or convention-named project. A sole unrelated project
+is not a safe fallback. Creating missing Foundry resources still requires the
+existing explicit creation checkbox; parallel mode does not approve billable creation.
+
+Each worker uses a separate checkout, Azure CLI cache, hosted-agent state and
+Rayfin deployment files under the current user's private
+`~/.fabric-demo/parallel-deployments/` directory. Only matching tenant/workspace
+state is reused; the main checkout's generated files are not changed. Workers use
+one committed source snapshot, so commit source changes first. Existing generated
+changes to `HydroOperationsApp/rayfin/rayfin.yml` need not be discarded. State and
+checkouts are retained, not deleted after completion.
+
+Each workspace has its own status, timings, live output and cancellation control.
+One failure does not stop the other workspaces. After the batch finishes, retry
+only the failed/cancelled workspace; Full Deploy retains its successful component
+checkpoints and requires explicit synchronization when definitions changed. A
+server interruption is not proof that remote Fabric jobs stopped: verify those
+jobs before starting another run. Cancellation stops owned local processes, not
+necessarily already-submitted remote Fabric jobs.
+
+Workspace names/GUID aliases are resolved before deployment; duplicate targets
+are rejected. Shared Entra mutations and Foundry bootstrap operations are locked
+across processes, and Entra redirects are reread inside the mutation lock to avoid
+losing another workspace's newly published origin. Workspace pipelines, builds and
+agent deployment work otherwise overlap. Fabric capacity, Spark concurrency and
+Azure quotas still apply; three targets do not imply three times the throughput.
+
 ## Easiest start — just launch it (no commands to type)
 
 One-time setup on the machine: install **[Python](https://www.python.org/downloads/)**

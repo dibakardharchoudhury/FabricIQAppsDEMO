@@ -323,6 +323,14 @@
           <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
         <label class="idfield"><span>Workspace (GUID or name)</span>
           <input id="workspace" type="text" autocomplete="off" placeholder="ws-… or a display name" /></label>
+        <label><input id="parallelDeploy" type="checkbox" /> Deploy to multiple workspaces in parallel</label>
+        <div id="parallelWorkspaceFields" hidden>
+          <label class="idfield"><span>Workspace 2 (optional)</span>
+            <input id="workspace2" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
+          <label class="idfield"><span>Workspace 3 (optional)</span>
+            <input id="workspace3" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
+          <p class="cardcap">Blank slots are ignored. Full Deploy and setup modules use the same form settings, with separate progress and files per workspace. Leave the Foundry project blank for automatic target-specific selection. Delete stays single-workspace.</p>
+        </div>
         <p id="targetSettingsStatus" class="cardcap" role="status"></p>
       </div>
 
@@ -590,9 +598,96 @@ $("deployFoundryFields").innerHTML = renderFoundryFields("deploy", "foundryClien
 $("deployAuthenticationFields").innerHTML = renderSpaFields("deployClientId");
 
 async function postJson(url, body) {
+  if ($("parallelDeploy")?.checked && parallelActions.has(url)) {
+    body = { action: url, workspaces: selectedWorkspaces(), data: body };
+    url = "/api/parallel";
+  }
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
+}
+
+const parallelActions = new Set([
+  "/api/sync", "/api/run-pipeline", "/api/setup-energy",
+  "/api/setup-foundry", "/api/deploy-app", "/api/full-workflow",
+]);
+function selectedWorkspaces() {
+  const ids = $("parallelDeploy")?.checked ? ["workspace", "workspace2", "workspace3"] : ["workspace"];
+  return ids.map(id => $(id).value.trim()).filter(Boolean);
+}
+function parallelPayload(action) {
+  if (action === "/api/full-workflow") return workflowPayload();
+  const common = { tenant: $("tenant").value, workspace: $("workspace").value };
+  if (action === "/api/sync") return {
+    ...common, repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
+    connectionId: connValue(), keepConnected: $("keepConnected").checked, pat: $("pat").value,
+  };
+  if (action === "/api/run-pipeline") return {
+    ...common, pipeline: "01_Pipe_Setup", parameters: collectPipelineParams(),
+  };
+  if (action === "/api/setup-foundry") return {
+    ...common, clientId: spaClientValue("foundryClientId"), ...foundryPayload("deploy"),
+  };
+  if (action === "/api/deploy-app") return { ...common, clientId: spaClientValue("deployClientId") };
+  return common;
+}
+
+function renderParallelRuns(el, job) {
+  if (!job.workspaceRuns?.length) return;
+  let container = el.querySelector(".parallel-runs");
+  if (!container) {
+    container = document.createElement("div");
+    container.className = "parallel-runs";
+    el.appendChild(container);
+  }
+  for (const state of job.workspaceRuns) {
+    const id = el.id + "-parallel-" + state.workspace;
+    let details = [...container.children].find(child => child.id === id);
+    if (!details) {
+      details = document.createElement("details");
+      details.id = id;
+      details.className = "workflow-phase-group";
+      details.open = true;
+      details.innerHTML = '<summary></summary><div class="workspace-panel"></div><button type="button" class="ghost workspace-action"></button>';
+      container.appendChild(details);
+    }
+    details.querySelector("summary").textContent = `${state.name} \u00b7 ${state.status}`;
+    const panel = details.querySelector(".workspace-panel");
+    panel.id = id + "-progress";
+    renderPanel(panel, state);
+    const button = details.querySelector(".workspace-action");
+    const retry = state.done && ["failed", "cancelled"].includes(state.status);
+    const canRetry = retry && job.status !== "running";
+    button.hidden = state.done && !retry;
+    button.disabled = retry && !canRetry;
+    button.textContent = !state.done ? "Cancel this workspace"
+      : state.requiresSync ? "Sync changes and retry this workspace"
+      : state.canResume ? "Resume this workspace" : "Retry this workspace";
+    button.onclick = async () => {
+      button.disabled = true;
+      if (!state.done) {
+        const result = await postJson(`/api/parallel/${job.jobId}/cancel-workspace`, { workspace: state.workspace });
+        if (!result.ok) {
+          state.error = result.data.error || `HTTP ${result.status}`;
+          renderPanel(panel, state);
+          button.disabled = false;
+        }
+        return;
+      }
+      if (state.requiresSync && !confirm("Sync changed definitions and retry this workspace, retaining unaffected completed stages?")) {
+        button.disabled = false;
+        return;
+      }
+      const fullWorkflow = job.parallelAction === "/api/full-workflow";
+      if (fullWorkflow) { workflowBusy = true; refresh(); }
+      await runJob("/api/parallel", {
+        action: job.parallelAction, workspaces: [state.workspace],
+        data: parallelPayload(job.parallelAction),
+        resume: job.parallelAction === "/api/full-workflow" && !!state.canResume,
+        syncLatest: !!state.requiresSync,
+      }, panel, () => fullWorkflow ? workflowDone() : refresh());
+    };
+  }
 }
 
 function renderPanel(el, job) {
@@ -683,6 +778,7 @@ function renderPanel(el, job) {
   out.className = `output ${statusCls}`;
   if (stick) out.scrollTop = out.scrollHeight;
   out._updateFollowStatus();
+  renderParallelRuns(el, job);
 }
 
 let subscriptionLoad = null;
@@ -831,6 +927,9 @@ const workflowJobStorageKey = "fabric-demo.full-workflow-job.v1";
 
 // Starts a job (or reconnects to an existing one) then polls until done.
 async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
+  const isWorkflow = panelEl.id === "workflowPanel"
+    || (startUrl === "/api/parallel" && body?.action === "/api/full-workflow");
+  panelEl.querySelector(".parallel-runs")?.remove();
   const job = { status: "running", phases: [], phaseIndex: 0, phase: "", lines: [], returncode: null };
   renderPanel(panelEl, job);
   let jobId = existingJobId;
@@ -838,7 +937,7 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
     const started = await postJson(startUrl, body);
     if (!started.ok || !started.data.jobId) {
       job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
-      if (panelEl.id === "workflowPanel" && workflowCheckpoint && started.data.requiresSync) {
+      if (isWorkflow && workflowCheckpoint && started.data.requiresSync) {
         workflowCheckpoint.requiresSync = true;
         workflowCheckpoint.fullSyncRequired = !!started.data.fullSyncRequired;
         workflowCheckpoint.changedNotebooks = started.data.changedNotebooks || [];
@@ -847,17 +946,18 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
     }
     jobId = started.data.jobId;
   }
-  if (panelEl.id === "workflowPanel") {
+  if (isWorkflow) {
     workflowCheckpoint = { jobId, status: "running" };
     try { localStorage.setItem(workflowJobStorageKey, jobId); } catch (_) {}
   }
   let since = 0;
+  let workspaceSince = {};
   let misses = 0;
   // A lost job / unreachable server means we stopped watching -- NOT that the task
   // failed. Fabric runs are server-side and keep going; say so instead of "Failed".
   const interrupted = (msg) => {
     job.status = "interrupted"; job.error = msg;
-    if (panelEl.id === "workflowPanel") {
+    if (isWorkflow) {
       workflowCheckpoint = { jobId, status: "interrupted" };
       $("workflowResumeStatus").textContent = msg + " Resume is unavailable; no steps will be restarted automatically.";
     }
@@ -865,7 +965,7 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
   };
   const poll = async () => {
     let r;
-    try { r = await fetch(`/api/jobs/${jobId}?since=${since}`); }
+    try { r = await fetch(`/api/jobs/${jobId}?since=${since}&workspaceSince=${encodeURIComponent(JSON.stringify(workspaceSince))}`); }
     catch (e) {
       // The local server may be briefly unreachable (e.g. restarting) -- retry before giving up.
       if (++misses <= 4) { setTimeout(poll, 1000); return; }
@@ -888,7 +988,15 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
     job.elapsedSeconds = j.elapsedSeconds;
     job.phaseTimings = j.phaseTimings;
     job.componentTimings = j.componentTimings;
-    if (panelEl.id === "workflowPanel") {
+    job.jobId = jobId;
+    job.parallelAction = j.parallelAction;
+    const previousRuns = new Map((job.workspaceRuns || []).map(state => [state.workspace, state]));
+    job.workspaceRuns = (j.workspaceRuns || []).map(state => ({
+      ...previousRuns.get(state.workspace), ...state,
+      lines: [...(previousRuns.get(state.workspace)?.lines || []), ...(state.lines || [])],
+    }));
+    workspaceSince = Object.fromEntries(job.workspaceRuns.map(state => [state.workspace, state.nextSince || 0]));
+    if (isWorkflow) {
       workflowCheckpoint = { jobId, status: j.status, canResume: j.canResume, resumeComponent: j.resumeComponent };
       if (j.resumeBlockedReason) $("workflowResumeStatus").textContent = j.resumeBlockedReason;
       refresh();
@@ -915,10 +1023,10 @@ const connValue = () => (reuseChecked() ? "yes" : "");
 const workflowReuseChecked = () => $("workflowReuseConn").checked;
 const workflowConnValue = () => (workflowReuseChecked() ? "yes" : "");
 function baseValid() {
-  return $("tenant").value.trim() && $("workspace").value.trim() && $("repository").value.includes("/");
+  return deployValid() && $("repository").value.includes("/");
 }
 function workflowBaseValid() {
-  return $("tenant").value.trim() && $("workspace").value.trim() && $("workflowRepository").value.includes("/");
+  return deployValid() && $("workflowRepository").value.includes("/");
 }
 function syncValid() {
   if (!baseValid()) return false;
@@ -932,10 +1040,10 @@ function workflowSyncValid() {
   return !!$("workflowPat").value.trim();
 }
 function testValid() {
-  return baseValid() && (reuseChecked() || $("pat").value.trim());
+  return $("workspace").value.trim() && baseValid() && (reuseChecked() || $("pat").value.trim());
 }
 function workflowTestValid() {
-  return workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
+  return $("workspace").value.trim() && workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
 }
 function deleteValid() {
   const dry = $("dryRun").checked;
@@ -943,9 +1051,12 @@ function deleteValid() {
     (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
 }
 function deployValid() {
-  return $("tenant").value.trim() && $("workspace").value.trim();
+  const targets = selectedWorkspaces();
+  return $("tenant").value.trim() && targets.length > 0
+    && new Set(targets.map(value => value.toLowerCase())).size === targets.length;
 }
 function refresh() {
+  $("parallelWorkspaceFields").hidden = !$("parallelDeploy").checked;
   $("sidebarTarget").textContent = [$("tenant").value.trim(), $("workspace").value.trim()].filter(Boolean).join(" / ");
   // The PAT only exists to CREATE a new connection, so reveal it only when one is
   // needed: reuse is off (create a saved connection) or a reuse test just failed.
@@ -982,7 +1093,7 @@ function refresh() {
   $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy") && spaClientValid("foundryClientId"));
   $("energyBtn").disabled = !deployValid();
   $("workflowBtn").disabled = workflowBusy || !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
-  const resumable = !!workflowCheckpoint?.canResume;
+  const resumable = !!workflowCheckpoint?.canResume && !$("parallelDeploy").checked;
   $("workflowResumeBtn").hidden = !resumable;
   $("workflowResumeBtn").disabled = workflowBusy || !deployValid() || !!workflowCheckpoint?.requiresSync;
   $("workflowSyncResumeBtn").hidden = !resumable || !workflowCheckpoint.requiresSync;
@@ -1086,6 +1197,12 @@ function foundryPayload(prefix) {
 }
 function foundryValid(prefix) {
   const account = $(prefix + "FoundryAccountName").value.trim();
+  const project = $(prefix + "FoundryProjectName").value.trim();
+  if ($("parallelDeploy")?.checked && selectedWorkspaces().length > 1 && project) {
+    $(prefix + "FoundryCreationStatus").textContent =
+      "Leave the project blank for multiple workspaces. Each workspace needs its own project; the account and model can be shared.";
+    return false;
+  }
   if (account && !/^[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]$/.test(account)) {
     $(prefix + "FoundryCreationStatus").textContent =
       "Foundry account name must be 2-64 letters, digits or hyphens, starting and ending with a letter or digit.";
@@ -1095,7 +1212,6 @@ function foundryValid(prefix) {
     $(prefix + "FoundryCreationStatus").textContent = "";
     return true;
   }
-  const project = $(prefix + "FoundryProjectName").value.trim();
   const model = $(prefix + "FoundryModel").value.trim();
   const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
@@ -1568,12 +1684,12 @@ function collectPipelineParams(prefix = "pp_") {
   return out;
 }
 function pipelineValid() {
-  return $("tenant").value.trim() && $("workspace").value.trim()
+  return deployValid()
     && pipelineTarget === pipelineTargetKey()
     && requiredPipelineFields.every(name => $("pp_" + name)?.value.trim());
 }
 function workflowPipelineValid() {
-  return $("tenant").value.trim() && $("workspace").value.trim()
+  return deployValid()
     && pipelineTarget === pipelineTargetKey()
     && requiredPipelineFields.every(name => $("wf_pp_" + name)?.value.trim());
 }

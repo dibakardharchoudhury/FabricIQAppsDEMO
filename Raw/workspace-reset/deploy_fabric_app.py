@@ -591,6 +591,9 @@ def ensure_azure_tenant(tenant: str) -> str:
 
 def isolated_azure_cli_config(tenant: str) -> Path:
     """Return the tenant-scoped cache used only for CAE reauthentication."""
+    parallel_cache = os.environ.get("HYDRO_PARALLEL_AZURE_CONFIG_DIR", "").strip()
+    if parallel_cache:
+        return Path(parallel_cache)
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
@@ -1011,15 +1014,19 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
     return app_id
 
 
-def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
+def read_rayfin_env(env_path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    env_path = RAYFIN_DIR / ".env"
     if env_path.exists():
         for raw in env_path.read_text(encoding="utf-8").splitlines():
             if "=" not in raw or raw.lstrip().startswith("#"):
                 continue
             key, value = raw.split("=", 1)
             values[key.strip()] = value.strip()
+    return values
+
+
+def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
+    values = read_rayfin_env(RAYFIN_DIR / ".env")
 
     state_path = RAYFIN_DIR / ".deployments.json"
     if not state_path.exists():
@@ -1885,6 +1892,18 @@ def export_frontend_env() -> None:
 
 
 def run_rayfin_deployment(command: list[str], tenant: str) -> str:
+    from deployment_locks import resource_lock
+
+    with resource_lock(tenant, "entra-spa"):
+        if os.environ.get("HYDRO_PARALLEL_DEPLOY") == "1":
+            values, _ = current_rayfin_target()
+            client_id = _public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID")
+            redirects = read_entra_spa_redirects_with_reauth(client_id, tenant)
+            write_rayfin_redirects(_unique_redirect_uris(redirects, ["http://localhost:5173"]))
+        return _run_rayfin_deployment(command, tenant)
+
+
+def _run_rayfin_deployment(command: list[str], tenant: str) -> str:
     try:
         return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
     finally:
@@ -2543,7 +2562,10 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             raise DeployError(f"Feature bootstrap configuration failed: {exc}") from exc
 
     timings.stage(2, "Resolving the tenant SPA app registration")
-    client_id = resolve_spa(args.client_id, tenant_id)
+    from deployment_locks import resource_lock
+
+    with resource_lock(tenant_id, "entra-spa"):
+        client_id = resolve_spa(args.client_id, tenant_id)
     if not client_id:
         raise DeployError(
             "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
@@ -2690,15 +2712,16 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
         try:
-            run_with_azure_cli_reauthentication(
-                tenant_id,
-                "configuring browser sign-in",
-                lambda: run_stream(
-                    node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
-                    cwd=APP_DIR,
-                    env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
-                ),
-            )
+            with resource_lock(tenant_id, "entra-spa"):
+                run_with_azure_cli_reauthentication(
+                    tenant_id,
+                    "configuring browser sign-in",
+                    lambda: run_stream(
+                        node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
+                        cwd=APP_DIR,
+                        env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
+                    ),
+                )
         except DeployError as exc:
             if feature_workspace:
                 raise DeployError("Feature deployment stopped: browser sign-in setup failed.") from exc

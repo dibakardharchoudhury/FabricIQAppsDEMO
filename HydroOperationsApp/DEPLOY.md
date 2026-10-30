@@ -22,6 +22,19 @@ Operations website.
 | Agent update | **Set up Foundry agents**, then **Deploy app** |
 | Energy data refresh | **Refresh energy sources** |
 
+**Multiple workspaces:** enable **Deploy to multiple workspaces in parallel** in
+the sidebar and fill up to three slots in the same tenant. Blank slots are ignored,
+even the first slot. Full Deploy and individual setup/deploy modules use the same
+form settings, but show separate workspace progress and logs. Delete remains
+single-workspace. Leave the shared Foundry project field blank for target-specific
+selection; creating missing resources still requires your explicit approval.
+Commit source changes first: workers use isolated committed checkouts and retain
+private per-workspace state, without overwriting this checkout's Rayfin files.
+Shared Entra writes are serialized to preserve all SPA redirects; other work can
+overlap subject to capacity/quota. A failed workspace does not stop the others.
+Use its retry control after the batch finishes to preserve completed Full Deploy
+stages. See [parallel execution and state](../Raw/workspace-reset/README.md#optional-up-to-three-workspaces-in-parallel).
+
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.
@@ -47,7 +60,7 @@ endings; do not recreate the ontology or change its source bindings for this err
 |---|---|
 | Tenant / workspace | Tenant may be remembered; workspace always starts empty |
 | Repository / branch | This checkout; confirm the branch is pushed |
-| Key Vault URI / Teams IDs | Saved for this target; unknown values stay blank |
+| Key Vault URI / Teams IDs | Reused within the tenant, with workspace overrides; unknown values stay blank |
 | Alert email | Signed-in user's email when the tenant matches; confirm the recipient |
 | Azure subscription | Active or sole subscription in the target tenant; otherwise choose |
 | Foundry project name / Model deployment name | Saved selection, target-named project, or unambiguous discovery |
@@ -55,8 +68,9 @@ endings; do not recreate the ontology or change its source bindings for this err
 
 Core/Full Deploy values autosave on this machine in gitignored
 [`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json).
-Wait for **Settings saved on this machine** before closing. Values are isolated by
-target; explicit clears persist. Foundry overrides and sidebar preferences use
+Wait for **Settings saved on this machine** before closing. Setup defaults are
+reused only within the same tenant; workspace overrides and explicit clears take
+precedence. Foundry overrides remain workspace-specific. Foundry choices and sidebar preferences use
 browser storage. PATs and credential values are never saved by these forms.
 
 Use **Hide sidebar** for more space. Connection tests run only when you click
