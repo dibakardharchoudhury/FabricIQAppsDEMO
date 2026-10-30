@@ -27,10 +27,12 @@ If a Full Deploy step fails, fix the reported prerequisite and choose **Retry fr
 continue**. Completed stages are checkpointed locally across reloads/server restarts.
 Changed notebook code requires **Sync updated definitions and resume**: only those notebooks
 are updated from this checkout, retaining live bindings and unrelated workspace items.
-A Geo-only fix resumes Energy setup, then Foundry and app deployment, without repeating
+A Geo-only fix resumes the combined Energy/Foundry/app stage without repeating
 successful Core setup. A changed core notebook reruns Core and its dependent stages.
 Pipeline/environment/item-metadata changes still require explicit full Git sync/setup.
-Runs made before checkpoint support cannot be recovered automatically. For this older
+Checkpoints from the older five-stage layout explicitly refuse automatic resume;
+their completed-stage information remains available. Runs made before checkpoint
+support cannot be recovered automatically. For this older
 Energy failure, use **Refresh energy sources** (it updates changed Geo notebook code
 only), then **Set up Foundry agents** and **Deploy app**. Do not repeat successful Core setup.
 
@@ -158,8 +160,11 @@ may be clipped visually without being truncated.
 | **Workspace (GUID or name)** | The workspace GUID from `/groups/<workspace-id>` in its Fabric URL, or its exact name | The existing Fabric workspace to deploy into, not a new workspace name to create. Prefer the GUID when names are duplicated. The workspace field starts empty deliberately. |
 
 Select **Full Deploy** for a new/prepared-empty workspace. It runs **1. GitHub sync
-→ 2. Core setup → 3. Foundry agents → 4. Deploy app**, stops on failure, and streams
-the component's output. Core includes Weather and energy ingestion/read-model checks.
+→ 2. Core setup → 3. Energy + Foundry + app deployment**, stops on failure, and streams
+the component's output. After Core's Weather and energy ingestion finish, Energy
+finalization and Foundry setup run concurrently inside one deployment process.
+App publication waits for both to succeed. Target/SPA resolution, configuration and
+dependency preflight run once, not once for each of three subprocesses.
 Core first completes the ontology: core bindings and initial UKMet ingestion precede
 operational SQL seeding, actual source-key/coverage checks, and readback of all required
 business entities and relationships. Only then are the Fabric Data Agent and retained
@@ -305,11 +310,12 @@ After NB01 creates and binds the Lakehouses, the Core/Weather `runMultiple` DAG
 and `Geo_001_ingest_energy_context` run in parallel branches of `01_Pipe_Setup`.
 Energy keeps its separate, schema-disabled GeoContext Lakehouse and Spark session:
 it must not inherit Core's operational default Lakehouse. The pipeline waits for
-both branches; either failure stops later steps. The local job then publishes and
-verifies the map read models without running ingestion a second time. The local
-progress display groups both operations under **Core Setup: Fabric, Weather and
-Energy**; publishing map read models is not a second notebook-ingestion stage.
-Foundry remains separate. Sync from GitHub once to import the updated pipeline/notebooks;
+both branches; either failure stops later steps. Standalone **Core setup** then
+publishes and verifies the map read models without running ingestion a second time.
+**Full Deploy** overlaps that finalization with independent Foundry setup, then
+publishes the website only after both succeed. It does not run Core or Geo_001
+again. Standalone Foundry, energy-refresh and app-only actions remain available.
+Sync from GitHub once to import the updated pipeline/notebooks;
 Core refuses the old serial pipeline before starting a long run.
 
 Notebook completion is not agent runtime acceptance. NB09's exact unsupported-v2
@@ -680,6 +686,114 @@ images are reused; runtime/auth checks remain mandatory.
 
 Elapsed time is shown in the UI; detailed `DEPLOY_TIMINGS` receipts remain in logs.
 Historical measurements: [deployment record](../docs/ontology-test-review.md).
+
+The October 29 Full Deploy baseline took **70m 35.688s**, without creating a new
+managed private endpoint:
+
+| Component | Measured duration | Critical-path audit |
+|---|---:|---|
+| GitHub sync | 11m 17.922s | Git import was about 2m 40s; finishing included the Weather Environment's library publication/build. Reruns now avoid a rebuild only after verifying unchanged published/staged contents. |
+| Core setup pipeline | 23m 01.391s | Root lakehouse setup precedes parallel Core/Weather and Geo_001 branches. Core uses a shared Spark session with concurrency four; agents wait for complete ontology bindings. |
+| Energy finalization | 9m 00.922s | 14.312s prerequisites and 524.110s preparation, including one Geo_002 job, not a second Geo_001 ingestion. |
+| Foundry setup | 15m 32.890s | The fresh Fabric backend gateway took about 8m 03s; hosted image preparation/publication took about 4m 47s. |
+| App deployment | 11m 42.407s | Backend reapplication, repeated connector CLI startup and final authentication readback contributed more than the static upload alone. |
+
+Substep review of that same run:
+
+| Area | Measured substeps | Treatment |
+|---|---|---|
+| Git | Connection discovery 7s; connect 2s; initialize 3s; import 2m 40s; finishing 8m 24s (rounded UI phases) | Retain import, runtime checks, changed/fresh Weather Environment publication/readback and disabled-until-ready schedule. An unrelated Git change no longer automatically forces an unchanged Environment rebuild. |
+| Core dependencies | Public activity-run readback: root setup 298.586s; then Core/Weather 1043.633s and Geo_001 888.459s overlap. The Core Spark session reports 102s queued and 843s running. | Preserve source/publication dependencies and existing Core/energy parallelism. These activity/session durations are not individual `runMultiple` child timings and must not be added together. |
+| Energy notebooks | Geo_001 ingestion is in Core; Geo_002 finalizes serving models and its agent | Consolidate verification reads and redundant actions, not jobs, source-version checks or required publication commands. |
+| Foundry | Identity 8.531s; SPA 9.750s; source/gateway/project/agents/hosted setup 913.781s | Resolve approved project creation before independent image/gateway work. Specialists and hosted publication still wait for verified backend and sources. |
+| App, sections 1–4 | Identity 8.797s; SPA 7.813s; state/readiness 128.500s; login 1.625s | Reuse a single invocation's successful definition read and Foundry token during read-only verification; retain source, connection, toolbox and specialist checks. |
+| App, sections 5–7 | Static build/publication 141.281s; backend/connector synchronization 217.890s; sign-in setup 51.141s | Keep backend runtime/CORS/database reapplication; batch explicit connector generation/application and validate each required receipt. |
+| App, section 8 | Full final verification 144.203s | Keep hosted identity, endpoint contract, real POST/preflight checks, redirect preservation and permissions/consent. The UI's roughly 24s endpoint/CORS slice was not this section's complete duration. |
+
+Implemented reductions:
+
+- Full Deploy no longer adds Energy finalization, Foundry setup and app setup as
+  three serial subprocesses. One canonical `--stage all --energy-map enabled
+  --energy-read-models-only` invocation finalizes the completed Core import while
+  Foundry provisions independently. Only the parent owns app configuration writes.
+  Both branches must succeed before static publication; the newly verified backend
+  is reused, and runtime/CORS/database reapplication and all final checks still run.
+  Standalone actions retain their existing behavior. Older five-stage checkpoints
+  are rejected explicitly rather than mapped onto different completion boundaries.
+  The historical **9m 00.922s** Energy phase is therefore eligible to overlap Foundry,
+  not simply subtracted from a future estimate.
+- A successful Weather Environment is no longer rebuilt merely because Git
+  imported an unrelated change. Compare authoritative published/staged library
+  inventories, full Spark compute settings and external-library YAML exports.
+  Only exact equivalence skips the rebuild. Changed versions, channels or compute,
+  custom/unknown libraries and incomplete paginated inventories require full
+  publication; API read failures propagate. Fresh/unsuccessful Environments still
+  publish normally. This uses Microsoft's documented
+  [published](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/list-libraries)
+  and [staging](https://learn.microsoft.com/en-us/rest/api/fabric/environment/staging/list-libraries)
+  library APIs, [compute readback](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/get-spark-compute)
+  and [external-library export](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/export-external-libraries).
+- On a fresh backend, prepare the immutable hosted source image **concurrently**
+  with Fabric gateway provisioning. No Rayfin configuration or azd environment is
+  written by the image worker. Publication still rereads the registry digest and
+  current source fingerprint after backend/source verification; failures stop
+  publication. Existing-backend deployments do not add a prebuild pass.
+- Run all declared connectors through one supported Rayfin `up connector apply
+  --json` invocation, rather than one per connector. The receipt must prove both
+  generation and application for Lakehouse, operational SQL and enabled energy
+  connectors; missing, skipped, duplicate or failed results stop deployment.
+- Share successful Fabric definition reads only inside one read-only Foundry
+  verification invocation, keyed by workspace/item/collection. Reuse its Foundry
+  token for toolbox and agent verification. Nothing is persisted or reused by a
+  later invocation, after a failed read, or across publication.
+- Energy serving verification uses **one Kusto query instead of three**, retaining
+  every validation and all four publication commands. Geo_002 uses **one preflight
+  instead of two**, retaining both source-version checks. Geo_001's no-manual-links
+  coverage check uses **one Spark count instead of two**; manual-history checks stay.
+- `DEPLOY_SUBSTEP_TIMING=` receipts now separate image preparation, gateway,
+  operational source verification, backend reapplication, connector application,
+  hosted identity, endpoint/CORS and Entra readback. Overlapping image/backend
+  durations are not additive wall-clock time.
+
+Regression tests verify these request/action reductions and synchronized overlap
+without weakening readiness checks. They are **not a new live Full Deploy
+benchmark**. Spark startup, source ingestion, fresh Environment build, Fabric
+provisioning and hosted activation remain service-dependent. Do not subtract
+entire historical phases or promise a new end-to-end duration from these tests.
+Read-only checks against the existing FEATURE target verified Weather equivalence
+in **16.110s** and complete prepared-Foundry configuration in **46.125s**. These
+isolated checks changed no cloud resources and are not directly comparable to an
+entire historical deployment section.
+
+#### Live combined-stage verification
+
+The canonical post-Core command completed successfully against the prepared FEATURE
+workspace on October 30 in **14m 05.266s**. It did not reimport Git, repeat Core/Geo_001,
+create a fresh backend, or rebuild the unchanged hosted image.
+
+| Measured work | Duration |
+|---|---:|
+| Energy finalization, including Geo_002 and verified serving readback | 4m 44.921s |
+| Foundry setup, concurrently with Energy | 1m 19.671s |
+| Static build/publication | 2m 24.828s |
+| Mandatory backend runtime/CORS/database reapplication | 2m 54.031s |
+| All connector generation/application and individual receipt checks | 19.328s |
+| Final endpoint/browser-equivalent CORS/POST readiness | 12.578s |
+
+Both setup branches completed before static publication. All 45 registered SPA
+redirects were preserved, and final deployment/permission/consent checks passed.
+This proves live overlap and end-to-end execution of the **combined post-Core
+stage**, not a fresh 70-minute Full Deploy comparison. Fresh Git import, Environment
+build, Spark startup and Core ingestion were not remeasured; no new full-deployment
+duration is certified. Hosting was protected by sign-in; interactive source/agent
+execution acceptance remains separate.
+The consolidated energy verifier was also executed against live serving data:
+**one query POST, 1.289s**; all validation took **7.713s**, or **11.460s** including
+discovery. It verified 12 ready layers, nine reservoir areas, 79 links, foreign-value
+restrictions and four owned-Lakehouse Delta locations. That check exposed and
+corrected a reserved KQL output alias before final validation. It did not run
+notebooks, ingestion, publication or control commands, and does not measure a new
+Geo notebook run.
 
 ## Deploying the merged feature branch
 

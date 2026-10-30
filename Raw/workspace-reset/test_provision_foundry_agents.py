@@ -28,6 +28,63 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class FabricIQConnectionTests(unittest.TestCase):
+    def test_project_connection_inventory_preserves_pagination_and_rejects_foreign_pages(self):
+        project = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p"
+        next_page = f"https://management.azure.com{project}/connections?api-version=2025-10-01-preview&skip=next"
+        deploy = Mock(DeployError=RuntimeError)
+        with patch.object(module, "request_with_read_retry", side_effect=[
+            Mock(ok=True, json=lambda: {"value": [{"name": "first"}], "nextLink": next_page}),
+            Mock(ok=True, json=lambda: {"value": [{"name": "second"}]}),
+        ]) as request:
+            self.assertEqual(module.read_project_connections(deploy, project, {}), [
+                {"name": "first"}, {"name": "second"},
+            ])
+            self.assertEqual(request.call_count, 2)
+        for invalid in (
+            {"value": [], "nextLink": next_page.replace("management.azure.com", "example.com")},
+            {"value": [], "nextLink": next_page.replace("/projects/p/", "/projects/other/")},
+            {"value": None},
+        ):
+            with self.subTest(page=invalid), patch.object(module, "request_with_read_retry", return_value=Mock(
+                ok=True, json=lambda: invalid,
+            )) as request, self.assertRaises(RuntimeError):
+                module.read_project_connections(deploy, project, {})
+            self.assertEqual(request.call_count, 1)
+
+    def test_definition_reads_are_coalesced_only_inside_one_verification(self):
+        deploy = Mock(FABRIC_BASE="https://api.fabric.microsoft.com/v1", DeployError=RuntimeError)
+        cached: dict = {}
+        payload = definition()
+        response = Mock(status_code=200, json=Mock(return_value=payload))
+        with patch.object(module, "request_with_read_retry", return_value=response) as request:
+            for _ in range(2):
+                self.assertEqual(module.read_data_agent_definition(
+                    deploy, "workspace", "agent", {}, definition_cache=cached,
+                ), payload)
+            self.assertEqual(request.call_count, 1)
+            for workspace, item, collection in (
+                ("other", "agent", "dataAgents"), ("workspace", "other", "dataAgents"),
+                ("workspace", "agent", "ontologies"),
+            ):
+                module.read_data_agent_definition(
+                    deploy, workspace, item, {}, collection=collection, definition_cache=cached,
+                )
+            module.read_data_agent_definition(deploy, "workspace", "agent", {}, definition_cache={})
+            self.assertEqual(request.call_count, 5)
+
+    def test_failed_definition_is_not_cached(self):
+        deploy = Mock(FABRIC_BASE="https://api.fabric.microsoft.com/v1", DeployError=RuntimeError)
+        cached: dict = {}
+        response = Mock(status_code=200, json=Mock(return_value=definition()))
+        with patch.object(module, "request_with_read_retry", side_effect=[
+            requests.HTTPError("denied"), response,
+        ]) as request:
+            with self.assertRaises(requests.HTTPError):
+                module.read_data_agent_definition(deploy, "workspace", "agent", {}, definition_cache=cached)
+            self.assertEqual(cached, {})
+            module.read_data_agent_definition(deploy, "workspace", "agent", {}, definition_cache=cached)
+            self.assertEqual(request.call_count, 2)
+
     def test_connections_match_portal_fabric_audience_and_type_metadata(self):
         properties = module.fabric_iq_connection_properties("https://api.fabric.microsoft.com/example")
         self.assertEqual(properties["audience"], "https://api.fabric.microsoft.com")
@@ -608,6 +665,11 @@ class PreparedFoundryTests(unittest.TestCase):
             module.verify_existing(deploy, tenant, workspace)
         connections.assert_called_once()
         deploy._published_operational_source_ready.assert_called_once()
+        self.assertIs(
+            connections.call_args.kwargs["definition_cache"],
+            deploy._published_operational_source_ready.call_args.kwargs["definition_cache"],
+        )
+        self.assertEqual(connections.call_args.kwargs["foundry_headers"], {"Authorization": "Bearer token"})
         self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "GET"])
         self.assertEqual([call.args[:2] for call in deploy.az.call_args_list], [("account", "get-access-token")])
         self.assertNotIn("WARNING", str(output.call_args_list))

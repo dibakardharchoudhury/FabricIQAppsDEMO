@@ -16,7 +16,7 @@ import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -1202,6 +1202,38 @@ class TinyFrame:
 
 
 class AssetLinkTests(HelpersTest):
+    def test_no_manual_links_needs_one_count_and_no_manual_or_asset_actions(self):
+        automatic, manual, assets = Mock(), Mock(), Mock()
+        automatic.count.return_value = 7
+        self.assertEqual(self.call("current_link_coverage", automatic, manual, assets, 0), (7, 0, 0))
+        automatic.count.assert_called_once()
+        automatic.unionByName.assert_not_called()
+        self.assertEqual(manual.mock_calls, [])
+        self.assertEqual(assets.mock_calls, [])
+
+    def test_nonempty_manual_coverage_retains_asset_join_and_orphan_counts(self):
+        automatic, manual, assets = Mock(), Mock(), Mock()
+        matched = assets.join.return_value
+        current = matched.select.return_value.distinct.return_value
+        automatic.unionByName.return_value.distinct.return_value.count.return_value = 6
+        current.count.return_value = 2
+        manual.count.return_value = 4
+        matched.count.return_value = 3
+        functions = types.ModuleType("pyspark.sql.functions")
+        functions.broadcast = Mock(side_effect=lambda frame: frame)
+        sql = types.ModuleType("pyspark.sql")
+        sql.functions = functions
+        with patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": sql,
+                                      "pyspark.sql.functions": functions}):
+            result = self.call("current_link_coverage", automatic, manual, assets, 4)
+        self.assertEqual(result, (6, 2, 1))
+        functions.broadcast.assert_called_once_with(manual)
+        assets.join.assert_called_once_with(manual, ["asset_feature_id", "asset_layer_id"], "inner")
+        matched.select.assert_called_once_with(*self.ns["LINK_MESSAGE_KEY"])
+        manual.count.assert_called_once()
+        matched.count.assert_called_once()
+        current.count.assert_called_once()
+
     def asset(self, identifier="plant:1", name="Test Plant", owner="Example Energy AS", layer="hydro-plants", **extra):
         raw = {"Navn": name, "HovedEier": owner, "VannKraftverkID": 1, **extra} if layer == "hydro-plants" else {
             "navn": name, "eier": owner, "objectid": 1, **extra,

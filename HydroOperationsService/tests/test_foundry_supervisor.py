@@ -36,7 +36,7 @@ from hydro_orchestrator.foundry_supervisor import (
     repair_evidence_row_descendant_paths,
     deterministic_fulfillment_route, governed_datasets, requests_new_work_order_proposal,
     requests_unsent_message, selected_equipment_from_evidence,
-    updated_equipment_selection,
+    evidence_equipment_ids, updated_equipment_selection,
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
@@ -3099,6 +3099,85 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             {"EQUIP_RTI_T008"},
         )
         self.assertEqual(_native_equipment_ids({"response": "Investigate EQUIP_RTI_T006 next."}), set())
+
+    def test_native_scope_ignores_sql_schema_and_execution_audit_metadata(self):
+        payload = {
+            "response": "Telemetry is unavailable; no turbine population is verified.",
+            "native_response": {
+                "tools": [{"schema": {"equipmentId": "varchar"}}],
+                "output": [{"arguments": {"equipment_id": "unresolved-filter"}}],
+            },
+            "documents": [{
+                "content": "| Field | Type |\n|---|---|\n| equipment_id | varchar |",
+            }],
+            "tables": [{
+                "columns": [{"name": "equipment_id", "type": "varchar"}],
+                "query": "SELECT equipment_id FROM assets",
+                "rows": [{"equipment_id": "EQUIP_RTI_T001"}],
+            }],
+            "native_table_0": [{"equipmentId": "EQUIP_RTI_T002"}],
+        }
+        self.assertEqual(
+            _native_equipment_ids(payload), {"EQUIP_RTI_T001", "EQUIP_RTI_T002"},
+        )
+        self.assertEqual(
+            _native_equipment_ids({key: value for key, value in payload.items()
+                                   if key not in {"tables", "native_table_0"}}),
+            set(),
+        )
+
+    def test_native_population_survives_partial_rca_reads_without_schema_contamination(self):
+        population = {f"EQUIP_RTI_T{index:03d}" for index in range(1, 16)}
+        payload = {
+            "response": "All fifteen turbines had BAD quality today.",
+            "native_response": {
+                "output": [{"schema": {"equipmentId": "varchar"}}],
+            },
+            "native_table_0": [{"equipment_id": identity} for identity in sorted(population)],
+        }
+        self.owner.record_native_result(self.request, "native-population", payload, self.request.question, "data-agent")
+        selected = evidence_equipment_ids(self.owner.evidence.values())
+        self.assertEqual(selected, population)
+        for requires_selection in (False, True):
+            with self.subTest(requires_selection=requires_selection):
+                actual = updated_equipment_selection(
+                    selected, {"EQUIP_RTI_T001", "unrelated-equipment"},
+                    requires_selection=requires_selection, dependent=True,
+                )
+                self.assertEqual(actual, population)
+        self.assertEqual(
+            updated_equipment_selection(set(), population, requires_selection=False, dependent=True),
+            population,
+        )
+        self.assertEqual(payload["native_response"]["output"][0]["schema"]["equipmentId"], "varchar")
+        context = self.owner.model_evidence("work-order")
+        self.assertEqual(context[0]["result"]["native_table_0"], payload["native_table_0"])
+        self.assertNotIn("native_response", context[0]["result"])
+        self.owner.selected_equipment_ids = selected
+        self.owner.specialists = [SpecialistResult(
+            role="rca", agent_name="hydro-rca-agent", version="1", response_id="rca-subset",
+            duration_ms=1, input_digest="a" * 64, text="",
+            report={"observations": [{"evidence_id": "native-population", "path": "/native_table_0/0"}]},
+        )]
+        after_rca = self.owner.model_evidence("work-order")
+        self.assertEqual(after_rca[0]["result"]["native_table_0"], payload["native_table_0"])
+
+    def test_full_specialist_context_retains_verified_identity_and_work_coverage(self):
+        population = ("EQUIP_RTI_T004", "EQUIP_RTI_T005")
+        snapshot = ToolEvidence(
+            id="complete-quality-work", source=SOURCE, tool="query_signal_quality_snapshot",
+            arguments={}, completed_at=utc_now(), result={"rows": []},
+            resolved_equipment_ids=population, work_coverage_equipment_ids=population,
+        )
+        self.owner.evidence[snapshot.id] = snapshot
+        for role in ("qa", "rca", "work-order", "weather"):
+            with self.subTest(role=role):
+                context = self.owner.model_evidence(role)
+                self.assertEqual(context[0]["resolved_equipment_ids"], population)
+                self.assertEqual(context[0]["work_coverage_equipment_ids"], population)
+                self.assertEqual(context[0]["completedAt"], snapshot.completed_at.isoformat())
+        self.owner.evidence[snapshot.id] = snapshot.model_copy(update={"work_coverage_equipment_ids": ()})
+        self.assertNotIn("work_coverage_equipment_ids", self.owner.model_evidence("work-order")[0])
 
     def test_resolved_scope_canonicalizes_every_specialist_source_filter(self):
         scope = ResolvedScope(

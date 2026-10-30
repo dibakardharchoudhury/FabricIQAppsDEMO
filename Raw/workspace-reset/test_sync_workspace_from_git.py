@@ -15,6 +15,7 @@ from sync_workspace_from_git import (
     ensure_spark_runtime, verify_environment_runtimes,
     bind_notebook_definition, notebook_definition, update_notebooks_from_checkout,
     _normalized_notebook_source,
+    weather_environment_unchanged,
 )
 
 LAKEHOUSE_ID = "lakehouse-id"
@@ -41,6 +42,7 @@ class FakeResponse:
         self.status_code = status_code
         self._body = body or {}
         self.text = text
+        self.content = text.encode("utf-8")
         self.headers = {}
 
     def json(self):
@@ -60,6 +62,10 @@ class FakeFabric:
         self.request_kwargs = []
         self.updates = []
         self.poll_lro = Mock(side_effect=lambda response: response)
+        self.libraries = [{"name": "xarray", "libraryType": "External", "version": "2025.10.1"}]
+        self.staged_libraries = copy.deepcopy(self.libraries)
+        self.library_export = "dependencies:\n  - xarray=2025.10.1\n"
+        self.staged_library_export = self.library_export
 
     def list_workspace_items(self, workspace_id):
         return [
@@ -116,6 +122,14 @@ class FakeFabric:
             return FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}})
         if "/items?type=Environment" in url:
             return FakeResponse(200, {"value": [{"id": "environment-id", "displayName": "Weather"}]})
+        if "/libraries?beta=false" in url:
+            return FakeResponse(200, {"libraries": (
+                self.staged_libraries if "/staging/" in url else self.libraries
+            )})
+        if "/libraries/exportExternalLibraries" in url:
+            return FakeResponse(200, text=(
+                self.staged_library_export if "/staging/" in url else self.library_export
+            ))
         if "/sparkcompute?beta=false" in url:
             return FakeResponse(200, {"runtimeVersion": "2.0"})
         if "/jobs/Pipeline/schedules" in url and method == "GET":
@@ -124,6 +138,9 @@ class FakeFabric:
             return FakeResponse(200, ipynb_definition(self.dependencies))
         if "/updateDefinition" in url:
             self.updates.append((url, kwargs["json"]))
+            return FakeResponse(200)
+        if method == "POST" and "/staging/publish" in url:
+            self.publish_state = "Success"
             return FakeResponse(200)
         if method == "POST":
             return FakeResponse(200)
@@ -603,6 +620,7 @@ class WeatherProvisioningTests(unittest.TestCase):
 
     def test_git_update_publishes_environment(self):
         fabric = FakeFabric()
+        fabric.staged_libraries[0]["version"] = "2026.1.0"
         with contextlib.redirect_stdout(io.StringIO()):
             configure_weather_assets(fabric, "workspace-id", git_updated=True)
 
@@ -613,6 +631,64 @@ class WeatherProvisioningTests(unittest.TestCase):
         ]
         self.assertEqual(len(posts), 1)
         self.assertIn("/environments/environment-id/staging/publish?beta=false", posts[0])
+
+    def test_unrelated_git_update_does_not_rebuild_verified_unchanged_environment(self):
+        fabric = FakeFabric()
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            configure_weather_assets(fabric, "workspace-id", git_updated=True)
+        self.assertFalse(any("/staging/publish" in url for _, url in fabric.requests))
+        self.assertEqual(len([url for _, url in fabric.requests if "exportExternalLibraries" in url]), 2)
+        self.assertIn("verified libraries and compute, skipping rebuild", output.getvalue())
+
+    def test_fresh_or_failed_environment_still_publishes_without_an_equivalence_shortcut(self):
+        for state in (None, "Failed"):
+            with self.subTest(state=state):
+                fabric = FakeFabric(publish_state=state)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    configure_weather_assets(fabric, "workspace-id", git_updated=True)
+                self.assertEqual(len([url for method, url in fabric.requests
+                                      if method == "POST" and "/staging/publish" in url]), 1)
+                self.assertFalse(any("exportExternalLibraries" in url for _, url in fabric.requests))
+
+    def test_paginated_inventory_cannot_prove_equivalence_from_only_the_first_page(self):
+        fabric = FakeFabric()
+        fabric.request = Mock(return_value=FakeResponse(200, {
+            "libraries": fabric.libraries, "continuationToken": "opaque/+token",
+        }))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(weather_environment_unchanged(fabric, "workspace-id", "environment-id"))
+
+    def test_channels_or_compute_changes_still_require_publication(self):
+        for changed in ("channels", "compute"):
+            with self.subTest(changed=changed):
+                fabric = FakeFabric()
+                if changed == "channels":
+                    fabric.staged_library_export += "channels:\n  - another-channel\n"
+                else:
+                    request = fabric.request
+                    fabric.request = lambda method, url, **kwargs: (
+                        FakeResponse(200, {"runtimeVersion": "2.0", "driverCores": 16})
+                        if "/staging/sparkcompute" in url else request(method, url, **kwargs)
+                    )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    configure_weather_assets(fabric, "workspace-id", git_updated=True)
+                self.assertEqual(len([url for method, url in fabric.requests
+                                      if method == "POST" and "/staging/publish" in url]), 1)
+
+    def test_custom_or_incomplete_libraries_are_not_treated_as_unchanged(self):
+        for row in ({"name": "custom.whl", "libraryType": "Custom"},
+                    {"name": "unknown", "libraryType": "Unknown"}, {"name": "missing-version"}):
+            with self.subTest(library=row):
+                fabric = FakeFabric()
+                fabric.libraries = fabric.staged_libraries = [row]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertFalse(weather_environment_unchanged(fabric, "workspace-id", "environment-id"))
+
+    def test_equivalence_read_failure_stops_instead_of_skipping_publication(self):
+        fabric = FakeFabric()
+        fabric.request = Mock(return_value=FakeResponse(403, text="Denied"))
+        with self.assertRaisesRegex(SystemExit, "equivalence check failed"):
+            weather_environment_unchanged(fabric, "workspace-id", "environment-id")
 
     def test_weather_notebooks_must_be_in_notebooks_folder(self):
         fabric = FakeFabric()

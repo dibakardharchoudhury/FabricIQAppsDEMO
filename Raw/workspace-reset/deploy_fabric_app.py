@@ -9,6 +9,8 @@ the local "Initialize Your Fabric Demo" web app and can also be run directly.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import ast
 import base64
 import hashlib
@@ -24,7 +26,7 @@ import time
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Generator, TypeVar
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
@@ -116,6 +118,19 @@ class DeploymentTimings:
 
 class DeployError(RuntimeError):
     """Expected deployment failure with an operator-readable message."""
+
+
+@contextmanager
+def timed_operation(label: str) -> Generator[None, None, None]:
+    started = time.monotonic()
+    status = "failed"
+    try:
+        yield
+        status = "completed"
+    finally:
+        print("DEPLOY_SUBSTEP_TIMING=" + json.dumps({
+            "label": label, "seconds": round(time.monotonic() - started, 3), "status": status,
+        }, separators=(",", ":")), flush=True)
 
 
 class AzureCliReauthenticationError(DeployError):
@@ -1878,7 +1893,9 @@ def run_rayfin_deployment(command: list[str], tenant: str) -> str:
         export_frontend_env()
 
 
-def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydrolakehouse") -> None:
+def validate_lakehouse_connector_apply(
+    output: str, connector_name: str | tuple[str, ...] = "hydrolakehouse",
+) -> None:
     """Rayfin can exit zero on partial connector failure; require both steps."""
     records = []
     for line in output.splitlines():
@@ -1892,11 +1909,22 @@ def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydro
     receipt = records[-1]
     if not isinstance(receipt, dict) or receipt.get("status") != "success":
         raise DeployError("Lakehouse connector application did not succeed.")
+    required = {connector_name} if isinstance(connector_name, str) else set(connector_name)
+    if not required:
+        raise DeployError("Connector verification requires at least one connector.")
+    generated_names: set[str] | None = None
     for key, status in (("generate", "generated"), ("results", "success")):
         rows = receipt.get(key)
-        if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
-                or rows[0].get("name") != connector_name or rows[0].get("status") != status):
+        if (not isinstance(rows, list) or not rows
+                or any(not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                       or row.get("status") != status for row in rows)):
             raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
+        names = [row["name"] for row in rows]
+        if (len(set(names)) != len(names) or not required.issubset(names)
+                or isinstance(connector_name, str) and len(rows) != 1
+                or generated_names is not None and generated_names != set(names)):
+            raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
+        generated_names = set(names)
 
 
 def configure_geo_connector(*, enabled: bool) -> None:
@@ -2249,7 +2277,10 @@ def bind_operational_store_env(workspace_id, headers) -> None:
     }), encoding="utf-8")
 
 
-def _published_operational_source_ready(workspace_id, values, sql_name, headers, *, required=True) -> bool:
+def _published_operational_source_ready(
+    workspace_id, values, sql_name, headers, *, required=True,
+    definition_cache: dict[tuple[str, str, str], dict] | None = None,
+) -> bool:
     from operational_store_support import is_operational_store_name
     from provision_foundry_agents import (
         read_data_agent_definition, verify_published_identity,
@@ -2277,7 +2308,9 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
     for agent in items:
         if agent["type"] != "DataAgent" or not agent["displayName"].startswith("RTI_Demo_Agent_"):
             continue
-        definition = read_data_agent_definition(sys.modules[__name__], workspace_id, agent["id"], headers)
+        definition = read_data_agent_definition(
+            sys.modules[__name__], workspace_id, agent["id"], headers, definition_cache=definition_cache,
+        )
         try:
             verify_published_identity(definition, workspace_id, ontology_id)
         except RuntimeError:
@@ -2288,7 +2321,9 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
     from operational_store_support import WEATHER_PROJECT_ENTITIES, SQL_PROJECT_ENTITIES, project_source_expressions
     from ontology_notebook_support import _verify_definition
     extension = read_data_agent_definition(
-        sys.modules[__name__], workspace_id, ontology_id, headers, collection="ontologies")
+        sys.modules[__name__], workspace_id, ontology_id, headers, collection="ontologies",
+        definition_cache=definition_cache,
+    )
     expected = []
     def require(path, text):
         expected.append({"path": path, "payload": base64.b64encode(text.encode()).decode()})
@@ -2364,10 +2399,59 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
         raise DeployError("Foundry provisioning module is unavailable.")
     foundry = importlib.util.module_from_spec(foundry_spec)
     foundry_spec.loader.exec_module(foundry)
-    selection = foundry.resolve_project(sys.modules[__name__], tenant, workspace_id)
-    ensure_appbackend_identity(tenant, workspace_id)
-    ensure_hosted_source_prerequisites(tenant, workspace_id)
+    with timed_operation("Foundry project/model preflight"):
+        selection = foundry.resolve_project(sys.modules[__name__], tenant, workspace_id)
+
+    def prepare_image() -> None:
+        with timed_operation("Foundry immutable image preparation (overlaps backend)"):
+            foundry.prepare_hosted_image(sys.modules[__name__], tenant, selection)
+
+    def prepare_backend() -> None:
+        with timed_operation("Foundry Fabric backend gateway"):
+            ensure_appbackend_identity(tenant, workspace_id)
+        with timed_operation("Foundry operational source verification"):
+            ensure_hosted_source_prerequisites(tenant, workspace_id)
+
+    if not appbackend_identity_present():
+        if not selection.project_id:
+            selection = foundry.resolve_project(
+                sys.modules[__name__], tenant, workspace_id, allow_create=True,
+                creation_settings=selection.creation_settings,
+            )
+        print("Foundry: preparing the source image alongside the independent Fabric backend gateway.", flush=True)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            image = pool.submit(prepare_image)
+            prepare_backend()
+            image.result()
+    else:
+        prepare_backend()
     foundry.provision(sys.modules[__name__], tenant, workspace_id, selection=selection)
+
+
+def prepare_energy_and_foundry(
+    tenant: str, workspace_id: str, *, publish_energy: Callable[[], None] | None = None,
+) -> None:
+    from feature_workspace import FeatureWorkspaceError
+
+    publish_energy = publish_energy or energy_workspace(tenant, workspace_id).publish_energy
+
+    def finish_energy() -> None:
+        with timed_operation("Full Deploy energy finalization (parallel with Foundry)"):
+            try:
+                publish_energy()
+            except FeatureWorkspaceError as error:
+                raise DeployError(f"Energy finalization failed: {error}") from error
+
+    print(
+        "Full Deploy: Energy finalization and Foundry setup run concurrently. "
+        "App publication waits for both; only this process updates app configuration.",
+        flush=True,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        energy_job = pool.submit(finish_energy)
+        with timed_operation("Full Deploy Foundry setup (parallel with Energy)"):
+            provision_foundry_agents(tenant, workspace_id)
+        energy_job.result()
 
 
 def verify_foundry_agents(tenant: str, workspace_id: str) -> None:
@@ -2415,6 +2499,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
 
     stage = getattr(args, "stage", "all")
     energy_setting = getattr(args, "energy_map", "keep")
+    core_prepared = getattr(args, "energy_read_models_only", False)
+    if core_prepared and (stage not in ("energy", "all")
+                          or stage == "all" and energy_setting != "enabled"):
+        raise DeployError(
+            "--energy-read-models-only requires --stage energy, or --stage all --energy-map enabled "
+            "after successful Core setup."
+        )
     if stage == "energy":
         from feature_workspace import FeatureWorkspaceError
 
@@ -2482,14 +2573,14 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         _unique_redirect_uris(original_entra_redirects, ["http://localhost:5173"])
     )
 
-    if feature_workspace and stage == "all":
+    if feature_workspace and stage == "all" and not core_prepared:
         try:
             feature_workspace.prepare()
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
 
     timings.stage(3, "Preparing target configuration and checking deployment prerequisites")
-    if stage == "all" and energy_setting == "enabled" and not feature_workspace:
+    if stage == "all" and energy_setting == "enabled" and not feature_workspace and not core_prepared:
         from feature_workspace import FeatureWorkspaceError
 
         try:
@@ -2504,7 +2595,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         client_id,
         enable_energy_map=enable_energy_map,
     )
-    if feature_workspace:
+    if feature_workspace and not core_prepared:
         feature_workspace.configure_app(RAYFIN_DIR / ".env")
     values, _ = current_rayfin_target()
     configure_geo_connector(
@@ -2517,7 +2608,16 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             raise DeployError("Run the local Foundry setup module first to prepare this target's AppBackend and agents.")
         verify_foundry_agents(tenant_id, workspace_id)
     else:
-        provision_foundry_agents(tenant_id, workspace_id)
+        if stage == "all" and core_prepared:
+            prepare_energy_and_foundry(
+                tenant_id, workspace_id,
+                publish_energy=feature_workspace.publish_energy if feature_workspace else None,
+            )
+            reuse_deployment = appbackend_identity_present()
+            if not reuse_deployment:
+                raise DeployError("Combined setup did not retain the verified AppBackend identity; no app was published.")
+        else:
+            provision_foundry_agents(tenant_id, workspace_id)
         if stage == "foundry":
             print(
                 "FOUNDRY_SETUP_SUCCESS (backend identity and multi-agent configuration readback verified; "
@@ -2571,28 +2671,21 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         "restarts cannot retain stale CORS state.",
         flush=True,
     )
-    run_rayfin_deployment(
-        rayfin24(
-            "up", "--workspace-id", workspace_id,
-            "--exclude-services", "staticHosting", "--yes",
-        ),
-        args.tenant,
-    )
-    connector_output = run_rayfin_deployment(
-        rayfin24("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
-        args.tenant,
-    )
-    validate_lakehouse_connector_apply(connector_output)
-    operational_output = run_rayfin_deployment(
-        rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
-    )
-    validate_lakehouse_connector_apply(operational_output, "hydrooperations")
-    energy_enabled = _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
-    if energy_enabled:
-        geo_output = run_rayfin_deployment(
-            rayfin24("up", "connector", "apply", "--name", "hydrogeo", "--json"), args.tenant,
+    with timed_operation("Reapply backend runtime/CORS and database settings"):
+        run_rayfin_deployment(
+            rayfin24(
+                "up", "--workspace-id", workspace_id,
+                "--exclude-services", "staticHosting", "--yes",
+            ),
+            args.tenant,
         )
-        validate_lakehouse_connector_apply(geo_output, "hydrogeo")
+    energy_enabled = _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
+    connector_names = ("hydrolakehouse", "hydrooperations") + (("hydrogeo",) if energy_enabled else ())
+    with timed_operation("Generate/apply all connectors and verify individual receipts"):
+        connector_output = run_rayfin_deployment(
+            rayfin24("up", "connector", "apply", "--json"), args.tenant,
+        )
+        validate_lakehouse_connector_apply(connector_output, connector_names)
 
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
@@ -2616,11 +2709,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         )
 
     timings.stage(8, "Checking the hosted page, Fabric backend, and sign-in readiness")
-    item_id = validate_fabric_app(workspace_id, args.tenant)
-    hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
-    api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
-    publishable_key = validate_rayfin_publishable_key()
-    validate_appbackend_cors(api_url, hosting_url, publishable_key, energy_enabled=energy_enabled)
+    with timed_operation("Hosted-page and Fabric backend identity readback"):
+        item_id = validate_fabric_app(workspace_id, args.tenant)
+        hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
+    with timed_operation("Endpoint identity and browser-equivalent CORS/POST readiness"):
+        api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
+        publishable_key = validate_rayfin_publishable_key()
+        validate_appbackend_cors(api_url, hosting_url, publishable_key, energy_enabled=energy_enabled)
     print(
         "LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed "
         "(use normal Fabric browser sign-in to verify all nine entities; "
@@ -2630,8 +2725,9 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
-        validate_spa_redirect_preservation(client_id, required_entra_redirects, tenant_id)
-        validate_entra_live_auth_with_reauth(client_id, hosting_url, tenant_id)
+        with timed_operation("Entra redirect preservation, permissions and consent readback"):
+            validate_spa_redirect_preservation(client_id, required_entra_redirects, tenant_id)
+            validate_entra_live_auth_with_reauth(client_id, hosting_url, tenant_id)
     else:
         warn_live_auth(
             f"Entra validation was skipped. After an administrator creates the SPA, register "
@@ -2665,7 +2761,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--energy-map", choices=("keep", "enabled", "disabled"), default="keep",
                         help="Keep this target's visibility setting, or explicitly enable/disable energy navigation.")
     parser.add_argument("--energy-read-models-only", action="store_true",
-                        help="With --stage energy, publish/verify Core's completed parallel import without rerunning it.")
+                        help="After Core setup, finalize energy without reingestion; with --stage all, "
+                             "overlap Energy/Foundry and publish the app only after both succeed.")
     parser.add_argument(
         "--push-config",
         action="store_true",

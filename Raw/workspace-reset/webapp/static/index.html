@@ -359,7 +359,7 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>Full Deploy</h2>
       </div>
-      <p class="hint">For a new workspace. Runs each step in order; stops on failure.</p>
+      <p class="hint">For a new workspace. Syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure.</p>
       <aside class="notice">
         <strong>Updating an existing app?</strong> Use <strong>Deploy app</strong>, not Full Deploy.
         <a href="/deploy-guide" target="_blank" rel="noopener">Prerequisites &amp; guide</a>
@@ -390,11 +390,11 @@
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Foundry agents</strong></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Energy + Foundry concurrently</strong><span>Finalizes map read models and provisions Foundry together; does not repeat Core or provider ingestion.</span></div></div>
           <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
-          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>Publishes the app and checks authentication and connectors.</span></div></div>
+          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>After both branches succeed, publishes the app and checks authentication and connectors.</span></div></div>
         </section>
       </div>
       <aside class="notice">
@@ -603,11 +603,13 @@ function renderPanel(el, job) {
     : (job.endedAt || Date.now()) - job.startedAt);
   const statusCls = job.status === "succeeded" ? "ok"
     : job.status === "failed" ? "error"
+    : job.status === "historical" ? "history"
     : (job.status === "interrupted" || job.status === "cancelled") ? "warn"
     : "running";
   const total = Math.max(1, (job.phases ? job.phases.length : 1) - 1);
   const pct = job.status === "succeeded" ? 100 : Math.round(((job.phaseIndex || 0) / total) * 100);
   const label = job.status === "running" ? ((job.phase || "Working") + "\u2026")
+    : job.status === "historical" ? "Previous deployment history"
     : job.status === "succeeded" ? "Succeeded"
     : job.status === "cancelled" ? "Cancelled"
     : job.status === "interrupted" ? "Monitoring interrupted"
@@ -654,7 +656,9 @@ function renderPanel(el, job) {
   const out = el.querySelector(".output");
   const stick = out._following();
   const summary = el.querySelector(".progress-summary");
-  const summaryHtml =
+  const summaryHtml = job.status === "historical"
+    ? `<div class="progress-head"><span class="status history">${label}</span></div>`
+    :
     `<div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
        ${phaseProgress}`;
@@ -738,6 +742,7 @@ const WORKFLOW_PHASE_GROUPS = [
       "Energy \u00b7 Preparing energy sources": "Publishing map read models",
     } },
   { key: "foundry", title: "Foundry Multi-agent Setup", prefixes: ["Foundry \u00b7"], components: ["Foundry multi-agent setup"] },
+  { key: "combined", title: "Energy + Foundry + App Deployment", prefixes: ["Combined \u00b7"], components: ["Energy + Foundry + app deployment"] },
   { key: "deploy", title: "Fabric App Deployment", prefixes: ["Deploy \u00b7"], components: ["Fabric app deploy"] },
 ];
 
@@ -990,7 +995,7 @@ function refresh() {
   } else if (resumable) {
     $("workflowResumeBtn").textContent = `Retry from ${workflowCheckpoint.resumeComponent} and continue`;
     $("workflowResumeStatus").textContent = "Keeps completed steps and runs all remaining stages. Original target and non-secret settings must match. A partially completed failed step runs again.";
-  } else if (workflowCheckpoint?.status !== "interrupted") {
+  } else if (!["interrupted", "historical"].includes(workflowCheckpoint?.status)) {
     $("workflowResumeStatus").textContent = workflowBusy ? "Full Deploy is running. Reloading this page reconnects to this job." : "";
   }
   const pipeBtn = $("pipelineBtn");
@@ -1513,8 +1518,8 @@ async function loadPipelineParams() {
     status.className = "phelp";
     status.setAttribute("role", "status");
     status.textContent = target
-      ? "Settings autosave for this target. Check alert destinations."
-      : "Enter a workspace to load saved settings.";
+      ? "Tenant defaults loaded; workspace overrides autosave. Check alert destinations."
+      : "Tenant defaults loaded. Enter a workspace to deploy.";
     $(container).prepend(status);
   }
   pipelineSavedValues = readPipelineSettings();
@@ -1578,7 +1583,7 @@ for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("input", () => {
     saveTargetSettings();
     restoreFoundrySettings();
-    if (pipelineTarget !== pipelineTargetKey()) {
+    if (id === "tenant" && pipelineTarget !== pipelineTargetKey()) {
       pipelineSpec = [];
       for (const container of ["pipelineFields", "workflowPipelineFields"]) {
         $(container).innerHTML = '<p class="phelp">Finish entering the target to load its setup parameters.</p>';

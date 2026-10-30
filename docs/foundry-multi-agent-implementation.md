@@ -1,5 +1,70 @@
 # Foundry and multi-agent implementation record
 
+## October 30 scope-corruption and dependent-review correction
+
+SQL schema metadata could become equipment scope: recursively inspecting the raw
+native execution audit promoted `equipmentId: varchar` to a selected asset.
+Identity extraction now excludes raw responses, documents, query/schema metadata
+and tool arguments, while retaining actual result rows and explicit answer identity
+fields. Original source responses remain unchanged in the audit.
+
+A second handoff defect could replace a previously established fleet with the
+subset read by RCA or maintenance verification. Dependent RCA/Work Order stages
+now preserve the established scope; a partial check neither narrows that fleet nor
+adds unrelated targets. Explicit operator and metric-based selections retain their
+separate authoritative selection paths.
+
+Tool replies and full specialist contexts now retain the backend-verified canonical identities and
+complete open-work coverage attestations, as projected contexts already did.
+Dropping those attestations hid usable coverage from Fixer: the recovered failure
+contained a complete fifteen-equipment snapshot followed by redundant per-equipment
+work reads. Passing existing attestations avoids asking the model to infer coverage
+from prose; it does not relax freshness, duplicate checks or approval requirements.
+Actual reduction in repeated model-selected reads still needs runtime measurement.
+
+The original reported failure was recovered from its hosted session journal.
+Its SQL query was `SELECT ... FROM dbo.WorkOrders WHERE 1 = 0`, a schema-only
+probe generated because turbine identity could not be established in that native
+session. The provider's zero-row answer did **not** establish zero open turbine
+work orders. Fixer independently read current quality/work evidence for all fifteen
+turbines but rejected drafting because the earlier selected scope was `varchar`.
+Replaying that exact original native receipt through the repaired extractor yields
+no selected equipment, rather than a fabricated identity.
+
+The published V16 native transport was exercised with the reported question.
+One execution queried Kusto, Lakehouse and operational SQL, returning fifteen
+affected turbines, ten existing open work orders and five uncovered draft
+candidates. A subsequent identical-question execution returned a provider refusal
+before querying data, despite its execution audit confirming automatic attachment
+of both ontology-associated sources. Missing source authoring is therefore not
+established as the cause of the intermittent answer. These observations do not
+certify repeatable native execution or successful end-to-end draft staging.
+
+The selected Data Agent was subsequently republished using NB11's unchanged
+Preview Runtime and publication functions, after checking live numeric generation
+2 and the selected published ontology identity. All submitted source definitions
+and stage instructions matched published readback. [Microsoft documents](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-runtime)
+that the
+published runtime is fixed by the selection at publication time, so changing only
+the draft selector is insufficient. This convergence does not establish that a
+runtime-selection mismatch caused the original failure.
+
+The original question after republication returned cited Kusto, Lakehouse and SQL
+tables, fifteen affected turbines, ten open work orders and five uncovered draft
+candidates. These are native query results, not proof that the application's
+approval cards were staged or that any production work order was created.
+A post-publication RCA variant still returned the Fabric provider's content refusal
+with no cited result tables. Runtime republication is therefore not a demonstrated
+fix for every failing prompt. End-to-end signed-in card verification remains open.
+
+Keep the execution minimal: Supervisor selects capabilities, Sparky calls the
+original Fabric question without a wrapper-model round, and Fixer reviews requested
+drafts. Gauge is a separate governed-read/verification capability, not a mandatory
+second factual-answer writer. Sleuth is only needed for requested investigation;
+Gale is only needed for weather work. Do not remove those capabilities merely to
+conceal a handoff or source failure. An investigation does not veto an otherwise
+supported diagnostic draft, and no production work order is saved without approval.
+
 ## October 29 single Hydro Intelligence entry point
 
 The separate Direct Data Agent mode was a UI design mistake and has been

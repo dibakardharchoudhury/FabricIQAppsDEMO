@@ -7,10 +7,12 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
+from contextlib import ExitStack
 
 
 MODULE_PATH = Path(__file__).with_name("deploy_fabric_app.py")
@@ -37,6 +39,16 @@ class CommandEncodingTests(unittest.TestCase):
 
 
 class DeploymentTimingTests(unittest.TestCase):
+    def test_substep_timing_records_failure_and_propagates_it(self):
+        with patch.object(DEPLOY.time, "monotonic", side_effect=[10, 13]), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            with self.assertRaisesRegex(DEPLOY.DeployError, "denied"):
+                with DEPLOY.timed_operation("Readback"):
+                    raise DEPLOY.DeployError("denied")
+        self.assertEqual(json.loads(output.getvalue().split("=", 1)[1]), {
+            "label": "Readback", "seconds": 3, "status": "failed",
+        })
+
     def test_ordered_durations_and_total_are_machine_readable(self):
         with patch.object(DEPLOY.time, "monotonic", side_effect=[10, 10, 15, 23]), \
              patch("sys.stdout", new_callable=io.StringIO) as output:
@@ -68,6 +80,24 @@ class DeploymentTimingTests(unittest.TestCase):
 
 
 class LakehouseConnectorReceiptTests(unittest.TestCase):
+    def test_batch_requires_every_connector_and_rejects_partial_or_duplicate_rows(self):
+        names = ("hydrolakehouse", "hydrooperations", "hydrogeo")
+        receipt = {
+            "status": "success",
+            "generate": [{"name": name, "status": "generated"} for name in names],
+            "results": [{"name": name, "status": "success"} for name in names],
+        }
+        DEPLOY.validate_lakehouse_connector_apply(json.dumps(receipt), names)
+        with self.assertRaises(DEPLOY.DeployError):
+            DEPLOY.validate_lakehouse_connector_apply(json.dumps({
+                **receipt, "results": receipt["results"] + [{"name": "unmatched", "status": "success"}],
+            }), names)
+        for key in ("generate", "results"):
+            for rows in (receipt[key][:-1], receipt[key] + [receipt[key][0]],
+                         [{**row, "status": "skipped"} for row in receipt[key]]):
+                with self.subTest(key=key, rows=rows), self.assertRaises(DEPLOY.DeployError):
+                    DEPLOY.validate_lakehouse_connector_apply(json.dumps({**receipt, key: rows}), names)
+
     def test_required_connector_generation_and_apply_must_both_succeed(self):
         receipt = {
             "status": "success",
@@ -112,6 +142,181 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
 
 
 class FoundryBackendGatewayTests(unittest.TestCase):
+    def test_energy_and_foundry_overlap_and_either_failure_blocks_completion(self):
+        from feature_workspace import FeatureWorkspaceError
+
+        for failure in ("", "energy", "foundry"):
+            with self.subTest(failure=failure):
+                energy_started = threading.Event()
+                foundry_started = threading.Event()
+                energy = Mock()
+
+                def finish_energy():
+                    energy_started.set()
+                    self.assertTrue(foundry_started.wait(5), "Foundry did not overlap Energy.")
+                    if failure == "energy":
+                        raise FeatureWorkspaceError("energy failed")
+
+                def foundry(*args):
+                    foundry_started.set()
+                    self.assertTrue(energy_started.wait(5), "Energy did not overlap Foundry.")
+                    if failure == "foundry":
+                        raise DEPLOY.DeployError("foundry failed")
+
+                energy.publish_energy.side_effect = finish_energy
+                with patch.object(DEPLOY, "energy_workspace", return_value=energy), \
+                     patch.object(DEPLOY, "provision_foundry_agents", side_effect=foundry), \
+                     patch.object(DEPLOY, "configure_app_feature_flags") as configure:
+                    if failure:
+                        with self.assertRaisesRegex(DEPLOY.DeployError, failure):
+                            DEPLOY.prepare_energy_and_foundry("tenant", "workspace")
+                    else:
+                        DEPLOY.prepare_energy_and_foundry("tenant", "workspace")
+                    configure.assert_not_called()
+                    energy.prepare_energy.assert_not_called()
+                    energy.publish_energy.assert_called_once_with()
+
+    def test_combined_deployment_reuses_core_and_gates_static_publication_on_both_branches(self):
+        from feature_workspace import FeatureWorkspaceError
+
+        for failure, isolated in (("", False), ("energy", False), ("foundry", False),
+                                  ("AppBackend", False), ("", True)):
+            with self.subTest(failure=failure, isolated=isolated), ExitStack() as stack:
+                energy = Mock()
+                energy.publish_energy.side_effect = (
+                    FeatureWorkspaceError("energy failed") if failure == "energy" else None
+                )
+                values = {"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true"}
+                mocks = {}
+                for name, result in {
+                    "prefer_tenant_scoped_azure_cli_config": None,
+                    "ensure_azure_tenant": "tenant",
+                    "resolve_workspace": ("workspace", "Demo", "capacity"),
+                    "resolve_spa": "11111111-1111-1111-1111-111111111111",
+                    "read_entra_spa_redirects_with_reauth": [],
+                    "write_rayfin_redirects": [],
+                    "prepare_rayfin_env": False,
+                    "current_rayfin_target": (values, None),
+                    "configure_geo_connector": None,
+                    "ensure_deploy_dependencies": None,
+                    "run_stream": "validated",
+                    "energy_workspace": energy,
+                    "appbackend_identity_present": failure != "AppBackend",
+                    "ensure_rayfin_login": None,
+                    "export_frontend_env": None,
+                    "run_rayfin_deployment": "Hosting URL: https://combined.webapp.fabricapps.net",
+                    "validate_lakehouse_connector_apply": None,
+                    "validate_fabric_app": "backend",
+                    "validate_hosted_page": "app-shell",
+                    "validate_rayfin_endpoint_contract": "https://api.test",
+                    "validate_rayfin_publishable_key": "pk-test",
+                    "validate_appbackend_cors": None,
+                    "validate_spa_redirect_preservation": None,
+                    "validate_entra_live_auth_with_reauth": None,
+                    "verify_foundry_agents": None,
+                    "verify_lakehouse_connector": {"facilities": 3, "equipment": 9, "instruments": 19},
+                }.items():
+                    mocks[name] = stack.enter_context(patch.object(DEPLOY, name, return_value=result))
+                provision = stack.enter_context(patch.object(
+                    DEPLOY, "provision_foundry_agents",
+                    side_effect=DEPLOY.DeployError("foundry failed") if failure == "foundry" else None,
+                ))
+                command = stack.enter_context(patch.object(
+                    DEPLOY, "rayfin24", side_effect=lambda *args: list(args),
+                ))
+                stack.enter_context(patch.dict(
+                    os.environ, {"FABRIC_FEATURE_CONFIG": "feature.json" if isolated else ""},
+                ))
+                if isolated:
+                    import feature_workspace
+                    stack.enter_context(patch.object(
+                        feature_workspace, "load_feature_config",
+                        return_value=Mock(enable_energy_map=True),
+                    ))
+                    stack.enter_context(patch.object(
+                        feature_workspace, "FeatureWorkspace", return_value=energy,
+                    ))
+                args = argparse.Namespace(
+                    tenant="tenant", workspace="workspace", client_id=None, push_config=False,
+                    stage="all", energy_map="enabled", energy_read_models_only=True,
+                )
+                if failure:
+                    with self.assertRaisesRegex(DEPLOY.DeployError, failure):
+                        DEPLOY._deploy(args, Mock())
+                    mocks["run_rayfin_deployment"].assert_not_called()
+                    mocks["validate_appbackend_cors"].assert_not_called()
+                else:
+                    DEPLOY._deploy(args, Mock())
+                    self.assertEqual(command.call_args_list[0].args, ("up", "staticapp", "deploy"))
+                    self.assertIn(
+                        ("up", "--workspace-id", "workspace", "--exclude-services", "staticHosting", "--yes"),
+                        [call.args for call in command.call_args_list],
+                    )
+                    mocks["validate_appbackend_cors"].assert_called_once()
+                    mocks["validate_entra_live_auth_with_reauth"].assert_called_once()
+                provision.assert_called_once_with("tenant", "workspace")
+                energy.prepare_energy.assert_not_called()
+                energy.prepare.assert_not_called()
+                energy.configure_app.assert_not_called()
+                energy.publish_energy.assert_called_once_with()
+                mocks["verify_foundry_agents"].assert_not_called()
+                mocks["prepare_rayfin_env"].assert_called_once()
+                mocks["resolve_spa"].assert_called_once()
+                if isolated:
+                    energy.finish.assert_called_once_with(
+                        lakehouse_counts={"facilities": 3, "equipment": 9, "instruments": 19},
+                    )
+
+    def test_fresh_image_and_gateway_overlap_but_publication_waits_for_both(self):
+        for failure in ("", "image", "backend"):
+            with self.subTest(failure=failure):
+                image_started = threading.Event()
+                backend_started = threading.Event()
+                image_finished = threading.Event()
+                backend_finished = threading.Event()
+                foundry = Mock()
+                foundry.resolve_project.return_value.project_id = "/projects/selected"
+
+                def image(*args):
+                    image_started.set()
+                    self.assertTrue(backend_started.wait(5), "Backend did not overlap image preparation.")
+                    image_finished.set()
+                    if failure == "image":
+                        raise DEPLOY.DeployError("image preparation failed")
+
+                def backend(*args):
+                    backend_started.set()
+                    self.assertTrue(image_started.wait(5), "Image preparation did not overlap backend.")
+                    backend_finished.set()
+                    if failure == "backend":
+                        raise DEPLOY.DeployError("backend failed")
+
+                def publish(*args, **kwargs):
+                    self.assertTrue(image_finished.is_set())
+                    self.assertTrue(backend_finished.is_set())
+
+                foundry.prepare_hosted_image.side_effect = image
+                foundry.provision.side_effect = publish
+                with (
+                    patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                        {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
+                    )),
+                    patch.object(DEPLOY, "appbackend_identity_present", return_value=False),
+                    patch.object(DEPLOY, "ensure_appbackend_identity", side_effect=backend),
+                    patch.object(DEPLOY, "ensure_hosted_source_prerequisites"),
+                    patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
+                    patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
+                    patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
+                ):
+                    if failure:
+                        with self.assertRaisesRegex(DEPLOY.DeployError, failure):
+                            DEPLOY.provision_foundry_agents("tenant", "workspace")
+                        foundry.provision.assert_not_called()
+                    else:
+                        DEPLOY.provision_foundry_agents("tenant", "workspace")
+                        foundry.provision.assert_called_once()
+                foundry.prepare_hosted_image.assert_called_once()
+
     def test_existing_backend_skips_rayfin_but_identifies_the_progress_phase(self):
         with (
             patch.object(DEPLOY, "appbackend_identity_present", return_value=True),
@@ -1493,10 +1698,11 @@ class DeployOrderTests(unittest.TestCase):
                     "environment validated",
                     "Hosting URL: https://fast.webapp.fabricapps.net",
                     "backend updated",
-                    json.dumps({"status": "success", "generate": [{"name": "hydrolakehouse", "status": "generated"}],
-                                "results": [{"name": "hydrolakehouse", "status": "success"}]}),
-                    json.dumps({"status": "success", "generate": [{"name": "hydrooperations", "status": "generated"}],
-                                "results": [{"name": "hydrooperations", "status": "success"}]}),
+                    json.dumps({"status": "success",
+                                "generate": [{"name": name, "status": "generated"}
+                                             for name in ("hydrolakehouse", "hydrooperations")],
+                                "results": [{"name": name, "status": "success"}
+                                            for name in ("hydrolakehouse", "hydrooperations")]}),
                     "live auth configured",
                 ],
             ) as run_stream,
@@ -1514,7 +1720,7 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
         self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "first")
         self.assertEqual(run_stream.call_args_list[2].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
-        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[5].kwargs["env"])
+        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[4].kwargs["env"])
         provision_agents.assert_not_called()
         verify_agents.assert_called_once_with("11111111-1111-4111-8111-111111111111", "workspace-id")
 
@@ -1556,8 +1762,11 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
             patch.object(DEPLOY, "node24_script", side_effect=lambda script, *args: [script.stem]),
             patch.object(DEPLOY, "run_stream", side_effect=lambda command, **kwargs:
-                         json.dumps({"status": "success", "generate": [{"name": command[4], "status": "generated"}],
-                                     "results": [{"name": command[4], "status": "success"}]})
+                         json.dumps({"status": "success",
+                                     "generate": [{"name": name, "status": "generated"}
+                                                  for name in ("hydrolakehouse", "hydrooperations")],
+                                     "results": [{"name": name, "status": "success"}
+                                                 for name in ("hydrolakehouse", "hydrooperations")]})
                          if command[:3] == ["up", "connector", "apply"] else f"Hosting URL: {hosting_url}") as run_stream,
             patch.object(
                 DEPLOY.requests,
@@ -1579,7 +1788,7 @@ class DeployOrderTests(unittest.TestCase):
         ):
             DEPLOY.deploy(args)
 
-        self.assertEqual(run_stream.call_count, 6)
+        self.assertEqual(run_stream.call_count, 5)
         provision_agents.assert_called_once_with("11111111-1111-4111-8111-111111111111", "workspace-id")
         self.assertEqual(run_stream.call_args_list[0].args[0], ["validate-env"])
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
@@ -1587,9 +1796,8 @@ class DeployOrderTests(unittest.TestCase):
             run_stream.call_args_list[2].args[0],
             ["up", "--workspace-id", "workspace-id", "--exclude-services", "staticHosting", "--yes"],
         )
-        self.assertEqual(run_stream.call_args_list[3].args[0], ["up", "connector", "apply", "--name", "hydrolakehouse", "--json"])
-        self.assertEqual(run_stream.call_args_list[4].args[0], ["up", "connector", "apply", "--name", "hydrooperations", "--json"])
-        self.assertEqual(run_stream.call_args_list[5].args[0], ["setup-live-auth"])
+        self.assertEqual(run_stream.call_args_list[3].args[0], ["up", "connector", "apply", "--json"])
+        self.assertEqual(run_stream.call_args_list[4].args[0], ["setup-live-auth"])
         hosting_get.assert_called_once_with(hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False)
         output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
         self.assertIn("HOSTING_VERIFICATION=protected-sign-in-gate", output)

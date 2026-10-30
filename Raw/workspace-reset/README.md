@@ -89,9 +89,10 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
   workflows and streams live progress.
-- **Full Deploy** — the local web UI runs GitHub sync, core setup (`01_Pipe_Setup`
-  followed by energy preparation), independent Foundry setup, then final app publication in one
-  monitored serial job. Each component has its own progress and failure boundary.
+- **Full Deploy** — the local web UI runs GitHub sync, then `01_Pipe_Setup`, then one
+  canonical deployment process that overlaps Energy finalization with Foundry setup.
+  App publication waits for both. Each completed component is checkpointed; the
+  combined component reruns idempotently if either branch or publication fails.
 
 ## Easiest start — just launch it (no commands to type)
 
@@ -129,12 +130,16 @@ it owns project/model/registry settings and explicitly billable first-time
 provisioning. Blank overrides use verified discovery, never another tenant's saved target.
 
 The **Core setup** and **Full Deploy** setup forms share non-secret parameter
-values and remember edits in this browser, separately for each tenant/workspace
-pair. This includes the environment suffix, Key Vault URI and secret *names*,
+values and remember workspace overrides in this browser. Reusable defaults from
+the same tenant populate even before a workspace is entered or when a new workspace
+name is selected; an existing workspace's explicit overrides take precedence.
+This includes the environment suffix, Key Vault URI and secret *names*,
 Teams destinations, alert recipient, run-as guard, and timeout. It never saves
-PATs, tokens, or secret values. Changing targets clears the previous target's
-fields; returning restores that target's entries, including intentionally blank
-values. The workspace field always follows the sidebar. Clearing this site's
+PATs, tokens, or secret values. Changing workspace names keeps the setup fields
+visible while loading defaults; changing tenants does not reuse the previous
+tenant's values. Returning restores explicit overrides, including intentionally
+blank values. The workspace field always follows the sidebar and is never inherited
+from defaults. Clearing this site's
 browser storage removes remembered values.
 
 When the target tenant GUID matches the signed-in user, an otherwise unset alert
@@ -145,15 +150,16 @@ remain blank rather than being guessed.
 For preconfigured local installations, start the server with `FABRIC_TENANT`,
 `FABRIC_WORKSPACE`, and `FABRIC_PIPELINE_PARAMS` (a JSON object using the pipeline
 parameter names). Only declared non-secret parameters are exposed, and these
-defaults apply only when both target fields match the configured values
-(case-insensitively). Saved browser edits take precedence. Invalid configured
+defaults are available to all workspace names in the configured tenant
+(case-insensitively), with matching-workspace overrides taking precedence.
+Saved browser edits take precedence. Invalid configured
 defaults produce a visible error, not a silently empty form. Restart the server
 after changing its environment.
 
 This machine can also keep non-secret defaults in the gitignored
 `webapp/pipeline-defaults.local.json`, with `tenant`, `workspace`, and a
-`parameters` object using the pipeline parameter names. These values apply only
-to the matching target, across browsers and server restarts. Environment
+`parameters` object using the pipeline parameter names. These values supply defaults
+within that tenant, across workspace names, browsers and server restarts. Environment
 `FABRIC_PIPELINE_PARAMS` configuration takes precedence; browser edits still
 override defaults. Never put tokens, PATs or credential secret values in this file.
 Invalid local configuration produces a visible error. The Teams ID fields link
@@ -230,6 +236,32 @@ versus **8m 38s** before the authentication-diagnostic replacement. All 40 works
 items and 40 SPA redirects were preserved. The linked timing comparison separates
 the directly measured authentication saving from other service-latency variation;
 it is not a fresh-workspace/setup-pipeline timing guarantee.
+
+The October 29 Full Deploy baseline was **70m 35.688s**: Git sync 677.922s,
+Core setup 1381.391s, energy finalization 540.922s, Foundry 932.890s and app
+publication 702.407s. Git sync now avoids an unchanged Weather Environment rebuild
+only after comparing its authoritative published/staged library inventories,
+compute settings and external-library exports. Fresh/changed Environments still
+publish; comparison read failures stop the sync. The current engine also overlaps
+Energy finalization with Foundry in one post-Core process, eliminating three serial
+orchestrator launches and their repeated target/SPA/configuration preflight. It reuses
+the freshly verified backend for static publication, but still reapplies backend
+runtime/CORS/database settings and runs all endpoint/authentication checks. It also overlaps
+immutable image preparation with fresh backend provisioning, batches connector application with individual receipt
+validation, and avoids duplicate definition/token reads inside read-only Foundry
+verification. Energy setup consolidates serving queries and redundant notebook
+actions while preserving freshness and publication checks. Detailed substeps now
+emit `DEPLOY_SUBSTEP_TIMING=` records; concurrent durations are not additive.
+See the linked speed section for the complete substep audit and remaining
+service-bound waits. These are regression-tested mechanical reductions, not a
+measured new fresh-workspace deployment duration.
+
+Live verification of the new **combined post-Core stage** succeeded on the prepared
+FEATURE target in **14m 05.266s**: Energy 284.921s and Foundry 79.671s ran concurrently,
+then app publication and all required runtime/CORS/connector/authentication checks
+completed. All 45 registered redirects were retained. This did not repeat Git/Core,
+create a backend or rebuild the unchanged image, so it is **not** a fresh Full Deploy
+benchmark. See the deployment guide's live-measurement table for the exact scope.
 
 ## What manual sync this replaces
 
@@ -677,10 +709,12 @@ core and Foundry settings with the individual modules.
 
 1. **Sync from GitHub** using its own repository, branch, directory, reusable
    connection/PAT settings, and connection test.
-2. **Core setup** runs `01_Pipe_Setup`, then energy preparation once.
-3. **Foundry agent setup** remains separate from core setup and website publication.
-4. **Deploy the Fabric app** using `deploy_fabric_app.py` and its own optional
-   SPA client ID.
+2. **Core setup** runs `01_Pipe_Setup`, including the existing parallel Core/Weather
+   and Geo_001 branches.
+3. **Energy + Foundry + app deployment** uses one `deploy_fabric_app.py` process.
+   Energy publishes/verifies the completed Core import while Foundry sets up independently;
+   website publication waits for both. Core/Geo_001 are not rerun. Target/SPA and
+   dependency preflight run once; only the parent writes Rayfin configuration.
 
 The individual actions remain available for running or troubleshooting a single
 component. **Refresh energy sources** updates only energy data without rerunning
@@ -723,8 +757,8 @@ Sync, Pipeline, and Deploy subphases, and **Cancel running jobs** terminates the
 currently active child process.
 
 After a failed or cancelled **Full Deploy**, use **Retry from … and continue**.
-For example, an **Energy setup** failure retains successful GitHub sync and
-`01_Pipe_Setup`, retries Energy setup, then runs Foundry setup and app publication.
+For example, an Energy or Foundry failure retains successful GitHub sync and
+`01_Pipe_Setup`, then retries the combined Energy/Foundry/app component.
 Only whole, successfully completed components are retained; a partially completed
 failed/cancelled component runs again through its existing idempotent command.
 Completed component/subphase timings remain visible; the overall timer measures
@@ -743,7 +777,13 @@ prefix, status, timings and input/source hashes are saved, never PATs, child
 environments or live logs. Failed/cancelled runs can resume after restarting the
 local server. A checkpoint that was still running when the server stopped is
 reported as interrupted, not safe to retry automatically: check Fabric's Monitoring
-hub before starting another run. Older runs have no durable checkpoint. For an older
+hub before starting another run. The older five-stage checkpoint layout explicitly
+refuses automatic resume and retains its recorded completion information; its
+boundaries cannot safely certify completion of the new combined component.
+Reloading such a run displays **Previous deployment history**, including its recorded
+outcome and completed stages, without a new failure, live progress, or any deployment
+being started. Explicit resume still refuses the incompatible checkpoint.
+Older runs have no durable checkpoint. For an older
 Energy failure, use **Refresh energy sources**, then **Set up Foundry agents** and
 **Deploy app**, rather than repeating successful Core setup. Energy setup now compares
 the Git-managed Geo notebooks with this checkout and updates changed code only,

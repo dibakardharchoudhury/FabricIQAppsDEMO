@@ -508,8 +508,9 @@ class FeatureWorkspaceTests(unittest.TestCase):
             "transmission", "regional", "distribution", "sea-cables", "masts", "transformers",
             "hydro-plants", "reservoirs", "power-balance", "power-flows", "grid-frequency", "umm",
         ]
-        for case in ("ready", "missing", "failed", "duplicate", "empty", "partial-query", "foreign-location",
-                     "missing-area", "invented-foreign-data", "invalid-links"):
+        for case in ("ready", "verify-only", "missing", "failed", "duplicate", "empty", "partial-query",
+                     "http-failure", "foreign-location", "missing-area", "invented-foreign-data",
+                     "invalid-links", "missing-links", "duplicate-links", "unknown-kind", "invalid-json", "invalid-data"):
             with (
                 self.subTest(case=case), tempfile.TemporaryDirectory() as directory,
                 patch.object(feature, "FeatureFabric"), patch.object(feature, "kusto_session") as session_factory,
@@ -538,33 +539,53 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     rows[-1] = rows[0]
                 elif case == "empty":
                     rows[0][2] = 0
-                result = {"Tables": [{"Rows": rows}]}
-                if case == "partial-query":
-                    result["Exceptions"] = ["partial result failure"]
                 areas = [[code, code[:2], code.startswith("NO"), 0.5 if code.startswith("NO") else None]
                          for code in ("NO", "SE", "FI", "DK", "NO1", "NO2", "NO3", "NO4", "NO5")]
                 if case == "missing-area":
                     areas.pop()
                 elif case == "invented-foreign-data":
                     areas[1][3] = 0
+                verification_rows = [
+                    *[["status", json.dumps(row)] for row in rows],
+                    *[["areas", row] for row in areas],
+                    ["links", json.dumps([-1 if case == "invalid-links" else 0])],
+                ]
+                if case == "missing-links":
+                    verification_rows.pop()
+                elif case == "duplicate-links":
+                    verification_rows.append(["links", "[0]"])
+                elif case == "unknown-kind":
+                    verification_rows.append(["unrequested", "[]"])
+                elif case == "invalid-json":
+                    verification_rows[-1][1] = "["
+                elif case == "invalid-data":
+                    verification_rows[-1][1] = "{}"
+                result = {"Tables": [{"Rows": verification_rows}]}
+                if case == "partial-query":
+                    result["Exceptions"] = ["partial result failure"]
+                publish = case != "verify-only"
                 post.side_effect = [
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: result),
-                    Mock(status_code=200, json=lambda: {"Tables": [{"Rows": areas}]}),
-                    Mock(status_code=200, json=lambda: {"Tables": [{"Rows": [[-1 if case == "invalid-links" else 0]]}]}),
+                    *[Mock(status_code=200, json=lambda: {}) for _ in range(4 if publish else 0)],
+                    Mock(status_code=503 if case == "http-failure" else 200, json=lambda: result),
                 ]
                 with patch.object(workspace, "_item", return_value={"id": "eventhouse"}):
-                    if case == "ready":
-                        workspace._publish_energy_read_models(SUBSCRIPTION)
+                    if case in ("ready", "verify-only"):
+                        workspace._publish_energy_read_models(SUBSCRIPTION, publish=publish)
                         self.assertEqual(workspace.state["energy_map_verification"]["umm"], 0)
                         self.assertEqual(len(workspace.state["energy_map_verification"]), 12)
                         self.assertEqual(workspace.state["energy_area_count"], 9)
                         self.assertEqual(workspace.state["energy_asset_link_count"], 0)
-                        for index, table in enumerate(tables):
+                        for index, table in enumerate(tables if publish else []):
                             self.assertIn(table["location"] + ";impersonate", post.call_args_list[index].kwargs["json"]["csl"])
+                        self.assertEqual(post.call_count, 5 if publish else 1)
+                        query_calls = [call for call in post.call_args_list if call.args[0].endswith("/query")]
+                        self.assertEqual(len(query_calls), 1)
+                        query = query_calls[0].kwargs["json"]["csl"]
+                        self.assertEqual(query.count("project verification_kind="), 3)
+                        self.assertNotIn("project kind=", query)
+                        for name in ("HydroGeoStatus", "HydroGeoReservoirAreas", "HydroGeoMarketAssetLinks"):
+                            self.assertEqual(query.count(f"external_table('{name}')"), 1)
+                        self.assertNotIn("isfuzzy", query)
                         self.assertIn("continuationToken=next%2Fpage", workspace.fabric.request.call_args.args[1])
                     else:
                         with self.assertRaises(feature.FeatureWorkspaceError):
@@ -820,7 +841,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     else:
                         deploy.deploy(args)
                         self.assertEqual(events, [
-                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "app", "app", "auth",
+                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "auth",
                             "endpoint", "cors", "auth-ready", "finish",
                         ])
                         cors.assert_called_once_with(api_url, url, "pk-test", energy_enabled=True)
@@ -838,9 +859,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     self.assertEqual([call.args for call in rayfin.call_args_list], [
                         ("up", "staticapp", "deploy"),
                         ("up", "--workspace-id", WORKSPACE, "--exclude-services", "staticHosting", "--yes"),
-                        ("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
-                        ("up", "connector", "apply", "--name", "hydrooperations", "--json"),
-                        ("up", "connector", "apply", "--name", "hydrogeo", "--json"),
+                        ("up", "connector", "apply", "--json"),
                     ])
 
     def test_private_endpoint_is_ready_before_import_or_setup(self):

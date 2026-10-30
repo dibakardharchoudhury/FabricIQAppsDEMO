@@ -192,6 +192,10 @@ def _is_timezone_aware_timestamp(value: object) -> bool:
 
 def _native_equipment_ids(value: object) -> set[str]:
     resolved: set[str] = set()
+    audit_fields = {
+        "native_response", "native_mcp_result", "documents", "columns", "query",
+        "schema", "parameters", "arguments",
+    }
 
     def add(candidate: object) -> None:
         if isinstance(candidate, str):
@@ -202,6 +206,8 @@ def _native_equipment_ids(value: object) -> set[str]:
     def visit(item: object) -> None:
         if isinstance(item, dict):
             for key, child in item.items():
+                if key in audit_fields:
+                    continue
                 if re.sub(r"[^a-z]", "", key.lower()) == "equipmentid":
                     add(child)
                 visit(child)
@@ -337,8 +343,10 @@ def _native_count_chart_metadata(
 
 
 def updated_equipment_selection(
-    current: set[str], grounded: set[str], *, requires_selection: bool,
+    current: set[str], grounded: set[str], *, requires_selection: bool, dependent: bool = False,
 ) -> set[str]:
+    if dependent and current:
+        return set(current)
     if requires_selection:
         return current.union(grounded)
     return set(grounded) if grounded else set(current)
@@ -918,8 +926,14 @@ class ToolEvidence(Contract):
     production_write_executed: Literal[False] = False
 
     def receipt(self) -> dict[str, object]:
-        return {"id": self.id, "tool": self.tool, "completedAt": self.completed_at.isoformat(),
-                "result": self.result}
+        value: dict[str, object] = {
+            "id": self.id, "tool": self.tool, "completedAt": self.completed_at.isoformat(), "result": self.result,
+        }
+        if self.resolved_equipment_ids:
+            value["resolved_equipment_ids"] = self.resolved_equipment_ids
+        if self.work_coverage_equipment_ids:
+            value["work_coverage_equipment_ids"] = self.work_coverage_equipment_ids
+        return value
 
 
 SourceRow = tuple[ToolEvidence, str, int, dict[str, object]]
@@ -5166,6 +5180,7 @@ class FoundrySupervisor:
                                 set(owner.selected_equipment_ids),
                                 grounded_ids,
                                 requires_selection=delegation.requires_selection,
+                                dependent=delegation.specialist in ("rca", "work-order"),
                             )
                         )
                     updated = turn.model_copy(update={
