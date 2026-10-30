@@ -806,7 +806,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         patch.object(deploy, "npm24", return_value=["validate"]),
                         patch.object(deploy, "node24_script", return_value=["auth"]),
                         patch.object(deploy, "run_stream", side_effect=lambda argv, **_: events.append(argv[0]) or url),
-                        patch.object(deploy, "run_rayfin_deployment", side_effect=lambda argv, tenant: events.append(argv[0]) or url),
+                        patch.object(deploy, "run_rayfin_deployment", side_effect=lambda argv, tenant, **_: events.append(argv[0]) or url),
                         patch.object(deploy.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
                         patch.object(deploy, "validate_fabric_app", return_value=item_id),
                         patch.object(deploy, "validate_hosted_page", return_value="verified"),

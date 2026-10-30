@@ -885,6 +885,48 @@ class DeployOrderTests(unittest.TestCase):
             with self.assertRaisesRegex(DEPLOY.DeployError, "invalid frontend config"):
                 DEPLOY.run_rayfin_deployment(["rayfin", "up"], "tenant")
 
+    def test_static_upload_401_refreshes_only_its_token_and_retries_without_rebuilding(self):
+        command = ["node24", "rayfin", "up", "staticapp", "deploy"]
+        key = ("tenant", "private-cli")
+        with (
+            patch.dict(os.environ, {"AZURE_CONFIG_DIR": "private-cli"}),
+            patch.dict(DEPLOY._FABRIC_TOKEN_CACHE, {key: (9999999999, "old"),
+                                                   ("other-tenant", "other-cli"): (9999999999, "other")}),
+            patch.object(DEPLOY, "rayfin_environment", side_effect=[
+                {"RAYFIN_TOKEN": "old"}, {"RAYFIN_TOKEN": "refreshed"},
+            ]),
+            patch.object(DEPLOY, "run_stream", side_effect=[
+                DEPLOY.DeployError("Static deploy failed: Static deploy failed: 401 Unauthorized"),
+                "Hosting URL: https://current.webapp.fabricapps.net",
+            ]) as run,
+            patch.object(DEPLOY, "export_frontend_env") as export,
+        ):
+            result = DEPLOY._run_rayfin_deployment(command, "TENANT")
+            self.assertNotIn(key, DEPLOY._FABRIC_TOKEN_CACHE)
+            self.assertIn(("other-tenant", "other-cli"), DEPLOY._FABRIC_TOKEN_CACHE)
+        self.assertIn("Hosting URL:", result)
+        self.assertEqual(command[-1], "deploy")
+        self.assertEqual(run.call_args_list[1].args[0], [*command, "--skip-build"])
+        self.assertEqual(run.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
+        export.assert_called_once()
+
+    def test_static_upload_authentication_recovery_is_bounded_and_not_a_general_mutation_retry(self):
+        cases = [
+            (["up", "staticapp", "deploy"], "Static deploy failed: 401 Unauthorized", 2),
+            (["up", "staticapp", "deploy"], "Static deploy failed: 403 Forbidden", 1),
+            (["up", "staticapp", "deploy"], "Build failed: 401 errors", 1),
+            (["up", "--yes"], "Static deploy failed: 401 Unauthorized", 1),
+        ]
+        for command, message, expected_calls in cases:
+            with self.subTest(command=command, message=message), \
+                    patch.object(DEPLOY, "rayfin_environment", return_value={}), \
+                    patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError(message)) as run, \
+                    patch.object(DEPLOY, "export_frontend_env") as export:
+                with self.assertRaisesRegex(DEPLOY.DeployError, message):
+                    DEPLOY._run_rayfin_deployment(command, "tenant")
+                self.assertEqual(run.call_count, expected_calls)
+                export.assert_called_once()
+
     def test_rayfin_commands_export_validated_configuration_on_success_and_failure(self):
         for fails in (False, True):
             with self.subTest(fails=fails):

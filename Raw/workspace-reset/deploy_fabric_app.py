@@ -1925,7 +1925,9 @@ def export_frontend_env() -> None:
     )
 
 
-def run_rayfin_deployment(command: list[str], tenant: str) -> str:
+def run_rayfin_deployment(
+    command: list[str], tenant: str, *, hosting_url: str | None = None,
+) -> str:
     from deployment_locks import resource_lock
 
     with resource_lock(tenant, "entra-spa"):
@@ -1933,13 +1935,29 @@ def run_rayfin_deployment(command: list[str], tenant: str) -> str:
             values, _ = current_rayfin_target()
             client_id = _public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID")
             redirects = read_entra_spa_redirects_with_reauth(client_id, tenant)
+            if hosting_url:
+                redirects = _redirects_with_current_hosting(redirects, hosting_url)
             write_rayfin_redirects(_unique_redirect_uris(redirects, ["http://localhost:5173"]))
         return _run_rayfin_deployment(command, tenant)
 
 
 def _run_rayfin_deployment(command: list[str], tenant: str) -> str:
     try:
-        return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+        try:
+            return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+        except DeployError as exc:
+            if (command[-3:] != ["up", "staticapp", "deploy"]
+                    or not re.search(r"Static deploy failed:[^\r\n]*\b401\b", str(exc))):
+                raise
+            print(
+                "WARNING: Fabric rejected the static-app upload with HTTP 401. "
+                "Refreshing the tenant-scoped token and retrying the upload once without rebuilding.",
+                flush=True,
+            )
+            _FABRIC_TOKEN_CACHE.pop((tenant.casefold(), os.environ.get("AZURE_CONFIG_DIR", "")), None)
+            return run_stream(
+                [*command, "--skip-build"], cwd=APP_DIR, env=rayfin_environment(tenant),
+            )
     finally:
         # Rayfin also rewrites .env after the prebuild hook and on failed up runs.
         # Regenerate through the repository producer; never patch generated files.
@@ -2089,6 +2107,11 @@ def _unique_redirect_uris(*groups: list[str]) -> list[str]:
             seen.add(uri)
             result.append(uri)
     return result
+
+
+def _redirects_with_current_hosting(redirects: list[str], hosting_url: str) -> list[str]:
+    # setup-live-auth selects the last Fabric origin; only the returned deployment URL is authoritative.
+    return _unique_redirect_uris([uri for uri in redirects if uri != hosting_url], [hosting_url])
 
 
 def read_entra_spa_redirects(client_id: str) -> list[str]:
@@ -2710,11 +2733,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
 
     timings.stage(6, "Adding the current app URL to the preserved redirect configuration")
     rayfin_redirects = write_rayfin_redirects(
-        _unique_redirect_uris(
-            original_entra_redirects,
-            [hosting_url],
-            ["http://localhost:5173"],
-        )
+        _redirects_with_current_hosting(original_entra_redirects, hosting_url)
     )
     # Only this tenant's own URIs can be asserted against Entra; teammate origins are not registered here.
     required_entra_redirects = _unique_redirect_uris(original_entra_redirects, [hosting_url])
@@ -2734,12 +2753,14 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
                 "--exclude-services", "staticHosting", "--yes",
             ),
             args.tenant,
+            hosting_url=hosting_url,
         )
     energy_enabled = _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
     connector_names = ("hydrolakehouse", "hydrooperations") + (("hydrogeo",) if energy_enabled else ())
     with timed_operation("Generate/apply all connectors and verify individual receipts"):
         connector_output = run_rayfin_deployment(
             rayfin24("up", "connector", "apply", "--json"), args.tenant,
+            hosting_url=hosting_url,
         )
         validate_lakehouse_connector_apply(connector_output, connector_names)
 
@@ -2747,6 +2768,9 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     if client_id:
         try:
             with resource_lock(tenant_id, "entra-spa"):
+                write_rayfin_redirects(_redirects_with_current_hosting(
+                    read_entra_spa_redirects_with_reauth(client_id, tenant_id), hosting_url,
+                ))
                 run_with_azure_cli_reauthentication(
                     tenant_id,
                     "configuring browser sign-in",

@@ -40,6 +40,12 @@ Commit source changes first: workers use isolated committed checkouts and retain
 private per-workspace state, without overwriting this checkout's Rayfin files.
 Shared Entra writes are serialized to preserve all SPA redirects; other work can
 overlap subject to capacity/quota. A failed workspace does not stop the others.
+Post-publication configuration refreshes retain the actual returned hosting URL,
+even before Entra registers it, and keep it as the current sign-in origin. They
+do not reuse historical origins from local configuration.
+If Fabric explicitly rejects a static-app upload with HTTP 401, the orchestrator
+refreshes its tenant-scoped token and retries that upload once without rebuilding.
+A second rejection, HTTP 403, build failure or non-static mutation still fails.
 Use its retry control after the batch finishes to preserve completed Full Deploy
 stages. See [parallel execution and state](../Raw/workspace-reset/README.md#optional-up-to-three-workspaces-in-parallel).
 

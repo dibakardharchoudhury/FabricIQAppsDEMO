@@ -374,10 +374,13 @@ class ParallelIsolationTests(unittest.TestCase):
 
     def test_entra_guard_refreshes_redirects_after_another_worker_publishes(self):
         redirects = ["https://existing.example"]
+        configured = []
 
         def publish(command, tenant):
             time.sleep(.1)
-            redirects.append(f"https://{command[0]}.example")
+            origins = [uri for uri in configured if uri.endswith(".webapp.fabricapps.net")]
+            self.assertEqual(origins[-1], f"https://{command[0]}.webapp.fabricapps.net")
+            redirects[:] = configured
             return "published"
 
         with TemporaryDirectory() as temporary, \
@@ -387,12 +390,52 @@ class ParallelIsolationTests(unittest.TestCase):
                     "RAYFIN_PUBLIC_AAD_CLIENT_ID": "client",
                 }, None)), \
                 patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", side_effect=lambda *args: list(redirects)), \
-                patch.object(DEPLOY, "write_rayfin_redirects", side_effect=lambda values: redirects.__setitem__(slice(None), values)), \
+                patch.object(DEPLOY, "write_rayfin_redirects", side_effect=lambda values: configured.__setitem__(slice(None), values)), \
                 patch.object(DEPLOY, "_run_rayfin_deployment", side_effect=publish):
             with ThreadPoolExecutor(max_workers=2) as executor:
-                results = list(executor.map(lambda name: DEPLOY.run_rayfin_deployment([name], TENANT), ["one", "two"]))
+                results = list(executor.map(lambda name: DEPLOY.run_rayfin_deployment(
+                    [name], TENANT, hosting_url=f"https://{name}.webapp.fabricapps.net",
+                ), ["one", "two"]))
         self.assertEqual(results, ["published", "published"])
-        self.assertTrue({"https://existing.example", "https://one.example", "https://two.example"}.issubset(redirects))
+        self.assertTrue({
+            "https://existing.example", "https://one.webapp.fabricapps.net", "https://two.webapp.fabricapps.net",
+        }.issubset(redirects))
+
+    def test_parallel_refresh_retains_the_actual_unregistered_hosting_origin(self):
+        current = "https://new-app-swedencentral.webapp.fabricapps.net"
+        other = "https://other-app-swedencentral.webapp.fabricapps.net"
+        stale = "https://stale-local-swedencentral.webapp.fabricapps.net"
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "rayfin.yml").write_text(
+                "services:\n  auth:\n    allowedRedirectUris:\n", encoding="utf-8",
+            )
+            with patch.object(LOCKS, "lock_directory", return_value=root / "locks"), \
+                    patch.dict(os.environ, {"HYDRO_PARALLEL_DEPLOY": "1"}), \
+                    patch.object(DEPLOY, "RAYFIN_DIR", root), \
+                    patch.object(DEPLOY, "current_rayfin_target", return_value=({
+                        "RAYFIN_PUBLIC_AAD_CLIENT_ID": "client",
+                    }, None)), \
+                    patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[other]), \
+                    patch.object(DEPLOY, "_run_rayfin_deployment", return_value="applied"):
+                DEPLOY.write_rayfin_redirects([other, stale, current])
+                DEPLOY.run_rayfin_deployment(["up", "connector", "apply"], TENANT)
+                self.assertNotIn(current, (root / "rayfin.yml").read_text(encoding="utf-8"))
+                DEPLOY.write_rayfin_redirects([other, stale, current])
+                DEPLOY.run_rayfin_deployment(["up", "connector", "apply"], TENANT, hosting_url=current)
+                written = (root / "rayfin.yml").read_text(encoding="utf-8")
+            self.assertIn(current, written)
+            self.assertIn(other, written)
+            self.assertNotIn(stale, written)
+            self.assertGreater(written.index(current), written.index(other))
+
+    def test_registered_current_hosting_origin_is_moved_after_other_fabric_origins(self):
+        current = "https://current.webapp.fabricapps.net"
+        other = "https://other.webapp.fabricapps.net"
+        self.assertEqual(
+            DEPLOY._redirects_with_current_hosting([current, other, current], current),
+            [other, current],
+        )
 
     def test_parallel_foundry_discovery_rejects_a_sole_unrelated_project(self):
         subscription = str(uuid.uuid4())
