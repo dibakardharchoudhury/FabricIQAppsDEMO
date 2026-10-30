@@ -3162,6 +3162,23 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         after_rca = self.owner.model_evidence("work-order")
         self.assertEqual(after_rca[0]["result"]["native_table_0"], payload["native_table_0"])
 
+    def test_full_specialist_context_retains_verified_identity_and_work_coverage(self):
+        population = ("EQUIP_RTI_T004", "EQUIP_RTI_T005")
+        snapshot = ToolEvidence(
+            id="complete-quality-work", source=SOURCE, tool="query_signal_quality_snapshot",
+            arguments={}, completed_at=utc_now(), result={"rows": []},
+            resolved_equipment_ids=population, work_coverage_equipment_ids=population,
+        )
+        self.owner.evidence[snapshot.id] = snapshot
+        for role in ("qa", "rca", "work-order", "weather"):
+            with self.subTest(role=role):
+                context = self.owner.model_evidence(role)
+                self.assertEqual(context[0]["resolved_equipment_ids"], population)
+                self.assertEqual(context[0]["work_coverage_equipment_ids"], population)
+                self.assertEqual(context[0]["completedAt"], snapshot.completed_at.isoformat())
+        self.owner.evidence[snapshot.id] = snapshot.model_copy(update={"work_coverage_equipment_ids": ()})
+        self.assertNotIn("work_coverage_equipment_ids", self.owner.model_evidence("work-order")[0])
+
     def test_resolved_scope_canonicalizes_every_specialist_source_filter(self):
         scope = ResolvedScope(
             source=SOURCE,

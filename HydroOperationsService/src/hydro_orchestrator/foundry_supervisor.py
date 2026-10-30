@@ -926,8 +926,14 @@ class ToolEvidence(Contract):
     production_write_executed: Literal[False] = False
 
     def receipt(self) -> dict[str, object]:
-        return {"id": self.id, "tool": self.tool, "completedAt": self.completed_at.isoformat(),
-                "result": self.result}
+        value: dict[str, object] = {
+            "id": self.id, "tool": self.tool, "completedAt": self.completed_at.isoformat(), "result": self.result,
+        }
+        if self.resolved_equipment_ids:
+            value["resolved_equipment_ids"] = self.resolved_equipment_ids
+        if self.work_coverage_equipment_ids:
+            value["work_coverage_equipment_ids"] = self.work_coverage_equipment_ids
+        return value
 
 
 SourceRow = tuple[ToolEvidence, str, int, dict[str, object]]
