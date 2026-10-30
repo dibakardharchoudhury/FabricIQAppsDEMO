@@ -924,40 +924,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(versions["weather"].name, "hydro-weather-agent")
         self.assertEqual(versions["weather"].tools[0]["name"], "hydro_query")
 
-    async def test_shared_project_reads_only_workspace_scoped_specialists(self):
-        suffix = "-" + SOURCE.workspace_id.hex
-        binding = NativeBinding(
-            source=SOURCE, connections={"data-agent": "hydro-fabric-iq" + suffix},
-            toolbox="hydro-fabric-iq-tools" + suffix, agent_name_suffix=suffix,
-        )
-        for invalid in ("-wrong", "-" + "0" * 32):
-            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
-                NativeBinding(source=SOURCE, connections={}, agent_name_suffix=invalid)
-        requests = []
-
-        def read_agent(request):
-            name = self.versions["weather"].name + suffix
-            requests.append(request.url.path)
-            self.assertTrue(request.url.path.endswith("/agents/" + name))
-            version = self.versions["weather"]
-            return httpx.Response(200, json={
-                "name": name, "versions": {"latest": {
-                    "version": version.version,
-                    "definition": {"kind": "prompt", "model": version.model, "tools": list(version.tools)},
-                }},
-            })
-
-        owner = self.make_owner(native_binding=binding)
-        journal = RunJournal(self.root / "shared-project-readback")
-        network = httpx.AsyncClient(transport=httpx.MockTransport(read_agent))
-        self.addAsyncCleanup(network.aclose)
-        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient", return_value=network):
-            versions = await owner.versions(journal, roles=frozenset({"weather"}))
-            recovered = await owner.versions(journal, roles=frozenset({"weather"}))
-        self.assertEqual(versions["weather"].name, "hydro-weather-agent" + suffix)
-        self.assertEqual(recovered["weather"], versions["weather"])
-        self.assertEqual(len(requests), 1)
-
     async def test_only_selected_model_agents_are_live_dependencies(self):
         requests = []
 

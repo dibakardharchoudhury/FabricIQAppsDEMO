@@ -901,7 +901,7 @@ class DeployOrderTests(unittest.TestCase):
             ]) as run,
             patch.object(DEPLOY, "export_frontend_env") as export,
         ):
-            result = DEPLOY._run_rayfin_deployment(command, "TENANT")
+            result = DEPLOY.run_rayfin_deployment(command, "TENANT")
             self.assertNotIn(key, DEPLOY._FABRIC_TOKEN_CACHE)
             self.assertIn(("other-tenant", "other-cli"), DEPLOY._FABRIC_TOKEN_CACHE)
         self.assertIn("Hosting URL:", result)
@@ -923,7 +923,7 @@ class DeployOrderTests(unittest.TestCase):
                     patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError(message)) as run, \
                     patch.object(DEPLOY, "export_frontend_env") as export:
                 with self.assertRaisesRegex(DEPLOY.DeployError, message):
-                    DEPLOY._run_rayfin_deployment(command, "tenant")
+                    DEPLOY.run_rayfin_deployment(command, "tenant")
                 self.assertEqual(run.call_count, expected_calls)
                 export.assert_called_once()
 
@@ -2272,6 +2272,14 @@ class DeployOrderTests(unittest.TestCase):
                             "tenant", "workspace", "Demo", "capacity", "client", enable_energy_map=selection,
                         ))
                     self.assertIn(f"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP={expected}", (rayfin / ".env").read_text())
+
+    def test_current_hosting_remains_last_without_losing_existing_redirects(self):
+        current = "https://current.webapp.fabricapps.net"
+        other = "https://other.webapp.fabricapps.net"
+        self.assertEqual(
+            DEPLOY._redirects_with_current_hosting([current, other, current], current),
+            [other, current],
+        )
 
     def test_write_rayfin_redirects_retains_current_entra_origin(self):
         current = "https://current-app-swedencentral.webapp.fabricapps.net"

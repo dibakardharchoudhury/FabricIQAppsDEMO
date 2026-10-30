@@ -455,7 +455,6 @@ const elements = new Map();
 const $ = id => {
   if (!elements.has(id)) elements.set(id, {
     id, value:id === "workflowPat" ? "secret-pat" : id, checked:false,
-    querySelector() { return null; },
     addEventListener(event, handler) { this[event] = handler; },
   });
   return elements.get(id);
@@ -551,6 +550,24 @@ class WorkspaceActionTests(unittest.TestCase):
     def setUp(self):
         self.client = SERVER.app.test_client()
 
+    def test_only_single_workspace_actions_are_exposed(self):
+        response = self.client.get("/")
+        try:
+            html = response.get_data(as_text=True)
+        finally:
+            response.close()
+        for obsolete in ("parallelDeploy", "workspace2", "workspace3", "FoundryProjectMode",
+                         "renderParallelRuns", "/api/parallel"):
+            self.assertNotIn(obsolete, html)
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/parallel", json={
+                "action": "/api/full-workflow", "workspaces": ["One", "Two"],
+                "data": {"tenant": "tenant.example"},
+            })
+        self.assertEqual(response.status_code, 405)
+        self.assertNotIn("/api/parallel", {rule.rule for rule in SERVER.app.url_map.iter_rules()})
+        start.assert_not_called()
+
     def test_setup_modules_are_separate_from_app_publication(self):
         target = {"tenant": "tenant.example", "workspace": "Demo"}
         for endpoint, stage in (
@@ -575,11 +592,10 @@ class WorkspaceActionTests(unittest.TestCase):
         finally:
             response.close()
         foundry_pane = html.split('<section id="paneFoundry"', 1)[1].split("</section>", 1)[0]
-        self.assertIn("Prepares backend and agents, not the website.", foundry_pane)
-        self.assertIn('id="deployFoundryFields"', foundry_pane)
-        self.assertIn("Then use <strong>Deploy app</strong> to publish the website.", foundry_pane)
-        self.assertIn("Setup prepares AppBackend", html)
-        self.assertIn("Missing backends create Fabric App/SQL/GraphQL resources, not the website.", html)
+        self.assertIn("AppBackend with SQL/GraphQL dependencies", foundry_pane)
+        self.assertIn("Does not publish the website.", foundry_pane)
+        self.assertIn("A Fabric App item can already appear during backend setup.", foundry_pane)
+        self.assertIn("After Foundry setup succeeds", foundry_pane)
         self.assertNotIn("Updates agents only", html)
         self.assertIn("five Foundry specialist agents", html)
         self.assertIn("Foundry account is the parent Azure resource", html)
@@ -785,12 +801,11 @@ async function evaluate(expression) {
     await call("Emulation.setDeviceMetricsOverride", {width:1000, height:900, deviceScaleFactor:1, mobile:false});
     const html = fs.readFileSync(htmlPath, "utf8");
     const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
-    const renderer = html.slice(html.indexOf("async function postJson("), html.indexOf("let subscriptionLoad"));
-    const validation = html.slice(html.indexOf("function deletionConfirmations("), html.indexOf("function refresh("));
+    const renderer = html.slice(html.indexOf("function renderPanel("), html.indexOf("let subscriptionLoad"));
     const helpers = html.slice(html.indexOf("const WORKFLOW_PHASE_GROUPS"), html.indexOf("// Starts a job"));
     await evaluate(`document.head.innerHTML = ${JSON.stringify("<style>"+style+"</style>")};
       document.body.innerHTML = '<div id="deployPanel"></div><div id="energyPanel"></div><div id="workflowPanel"></div>';
-      ${helpers}\n${renderer}\n${validation}
+      ${helpers}\n${renderer}
       var panel = document.getElementById("deployPanel");
       var job = {status:"running", phases:["Start","Deploy"], phaseIndex:0,
         lines:Array.from({length:160}, (_,i) => "Output line "+i+" <safe & literal>")};
@@ -906,94 +921,13 @@ async function evaluate(expression) {
       check(out===original && bottom(), "Completion should keep the scroll surface and follow tail");
       check(out.classList.contains("error") && out.textContent.endsWith("exit code: 1"), "Completion output lost");
       check(out.textContent.includes("[error] Final failure"), "Error output lost");`);
-    await evaluate(`
-      var batch={
-        status:"running",jobId:"batch",parallelAction:"/api/full-workflow",lines:["Workspace progress"],
-        workspaceRuns:[
-          {workspace:"one",name:"One <literal>",status:"succeeded",done:true,lines:["one-only"]},
-          {workspace:"two",name:"Two",status:"failed",done:true,lines:["two-only"],canResume:true},
-          {workspace:"three",name:"Three",status:"running",done:false,lines:["three-only"]}
-        ]
-      };
-      renderPanel(other,batch);
-      check(other.querySelectorAll(".parallel-runs > details").length===3,"Every workspace needs its own panel");
-      var cards=other.querySelectorAll(".parallel-runs > details");
-      check(cards[0].querySelector("summary").textContent==="One <literal> · succeeded","Workspace name must remain literal");
-      check(cards[0].querySelector(".output").textContent.includes("one-only")
-        && !cards[0].querySelector(".output").textContent.includes("two-only"),"Workspace logs mixed");
-      check(cards[0].querySelector(".workspace-action").hidden,"Successful workspace must not offer a retry");
-      check(cards[1].querySelector(".workspace-action").textContent==="Resume this workspace","Full checkpoint control lost");
-      check(cards[1].querySelector(".workspace-action").disabled,"Wait for other targets before retrying");
-      check(cards[2].querySelector(".workspace-action").textContent==="Cancel this workspace","Individual cancel lost");
-      var targetInputs=document.createElement("div");
-      targetInputs.innerHTML='<input id="parallelDeploy" type="checkbox" checked><input id="tenant" value="tenant.example"><input id="workspace" value=""><input id="workspace2" value=" Two "><input id="workspace3" value=""><input id="dryRun" type="checkbox" checked><input id="confirmText"><textarea id="parallelConfirmText"></textarea>';
-      document.body.appendChild(targetInputs);
-      var $=id=>document.getElementById(id);
-      check(JSON.stringify(selectedWorkspaces())==='["Two"]',"Blank target slots must be ignored");
-      check(deleteValid(),"Dry run must support an empty first slot");
-      $("workspace3").value="Three";
-      $("dryRun").checked=false;
-      $("parallelConfirmText").value="Two";
-      check(!deleteValid(),"Partial confirmation must not enable deletion");
-      $("parallelConfirmText").value="two\\nTHREE";
-      check(deleteValid(),"Every selected workspace must be confirmable");
-      $("workspace2").value="Changed";
-      check(!deleteValid(),"Changing a target invalidates its previous confirmation");
-      $("workspace2").value="Two";
-      var requests=[];
-      window.fetch=async (url,options)=>{requests.push({url,body:JSON.parse(options.body)});
-        return {ok:true,status:200,json:async()=>({jobId:"test"})};};
-    `);
-    await evaluate(`(async()=>{
-      var actions=["/api/full-workflow","/api/sync","/api/run-pipeline","/api/setup-energy",
-        "/api/setup-foundry","/api/deploy-app","/api/delete","/api/test-connection"];
-      for (var action of actions) {
-        await postJson(action,{tenant:"tenant",workspace:"",dryRun:true});
-        check(requests.at(-1).url==="/api/parallel" && requests.at(-1).body.action===action
-          && JSON.stringify(requests.at(-1).body.workspaces)==='["Two","Three"]',"Module did not fan out: "+action);
-      }
-      $("parallelDeploy").checked=false;
-      $("workspace").value="Single";
-      $("confirmText").value="single";
-      check(deleteValid(),"Single-workspace deletion confirmation must still work");
-      for (var action of actions) {
-        await postJson(action,{tenant:"tenant",workspace:"One",dryRun:true});
-        check(requests.at(-1).url===action,"Checkbox off must preserve single-target behavior: "+action);
-      }
-      var deletePanel=document.createElement("div"); deletePanel.id="deleteFixture"; document.body.appendChild(deletePanel);
-      var deletion={status:"failed",parallelAction:"/api/delete",lines:[],workspaceRuns:[
-        {workspace:"one",name:"One",tenant:"tenant",status:"failed",done:true,dryRun:false,lines:[]}]};
-      renderPanel(deletePanel,deletion);
-      var retryButton=deletePanel.querySelector(".workspace-action");
-      var retryInput=deletePanel.querySelector(".workspace-delete-confirm input");
-      check(retryButton.disabled,"Destructive retry must require fresh confirmation");
-      retryInput.value="wrong"; retryInput.dispatchEvent(new Event("input"));
-      check(retryButton.disabled,"Wrong confirmation must not authorize deletion");
-      retryInput.value="one"; retryInput.dispatchEvent(new Event("input"));
-      check(!retryButton.disabled,"Canonical target confirmation should enable retry");
-      var retryCalls=[]; globalThis.runJob=async(url,body)=>{retryCalls.push(body);};
-      await retryButton.onclick();
-      check(retryCalls.length===1 && retryCalls[0].data.dryRun===false
-        && retryCalls[0].data.confirmedWorkspaces[0]==="one","Destructive retry target was not explicitly scoped");
-      check(retryInput.value==="","Delete confirmation must be consumed");
-      await retryButton.onclick();
-      check(retryCalls.length===1,"Consumed confirmation must not authorize another retry");
-      deletion.workspaceRuns[0].dryRun=true;
-      renderPanel(deletePanel,deletion);
-      await retryButton.onclick();
-      check(retryCalls.length===2 && retryCalls[1].data.dryRun===true,
-        "Retrying a preview must never upgrade to destructive mode when the form changed");
-    })()`);
-    console.log("PASS: streaming, manual/near-tail scroll, selection, wheel, PageDown, keyboard jump, module groups, parallel targets and completion");
+    console.log("PASS: streaming, manual/near-tail scroll, selection, wheel, PageDown, keyboard jump, module groups and completion");
   } finally {
-    const exited = browser.exitCode !== null ? Promise.resolve()
-      : new Promise(resolve => browser.once("close", resolve));
     if (socket && socket.readyState === WebSocket.OPEN) {
       try {await call("Browser.close");} catch {}
       socket.close();
     }
     browser.kill();
-    await exited;
     clearTimeout(watchdog);
   }
 })().catch(error => {console.error(error); process.exitCode=1;});
@@ -1005,7 +939,7 @@ async function evaluate(expression) {
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         finally:
-            shutil.rmtree("\\\\?\\" + str(profile.resolve()) if os.name == "nt" else profile)
+            shutil.rmtree(profile)
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
         starter = "_start_workflow" if endpoint in ("/api/full-workflow", "/api/run-pipeline") else "_start"
@@ -1513,61 +1447,6 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 self.assertEqual(self.client.post("/api/pipeline-params", json=payload).status_code, 400)
                 self.assertEqual(path.read_text(encoding="utf-8"), "{")
 
-    def test_core_workspace_preview_tracks_all_targets_without_submitting_display_text(self):
-        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        code = (
-            page[page.index("function selectedWorkspaces("):page.index("function parallelPayload(")]
-            + page[page.index("function syncPipelineWorkspace("):page.index("async function loadPipelineParams(")]
-            + page[page.index("function collectPipelineParams("):page.index("function pipelineValid(")]
-        )
-        script = """
-const assert = require("node:assert/strict");
-const fields = new Map();
-const $ = id => fields.get(id);
-for (const [id,value] of [["workspace","One"],["workspace2","Two"],["workspace3","Three"]]) {
-  fields.set(id,{value});
-}
-fields.set("parallelDeploy",{checked:false});
-const pipelineSpec=[{name:"workspace_id"},{name:"env_suffix"}];
-for(const prefix of ["pp_","wf_pp_"]) {
-  const wrapper={classList:{toggle(name,value){wrapper[name]=value;}}};
-  fields.set(prefix+"workspace_id",{value:"",closest:()=>wrapper});
-  fields.set(prefix+"workspace_idLabel",{textContent:""});
-  fields.set(prefix+"workspace_idHelp",{textContent:""});
-  fields.set(prefix+"env_suffix",{value:"V20"});
-}
-""" + code + """
-function checkTargets(expected,parallel) {
-  syncPipelineWorkspace();
-  for(const prefix of ["pp_","wf_pp_"]) {
-    const field=$(prefix+"workspace_id");
-    assert.equal(field.value,expected.join("\\n"));
-    assert.equal(field.rows,Math.max(1,expected.length));
-    assert.equal(field.closest(".param").wide,parallel);
-    assert.equal($(prefix+"workspace_idLabel").textContent,
-      parallel ? "Target workspaces ("+expected.length+")" : "Workspace name or ID");
-    assert.match($(prefix+"workspace_idHelp").textContent,
-      parallel ? /each worker uses its own workspace ID/ : /From the sidebar/);
-    assert.deepEqual(collectPipelineParams(prefix),{env_suffix:"V20"});
-  }
-}
-$("parallelDeploy").checked=true;
-checkTargets(["One","Two","Three"],true);
-$("workspace2").value=" Updated ";
-checkTargets(["One","Updated","Three"],true);
-$("workspace").value=" ";
-$("workspace2").value="";
-checkTargets(["Three"],true);
-$("workspace3").value=" ";
-checkTargets([],true);
-$("workspace").value="Single";
-$("workspace2").value="Ignored";
-$("parallelDeploy").checked=false;
-checkTargets(["Single"],false);
-"""
-        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_browser_keeps_workspaces_blank_until_explicit_entry(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         function = page[page.index("async function loadPipelineParams("):page.index("function collectPipelineParams(")]
@@ -1705,9 +1584,6 @@ const escapeHtml=value=>String(value).replaceAll("&","&amp;").replaceAll('"',"&q
 """ + code + """
 for(const prefix of ["pp_","wf_pp_"]){
   const html=renderPipelineFields(prefix);
-  assert.ok(html.includes('<textarea id="'+prefix+'workspace_id" rows="1" readonly'));
-  assert.ok(html.includes('id="'+prefix+'workspace_idLabel"'));
-  assert.ok(html.includes('id="'+prefix+'workspace_idHelp"'));
   assert.equal(html.split(">Find ID</a>").length-1,2);
   assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
   const visible=html.split("<details")[0];
@@ -1992,7 +1868,6 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                             "tenant": "tenant.example", "workspace": "DEV",
                             "parameters": {**PIPELINE_PARAMS, "key_vault_uri": "https://mock.vault.azure.net/",
                                            "alert_email_to": "operations@example.test",
-                                           "workspace_id": "FEATURE\nDEV\nTEST",
                                            "ontology_data_agent_mode": "enabled",
                                            "ontology_operations_agent_mode": "enabled"},
                         })
@@ -2365,10 +2240,7 @@ console.log(JSON.stringify([
             self.assertEqual(normal_fields.count('type="text"'), 4)
             self.assertLess(form.index(f'id="{prefix}AzureSubscriptionId"'), form.index(f'id="{prefix}FoundryProjectName"'))
             self.assertIn("FoundryCreate", normal_fields)
-            self.assertNotIn("Automatic multi-agent setup", normal_fields)
-            self.assertIn('<details class="form-details">\n      <summary>Setup details</summary>', form)
-            self.assertNotIn('<details class="form-details" open', form)
-            self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", normal_fields).split()), 65)
+            self.assertIn("Automatic multi-agent setup", form)
             self.assertIn("billable", normal_fields)
             self.assertNotIn("FoundryOverrides", form)
             self.assertNotIn("FoundryNewProjectOptions", form)
@@ -2392,10 +2264,10 @@ console.log(JSON.stringify([
             self.assertIn("FoundryAccountName", form)
             self.assertIn("Saved project or automatic discovery", form)
             self.assertNotIn("usage charges", form)
-            self.assertIn("Allow project creation (billable)", normal_fields)
+            self.assertIn("Allow project creation (billable)", form)
             self.assertIn(f'aria-describedby="{prefix}FoundryCreateHelp"', form)
             self.assertIn(f'id="{prefix}FoundryCreateHelp"', form)
-            self.assertIn("Global inference may apply. Existing projects are reused.", normal_fields)
+            self.assertIn("Global inference may apply. Existing projects are reused.", form)
             self.assertNotIn("Leave blank unless", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
             self.assertEqual(len(identifiers), len(set(identifiers)))
@@ -2417,14 +2289,6 @@ console.log(JSON.stringify([
         self.assertIn("Deletes every workspace item.", page)
         self.assertIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
-
-    def test_parallel_workspace_fields_are_spaced_and_checkbox_is_inline(self):
-        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        self.assertIn("#parallelWorkspaceFields { display:grid; gap:.85rem; }", page)
-        self.assertIn('<label class="check"><input id="parallelDeploy" type="checkbox" />', page)
-        self.assertIn("All actions use these targets. Blank slots are ignored.", page)
-        self.assertNotIn("margin:-.5rem 0 .1rem", page)
-        self.assertIn(".hint:empty, .phelp:empty, .cardcap:empty { display:none; }", page)
 
     def test_precreated_spa_is_explicit_validated_and_used_by_each_submission(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -2518,10 +2382,9 @@ const fields = {};
 const $ = id => fields[id];
 const suffixes = [
   "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName",
-  "FoundryModel", "FoundryCreate", "FoundryProjectMode",
+  "FoundryModel", "FoundryCreate",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
-fields.parallelDeploy = {checked:true};
 """ + functions + """
 for (const prefix of ["deploy", "workflow"]) {
   for (const suffix of suffixes) {
@@ -2559,7 +2422,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(creating.foundryModel, "existing-model");
   assert.equal(creating.foundryProjectResourceId, "");
   assert.equal(creating.foundryProjectName, "existing-project-name");
-  assert.equal(creating.foundryNewProjectName, "existing-project-name");
+  assert.equal(Object.hasOwn(creating, "foundryNewProjectName"), false);
   for (const key of ["foundryModelVersion", "foundryModelSku", "foundryModelCapacity",
                      "foundryLocation", "foundryModelName"]) assert.equal(Object.hasOwn(creating, key), false);
   assert.equal(Object.hasOwn(creating, "productionWrites"), false);
@@ -2571,54 +2434,6 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal(reused.foundryProjectResourceId, "");
   assert.equal(reused.foundryProjectName, "existing-project-name");
   assert.equal(Object.hasOwn(reused, "foundryNewProjectName"), false);
-  assert.equal(reused.separateFoundryProjects, false);
-  $(prefix+"FoundryProjectMode").value = "separate";
-  assert.equal(foundryValid(prefix), true);
-  assert.equal(foundryPayload(prefix).separateFoundryProjects, true);
-  $(prefix+"FoundryProjectName").value = projectId;
-  assert.equal(foundryValid(prefix), false);
-  assert.match($(prefix+"FoundryCreationStatus").textContent, /project base name/);
-  $(prefix+"FoundryProjectMode").value = "";
-  assert.equal(foundryValid(prefix), true);
-  $(prefix+"FoundryProjectMode").value = "separate";
-  fields.parallelDeploy.checked = false;
-  $(prefix+"FoundryProjectName").value = "single-project";
-  $(prefix+"FoundryCreate").checked = true;
-  assert.equal(foundryValid(prefix), true);
-  assert.equal(foundryPayload(prefix).separateFoundryProjects, false);
-  assert.equal(foundryPayload(prefix).foundryNewProjectName, "single-project");
-  assert.equal($(prefix+"FoundryProjectMode").value, "separate");
-  fields.parallelDeploy.checked = true;
-  assert.equal(foundryPayload(prefix).separateFoundryProjects, true);
-  assert.equal(Object.hasOwn(foundryPayload(prefix), "foundryNewProjectName"), false);
-}
-"""
-        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_parallel_project_usage_tracks_checkbox_in_both_forms(self):
-        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        self.assertIn('<label id="${prefix}FoundryProjectModeField" hidden>', page)
-        self.assertIn('<select id="${prefix}FoundryProjectMode" disabled>', page)
-        start = page.index("function refresh()")
-        visibility = page[start:page.index("  const targets =", start)] + "}"
-        script = """
-const assert = require("node:assert/strict");
-const fields = {parallelDeploy: {checked:false}, parallelWorkspaceFields: {}};
-const $ = id => fields[id];
-for (const prefix of ["deploy", "workflow"]) {
-  fields[prefix+"FoundryProjectModeField"] = {};
-  fields[prefix+"FoundryProjectMode"] = {value:"separate"};
-}
-""" + visibility + """
-for (const enabled of [false, true, false, true]) {
-  fields.parallelDeploy.checked = enabled;
-  refresh();
-  for (const prefix of ["deploy", "workflow"]) {
-    assert.equal(fields[prefix+"FoundryProjectModeField"].hidden, !enabled);
-    assert.equal(fields[prefix+"FoundryProjectMode"].disabled, !enabled);
-    assert.equal(fields[prefix+"FoundryProjectMode"].value, "separate");
-  }
 }
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
@@ -2847,9 +2662,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="workflowBtn"', page)
         self.assertIn('"/api/full-workflow"', page)
-        self.assertIn("Stops on failure.", page)
-        self.assertIn("3. Energy + Foundry concurrently", page)
-        self.assertIn("Publish after both branches succeed", page)
+        self.assertIn("finishes Energy and Foundry concurrently before app publication; stops on failure.", page)
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="deploymentActions"'))
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="tabDelete"'))
 
@@ -2899,7 +2712,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
 
     def test_deploy_page_explains_portable_backend_readiness_contract(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        self.assertIn("checks authentication, CORS and connectors", page)
+        self.assertIn("verifies authentication, CORS and connectors", page)
         self.assertIn('href="/deploy-guide"', page)
         guide = (SERVER.REPO_ROOT / "HydroOperationsApp" / "DEPLOY.md").read_text(encoding="utf-8")
         self.assertIn("preflights and POST", guide)

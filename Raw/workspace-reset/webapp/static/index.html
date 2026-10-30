@@ -70,7 +70,6 @@
   .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:1.05rem 1.15rem; }
   label { display:flex; flex-direction:column; font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); gap:.42rem; }
   label.check { flex-direction:row; align-items:center; gap:.6rem; color:var(--text); text-transform:none; letter-spacing:normal; font-weight:500; font-size:.9rem; }
-  label.check input[type=checkbox] { flex-shrink:0; margin:0; }
   #patNote { text-transform:none; letter-spacing:normal; font-weight:500; color:#7c8ab0; }
   input[type=text],input[type=password],input[type=number],input:not([type]),textarea { background:var(--field); border:1px solid var(--border); color:var(--text);
     border-radius:10px; padding:.62rem .78rem; font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal;
@@ -217,10 +216,8 @@
 
   /* target card: clearly a form, not part of the nav below it */
   .side-card.target { border-color:rgba(59,130,246,.22); }
-  .side-card.target label.check { align-items:flex-start; font-size:.78rem; line-height:1.4; }
-  #parallelWorkspaceFields { display:grid; gap:.85rem; }
   .side-card .cardcap { font-size:.66rem; color:#7c8ab0; font-weight:400; text-transform:none; letter-spacing:normal;
-    margin:0; line-height:1.4; }
+    margin:-.5rem 0 .1rem; line-height:1.4; }
 
   /* vertical list nav — flat, browser-style grouped tabs */
   .nav { display:flex; flex-direction:column; gap:.16rem; }
@@ -331,14 +328,6 @@
           <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
         <label class="idfield"><span>Workspace (GUID or name)</span>
           <input id="workspace" type="text" autocomplete="off" placeholder="ws-… or a display name" /></label>
-        <label class="check"><input id="parallelDeploy" type="checkbox" /><span>Parallel deployment (up to 3)</span></label>
-        <div id="parallelWorkspaceFields" hidden>
-          <label class="idfield"><span>Workspace 2 (optional)</span>
-            <input id="workspace2" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
-          <label class="idfield"><span>Workspace 3 (optional)</span>
-            <input id="workspace3" type="text" autocomplete="off" placeholder="GUID or display name" /></label>
-          <p class="cardcap">All actions use these targets. Blank slots are ignored.</p>
-        </div>
         <p id="targetSettingsStatus" class="cardcap" role="status"></p>
       </div>
 
@@ -375,7 +364,7 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>Full Deploy</h2>
       </div>
-      <p class="hint">New workspace: sync, configure, then publish. Stops on failure.</p>
+      <p class="hint">For a new workspace. Syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure.</p>
       <aside class="notice">
         <strong>Updating an existing app?</strong> Use <strong>Deploy app</strong>, not Full Deploy.
         <a href="/deploy-guide" target="_blank" rel="noopener">Prerequisites &amp; guide</a>
@@ -402,20 +391,20 @@
           <div id="workflowTestPanel"></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
-          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Weather and energy ingestion; complete ontology before either Fabric agent.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Core bindings and initial UKMet ingestion build the complete ontology before either Fabric agent; energy ingestion runs alongside.</span></div></div>
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Energy + Foundry concurrently</strong><span>Prepare energy maps and workspace-scoped agents.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Energy + Foundry concurrently</strong><span>Finalizes map read models and provisions Foundry together; does not repeat Core or provider ingestion.</span></div></div>
           <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
-          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>Publish after both branches succeed; verify authentication and connectors.</span></div></div>
+          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>After both branches succeed, publishes the app and checks authentication and connectors.</span></div></div>
         </section>
       </div>
-      <p class="phelp">
+      <aside class="notice">
         Settings stay on this machine. GitHub PATs are never saved.
-      </p>
+      </aside>
       <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Run Full Deploy</button>
       <button id="workflowResumeBtn" class="ghost" hidden disabled>Retry failed step and continue</button>
       <button id="workflowSyncResumeBtn" class="ghost" hidden disabled>Sync updated definitions and resume</button>
@@ -459,7 +448,7 @@
         <span class="ico" style="background:rgba(139,92,246,.16);color:#c4b5fd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg></span>
         <h2>Core setup</h2>
       </div>
-      <p class="hint">Requires both UKMet API keys in Key Vault. Builds the complete ontology before either Fabric agent; ingests energy in parallel.</p>
+      <p class="hint">Requires both UKMet API keys in Key Vault. Core bindings, initial weather ingestion and SQL/weather relationship validation complete the ontology before either Fabric agent is published. Energy ingestion runs in parallel. Foundry follows successful Core setup.</p>
       <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
       <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run core setup</button>
       <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
@@ -481,10 +470,10 @@
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
         <h2>Set up Foundry agents</h2>
       </div>
-      <p class="hint">Run Core setup first. Prepares backend and agents, not the website. Native graph materialization is not required.</p>
+      <p class="hint">Run Core setup first. Creates or reuses AppBackend with SQL/GraphQL dependencies for the Hosted Agent, then configures Foundry agents. Native graph materialization is not required. Does not publish the website.</p>
       <div id="deployFoundryFields"></div>
       <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
-      <p class="hint">Then use <strong>Deploy app</strong> to publish the website. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
+      <p class="hint">After Foundry setup succeeds, <strong>Deploy app</strong> publishes the website using the prepared backend. A Fabric App item can already appear during backend setup. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
       <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
     </div>
   </section>
@@ -492,9 +481,10 @@
   <section id="paneDeploy" class="pane">
     <div class="card">
       <div class="card-head"><h2>Deploy Fabric app last</h2></div>
-      <p class="hint">Publishes the app and checks authentication, CORS and connectors. Does not rerun setup. Prepare energy maps first if enabled.</p>
-      <p class="phelp">Graph view: materialize the ontology graph first in Fabric.</p>
+      <p class="hint">Publishes the prepared app and verifies authentication, CORS and connectors. Does not rerun data or agent setup.</p>
+      <p class="phelp">For graph views, materialize the ontology graph first: Manage graph &rarr; select eligible entities/relationships &rarr; Continue &rarr; Materialize. Then bind the selected graph explicitly.</p>
       <div id="deployAuthenticationFields"></div>
+      <p class="hint">Uses the energy-map setting already prepared for this target. Run Energy setup to prepare map data before publication.</p>
       <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
@@ -508,10 +498,8 @@
       </div>
       <p class="hint"><strong>Deletes every workspace item.</strong> Preview with dry run first. Not needed for app updates.</p>
       <label class="check"><input id="dryRun" type="checkbox" checked /> Dry run (list only, delete nothing)</label>
-      <p id="deleteTargets" class="hint" style="white-space:pre-line"></p>
-      <label id="confirmWrap" style="display:none"><span id="deleteConfirmLabel">Type the workspace to confirm deletion</span>
-        <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" />
-        <textarea id="parallelConfirmText" rows="3" hidden placeholder="Repeat each selected workspace exactly, one per line, in the order shown"></textarea></label>
+      <label id="confirmWrap" style="display:none">Type the workspace to confirm deletion
+        <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" /></label>
       <button id="deleteBtn" class="primary" disabled>List items (dry run)</button>
       <div id="deletePanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
@@ -553,7 +541,7 @@ const spaClientIds = ["deployClientId", "foundryClientId", "workflowDeployClient
 function renderSpaFields(clientId) {
   return `<details class="foundry-block">
     <summary>Fabric App authentication</summary>
-    <p class="hint">App registration is automatic. Override only with an administrator-prepared client ID.</p>
+    <p class="hint">Setup automatically reuses or creates an app registration in the target tenant. Select this only to use a specific registration prepared by your administrator.</p>
     <label class="check"><input id="${clientId}UseExisting" type="checkbox" />
       <span>Use a pre-created app registration</span></label>
     <div id="${clientId}Fields" hidden>
@@ -594,11 +582,6 @@ function renderFoundryFields(prefix, clientId) {
         <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or automatic discovery" /></label>
       <label>Model deployment name
         <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
-      <label id="${prefix}FoundryProjectModeField" hidden>Parallel project usage
-        <select id="${prefix}FoundryProjectMode" disabled>
-          <option value="">Reuse the entered project</option>
-          <option value="separate">Separate projects (short workspace suffix)</option>
-        </select></label>
     </div>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
       <span>Allow project creation (billable)</span></label>
@@ -608,8 +591,7 @@ function renderFoundryFields(prefix, clientId) {
       <summary>Setup details</summary>
       <p id="${prefix}FoundryModeSummary" class="phelp">Automatic multi-agent setup.</p>
       <p class="phelp">A Foundry account is the parent Azure resource; projects live inside it. Blank uses automatic discovery.</p>
-      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents, workspace-bound connections and hosted orchestrator. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
-      <p class="phelp">Shared projects isolate workspace agents. Separate projects add a stable eight-character workspace suffix. Model quota is shared within an account.</p>
+      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents, connections and hosted orchestrator. Missing backends create Fabric App/SQL/GraphQL resources, not the website. Existing canonical agent names are retained; no workspace-suffixed copies are created.</p>
       <p class="phelp">New models prefer 75,000 TPM where quota permits; lower allocations remain supported.</p>
     </details>
     ${renderSpaFields(clientId)}`;
@@ -619,125 +601,9 @@ $("deployFoundryFields").innerHTML = renderFoundryFields("deploy", "foundryClien
 $("deployAuthenticationFields").innerHTML = renderSpaFields("deployClientId");
 
 async function postJson(url, body) {
-  if ($("parallelDeploy")?.checked && parallelActions.has(url)) {
-    body = { action: url, workspaces: selectedWorkspaces(), data: body };
-    url = "/api/parallel";
-  }
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
-}
-
-const parallelActions = new Set([
-  "/api/sync", "/api/run-pipeline", "/api/setup-energy",
-  "/api/setup-foundry", "/api/deploy-app", "/api/full-workflow",
-  "/api/delete", "/api/test-connection",
-]);
-function selectedWorkspaces() {
-  const ids = $("parallelDeploy")?.checked ? ["workspace", "workspace2", "workspace3"] : ["workspace"];
-  return ids.map(id => $(id).value.trim()).filter(Boolean);
-}
-function parallelPayload(action) {
-  if (action === "/api/full-workflow") return workflowPayload();
-  const common = { tenant: $("tenant").value, workspace: $("workspace").value };
-  if (action === "/api/delete") return {
-    ...common, dryRun: $("dryRun").checked, confirmedWorkspaces: deletionConfirmations(),
-  };
-  if (action === "/api/test-connection" && $("paneWorkflow").classList.contains("active")) return workflowPayload();
-  if (action === "/api/sync" || action === "/api/test-connection") return {
-    ...common, repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
-    connectionId: connValue(), keepConnected: $("keepConnected").checked, pat: $("pat").value,
-  };
-  if (action === "/api/run-pipeline") return {
-    ...common, pipeline: "01_Pipe_Setup", parameters: collectPipelineParams(),
-  };
-  if (action === "/api/setup-foundry") return {
-    ...common, clientId: spaClientValue("foundryClientId"), ...foundryPayload("deploy"),
-  };
-  if (action === "/api/deploy-app") return { ...common, clientId: spaClientValue("deployClientId") };
-  return common;
-}
-
-function renderParallelRuns(el, job) {
-  if (!job.workspaceRuns?.length) return;
-  let container = el.querySelector(".parallel-runs");
-  if (!container) {
-    container = document.createElement("div");
-    container.className = "parallel-runs";
-    el.appendChild(container);
-  }
-  for (const state of job.workspaceRuns) {
-    const id = el.id + "-parallel-" + state.workspace;
-    let details = [...container.children].find(child => child.id === id);
-    if (!details) {
-      details = document.createElement("details");
-      details.id = id;
-      details.className = "workflow-phase-group";
-      details.open = true;
-      details.innerHTML = '<summary></summary><div class="workspace-panel"></div><label class="workspace-delete-confirm" hidden>Confirm this workspace GUID again to retry deletion<input type="text" autocomplete="off"></label><button type="button" class="ghost workspace-action"></button>';
-      container.appendChild(details);
-    }
-    details.querySelector("summary").textContent = `${state.name} \u00b7 ${state.status}`;
-    const panel = details.querySelector(".workspace-panel");
-    panel.id = id + "-progress";
-    renderPanel(panel, state);
-    const button = details.querySelector(".workspace-action");
-    const retry = state.done && ["failed", "cancelled"].includes(state.status);
-    const canRetry = retry && job.status !== "running";
-    const destructiveRetry = retry && job.parallelAction === "/api/delete" && state.dryRun !== true;
-    const confirmation = details.querySelector(".workspace-delete-confirm");
-    const confirmationInput = confirmation.querySelector("input");
-    confirmation.hidden = !destructiveRetry;
-    confirmationInput.placeholder = state.workspace;
-    const updateButton = () => {
-      button.disabled = (retry && !canRetry) || (destructiveRetry
-        && confirmationInput.value.trim().toLowerCase() !== state.workspace.toLowerCase());
-    };
-    confirmationInput.oninput = updateButton;
-    button.hidden = state.done && !retry;
-    updateButton();
-    button.textContent = !state.done ? "Cancel this workspace"
-      : state.requiresSync ? "Sync changes and retry this workspace"
-      : state.canResume ? "Resume this workspace" : "Retry this workspace";
-    button.onclick = async () => {
-      button.disabled = true;
-      if (!state.done) {
-        const result = await postJson(`/api/parallel/${job.jobId}/cancel-workspace`, { workspace: state.workspace });
-        if (!result.ok) {
-          state.error = result.data.error || `HTTP ${result.status}`;
-          renderPanel(panel, state);
-          button.disabled = false;
-        }
-        return;
-      }
-      if (state.requiresSync && !confirm("Sync changed definitions and retry this workspace, retaining unaffected completed stages?")) {
-        button.disabled = false;
-        return;
-      }
-      const fullWorkflow = job.parallelAction === "/api/full-workflow";
-      if (fullWorkflow) { workflowBusy = true; refresh(); }
-      let data;
-      if (job.parallelAction === "/api/delete") {
-        if (destructiveRetry && confirmationInput.value.trim().toLowerCase() !== state.workspace.toLowerCase()) {
-          updateButton();
-          return;
-        }
-        data = {
-          tenant: state.tenant, workspace: state.workspace, dryRun: state.dryRun === true,
-          confirmedWorkspaces: destructiveRetry ? [confirmationInput.value.trim()] : [],
-        };
-        confirmationInput.value = "";
-      } else {
-        data = parallelPayload(job.parallelAction);
-      }
-      await runJob("/api/parallel", {
-        action: job.parallelAction, workspaces: [state.workspace],
-        data,
-        resume: job.parallelAction === "/api/full-workflow" && !!state.canResume,
-        syncLatest: !!state.requiresSync,
-      }, panel, () => fullWorkflow ? workflowDone() : refresh());
-    };
-  }
 }
 
 function renderPanel(el, job) {
@@ -775,7 +641,7 @@ function renderPanel(el, job) {
   if (!el.querySelector(".progress-summary")) {
     el.innerHTML = `<div class="progress">
       <div class="progress-summary"></div>
-      <pre id="${el.id}Output" class="output" tabindex="0" role="region" aria-label="Live action output"></pre>
+      <pre id="${el.id}Output" class="output" tabindex="0" role="region" aria-label="Live deployment output"></pre>
       <div class="output-controls"><button type="button" class="ghost" aria-controls="${el.id}Output">Jump to latest</button><span></span></div>
     </div>`;
     const out = el.querySelector(".output");
@@ -828,7 +694,6 @@ function renderPanel(el, job) {
   out.className = `output ${statusCls}`;
   if (stick) out.scrollTop = out.scrollHeight;
   out._updateFollowStatus();
-  renderParallelRuns(el, job);
 }
 
 let subscriptionLoad = null;
@@ -977,9 +842,6 @@ const workflowJobStorageKey = "fabric-demo.full-workflow-job.v1";
 
 // Starts a job (or reconnects to an existing one) then polls until done.
 async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
-  const isWorkflow = panelEl.id === "workflowPanel"
-    || (startUrl === "/api/parallel" && body?.action === "/api/full-workflow");
-  panelEl.querySelector(".parallel-runs")?.remove();
   const job = { status: "running", phases: [], phaseIndex: 0, phase: "", lines: [], returncode: null };
   renderPanel(panelEl, job);
   let jobId = existingJobId;
@@ -987,7 +849,7 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
     const started = await postJson(startUrl, body);
     if (!started.ok || !started.data.jobId) {
       job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
-      if (isWorkflow && workflowCheckpoint && started.data.requiresSync) {
+      if (panelEl.id === "workflowPanel" && workflowCheckpoint && started.data.requiresSync) {
         workflowCheckpoint.requiresSync = true;
         workflowCheckpoint.fullSyncRequired = !!started.data.fullSyncRequired;
         workflowCheckpoint.changedNotebooks = started.data.changedNotebooks || [];
@@ -996,18 +858,17 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
     }
     jobId = started.data.jobId;
   }
-  if (isWorkflow) {
+  if (panelEl.id === "workflowPanel") {
     workflowCheckpoint = { jobId, status: "running" };
     try { localStorage.setItem(workflowJobStorageKey, jobId); } catch (_) {}
   }
   let since = 0;
-  let workspaceSince = {};
   let misses = 0;
   // A lost job / unreachable server means we stopped watching -- NOT that the task
   // failed. Fabric runs are server-side and keep going; say so instead of "Failed".
   const interrupted = (msg) => {
     job.status = "interrupted"; job.error = msg;
-    if (isWorkflow) {
+    if (panelEl.id === "workflowPanel") {
       workflowCheckpoint = { jobId, status: "interrupted" };
       $("workflowResumeStatus").textContent = msg + " Resume is unavailable; no steps will be restarted automatically.";
     }
@@ -1015,7 +876,7 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
   };
   const poll = async () => {
     let r;
-    try { r = await fetch(`/api/jobs/${jobId}?since=${since}&workspaceSince=${encodeURIComponent(JSON.stringify(workspaceSince))}`); }
+    try { r = await fetch(`/api/jobs/${jobId}?since=${since}`); }
     catch (e) {
       // The local server may be briefly unreachable (e.g. restarting) -- retry before giving up.
       if (++misses <= 4) { setTimeout(poll, 1000); return; }
@@ -1038,15 +899,7 @@ async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
     job.elapsedSeconds = j.elapsedSeconds;
     job.phaseTimings = j.phaseTimings;
     job.componentTimings = j.componentTimings;
-    job.jobId = jobId;
-    job.parallelAction = j.parallelAction;
-    const previousRuns = new Map((job.workspaceRuns || []).map(state => [state.workspace, state]));
-    job.workspaceRuns = (j.workspaceRuns || []).map(state => ({
-      ...previousRuns.get(state.workspace), ...state,
-      lines: [...(previousRuns.get(state.workspace)?.lines || []), ...(state.lines || [])],
-    }));
-    workspaceSince = Object.fromEntries(job.workspaceRuns.map(state => [state.workspace, state.nextSince || 0]));
-    if (isWorkflow) {
+    if (panelEl.id === "workflowPanel") {
       workflowCheckpoint = { jobId, status: j.status, canResume: j.canResume, resumeComponent: j.resumeComponent };
       if (j.resumeBlockedReason) $("workflowResumeStatus").textContent = j.resumeBlockedReason;
       refresh();
@@ -1073,10 +926,10 @@ const connValue = () => (reuseChecked() ? "yes" : "");
 const workflowReuseChecked = () => $("workflowReuseConn").checked;
 const workflowConnValue = () => (workflowReuseChecked() ? "yes" : "");
 function baseValid() {
-  return deployValid() && $("repository").value.includes("/");
+  return $("tenant").value.trim() && $("workspace").value.trim() && $("repository").value.includes("/");
 }
 function workflowBaseValid() {
-  return deployValid() && $("workflowRepository").value.includes("/");
+  return $("tenant").value.trim() && $("workspace").value.trim() && $("workflowRepository").value.includes("/");
 }
 function syncValid() {
   if (!baseValid()) return false;
@@ -1095,45 +948,16 @@ function testValid() {
 function workflowTestValid() {
   return workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
 }
-function deletionConfirmations() {
-  return $("parallelConfirmText").value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
-}
 function deleteValid() {
   const dry = $("dryRun").checked;
-  if (!deployValid()) return false;
-  if (dry) return true;
-  if (!$("parallelDeploy").checked) {
-    return $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase();
-  }
-  const targets = selectedWorkspaces();
-  const confirmations = deletionConfirmations();
-  return targets.length === confirmations.length
-    && targets.every((target, index) => target.toLowerCase() === confirmations[index].toLowerCase());
+  return $("tenant").value.trim() && $("workspace").value.trim() &&
+    (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
 }
 function deployValid() {
-  const targets = selectedWorkspaces();
-  return $("tenant").value.trim() && targets.length > 0
-    && new Set(targets.map(value => value.toLowerCase())).size === targets.length;
+  return $("tenant").value.trim() && $("workspace").value.trim();
 }
 function refresh() {
-  $("parallelWorkspaceFields").hidden = !$("parallelDeploy").checked;
-  for (const prefix of ["deploy", "workflow"]) {
-    $(prefix + "FoundryProjectModeField").hidden = !$("parallelDeploy").checked;
-    $(prefix + "FoundryProjectMode").disabled = !$("parallelDeploy").checked;
-  }
-  const targets = selectedWorkspaces();
-  syncPipelineWorkspace();
-  const targetSummary = targets.join(", ");
-  $("sidebarTarget").textContent = [$("tenant").value.trim(), targetSummary].filter(Boolean).join(" / ");
-  $("sidebarTarget").title = targetSummary;
-  for (const [id, label] of [
-    ["workflowBtn", "Run Full Deploy"], ["syncBtn", "Run sync"], ["pipelineBtn", "Run core setup"],
-    ["energyBtn", "Refresh energy sources"], ["foundryBtn", "Set up Foundry agents"],
-    ["deployBtn", "Deploy Fabric app"], ["testBtn", "Test connection"], ["workflowTestBtn", "Test connection"],
-  ]) {
-    $(id).textContent = $("parallelDeploy").checked
-      ? `${label} (${targets.length} workspace${targets.length === 1 ? "" : "s"})` : label;
-  }
+  $("sidebarTarget").textContent = [$("tenant").value.trim(), $("workspace").value.trim()].filter(Boolean).join(" / ");
   // The PAT only exists to CREATE a new connection, so reveal it only when one is
   // needed: reuse is off (create a saved connection) or a reuse test just failed.
   const needPat = !reuseChecked() || connTestState === "fail";
@@ -1157,33 +981,19 @@ function refresh() {
     $("workflowPatNote").textContent = "";
   }
   const dry = $("dryRun").checked;
-  const parallel = $("parallelDeploy").checked;
-  const deleteTargets = selectedWorkspaces();
   $("confirmWrap").style.display = dry ? "none" : "flex";
-  $("confirmText").hidden = parallel;
-  $("parallelConfirmText").hidden = !parallel;
-  $("deleteConfirmLabel").textContent = parallel
-    ? "Confirm every selected workspace, one per line, in the order shown"
-    : "Type the workspace to confirm deletion";
-  $("deleteTargets").textContent = deleteTargets.length
-    ? "Targets:\n" + deleteTargets.map((target, index) => `${index + 1}. ${target}`).join("\n")
-    : "Enter at least one target workspace.";
-  $("deleteBtn").textContent = parallel
-    ? `${dry ? "List items (dry run)" : "Delete all items"} in ${deleteTargets.length} workspace${deleteTargets.length === 1 ? "" : "s"}`
-    : dry ? "List items (dry run)" : "Delete everything";
+  $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
   $("deleteBtn").className = dry ? "primary" : "destructive";
   $("syncBtn").disabled = !syncValid();
   $("testBtn").disabled = testing || !testValid();
   $("workflowTestBtn").disabled = testing || !workflowTestValid();
   $("deleteBtn").disabled = !deleteValid();
   for (const clientId of spaClientIds) updateSpaChoice(clientId);
-  const foundryReady = foundryValid("deploy");
-  const workflowFoundryReady = foundryValid("workflow");
   $("deployBtn").disabled = !(deployValid() && spaClientValid("deployClientId"));
-  $("foundryBtn").disabled = !(deployValid() && foundryReady && spaClientValid("foundryClientId"));
+  $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy") && spaClientValid("foundryClientId"));
   $("energyBtn").disabled = !deployValid();
-  $("workflowBtn").disabled = workflowBusy || !(workflowSyncValid() && workflowPipelineValid() && deployValid() && workflowFoundryReady && spaClientValid("workflowDeployClientId"));
-  const resumable = !!workflowCheckpoint?.canResume && !$("parallelDeploy").checked;
+  $("workflowBtn").disabled = workflowBusy || !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
+  const resumable = !!workflowCheckpoint?.canResume;
   $("workflowResumeBtn").hidden = !resumable;
   $("workflowResumeBtn").disabled = workflowBusy || !deployValid() || !!workflowCheckpoint?.requiresSync;
   $("workflowSyncResumeBtn").hidden = !resumable || !workflowCheckpoint.requiresSync;
@@ -1203,7 +1013,6 @@ function refresh() {
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
 document.querySelectorAll("input").forEach((el) => el.addEventListener("input", refresh));
-$("parallelConfirmText").addEventListener("input", refresh);
 document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventListener("change", refresh));
 // Any change to a connection-affecting field invalidates the previous test result.
 ["repository", "branch", "directory", "tenant", "workspace", "pat"].forEach((id) =>
@@ -1268,8 +1077,7 @@ $("deleteBtn").addEventListener("click", async () => {
   $("deleteBtn").disabled = true;
   await runJob("/api/delete", {
     tenant: $("tenant").value, workspace: $("workspace").value, dryRun: $("dryRun").checked,
-    confirmedWorkspaces: deletionConfirmations(),
-  }, $("deletePanel"), () => { $("confirmText").value = ""; $("parallelConfirmText").value = ""; refresh(); });
+  }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
 });
 
 // Standalone Foundry controls retain the deploy-prefixed IDs.
@@ -1278,8 +1086,6 @@ function foundryPayload(prefix) {
   const creating = $(prefix + "FoundryCreate").checked;
   const project = value("FoundryProjectName");
   const resourceId = /^\/subscriptions\//i.test(project);
-  const separate = $("parallelDeploy")?.checked === true
-    && $(prefix + "FoundryProjectMode")?.value === "separate";
   return {
     azureSubscriptionId: value("AzureSubscriptionId"),
     foundryAccountName: value("FoundryAccountName"),
@@ -1287,38 +1093,25 @@ function foundryPayload(prefix) {
     foundryProjectName: resourceId ? "" : project,
     foundryModel: value("FoundryModel"),
     createFoundry: creating,
-    separateFoundryProjects: separate,
-    ...(creating && !resourceId && project && !separate
-      ? {foundryNewProjectName: project} : {}),
   };
 }
 function foundryValid(prefix) {
   const account = $(prefix + "FoundryAccountName").value.trim();
-  const project = $(prefix + "FoundryProjectName").value.trim();
-  const separate = $("parallelDeploy")?.checked && $(prefix + "FoundryProjectMode")?.value === "separate";
-  if (separate && project && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(project)) {
-    $(prefix + "FoundryCreationStatus").textContent =
-      "For separate projects, enter a project base name, not a resource ID. Each workspace gets a stable short suffix.";
-    return false;
-  }
   if (account && !/^[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]$/.test(account)) {
     $(prefix + "FoundryCreationStatus").textContent =
       "Foundry account name must be 2-64 letters, digits or hyphens, starting and ending with a letter or digit.";
     return false;
   }
   if (!$(prefix + "FoundryCreate").checked) {
-    $(prefix + "FoundryCreationStatus").textContent = separate
-      ? "Reuses suffixed projects. Enable creation if missing."
-      : project && $("parallelDeploy")?.checked
-        ? "Shared project; workspace-isolated agents. Model quota is shared."
-        : "";
+    $(prefix + "FoundryCreationStatus").textContent = "";
     return true;
   }
+  const project = $(prefix + "FoundryProjectName").value.trim();
   const model = $(prefix + "FoundryModel").value.trim();
-  const valid = (separate || !project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
+  const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Reuses existing resources; creates missing projects after quota checks."
+    ? "Existing resources are reused. A missing project uses these names and automatic model defaults; Azure checks quota."
     : "Enter a valid model deployment name above. Names use up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit.";
   return valid;
 }
@@ -1326,8 +1119,8 @@ function updateFoundryMode(prefix) {
   const creating = $(prefix + "FoundryCreate").checked;
   if (!creating) $(prefix + "FoundryCreationStatus").textContent = "";
   $(prefix + "FoundryModeSummary").textContent = creating
-    ? "Create only if missing."
-    : "Reuse existing resources.";
+    ? "Automatic multi-agent setup. Create only if missing, using the names above."
+    : "Automatic multi-agent setup. Reuse existing resources.";
 }
 for (const prefix of ["deploy", "workflow"]) {
   const create = $(prefix + "FoundryCreate");
@@ -1493,7 +1286,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName", "FoundryModel", "FoundryProjectMode",
+  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName", "FoundryModel",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
 function restoreTargetSettings() {
@@ -1668,13 +1461,10 @@ function renderPipelineFields(prefix) {
   const fields = pipelineSpec.map((p) => {
     const advanced = !["env_suffix", "workspace_id", ...requiredPipelineFields].includes(p.name);
     const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
-    const control = p.name === "workspace_id"
-      ? `<textarea id="${prefix}${p.name}" rows="1" readonly aria-describedby="${prefix}${p.name}Help">${escapeHtml(p.default || "")}</textarea>`
-      : `<input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />`;
     const html = `<div class="param${wide ? " wide" : ""}">
-      <label id="${prefix}${p.name}Label" for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
-      <span id="${prefix}${p.name}Help" class="phelp">${escapeHtml(p.help)}${p.helpUrl ? ` <a href="${escapeHtml(p.helpUrl)}" target="_blank" rel="noopener noreferrer">Find ID</a>` : ""}</span>
-      ${control}
+      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
+      <span class="phelp">${escapeHtml(p.help)}${p.helpUrl ? ` <a href="${escapeHtml(p.helpUrl)}" target="_blank" rel="noopener noreferrer">Find ID</a>` : ""}</span>
+      <input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />
     </div>`;
     return { advanced, html };
   });
@@ -1696,20 +1486,10 @@ function updatePipelineDefaultsSummary() {
   }
 }
 function syncPipelineWorkspace() {
-  const targets = selectedWorkspaces();
-  const parallel = $("parallelDeploy").checked;
-  for (const prefix of ["pp_", "wf_pp_"]) {
-    const field = $(prefix + "workspace_id");
-    if (!field) continue;
-    field.value = targets.join("\n");
-    field.rows = Math.max(1, targets.length);
-    field.closest(".param").classList.toggle("wide", parallel);
-    $(prefix + "workspace_idLabel").textContent = parallel
-      ? `Target workspaces (${targets.length})` : "Workspace name or ID";
-    $(prefix + "workspace_idHelp").textContent = parallel
-      ? "Settings apply to all targets; each worker uses its own workspace ID."
-      : "From the sidebar.";
-  }
+  ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
+    const field = $(id);
+    if (field) field.value = $("workspace").value;
+  });
 }
 async function loadPipelineParams() {
   const sequence = ++pipelineLoadSequence;
@@ -1795,24 +1575,21 @@ async function loadPipelineParams() {
 }
 function collectPipelineParams(prefix = "pp_") {
   const out = {};
-  pipelineSpec.forEach((p) => {
-    if (p.name === "workspace_id") return;
-    const el = $(prefix + p.name);
-    if (el) out[p.name] = el.value;
-  });
+  pipelineSpec.forEach((p) => { const el = $(prefix + p.name); if (el) out[p.name] = el.value; });
   return out;
 }
 function pipelineValid() {
-  return deployValid()
+  return $("tenant").value.trim() && $("workspace").value.trim()
     && pipelineTarget === pipelineTargetKey()
     && requiredPipelineFields.every(name => $("pp_" + name)?.value.trim());
 }
 function workflowPipelineValid() {
-  return deployValid()
+  return $("tenant").value.trim() && $("workspace").value.trim()
     && pipelineTarget === pipelineTargetKey()
     && requiredPipelineFields.every(name => $("wf_pp_" + name)?.value.trim());
 }
 
+$("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });
 for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("input", () => {
     saveTargetSettings();

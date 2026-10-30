@@ -896,13 +896,6 @@ class NativeBinding(Contract):
     source: SourceIdentity
     connections: dict[NativeSource, str]
     toolbox: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
-    agent_name_suffix: str = Field(default="", pattern=r"^(-[0-9a-f]{32})?$")
-
-    @model_validator(mode="after")
-    def workspace_agent_scope(self) -> "NativeBinding":
-        if self.agent_name_suffix and self.agent_name_suffix != "-" + self.source.workspace_id.hex:
-            raise ValueError("Agent names must be scoped to the verified workspace.")
-        return self
 
 
 class EvidenceDataset(Contract):
@@ -2353,10 +2346,6 @@ class FoundrySupervisor:
             raise SourceFailure("Shared deployed-agent identities contain an invalid role or name.") from None
         if "supervisor" in configured_names or any(not name.strip() for name in configured_names.values()):
             raise SourceFailure("Specialist identities cannot replace the hosted control plane or use empty names.")
-        if self.native_binding is not None and self.native_binding.agent_name_suffix:
-            configured_names = {
-                role: name + self.native_binding.agent_name_suffix for role, name in configured_names.items()
-            }
         if self.native_binding is not None and self.native_binding.toolbox is not None:
             configured_names["fabric-iq"] = self.native_binding.toolbox
         if roles is not None:
