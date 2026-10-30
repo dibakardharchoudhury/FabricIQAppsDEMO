@@ -9,7 +9,7 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
   authoring, parsing, or agent sources. Preserve the original Operations Agent playbook/actions
   capabilities while binding them to the verified v2 ontology. Existing v1 items need a separately
   planned replacement, not silent reuse or destructive migration.
-- Fresh ontology creation uses TMDL database/model/default-namespace parts. Preserve existing
+- Fresh ontology creation uses the required `.platform` manifest plus TMDL database/model/default-namespace parts. Preserve existing
   bindings and unknown parts on reruns, and verify readback before publication.
 - REST `/v1`, definition schema versions, and `env_suffix` values such as `V9` are not
   ontology generations. Do not globally rename them to `v2`.

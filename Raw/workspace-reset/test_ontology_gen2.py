@@ -354,16 +354,34 @@ class GenerationPersistenceTests(unittest.TestCase):
                 self.assertEqual(payload["folderId"], "folder")
                 self.assertEqual(set(payload["definition"]), {"parts"})
                 parts = payload["definition"]["parts"]
-                self.assertEqual(len(parts), 3)
+                self.assertEqual(len(parts), 4)
                 self.assertTrue(all(part["payloadType"] == "InlineBase64" for part in parts))
-                self.assertEqual({
+                decoded = {
                     part["path"]: base64.b64decode(part["payload"], validate=True).decode("utf-8")
                     for part in parts
+                }
+                self.assertEqual(set(decoded), {
+                    ".platform",
+                    "database.tmdl",
+                    "model.tmdl",
+                    "namespaces/default.tmdl",
+                })
+                self.assertEqual({
+                    path: decoded[path]
+                    for path in ("database.tmdl", "model.tmdl", "namespaces/default.tmdl")
                 }, {
                     "database.tmdl": "database\n\tcompatibilityLevel: 1000000\n",
                     "model.tmdl": "model Model\n\nref namespace default\n",
                     "namespaces/default.tmdl": "namespace default\n\tlineageTag: default\n",
                 })
+                platform = json.loads(decoded[".platform"])
+                self.assertEqual(
+                    platform["$schema"],
+                    "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+                )
+                self.assertEqual(platform["metadata"], {"type": "Ontology", "displayName": "demo"})
+                self.assertEqual(platform["config"]["version"], "2.0")
+                uuid.UUID(platform["config"]["logicalId"])
                 if status == 202:
                     ns["_created_item_result"].assert_called_once_with(
                         "https://api.fabric.microsoft.com/v1/operations/operation-id")
@@ -387,7 +405,7 @@ class GenerationPersistenceTests(unittest.TestCase):
         ns["get_ontology"].assert_not_called()
         self.assertEqual(
             {part["path"] for part in ns["api_request"].call_args.kwargs["data"]["definition"]["parts"]},
-            {"database.tmdl", "model.tmdl", "namespaces/default.tmdl"},
+            {".platform", "database.tmdl", "model.tmdl", "namespaces/default.tmdl"},
         )
 
 

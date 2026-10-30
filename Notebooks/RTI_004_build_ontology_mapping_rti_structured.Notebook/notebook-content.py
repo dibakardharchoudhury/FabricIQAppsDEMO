@@ -32,8 +32,9 @@
 # - `signal_master` is the semantic bridge between structured metadata and RTI
 # - `event_time`, `value`, and `quality` are defined as time-series properties on `signal_master`
 #
-# Fresh creation explicitly supplies `database.tmdl`, `model.tmdl`, and
-# `namespaces/default.tmdl`; entities and relationships are emitted as TMDL.
+# Fresh creation explicitly supplies the required `.platform` manifest plus
+# `database.tmdl`, `model.tmdl`, and `namespaces/default.tmdl`; entities and
+# relationships are emitted as TMDL.
 # The live resource must report integer `properties.generation == 2`. Existing v1
 # items are rejected, not migrated or deleted; use a separate v2 target.
 # REST `/v1` and deployment suffixes such as `_V9` are not ontology generation.
@@ -3183,10 +3184,16 @@ def find_ontology_by_name(
 def create_ontology(display_name: str, description: str = "", folder_id: Optional[str] = None) -> dict:
     """Select v2 explicitly through TMDL, then verify live generation metadata."""
     url = f"{FABRIC_API_BASE}/{FABRIC_API_VERSION}/workspaces/{workspace_id}/ontologies"
+    platform = {
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+        "metadata": {"type": "Ontology", "displayName": display_name},
+        "config": {"version": "2.0", "logicalId": str(uuid.uuid4())},
+    }
     data = {
         "displayName": display_name,
         "description": description,
         "definition": {"parts": [
+            _encode_part(".platform", json.dumps(platform, separators=(",", ":"))),
             _encode_part("database.tmdl", "database\n\tcompatibilityLevel: 1000000\n"),
             _encode_part("model.tmdl", "model Model\n\nref namespace default\n"),
             _encode_part("namespaces/default.tmdl", "namespace default\n\tlineageTag: default\n"),

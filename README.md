@@ -74,6 +74,7 @@ reads; names and guessed foreign keys never create topology. See [the graph cont
 
 | V2 definition part | Purpose |
 | --- | --- |
+| `.platform` | Required Fabric item manifest with Ontology type, display name, version `2.0`, and a logical ID. |
 | `database.tmdl` | Root with `compatibilityLevel: 1000000`. |
 | `model.tmdl`, `namespaces/default.tmdl` | Model and required default namespace; fresh creation submits both alongside the database root. |
 | `entities/*.tmdl` | Entity keys, scalar/time-series properties, and backing configurations. |
