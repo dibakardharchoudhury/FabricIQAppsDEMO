@@ -20,7 +20,7 @@ from urllib.parse import quote, urlparse
 import requests
 
 from deploy_foundry_project import PREFERRED_ORCHESTRATION_TPM
-from foundry_resource_names import foundry_resource_suffix
+from foundry_resource_names import foundry_resource_suffix, workspace_project_name
 
 
 def saved_resource_suffix(deploy, values: dict[str, str], workspace: str) -> str:
@@ -601,6 +601,8 @@ def resolve_project(
         saved_endpoint = ""
     explicit_endpoint = "" if new_project_name else os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip()
     project_name = new_project_name or os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
+    if account_name and not project_name and not explicit_project_id and not explicit_endpoint and not saved_project_id:
+        project_name = workspace_project_name(workspace)
     if project_name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project_name):
         raise deploy.DeployError("Existing Foundry project name must contain only letters, digits, '.', '_' or '-'.")
     if project_name and not explicit_project_id and not explicit_endpoint \
@@ -688,11 +690,39 @@ def resolve_project(
             print(f"Foundry: reusing this target's convention-named project {expected_name}.", flush=True)
         elif project_module.enabled():
             candidates = []
-    if project_name and not candidates and not new_project_name:
+    if project_name and not candidates and not new_project_name and not project_module.enabled():
         raise deploy.DeployError(
             f"Existing Foundry project '{project_name}' was not found in the selected subscription. "
             "Check the project name or approve creating a missing project; no replacement was created."
         )
+    shared_setup_needed = not candidates
+    if len(candidates) == 1 and enabled() and account_name:
+        access = deploy.run_capture(deploy.az(
+            "account", "get-access-token", "--tenant", tenant, "--resource", "https://management.azure.com/",
+            "--query", "accessToken", "-o", "tsv",
+        ))
+        if not access:
+            raise deploy.DeployError("No delegated Azure management token was returned.")
+        connected = read_project_connections(deploy, candidates[0][0], {"Authorization": f"Bearer {access}"})
+        shared_setup_needed = not {"ContainerRegistry", "AppInsights"}.issubset({
+            item.get("properties", {}).get("category") for item in connected
+        })
+    if shared_setup_needed and enabled() and account_name:
+        from shared_foundry_project import prepare_shared_project, ensure_shared_project
+
+        prepared = prepare_shared_project(
+            deploy, tenant=tenant, subscription=subscription, account_name=account_name,
+            project_name=project_name or (
+                candidates[0][0].rsplit("/", 1)[-1] if candidates else workspace_project_name(workspace)
+            ), model=model,
+        )
+        if prepared is not None:
+            if creation_settings and creation_settings != prepared:
+                raise deploy.DeployError("The shared Foundry account/model/infrastructure changed after preflight.")
+            if not allow_create:
+                return FoundrySelection(subscription, "", "", prepared["model"], prepared)
+            ensure_shared_project(deploy, tenant=tenant, settings=prepared)
+            candidates = discover("")
     if not candidates and project_module.enabled() and not allow_create:
         location = creation_location(deploy, tenant, workspace, project_module)
         settings = project_module.model_defaults(
@@ -724,6 +754,7 @@ def resolve_project(
         created = project_module.ensure_foundry_project(
             deploy, hosted_module, tenant=tenant, workspace=workspace, subscription=subscription,
             location=location, model=model, check_access=agent_access, model_settings=settings,
+            project_name=project_name,
         )
         candidates = discover(created)
     if len(candidates) != 1:

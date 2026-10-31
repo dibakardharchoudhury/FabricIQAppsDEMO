@@ -8,3 +8,7 @@ def foundry_resource_suffix(workspace: str) -> str:
     ):
         raise ValueError("Foundry resource names require a verified workspace GUID.")
     return "-" + workspace.replace("-", "").lower()
+
+
+def workspace_project_name(workspace: str) -> str:
+    return "hydro-workspace" + foundry_resource_suffix(workspace)

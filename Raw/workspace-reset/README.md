@@ -96,8 +96,11 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 
 All launcher actions target one workspace; multi-workspace fan-out remains removed.
 Foundry setup uses stable workspace-GUID suffixes for agents, connections, toolbox
-and hosted state. Select the same existing account, project and ready model
-deployment to share its model allocation without reserving more quota. Reruns
+and hosted state. Select the same existing account and ready model deployment,
+leaving the project field blank to use `hydro-workspace-<full-workspace-GUID-hex>`.
+Approve creation of a missing project: setup creates only that project and its
+scoped access/shared-infrastructure connections, not another model allocation.
+Explicit existing project selections and same-target saved identities remain supported. Reruns
 reuse that workspace's set; other workspace and older unsuffixed resources are
 not deleted or retargeted. App-only publication still verifies compatible older
 unsuffixed deployments. Shared model rate limits and hosted compute costs remain.
@@ -200,8 +203,20 @@ offer or submit a write-permission override. Enabled writes still require human 
 **Check this box if you want to create a new Foundry project with the multi-agent
 setup.** is explicit, billable approval, never remembered. It does not discard or
 disable either shared name; existing projects
-are reused even with approval enabled. A missing project uses the exact
-project name entered above. A deployment alias is resolved to its underlying
+are reused even with approval enabled. With an existing account, a missing project
+uses the exact name entered above, or the stable full workspace-GUID project name.
+The existing ready account-level model deployment is verified before project-only
+creation. Its model/version/SKU/capacity fingerprint is checked again during setup;
+no model catalog, quota allocation or model resize runs on this path.
+The existing account's region, connected registry and monitoring are reused;
+ambiguous/missing infrastructure, invalid model identity, access denial or allocation
+drift fails explicitly. Project managed identities receive scoped registry/model/project
+access; the operator receives project access. Shared account/model/registry/monitoring
+resources are outside project-only cleanup ownership. Project agent access is verified
+after bounded endpoint/RBAC propagation waits, not inferred from project creation.
+
+Only an approved genuinely missing account uses full infrastructure/model bootstrap.
+On that bootstrap path a deployment alias is resolved to its underlying
 model/version in the selected subscription; a catalog chat model name also works.
 Region, model version, pay-as-you-go SKU and minimum/default capacity are automatic.
 Regional Standard is preferred, followed by DataZoneStandard and GlobalStandard;

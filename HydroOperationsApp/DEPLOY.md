@@ -464,17 +464,35 @@ missing source-fingerprinted images, and republishes the hosted coordinator only
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
 
-**Share an existing model allocation across workspaces:** select the same existing
-Foundry account, project and ready model deployment for each single-workspace run.
-Leave **Allow project creation (billable)** off. Setup reads and reuses that model
-without creating another model deployment or changing its quota allocation.
+**Separate project lifecycles while sharing one model allocation:** select the same
+existing Foundry account and ready model deployment for each single-workspace run.
+Leave the project name blank for `hydro-workspace-<full-workspace-GUID-without-hyphens>`,
+or enter an exact project name. Enable **Allow project creation (billable)** only
+when that project is missing. Setup first verifies the existing account/model,
+then creates only the project and its managed identity, scoped access and
+connections to the shared registry/monitoring. It does not run model catalog/quota
+allocation, resize the model, or change account networking. Partial project setup
+is retained and converged on retry; project endpoint/access and connection readback
+must succeed. A model/region mismatch, denied access, missing/ambiguous shared
+infrastructure or changed model allocation is a hard failure, not bootstrap.
+
+An explicitly selected existing project remains supported, including the former
+shared-project arrangement. Same-target saved project identities are preserved;
+blanking the field does not migrate or delete an existing deployment. New targets
+with an explicit account and no project selection use the stable workspace project.
+Only a genuinely missing account with creation approval uses the original
+account/model/registry/monitoring bootstrap and its regional quota preflight.
 Each workspace gets its own stable agent set, native connections/toolbox and
 hosted runtime configuration. Generated azd state is isolated by project endpoint
 and hosted agent name; container images are reused by source fingerprint.
 
 The model's TPM/RPM limits are shared across all agent sets; model inference and
-hosted compute remain billable. Resource names do not provide security isolation
-between users with access to the same project. Existing unsuffixed deployments
+hosted compute remain billable. Projects allow scoped permissions and separate agent lifecycles, but share
+account-level networking/governance and model capacity. A busy project can throttle
+other projects; projects do not multiply TPM. Shared account/model resources are
+not owned by the project-only provisioning path and must not be included in project
+cleanup. Resource names alone do not provide security isolation between users with
+access to the same project. Existing unsuffixed deployments
 remain supported by read-only app publication; running Foundry setup creates the
 workspace-scoped set without deleting or retargeting the older set.
 
@@ -499,7 +517,7 @@ Model preflight requires a verifiable positive token limit. New allocations pref
 **75,000 tokens/minute** within the selected model/SKU's available regional quota.
 Existing smaller allocations are reused with a warning, not silently increased;
 they may throttle the planner, source catalog or concurrent workspace requests.
-For a new project, `HYDRO_FOUNDRY_MODEL_CAPACITY` can override the catalog capacity
+For new account/model bootstrap only, `HYDRO_FOUNDRY_MODEL_CAPACITY` can override the catalog capacity
 before the canonical deployment command. Capacity units are model/SKU-specific:
 verify the resulting live token limit and available regional quota. Existing model
 allocation is never silently changed, and concurrent requests can require more.

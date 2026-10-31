@@ -414,7 +414,8 @@ def _workflow_source_keys() -> dict[str, str]:
     core.append(PIPELINE_SCRIPT)
     energy.extend((DEPLOY_SCRIPT, SCRIPT_DIR / "feature_workspace.py"))
     foundry = [DEPLOY_SCRIPT, SCRIPT_DIR / "provision_foundry_agents.py",
-               SCRIPT_DIR / "deploy_foundry_project.py", SCRIPT_DIR / "deploy_hosted_agent.py"]
+               SCRIPT_DIR / "deploy_foundry_project.py", SCRIPT_DIR / "deploy_hosted_agent.py",
+               SCRIPT_DIR / "shared_foundry_project.py", SCRIPT_DIR / "foundry_resource_names.py"]
     if (REPO_ROOT / "HydroOperationsService" / "Dockerfile").exists():
         spec = importlib.util.spec_from_file_location(
             "workflow_hosted_sources", Path(__file__).resolve().parent.parent / "deploy_hosted_agent.py")

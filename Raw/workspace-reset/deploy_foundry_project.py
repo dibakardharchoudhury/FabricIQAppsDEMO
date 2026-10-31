@@ -1,8 +1,9 @@
-"""Create the Foundry project (account, project, model deployment, ACR, Application Insights) on request.
+"""Bootstrap a missing Foundry account, project, model deployment, ACR and Application Insights on request.
 
 Called by provision_foundry_agents.provision() only when no Foundry endpoint is selected AND the operator explicitly
 opted in (HYDRO_FOUNDRY_CREATE=true, or the local app's checkbox), because it creates billable Azure resources. It
 is not a separate deployment path: it provisions the project the rest of the deployer then discovers and uses.
+Existing-account project-only creation is handled by shared_foundry_project without model allocation.
 
 It runs the same Azure Developer CLI template Microsoft documents for new Foundry projects
 (Azure-Samples/azd-ai-starter-basic) from a persistent per-target folder, so a rerun reuses the same azd
@@ -288,6 +289,7 @@ def ensure_foundry_project(
     deploy, hosted, *, tenant: str, workspace: str, subscription: str, location: str, model: str, check_access,
     sleep=time.sleep,
     model_settings: dict[str, str] | None = None,
+    project_name: str = "",
 ) -> str:
     """Provision a Foundry project and return its endpoint once the signed-in user can create agents in it."""
     try:
@@ -310,8 +312,9 @@ def ensure_foundry_project(
         "ENABLE_HOSTED_AGENTS": "true", "ENABLE_CAPABILITY_HOST": "false", "ENABLE_MONITORING": "true",
         "AI_PROJECT_DEPLOYMENTS": deployments,
     }
-    if requested_project_name():
-        settings["AZURE_AI_PROJECT_NAME"] = requested_project_name()
+    project_name = requested_project_name() or project_name
+    if project_name:
+        settings["AZURE_AI_PROJECT_NAME"] = project_name
     if account_name:
         settings["AZURE_AI_ACCOUNT_NAME"] = account_name
     hosted.set_azd_environment(deploy, directory, name, settings)
@@ -329,7 +332,7 @@ def ensure_foundry_project(
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".services.ai.azure.com"):
         raise deploy.DeployError("Provisioning finished but reported no valid Foundry project endpoint.")
-    if requested_project_name() and parsed.path.rstrip("/").rsplit("/", 1)[-1].casefold() != requested_project_name().casefold():
+    if project_name and parsed.path.rstrip("/").rsplit("/", 1)[-1].casefold() != project_name.casefold():
         raise deploy.DeployError("Provisioning reported a different project than the requested new project name.")
     if account_name and values.get("AZURE_AI_ACCOUNT_NAME", "").casefold() != account_name.casefold():
         raise deploy.DeployError("Provisioning reported a different account than the requested Foundry account name.")
