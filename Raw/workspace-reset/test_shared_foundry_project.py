@@ -24,6 +24,16 @@ class SharedProjectTests(unittest.TestCase):
         self.projects = {}
         self.connections = {}
         self.calls = []
+        self.instrumentation_key = "40000000-0000-0000-0000-000000000001"
+        self.connection_string = (
+            f"InstrumentationKey={self.instrumentation_key};"
+            "IngestionEndpoint=https://swedencentral-0.in.applicationinsights.azure.com/;"
+            "LiveEndpoint=https://swedencentral.livediagnostics.monitor.azure.com/;"
+            "ApplicationId=50000000-0000-0000-0000-000000000001"
+        )
+        self.monitor_detail = {"id": self.monitor, "properties": {
+            "InstrumentationKey": self.instrumentation_key, "ConnectionString": self.connection_string,
+        }}
         self.allocation = {"name": "shared-model", "sku": {"name": "Standard", "capacity": 75}, "properties": {
             "provisioningState": "Succeeded", "model": {"format": "OpenAI", "name": "chat", "version": "1"},
             "capabilities": {"chatCompletion": "true"},
@@ -36,7 +46,7 @@ class SharedProjectTests(unittest.TestCase):
             }},
             {"name": "original-monitor", "properties": {
                 "category": "AppInsights", "target": self.monitor,
-                "authType": "ApiKey", "metadata": {"ResourceId": self.monitor},
+                "authType": "ApiKey", "metadata": {"ApiType": "Azure", "ResourceId": self.monitor},
             }},
             {"name": "foreign-source", "properties": {"category": "RemoteTool", "target": "https://foreign.example"}},
         ]
@@ -77,7 +87,8 @@ class SharedProjectTests(unittest.TestCase):
                 "provisioningState": "Succeeded", "customSubDomainName": "shared",
             }}
         elif path == self.monitor:
-            body = {"properties": {"InstrumentationKey": "fixture-key"}}
+            self.assertEqual(method, "GET")
+            body = copy.deepcopy(self.monitor_detail)
         elif path.endswith("/connections"):
             if path == self.account + "/connections":
                 body = {"value": copy.deepcopy(self.infrastructure)}
@@ -99,6 +110,17 @@ class SharedProjectTests(unittest.TestCase):
                     return Mock(status_code=400, ok=False, text=(
                         "Credentials Property can't be empty for auth type RegistryIdentity"
                     ))
+                if properties.get("category") == "AppInsights":
+                    if properties.get("credentials") != {"key": self.connection_string}:
+                        return Mock(status_code=400, ok=False, text=(
+                            "An Application Insights instrumentation key is not supported. "
+                            "Provide the full Application Insights connection string instead."
+                        ))
+                    self.assertEqual(properties.get("authType"), "ApiKey")
+                    self.assertEqual(properties.get("target"), self.monitor)
+                    self.assertEqual(properties.get("metadata"), {
+                        "ApiType": "Azure", "ResourceId": self.monitor,
+                    })
                 self.connections[(project, name)] = copy.deepcopy(properties)
             if (project, name) not in self.connections:
                 return Mock(status_code=404, ok=False)
@@ -236,6 +258,70 @@ class SharedProjectTests(unittest.TestCase):
             shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
         writes = [path for method, path in self.calls[start:] if method != "GET"]
         self.assertEqual(writes, [self.account + "/projects/new/connections/hydro-shared-monitoring"])
+        self.assertEqual(self.connections[(self.account + "/projects/new", "hydro-shared-monitoring")]["credentials"],
+                         {"key": self.connection_string})
+
+    def test_instrumentation_key_only_payload_is_rejected_and_retry_preserves_registry_and_project(self):
+        before = copy.deepcopy(self.allocation)
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            plan = shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
+                                                 account_name="shared", project_name="dev", model="shared-model")
+        self.assertNotIn(self.connection_string, json.dumps(plan))
+        def rejected(method, url, **kwargs):
+            if method == "PUT" and "/connections/hydro-shared-monitoring?" in url:
+                kwargs["json"]["properties"]["credentials"]["key"] = self.instrumentation_key
+            return self.response(method, url, **kwargs)
+        with patch.object(foundry, "request_with_read_retry", side_effect=rejected):
+            with self.assertRaisesRegex(RuntimeError, "hydro-shared-monitoring .*HTTP 400.*full Application Insights"):
+                shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+        project_id = self.account + "/projects/dev"
+        project = copy.deepcopy(self.projects[project_id])
+        registry = copy.deepcopy(self.connections[(project_id, "hydro-shared-registry")])
+        self.assertNotIn((project_id, "hydro-shared-monitoring"), self.connections)
+        start = len(self.calls)
+        with patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+        self.assertEqual([path for method, path in self.calls[start:] if method == "PUT"],
+                         [project_id + "/connections/hydro-shared-monitoring"])
+        self.assertEqual(self.projects[project_id], project)
+        self.assertEqual(self.connections[(project_id, "hydro-shared-registry")], registry)
+        self.assertEqual(self.allocation, before)
+
+    def test_missing_or_incomplete_connection_string_fails_preflight_before_mutation(self):
+        for value in (None, "", self.instrumentation_key,
+                      f"InstrumentationKey={self.instrumentation_key}",
+                      f"InstrumentationKey={self.instrumentation_key};IngestionEndpoint=http://example.test"):
+            with self.subTest(value=value), self.environment(), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                self.monitor_detail["properties"]["ConnectionString"] = value
+                with self.assertRaisesRegex(RuntimeError, "full ConnectionString"):
+                    shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
+                                                  account_name="shared", project_name="dev", model="shared-model")
+                self.assertFalse(self.projects)
+                self.assertFalse(self.connections)
+                self.assertTrue(all(method == "GET" for method, _ in self.calls))
+
+    def test_monitoring_identity_mismatch_fails_preflight_before_mutation(self):
+        self.monitor_detail["id"] = self.account
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            with self.assertRaisesRegex(RuntimeError, "Application Insights resource identity"):
+                shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
+                                              account_name="shared", project_name="dev", model="shared-model")
+        self.assertFalse(self.projects)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+
+    def test_monitoring_becoming_invalid_after_preflight_stops_before_project_or_roles(self):
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            plan = shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
+                                                 account_name="shared", project_name="dev", model="shared-model")
+            self.monitor_detail["properties"].pop("ConnectionString")
+            with patch.object(shared, "_assign_role") as roles:
+                with self.assertRaisesRegex(RuntimeError, "full ConnectionString"):
+                    shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+                roles.assert_not_called()
+        self.assertFalse(self.projects)
+        self.assertFalse(self.connections)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
 
     def test_retry_after_registry_rejection_retains_project_and_model(self):
         before = copy.deepcopy(self.allocation)

@@ -492,6 +492,9 @@ Registry connections use `ManagedIdentity` credentials containing the verified
 project principal ID and shared registry resource ID. Existing connections are
 reused; a failed connection setup retains the project for retry without reallocating
 model TPM. Errors identify the exact ARM resource and API version.
+Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
+not its instrumentation key. It is validated before project changes and rechecked
+on retry; credential values are not saved in the preflight plan.
 
 An explicitly selected existing project remains supported, including the former
 shared-project arrangement. Same-target saved project identities are preserved;

@@ -53,6 +53,21 @@ def _model_fingerprint(deploy, settings, headers):
     }, sort_keys=True).encode()).hexdigest()
 
 
+def _monitoring_connection_string(deploy, resource_id, headers):
+    monitor = _request(deploy, "GET", resource_id, headers, api="2020-02-02")
+    if str(monitor.get("id", "")).casefold() != resource_id.casefold():
+        raise deploy.DeployError("Shared Application Insights resource identity/readback does not match.")
+    connection_string = monitor.get("properties", {}).get("ConnectionString")
+    if (not isinstance(connection_string, str)
+            or not re.search(r"(?:^|;)InstrumentationKey=[0-9a-f-]{36}(?:;|$)", connection_string, re.IGNORECASE)
+            or not re.search(r"(?:^|;)IngestionEndpoint=https://[^;\s]+(?:;|$)", connection_string, re.IGNORECASE)):
+        raise deploy.DeployError(
+            "Shared Application Insights requires a full ConnectionString from ARM readback; "
+            "an instrumentation key alone is not supported. Verify monitoring before retrying."
+        )
+    return connection_string
+
+
 def prepare_shared_project(deploy, *, tenant, subscription, account_name, project_name, model):
     from deploy_hosted_agent import registry_name
     from provision_foundry_agents import read_model_selection, read_project_connections, linked_application_insights
@@ -119,6 +134,7 @@ def prepare_shared_project(deploy, *, tenant, subscription, account_name, projec
         raise deploy.DeployError("Shared registry resource identity/readback does not match its connection.")
     if not insights_id.lower().startswith(f"/subscriptions/{subscription.lower()}/"):
         raise deploy.DeployError("Shared monitoring must belong to the selected subscription.")
+    _monitoring_connection_string(deploy, insights_id, headers)
     settings = {
         "account_id": account_id, "project_name": project_name, "model": model,
         "location": account["location"], "registry_id": registry_id, "registry_host": registry_host,
@@ -150,6 +166,7 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
     headers = _headers(deploy, tenant)
     if _model_fingerprint(deploy, settings, headers) != settings["model_fingerprint"]:
         raise deploy.DeployError("The shared model deployment changed after preflight; no project was created.")
+    connection_string = _monitoring_connection_string(deploy, settings["insights_id"], headers)
     project_id = settings["account_id"] + "/projects/" + settings["project_name"]
     url = f"https://management.azure.com{project_id}?api-version=2025-06-01"
     response = request_with_read_retry("GET", url, headers=headers, timeout=60)
@@ -180,10 +197,6 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
     _assign_role(deploy, project_id, principal, FOUNDRY_USER, "ServicePrincipal")
     operator = deploy.run_capture(deploy.az("ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"))
     _assign_role(deploy, project_id, operator, FOUNDRY_USER, "User")
-    monitor = _request(deploy, "GET", settings["insights_id"], headers, api="2020-02-02")
-    key = monitor.get("properties", {}).get("InstrumentationKey")
-    if not key:
-        raise deploy.DeployError("Shared Application Insights readback has no instrumentation key.")
     connected = read_project_connections(deploy, project_id, headers)
     for name, properties in (
         ("hydro-shared-registry", {
@@ -195,8 +208,8 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
         }),
         ("hydro-shared-monitoring", {
             "category": "AppInsights", "authType": "ApiKey", "target": settings["insights_id"],
-            "credentials": {"key": key}, "isSharedToAll": False,
-            "metadata": {"ApiType": "AppInsights", "ResourceId": settings["insights_id"]},
+            "credentials": {"key": connection_string}, "isSharedToAll": False,
+            "metadata": {"ApiType": "Azure", "ResourceId": settings["insights_id"]},
         }),
     ):
         matching = [item for item in connected if item.get("properties", {}).get("category") == properties["category"]
