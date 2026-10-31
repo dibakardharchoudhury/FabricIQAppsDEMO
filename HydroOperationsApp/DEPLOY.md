@@ -455,6 +455,10 @@ price area also matched the independently queried imported source row.
 
 ### Persistent Foundry agents
 
+**Project creation:** check only for a missing project. **Redeploy:** leave unchecked;
+keep the same workspace/account/project/model. Agent updates still run.
+A missing project stops deployment when creation is unchecked.
+
 Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
 specialists and `hydro-orchestrator`, each suffixed with the workspace GUID without
 hyphens, against this checkout and the selected Fabric target.

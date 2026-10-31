@@ -585,7 +585,8 @@ function renderFoundryFields(prefix, clientId) {
     </div>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
       <span>Allow project creation (billable)</span></label>
-    <p id="${prefix}FoundryCreateHelp" class="hint">Existing account: create only the project and reuse its model allocation. New account: model provisioning checks quota. Global inference may apply.</p>
+    <p id="${prefix}FoundryCreateHelp" class="hint">New project: check. Redeploy: leave unchecked. Agent updates still run.</p>
+    <p class="hint">Existing account: shared model TPM. New account: quota checks. Global inference may apply.</p>
     <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
     <details class="form-details">
       <summary>Setup details</summary>
@@ -1113,7 +1114,7 @@ function foundryValid(prefix) {
   const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Existing account: create only the missing project, sharing its verified model allocation. A missing account requires bootstrap and quota checks."
+    ? "Create only if missing. Existing account: reuse model TPM; new account: check quota."
     : "Enter a valid model deployment name above. Names use up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit.";
   return valid;
 }
