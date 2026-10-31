@@ -720,7 +720,9 @@ or unused suffix when an existing target ontology is v1: setup rejects it withou
 restored Operations Agent run-as identity and Teams delivery. `alert_email_to` separately configures
 the `Pipe_SendEmailAlert` recipient and is required by the local launcher. Setup stores it as the
 pipeline parameter default; To reads `@pipeline().parameters.alert_email_to`. The launcher marks
-email and Teams destinations with **Alerts** labels. Sync updated RTI_010 and rerun setup to update
+the run-as user, email and Teams destinations with **Operations Agent** labels. Key Vault secret-name
+fields stay visible; the launcher omits the notebook timeout control and retains the pipeline default.
+Sync updated RTI_010 and rerun setup to update
 existing pipelines. A direct RTI_010 run
 falls back to the configured run-as user, or the deploying user when both fields are blank. Email alerts
 also require the Office 365 Outlook OAuth2 connection described in the root README. Review status/reasons and

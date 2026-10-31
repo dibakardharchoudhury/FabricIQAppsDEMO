@@ -1525,7 +1525,6 @@ const syncPipelineWorkspace = () => {
   for(const prefix of ["pp_","wf_pp_"]) $(prefix+"workspace_id").value=$("workspace").value;
 };
 const suggestPipelineEmail = () => {};
-const updatePipelineDefaultsSummary = () => {};
 const loadSubscriptions = () => {};
 const refresh = () => {};
 const escapeHtml = String;
@@ -1622,32 +1621,46 @@ global.fetch = async url => {
         self.assertIn("groupId=", specs["ops_agent_teams_team_id"]["help"])
         self.assertIn("URL-decode", specs["ops_agent_teams_channel_id"]["help"])
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        code = page[page.index("function renderPipelineFields("):page.index("function updatePipelineDefaultsSummary(")]
+        code = page[page.index("function renderPipelineFields("):page.index("function syncPipelineWorkspace(")]
+        code += page[page.index("function collectPipelineParams("):page.index("function pipelineValid(")]
         script = """
 const assert=require("node:assert/strict");
 const pipelineSpec = """ + json.dumps(list(specs.values())) + """;
 const requiredPipelineFields=["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id","alert_email_to"];
 const escapeHtml=value=>String(value).replaceAll("&","&amp;").replaceAll('"',"&quot;");
+let inputs=new Map();
+const $=id=>inputs.get(id);
 """ + code + """
 for(const prefix of ["pp_","wf_pp_"]){
   const html=renderPipelineFields(prefix);
   assert.equal(html.split(">Find ID</a>").length-1,2);
   assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
-  assert.equal(html.split('class="alert-routing-label"').length-1,3);
-  for(const name of ["ops_agent_teams_team_id","ops_agent_teams_channel_id","alert_email_to"]){
+  assert.equal(html.split('class="alert-routing-label"').length-1,4);
+  for(const name of ["ops_agent_teams_team_id","ops_agent_teams_channel_id","ops_agent_run_as_user","alert_email_to"]){
     assert.ok(html.includes(`for="${prefix}${name}" class="plabel"`));
     const label=html.split(`for="${prefix}${name}"`)[1].split("</label>")[0];
-    assert.ok(label.includes('class="alert-routing-label">Alerts</span>'));
+    assert.ok(label.includes('class="alert-routing-label">Operations Agent</span>'));
   }
-  const visible=html.split("<details")[0];
+  const visible=html;
   assert.ok(visible.includes("Required:"));
   assert.ok(visible.includes("existing Key Vault"));
   assert.ok(visible.includes("notebook read access"));
-  assert.ok(visible.replace(/<[^>]*>/g," ").trim().split(/\\s+/).length <= 100);
+  assert.ok(visible.replace(/<[^>]*>/g," ").trim().split(/\\s+/).length <= 150);
   assert.ok(!visible.includes("defaultsSummary"));
-  assert.ok(html.includes("tenant ID, client ID and client secret"));
   assert.ok(html.includes("does not create the vault or its secrets"));
-  assert.ok(html.includes("<summary>Key Vault secret names and notebook settings</summary>"));
+  assert.ok(html.includes("<h3>Key Vault secret names</h3>"));
+  for(const name of ["key_vault_tenant_id_secret_name","key_vault_client_id_secret_name","key_vault_client_secret_name"]){
+    assert.ok(html.includes(`id="${prefix}${name}"`));
+  }
+  assert.ok(!html.includes("<details"));
+  assert.ok(!html.includes("per_notebook_timeout_secs"));
+  inputs=new Map([...html.matchAll(/<input id="([^"]+)"[^>]*value="([^"]*)"/g)]
+    .map(match=>[match[1],{value:match[2]}]));
+  const submitted=collectPipelineParams(prefix);
+  assert.equal(Object.hasOwn(submitted,"per_notebook_timeout_secs"),false);
+  for(const name of ["ops_agent_run_as_user","key_vault_tenant_id_secret_name","key_vault_client_id_secret_name","key_vault_client_secret_name"]){
+    assert.equal(Object.hasOwn(submitted,name),true);
+  }
   assert.ok(!html.includes("Change notebook defaults (optional)"));
 }
 """
@@ -1659,7 +1672,7 @@ for(const prefix of ["pp_","wf_pp_"]){
         functions = (
             page[page.index("const spaClientIds ="):page.index("function renderFoundryFields(")]
             + page[page.index("let pipelineSpec ="):page.index("function renderPipelineFields(")]
-            + page[page.index("function updatePipelineDefaultsSummary("):page.index("async function loadPipelineParams(")]
+            + page[page.index("function syncPipelineWorkspace("):page.index("async function loadPipelineParams(")]
         )
         script = """
 const assert = require("node:assert/strict");

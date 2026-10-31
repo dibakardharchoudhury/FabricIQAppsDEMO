@@ -42,7 +42,7 @@
   .badge { display:inline-flex; align-items:center; gap:.45rem; font-size:.72rem; font-weight:650; color:#a7f3d0;
     background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.28); padding:.34rem .66rem; border-radius:999px; letter-spacing:.02em; }
   .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); animation:pulse 2s infinite; }
-  .alert-routing-label { display:inline-block; margin-left:.4rem; padding:.1rem .35rem; border-radius:4px;
+  .alert-routing-label { display:inline-block; white-space:nowrap; padding:.1rem .35rem; border-radius:4px;
     border:1px solid rgba(251,191,36,.35); color:var(--warn); background:rgba(251,191,36,.08);
     font-size:.6rem; letter-spacing:0; text-transform:none; }
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)} 70%{box-shadow:0 0 0 7px rgba(52,211,153,0)} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0)} }
@@ -263,7 +263,8 @@
   .workflow-config-head span { color:var(--muted); font-size:.75rem; line-height:1.45; }
   .workflow-config-section .params { margin-top:.4rem; }
   .param { display:flex; flex-direction:column; gap:.4rem; }
-  .param .plabel { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  .param .plabel { flex-direction:row; align-items:center; flex-wrap:wrap; gap:.4rem;
+    font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
   .param .phelp { font-size:.74rem; line-height:1.45; color:#7c8ab0; font-weight:400; margin:-.06rem 0 .1rem; }
   .param input { width:100%; }
   .param.wide { grid-column:1 / -1; }
@@ -1424,7 +1425,6 @@ function savePipelineField(name, value) {
     const field = $(prefix + name);
     if (field) field.value = value;
   }
-  updatePipelineDefaultsSummary();
   const values = {};
   for (const spec of pipelineSpec) {
     if (spec.name !== "workspace_id" && typeof pipelineSavedValues[spec.name] === "string") {
@@ -1464,33 +1464,22 @@ function persistPipelineSettings(values) {
   });
 }
 function renderPipelineFields(prefix) {
-  const fields = pipelineSpec.map((p) => {
-    const advanced = !["env_suffix", "workspace_id", ...requiredPipelineFields].includes(p.name);
+  const fields = pipelineSpec.filter(p => p.name !== "per_notebook_timeout_secs").map((p) => {
+    const secretName = ["key_vault_tenant_id_secret_name", "key_vault_client_id_secret_name", "key_vault_client_secret_name"].includes(p.name);
     const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
-    const alertDestination = ["ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"].includes(p.name);
+    const alertDestination = ["ops_agent_teams_team_id", "ops_agent_teams_channel_id", "ops_agent_run_as_user", "alert_email_to"].includes(p.name);
     const html = `<div class="param${wide ? " wide" : ""}">
-      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}${alertDestination ? ' <span class="alert-routing-label">Alerts</span>' : ""}</label>
+      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}${alertDestination ? ' <span class="alert-routing-label">Operations Agent</span>' : ""}</label>
       <span class="phelp">${escapeHtml(p.help)}${p.helpUrl ? ` <a href="${escapeHtml(p.helpUrl)}" target="_blank" rel="noopener noreferrer">Find ID</a>` : ""}</span>
       <input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />
     </div>`;
-    return { advanced, html };
+    return { secretName, html };
   });
   return `<p class="phelp"><strong>Required:</strong> existing Key Vault with SPN credentials and notebook read access.</p>
-    <div class="params">${fields.filter(p => !p.advanced).map(p => p.html).join("")}</div>
-    <details class="foundry-block"><summary>Key Vault secret names and notebook settings</summary>
-    <p class="phelp">Required secrets: tenant ID, client ID and client secret. Setup does not create the vault or its secrets. Enter names, never secret values.</p>
-    <p id="${prefix}defaultsSummary" class="phelp"></p>
-    <div class="params">${fields.filter(p => p.advanced).map(p => p.html).join("")}</div></details>`;
-}
-function updatePipelineDefaultsSummary() {
-  for (const prefix of ["pp_", "wf_pp_"]) {
-    const summary = $(prefix + "defaultsSummary");
-    if (!summary) continue;
-    const value = name => $(prefix + name)?.value || "";
-    summary.textContent = `Secrets: ${
-      ["key_vault_tenant_id_secret_name", "key_vault_client_id_secret_name", "key_vault_client_secret_name"].map(value).join(", ")
-    }. Run as: ${value("ops_agent_run_as_user") || "signed-in user"}. Timeout: ${value("per_notebook_timeout_secs")}s.`;
-  }
+    <div class="params">${fields.filter(p => !p.secretName).map(p => p.html).join("")}</div>
+    <section class="foundry-block"><h3>Key Vault secret names</h3>
+    <p class="phelp">Setup does not create the vault or its secrets. Enter names, never secret values.</p>
+    <div class="params">${fields.filter(p => p.secretName).map(p => p.html).join("")}</div></section>`;
 }
 function syncPipelineWorkspace() {
   ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
@@ -1567,7 +1556,6 @@ async function loadPipelineParams() {
     });
   });
   suggestPipelineEmail();
-  updatePipelineDefaultsSummary();
   if (migrateBrowserValues) {
     const values = {};
     for (const p of pipelineSpec) {

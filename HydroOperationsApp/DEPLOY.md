@@ -219,7 +219,7 @@ source** line and the local version API identify the actual checkout.
 
 Key Vault URI, both Teams IDs and alert email are required by the local Core/Full
 Deploy form. Unknown destination values stay blank rather than being guessed.
-The **Alerts** badges identify Teams and email destinations. NB10 applies the email
+The **Operations Agent** badges identify its run-as user, Teams IDs and email recipient. NB10 applies the email
 recipient as a pipeline parameter default; the **To** expression reads it at runtime.
 Existing pipelines need updated NB10 source and a setup rerun. Changing the local
 form alone does not update Fabric or attest email/Teams delivery.
@@ -246,7 +246,7 @@ an answer format. It records runtime as `not_checked`; a successful publish is n
 certification. NB11 publishes operational guidance afterward, and interactive app requests
 use Supervisor → Sparky → Fabric Responses. That sequence is expected; no extra SQL/KQL/
 combined-source runtime or Teams/email delivery checks are required to complete setup.
-Expand **Key Vault secret names and notebook settings** only when defaults differ:
+Key Vault secret-name fields stay visible. Review defaults before running:
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -254,7 +254,8 @@ Expand **Key Vault secret names and notebook settings** only when defaults diffe
 | **KV secret · client id** | `clientid` | Name of the vault secret containing the SPN application/client ID. |
 | **KV secret · client secret** | `clientsecret` | Name of the vault secret containing the SPN credential. **Never paste the credential value here.** |
 | **Agent run-as user** | Blank | Uses the deploying signed-in user. An explicit UPN is an identity guard, not a way to impersonate another user or grant permissions. |
-| **Per-notebook timeout (secs)** | `3600` | Maximum runtime in seconds for each child notebook, not the entire deployment. |
+
+The launcher omits the timeout control; child notebooks retain the pipeline's `3600`-second default.
 
 #### D. Foundry agents: subscription, then project and model
 
