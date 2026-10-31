@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 
 import provision_foundry_agents as foundry
@@ -29,8 +30,14 @@ class SharedProjectTests(unittest.TestCase):
             "rateLimits": [{"key": "token", "count": 75000, "renewalPeriod": 60}],
         }}
         self.infrastructure = [
-            {"name": "original-acr", "properties": {"category": "ContainerRegistry", "target": "sharedreg.azurecr.io"}},
-            {"name": "original-monitor", "properties": {"category": "AppInsights", "target": self.monitor}},
+            {"name": "original-acr", "properties": {
+                "category": "ContainerRegistry", "target": "sharedreg.azurecr.io",
+                "authType": "ManagedIdentity", "metadata": {"ResourceId": self.registry},
+            }},
+            {"name": "original-monitor", "properties": {
+                "category": "AppInsights", "target": self.monitor,
+                "authType": "ApiKey", "metadata": {"ResourceId": self.monitor},
+            }},
             {"name": "foreign-source", "properties": {"category": "RemoteTool", "target": "https://foreign.example"}},
         ]
         self.deploy.run_capture.side_effect = self.capture
@@ -81,7 +88,18 @@ class SharedProjectTests(unittest.TestCase):
         elif "/connections/" in path:
             project, name = path.split("/connections/", 1)
             if method == "PUT":
-                self.connections[(project, name)] = copy.deepcopy(kwargs["json"]["properties"])
+                properties = kwargs["json"]["properties"]
+                if properties.get("category") == "ContainerRegistry" and (
+                    properties.get("authType") != "ManagedIdentity"
+                    or properties.get("credentials") != {
+                        "clientId": self.projects.get(project, {}).get("identity", {}).get("principalId"),
+                        "resourceId": self.registry,
+                    }
+                ):
+                    return Mock(status_code=400, ok=False, text=(
+                        "Credentials Property can't be empty for auth type RegistryIdentity"
+                    ))
+                self.connections[(project, name)] = copy.deepcopy(properties)
             if (project, name) not in self.connections:
                 return Mock(status_code=404, ok=False)
             body = {"properties": copy.deepcopy(self.connections[(project, name)])}
@@ -91,7 +109,9 @@ class SharedProjectTests(unittest.TestCase):
                 self.assertEqual(kwargs["json"]["identity"], {"type": "SystemAssigned"})
                 self.assertEqual(kwargs["json"]["properties"], {})
                 name = path.rsplit("/", 1)[1]
-                self.projects[path] = {"id": path, "identity": {"principalId": self.principal},
+                self.projects[path] = {"id": path, "identity": {
+                    "type": "SystemAssigned", "principalId": str(uuid.uuid5(uuid.NAMESPACE_URL, path)),
+                },
                                        "properties": {"provisioningState": "Succeeded", "endpoints": {
                                            "AI Foundry API": f"https://shared.services.ai.azure.com/api/projects/{name}",
                                        }}}
@@ -135,6 +155,11 @@ class SharedProjectTests(unittest.TestCase):
         self.assertEqual(len([1 for method, path in self.calls if method == "PUT" and "/connections/" not in path]), 10)
         self.assertTrue(all("/projects/" in path for method, path in self.calls if method != "GET"))
         self.assertTrue(all(properties["category"] != "RemoteTool" for properties in self.connections.values()))
+        registry_principals = {
+            properties["credentials"]["clientId"] for properties in self.connections.values()
+            if properties["category"] == "ContainerRegistry"
+        }
+        self.assertEqual(len(registry_principals), 10)
         self.deploy.run_stream.assert_not_called()
 
     def test_missing_or_unready_model_stops_before_project_creation_and_quota(self):
@@ -147,6 +172,50 @@ class SharedProjectTests(unittest.TestCase):
             quota.assert_not_called()
         self.assertFalse(self.projects)
         self.assertTrue(all(method == "GET" for method, _ in self.calls))
+
+    def test_feature_existing_connections_skip_creation_but_dev_requires_valid_credentials(self):
+        feature = self.account + "/projects/feature"
+        with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            self.response("PUT", "https://management.azure.com" + feature, json={
+                "identity": {"type": "SystemAssigned"}, "properties": {},
+            })
+            for connection in self.infrastructure[:2]:
+                self.connections[(feature, connection["name"])] = copy.deepcopy(connection["properties"])
+            start = len(self.calls)
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "feature"}):
+                selected = foundry.resolve_project(
+                    self.deploy, "tenant", "20000000-0000-0000-0000-000000000001", allow_create=True,
+                )
+            self.assertEqual(selected.project_id, feature)
+            self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "dev"}):
+                plan = foundry.resolve_project(
+                    self.deploy, "tenant", "20000000-0000-0000-0000-000000000002",
+                )
+                selected = foundry.resolve_project(
+                    self.deploy, "tenant", "20000000-0000-0000-0000-000000000002",
+                    allow_create=True, creation_settings=plan.creation_settings,
+                )
+            self.assertEqual(selected.project_id, self.account + "/projects/dev")
+        self.assertEqual(self.connections[(selected.project_id, "hydro-shared-registry")]["credentials"], {
+            "clientId": self.projects[selected.project_id]["identity"]["principalId"],
+            "resourceId": self.registry,
+        })
+        self.assertNotEqual(self.projects[selected.project_id]["identity"]["principalId"],
+                            self.projects[feature]["identity"]["principalId"])
+
+    def test_original_missing_registry_credentials_are_rejected_without_connection_mutation(self):
+        path = self.account + "/projects/dev/connections/hydro-shared-registry"
+        with patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            with self.assertRaisesRegex(
+                RuntimeError, r"PUT .*connections/hydro-shared-registry .*HTTP 400.*RegistryIdentity",
+            ):
+                shared._request(self.deploy, "PUT", path, {}, api="2025-10-01-preview", json={
+                    "properties": {"category": "ContainerRegistry", "authType": "ManagedIdentity",
+                                   "target": "sharedreg.azurecr.io"},
+                })
+        self.assertFalse(self.connections)
 
     def test_model_change_after_preflight_prevents_project_creation(self):
         with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
@@ -167,6 +236,46 @@ class SharedProjectTests(unittest.TestCase):
             shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
         writes = [path for method, path in self.calls[start:] if method != "GET"]
         self.assertEqual(writes, [self.account + "/projects/new/connections/hydro-shared-monitoring"])
+
+    def test_retry_after_registry_rejection_retains_project_and_model(self):
+        before = copy.deepcopy(self.allocation)
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            plan = shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
+                                                 account_name="shared", project_name="dev", model="shared-model")
+        def rejected(method, url, **kwargs):
+            if method == "PUT" and "/connections/hydro-shared-registry?" in url:
+                kwargs["json"]["properties"].pop("credentials")
+            return self.response(method, url, **kwargs)
+        with patch.object(foundry, "request_with_read_retry", side_effect=rejected):
+            with self.assertRaisesRegex(RuntimeError, "hydro-shared-registry .*HTTP 400"):
+                shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+        project = copy.deepcopy(self.projects[self.account + "/projects/dev"])
+        self.assertFalse(self.connections)
+        start = len(self.calls)
+        with patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+        self.assertEqual(self.projects[self.account + "/projects/dev"], project)
+        self.assertEqual(self.allocation, before)
+        self.assertEqual([path for method, path in self.calls[start:] if method == "PUT"], [
+            self.account + "/projects/dev/connections/hydro-shared-registry",
+            self.account + "/projects/dev/connections/hydro-shared-monitoring",
+        ])
+
+    def test_existing_incompatible_connection_is_not_silently_reused_or_overwritten(self):
+        for field, value in (("authType", "ApiKey"), ("metadata", {"ResourceId": self.monitor})):
+            with self.subTest(field=field), self.environment(), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                self.projects.clear()
+                self.connections.clear()
+                plan = shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
+                                                     account_name="shared", project_name="dev", model="shared-model")
+                shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+                connection = self.connections[(self.account + "/projects/dev", "hydro-shared-registry")]
+                connection[field] = value
+                start = len(self.calls)
+                with self.assertRaisesRegex(RuntimeError, "authentication/resource identity"):
+                    shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+                self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
 
     def test_creation_off_does_not_reuse_an_unrelated_sole_project(self):
         with self.environment(), patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "false"}), \

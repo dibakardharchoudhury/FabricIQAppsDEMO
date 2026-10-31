@@ -35,7 +35,10 @@ def _request(deploy, method, path, headers, *, api="2025-06-01", **kwargs):
         headers=headers, timeout=180, **kwargs,
     )
     if not response.ok:
-        raise deploy.DeployError(f"Shared Foundry project {method} failed: HTTP {response.status_code}: {response.text[:800]}")
+        raise deploy.DeployError(
+            f"Shared Foundry {method} {path} (API {api}) failed: "
+            f"HTTP {response.status_code}: {response.text[:800]}"
+        )
     return response.json() if response.content else {}
 
 
@@ -185,6 +188,8 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
     for name, properties in (
         ("hydro-shared-registry", {
             "category": "ContainerRegistry", "authType": "ManagedIdentity",
+            # ContainerRegistry uses the project principal as clientId, matching the azd template.
+            "credentials": {"clientId": principal, "resourceId": settings["registry_id"]},
             "target": settings["registry_host"], "isSharedToAll": False,
             "metadata": {"ResourceId": settings["registry_id"]},
         }),
@@ -199,6 +204,13 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
         if len(matching) > 1:
             raise deploy.DeployError("Project infrastructure has duplicate live connections.")
         if matching:
+            compatible = {field: properties[field] for field in ("category", "authType", "target", "metadata")}
+            compatible["metadata"] = {"ResourceId": properties["metadata"]["ResourceId"]}
+            if not definition_matches(matching[0].get("properties", {}), compatible):
+                raise deploy.DeployError(
+                    f"Existing {properties['category']} connection authentication/resource identity "
+                    "does not match the shared infrastructure; refusing replacement."
+                )
             continue
         path = project_id + "/connections/" + name
         current = request_with_read_retry(

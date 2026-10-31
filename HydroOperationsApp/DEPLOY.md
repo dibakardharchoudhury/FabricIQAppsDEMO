@@ -488,6 +488,10 @@ allocation, resize the model, or change account networking. Partial project setu
 is retained and converged on retry; project endpoint/access and connection readback
 must succeed. A model/region mismatch, denied access, missing/ambiguous shared
 infrastructure or changed model allocation is a hard failure, not bootstrap.
+Registry connections use `ManagedIdentity` credentials containing the verified
+project principal ID and shared registry resource ID. Existing connections are
+reused; a failed connection setup retains the project for retry without reallocating
+model TPM. Errors identify the exact ARM resource and API version.
 
 An explicitly selected existing project remains supported, including the former
 shared-project arrangement. Same-target saved project identities are preserved;
