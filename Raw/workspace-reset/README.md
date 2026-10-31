@@ -802,6 +802,13 @@ failed/cancelled component runs again through its existing idempotent command.
 Completed component/subphase timings remain visible; the overall timer measures
 the current retry attempt.
 
+Related deployment REST clients share bounded GET/HEAD recovery: up to six attempts for
+connection resets, timeouts and transient HTTP errors. Ambiguous start/write requests are
+never replayed; permanent authorization, certificate and terminal job failures propagate.
+Dependent stages require verified success, never an interrupted monitor or cancelled run.
+The Setup runner prints its accepted job URL. `--resume-job-url <url>` validates the
+workspace/pipeline and monitors that existing job without starting another one.
+
 Resume requires the original effective tenant, workspace, Git source/connection,
 pipeline parameters, SPA and Foundry/app settings. Changed inputs reject the retry
 without starting anything; restore those inputs or explicitly choose **Run Full
@@ -810,12 +817,13 @@ enter it again only when retrying an incomplete Git sync that needs one.
 The browser remembers only the last Full Deploy job ID and reconnects after page
 reload. Full Deploy checkpoints and measured timings are saved atomically in the
 existing gitignored `webapp/pipeline-defaults.local.json` settings file (or its
-`FABRIC_UI_PIPELINE_DEFAULTS_FILE` override). Only job identity, successful component
-prefix, status, timings and input/source hashes are saved, never PATs, child
+`FABRIC_UI_PIPELINE_DEFAULTS_FILE` override). Only job identity, accepted Setup job URL/outcome,
+successful component prefix, status, timings and input/source hashes are saved, never PATs, child
 environments or live logs. Failed/cancelled runs can resume after restarting the
-local server. A checkpoint that was still running when the server stopped is
-reported as interrupted, not safe to retry automatically: check Fabric's Monitoring
-hub before starting another run. The older five-stage checkpoint layout explicitly
+local server. An interrupted Setup monitor with an accepted URL resumes that same job;
+it does not rerun Setup. Other interrupted checkpoints require checking Fabric's Monitoring
+hub before starting another run. New Setup submissions reject active/unverified runs.
+The older five-stage checkpoint layout explicitly
 refuses automatic resume and retains its recorded completion information; its
 boundaries cannot safely certify completion of the new combined component.
 Reloading such a run displays **Previous deployment history**, including its recorded

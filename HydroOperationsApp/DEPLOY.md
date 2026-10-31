@@ -37,6 +37,10 @@ Core setup just to repair local dependencies or app publication.
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.
+Related REST status reads share bounded retries for resets, timeouts and transient HTTP errors.
+An interrupted Setup monitor resumes its recorded job URL, never submits a duplicate.
+Failure, cancellation or an unverified outcome blocks dependent stages. Persistent errors
+still propagate; this is not a blanket retry of deployment/start requests.
 Changed notebook code requires **Sync updated definitions and resume**: only those notebooks
 are updated from this checkout, retaining live bindings and unrelated workspace items.
 A Geo-only fix resumes the combined Energy/Foundry/app stage without repeating

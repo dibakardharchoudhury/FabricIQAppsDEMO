@@ -812,8 +812,8 @@ class DeployOrderTests(unittest.TestCase):
                     DEPLOY.check_capacity_availability("target", {})
         for status in (401, 429, 500):
             with self.subTest(status=status), patch.object(
-                DEPLOY.requests, "get", return_value=Mock(status_code=status, ok=False, text="service failure")
-            ):
+                DEPLOY.requests, "get", return_value=Mock(status_code=status, ok=False, text="service failure", headers={})
+            ), patch.object(DEPLOY.time, "sleep"):
                 with self.assertRaisesRegex(DEPLOY.DeployError, f"HTTP {status}"):
                     DEPLOY.check_capacity_availability("target", {})
 

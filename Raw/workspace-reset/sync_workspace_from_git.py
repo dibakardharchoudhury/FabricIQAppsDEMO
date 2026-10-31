@@ -80,6 +80,7 @@ from urllib.parse import quote
 
 try:
     import requests
+    from http_retries import request_with_read_retry
     from azure.core.exceptions import ClientAuthenticationError
     from azure.identity import AzureCliCredential
 except ImportError as exc:  # pragma: no cover - dependency guard
@@ -153,29 +154,10 @@ class Fabric:
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self._token()}"
-        method = method.upper()
-        for attempt in range(6):
-            try:
-                resp = self._session.request(
-                    method, url, headers=headers, timeout=120, **kwargs
-                )
-            except requests.RequestException as exc:
-                if method != "GET" or attempt == 5:
-                    raise
-                wait = min(2 ** attempt, 15)
-                print(
-                    f"  transient Fabric connection failure "
-                    f"({type(exc).__name__}); retrying GET in {wait}s..."
-                )
-                time.sleep(wait)
-                continue
-            if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", "10"))
-                print(f"  throttled (429); waiting {wait}s...")
-                time.sleep(wait)
-                continue
-            return resp
-        return resp
+        return request_with_read_retry(
+            method, url, send=self._session.request, headers=headers, timeout=120,
+            retry_throttled_writes=True, **kwargs,
+        )
 
     def create_github_connection(self, display_name: str, repo_url: str, pat: str) -> str:
         """Create a ShareableCloud GitHubSourceControl connection from a PAT; return its id."""

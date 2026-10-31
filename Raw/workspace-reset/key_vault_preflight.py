@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 import requests
+from http_retries import request_with_read_retry
 from azure.identity import AzureCliCredential
 
 FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
@@ -131,12 +132,10 @@ class CloudClient:
         headers["Authorization"] = f"Bearer {token}"
         if scope == FABRIC_SCOPE:
             headers["x-ms-fabric-skill"] = "git-integration-operations-cli"
-        for attempt in range(6):
-            response = self.session.request(method, url, headers=headers, timeout=120, allow_redirects=False, **kwargs)
-            if response.status_code != 429:
-                return response
-            time.sleep(min(30, int(response.headers.get("Retry-After", "5")) * (attempt + 1)))
-        return response
+        return request_with_read_retry(
+            method, url, send=self.session.request, headers=headers, timeout=120,
+            allow_redirects=False, retry_throttled_writes=True, **kwargs,
+        )
 
 
 def _json_or_error(response: requests.Response, action: str, expected: set[int] = {200}) -> dict[str, Any]:

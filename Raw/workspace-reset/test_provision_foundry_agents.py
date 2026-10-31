@@ -1166,7 +1166,7 @@ class PublishedIdentityTests(unittest.TestCase):
         ]) as request, patch.object(module.time, "sleep") as sleep:
             self.assertIs(module.request_with_read_retry("GET", "https://example.test/agents", timeout=60), response)
             self.assertEqual(request.call_count, 3)
-            self.assertEqual(sleep.call_args_list, [call(2), call(4)])
+            self.assertEqual(sleep.call_args_list, [call(1), call(2)])
 
     def test_exhausted_read_failure_propagates(self):
         error = requests.ConnectionError("DNS unavailable")
@@ -1174,8 +1174,8 @@ class PublishedIdentityTests(unittest.TestCase):
             with self.assertRaises(requests.ConnectionError) as caught:
                 module.request_with_read_retry("GET", "https://example.test/agents", timeout=60)
             self.assertIs(caught.exception, error)
-            self.assertEqual(request.call_count, 4)
-            self.assertEqual(sleep.call_args_list, [call(2), call(4), call(8)])
+            self.assertEqual(request.call_count, 6)
+            self.assertEqual(sleep.call_args_list, [call(1), call(2), call(4), call(8), call(15)])
 
     def test_mutations_and_certificate_failures_are_never_retried(self):
         for method, error in [
@@ -1191,7 +1191,7 @@ class PublishedIdentityTests(unittest.TestCase):
                     sleep.assert_not_called()
 
     def test_http_errors_are_not_retried_or_hidden(self):
-        for status in (401, 403, 404, 429, 500):
+        for status in (401, 403, 404):
             response = Mock(status_code=status)
             with patch.object(module.requests, "request", return_value=response) as request, patch.object(module.time, "sleep") as sleep:
                 self.assertIs(module.request_with_read_retry("GET", "https://example.test/agents", timeout=60), response)

@@ -43,6 +43,7 @@ import uuid
 import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -72,6 +73,17 @@ ENERGY_TIMEOUT_S = 3 * 3600
 COMBINED_TIMEOUT_S = max(ENERGY_TIMEOUT_S, FOUNDRY_TIMEOUT_S) + DEPLOY_TIMEOUT_S
 COMBINED_STEP = "Energy + Foundry + app deployment"
 WORKFLOW_STEPS = ["GitHub sync", "Setup pipeline", COMBINED_STEP]
+
+
+class WorkflowStep(TypedDict):
+    name: str
+    argv: list[str]
+    timeout: int
+    markers: list[tuple[int, tuple[str, ...]]]
+    phase_offset: int
+    env: NotRequired[dict[str, str] | None]
+    tenant: NotRequired[str]
+    workspace: NotRequired[str]
 
 # Ordered phase labels + the substrings that mark reaching each phase. Index 0 is
 # the initial state; success jumps to the final phase.
@@ -104,7 +116,7 @@ PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("Key Vault preflight:", "Pipeline '")),
     (2, ("public network access", "checking Fabric managed private endpoints", "Fabric endpoint state")),
     (3, ("Pipeline '",)),
-    (4, ("Starting pipeline", "run queued", "job status:")),
+    (4, ("Starting pipeline", "Resuming monitoring", "run queued", "job status:")),
 ]
 
 DEPLOY_PHASES = [
@@ -235,6 +247,12 @@ class Job:
         self.resumed_by: str | None = None
         self.source_keys: dict[str, str] = {}
         self.pending_notebook_sync: list[str] = []
+        self.pipeline_job_url: str | None = None
+        self.pipeline_job_state: str | None = None
+
+    def pipeline_monitor_pending(self) -> bool:
+        return bool(self.pipeline_job_url and self.pipeline_job_state in {None, "Completed"}
+                    and "Setup pipeline" not in self.completed_steps)
 
     def advance_phase(self, index: int) -> None:
         """Called under job.lock; omitted log markers have no invented duration."""
@@ -314,6 +332,7 @@ def _save_workflow_checkpoints(*jobs: Job) -> None:
                 "status": job.status, "returncode": job.returncode,
                 "failedComponent": job.failed_component, "resumedBy": job.resumed_by,
                 "pendingNotebookSync": job.pending_notebook_sync,
+                "pipelineJobUrl": job.pipeline_job_url, "pipelineJobState": job.pipeline_job_state,
                 **job.timing_snapshot(),
             }
     if not records:
@@ -372,6 +391,18 @@ def _restore_workflow(job_id: str) -> Job | None:
         job.completed_steps = completed
         job.source_keys = record.get("sources", {})
         job.pending_notebook_sync = record.get("pendingNotebookSync", [])
+        job.pipeline_job_url = record.get("pipelineJobUrl")
+        job.pipeline_job_state = record.get("pipelineJobState")
+        if job.pipeline_job_url is not None:
+            from run_pipeline import validate_pipeline_job_url, TERMINAL_STATES
+            if not isinstance(job.pipeline_job_url, str) or (
+                    job.pipeline_job_state is not None and job.pipeline_job_state not in TERMINAL_STATES):
+                raise ValueError("Invalid accepted pipeline checkpoint.")
+            job.pipeline_job_url = validate_pipeline_job_url(job.pipeline_job_url)
+            if "GitHub sync" not in completed:
+                raise ValueError("Accepted Setup checkpoint lacks its completed GitHub sync dependency.")
+        elif job.pipeline_job_state is not None:
+            raise ValueError("Pipeline checkpoint has an outcome but no accepted job URL.")
         if (not isinstance(job.pending_notebook_sync, list)
                 or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name)
                        for name in job.pending_notebook_sync)):
@@ -413,7 +444,10 @@ def _workflow_source_keys() -> dict[str, str]:
                 relative = path.relative_to(REPO_ROOT)
                 (energy if any(part.startswith("Geo_") for part in relative.parts) else core).append(path)
                 definitions["file:" + relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-    core.append(PIPELINE_SCRIPT)
+    shared_reads = [SCRIPT_DIR / name for name in (
+        "http_retries.py", "sync_workspace_from_git.py", "key_vault_preflight.py",
+    )]
+    core.extend([PIPELINE_SCRIPT, *shared_reads])
     energy.extend((DEPLOY_SCRIPT, SCRIPT_DIR / "feature_workspace.py"))
     foundry = [DEPLOY_SCRIPT, SCRIPT_DIR / "provision_foundry_agents.py",
                SCRIPT_DIR / "deploy_foundry_project.py", SCRIPT_DIR / "deploy_hosted_agent.py",
@@ -426,6 +460,8 @@ def _workflow_source_keys() -> dict[str, str]:
         hosted = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(hosted)
         foundry.extend(hosted.packaged_sources(REPO_ROOT))
+    energy.extend(shared_reads)
+    foundry.extend(shared_reads)
     groups = {
         "Setup pipeline": core, "Energy setup": energy,
         "Foundry multi-agent setup": foundry,
@@ -617,13 +653,33 @@ def _run_workflow_step(
         assert proc.stdout is not None
         for raw in proc.stdout:
             line = raw.rstrip("\n")
+            pipeline_url = None
+            pipeline_state = None
+            if name == "Setup pipeline":
+                from run_pipeline import validate_pipeline_job_url, TERMINAL_STATES
+                if line.startswith("PIPELINE_JOB_URL="):
+                    pipeline_url = validate_pipeline_job_url(line.removeprefix("PIPELINE_JOB_URL="))
+                if line.startswith("PIPELINE_JOB_TERMINAL="):
+                    pipeline_state = line.removeprefix("PIPELINE_JOB_TERMINAL=")
+                    if pipeline_state not in TERMINAL_STATES:
+                        raise ValueError("Pipeline monitor reported an invalid terminal state.")
             with job.lock:
                 job.lines.append(f"[{name}] {line}")
+                if pipeline_url:
+                    job.pipeline_job_url = pipeline_url
+                    job.pipeline_job_state = None
+                if pipeline_state:
+                    job.pipeline_job_state = pipeline_state
                 for idx, subs in markers:
                     target = phase_offset + idx - 1
                     if target > job.phase_index and any(marker in line for marker in subs):
                         job.advance_phase(target)
+            if pipeline_url or pipeline_state:
+                _save_workflow_checkpoints(job)
         proc.wait()
+    except (OSError, ValueError, TypeError, ImportError):
+        _terminate_owned_process(proc)
+        raise
     finally:
         timer.cancel()
         if proc.stdout is not None:
@@ -635,7 +691,7 @@ def _run_workflow_step(
     return proc.returncode
 
 
-def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
+def _workflow_worker(job: Job, steps: list[WorkflowStep]) -> None:
     try:
         _workflow_worker_steps(job, steps)
     except Exception as exc:
@@ -652,7 +708,7 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
                 job.lines.append(f"[checkpoint unavailable] {exc}; verify Fabric before retrying.")
 
 
-def _workflow_worker_steps(job: Job, steps: list[dict[str, object]]) -> None:
+def _workflow_worker_steps(job: Job, steps: list[WorkflowStep]) -> None:
     steps = steps[len(job.completed_steps):]
     for step_index, step in enumerate(steps):
         if job.cancel_requested:
@@ -666,6 +722,8 @@ def _workflow_worker_steps(job: Job, steps: list[dict[str, object]]) -> None:
             }
         try:
             if job.pending_notebook_sync:
+                if "tenant" not in step or "workspace" not in step:
+                    raise ValueError("Changed notebook sync lacks its verified workflow target; no step was started.")
                 argv = [str(SYNC_SCRIPT), "--tenant", str(step["tenant"]), "--workspace", str(step["workspace"]), "--yes"]
                 for notebook in job.pending_notebook_sync:
                     argv.extend(("--update-notebook", notebook))
@@ -684,10 +742,14 @@ def _workflow_worker_steps(job: Job, steps: list[dict[str, object]]) -> None:
                 with job.lock:
                     job.pending_notebook_sync = []
                 _save_workflow_checkpoints(job)
+            argv = step["argv"]
+            pipeline_url = job.pipeline_job_url
+            if name == "Setup pipeline" and pipeline_url is not None and job.pipeline_monitor_pending():
+                argv = [*argv, "--resume-job-url", pipeline_url]
             returncode = _run_workflow_step(
                 job,
                 name,
-                step["argv"],
+                argv,
                 step.get("env"),
                 int(step["timeout"]),
                 step["markers"],
@@ -706,21 +768,34 @@ def _workflow_worker_steps(job: Job, steps: list[dict[str, object]]) -> None:
                     f"{type(exc).__name__}: {exc}"
                 )
             return
+        if (name == "Setup pipeline" and returncode == 0 and job.pipeline_job_url
+                and job.pipeline_job_state != "Completed"):
+            returncode = 2
+            with job.lock:
+                job.lines.append("[workflow stopped] Setup exited without a verified Completed job outcome.")
         with job.lock:
-            job.finish_component(name, "cancelled" if job.cancel_requested else
+            cancelled = job.cancel_requested or (
+                name == "Setup pipeline" and job.pipeline_job_state == "Cancelled")
+            job.finish_component(name, "cancelled" if cancelled else
                                  "succeeded" if returncode == 0 else "failed", first, last)
         if returncode != 0:
             with job.lock:
                 job.returncode = returncode
-                if job.cancel_requested:
+                if cancelled:
                     job.status = "cancelled"
                 else:
                     job.status = "failed"
                     job.failed_component = name
-                    job.lines.append(
-                        f"[workflow stopped] {name} failed with exit code {returncode}; "
-                        "later steps were not started."
-                    )
+                    if name == "Setup pipeline" and returncode == 2 and job.pipeline_monitor_pending():
+                        job.lines.append(
+                            "[workflow stopped] Setup monitoring interrupted; Fabric run outcome is unverified. "
+                            "Resume will monitor the same accepted job; later steps were not started."
+                        )
+                    else:
+                        job.lines.append(
+                            f"[workflow stopped] {name} failed with exit code {returncode}; "
+                            "later steps were not started."
+                        )
                 job.finish_timing(job.status)
             return
         with job.lock:
@@ -744,7 +819,7 @@ def _workflow_worker_steps(job: Job, steps: list[dict[str, object]]) -> None:
 
 
 def _start_workflow(
-    steps: list[dict[str, object]], *, phases: list[str] | None = None,
+    steps: list[WorkflowStep], *, phases: list[str] | None = None,
     workflow_key: str | None = None, resume_from: Job | None = None,
     source_keys: dict[str, str] | None = None, restart_at: int | None = None,
     pending_notebook_sync: list[str] | None = None,
@@ -764,6 +839,9 @@ def _start_workflow(
                     return None
                 resume_from.resumed_by = job.id
                 job.completed_steps = list(resume_from.completed_steps[:restart_at])
+                if resume_from.pipeline_monitor_pending():
+                    job.pipeline_job_url = resume_from.pipeline_job_url
+                    job.pipeline_job_state = resume_from.pipeline_job_state
                 first = int(steps[len(job.completed_steps)]["phase_offset"])
                 for index in range(1, first):
                     job.phase_timings[index] = dict(resume_from.phase_timings[index])
@@ -1185,7 +1263,7 @@ def api_run_pipeline():
     return job_response(job_id)
 
 
-def _core_setup_steps(data: dict, *, phase_offset: int = 1) -> list[dict[str, object]]:
+def _core_setup_steps(data: dict, *, phase_offset: int = 1) -> list[WorkflowStep]:
     argv, env_extra = _pipeline_invocation(data)
     energy_argv = _deploy_invocation({**data, "energyMap": "enabled"}, stage="energy")
     energy_argv.insert(1, "--energy-read-models-only")
@@ -1405,7 +1483,9 @@ def api_full_workflow():
                           f"Recorded completed stages: {resume_from.completed_steps}. Checkpoint retained; "
                           "verify Fabric before explicitly starting a new Full Deploy. No steps were started."
                 ), 409
-            if (resume_from.workflow_key is None or resume_from.status not in {"failed", "cancelled"}
+            if (resume_from.workflow_key is None
+                    or not (resume_from.status in {"failed", "cancelled"}
+                            or resume_from.status == "interrupted" and resume_from.pipeline_monitor_pending())
                     or resume_from.resumed_by is not None
                     or len(resume_from.completed_steps) >= len(resume_from.workflow_steps)):
                 return jsonify(error="This job has no available failed/cancelled Full Deploy checkpoint. "
@@ -1424,7 +1504,7 @@ def api_full_workflow():
     sync_offset = 1
     pipeline_offset = len(SYNC_PHASES) - 1
     combined_offset = pipeline_offset + len(PIPELINE_PHASES) - 2
-    steps = [
+    steps: list[WorkflowStep] = [
         {
             "name": "GitHub sync", "argv": sync_argv, "env": sync_env,
             "timeout": SYNC_TIMEOUT_S, "markers": SYNC_MARKERS, "phase_offset": sync_offset,
@@ -1469,6 +1549,11 @@ def api_full_workflow():
             changed = [name for name in set(sources) | set(resume_from.source_keys)
                        if sources.get(name) != resume_from.source_keys.get(name)]
             changed_files = [name[5:] for name in changed if name.startswith("file:")]
+            if resume_from.pipeline_monitor_pending() and (changed_files or pending_notebooks):
+                return jsonify(
+                    error="An accepted Setup run is still unverified. Monitor that run before changing "
+                          "Fabric definitions. No steps were started."
+                ), 409
             notebook_files = [
                 path for path in changed_files if path.startswith("Notebooks/") and path.endswith(".Notebook/notebook-content.py")
                 and "file:" + path in sources
@@ -1552,7 +1637,9 @@ def api_job(job_id: str):
         failed_component = job.failed_component
         timings = job.timing_snapshot()
         completed_steps = list(job.completed_steps)
-        can_resume = (job.workflow_key is not None and status in {"failed", "cancelled"}
+        can_resume = (job.workflow_key is not None
+                      and (status in {"failed", "cancelled"}
+                           or status == "interrupted" and job.pipeline_monitor_pending())
                       and job.resumed_by is None and len(completed_steps) < len(job.workflow_steps))
         resume_component = job.workflow_steps[len(completed_steps)] if can_resume else None
     return jsonify(

@@ -21,6 +21,7 @@ import requests
 
 from deploy_foundry_project import PREFERRED_ORCHESTRATION_TPM
 from foundry_resource_names import foundry_resource_suffix, workspace_project_name
+from http_retries import request_with_read_retry
 
 
 def saved_resource_suffix(deploy, values: dict[str, str], workspace: str) -> str:
@@ -28,26 +29,6 @@ def saved_resource_suffix(deploy, values: dict[str, str], workspace: str) -> str
     if suffix and suffix != foundry_resource_suffix(workspace):
         raise deploy.DeployError("The saved Foundry resource suffix belongs to another workspace.")
     return suffix
-
-
-def request_with_read_retry(method: str, url: str, **kwargs) -> requests.Response:
-    method = method.upper()
-    for attempt in range(4):
-        try:
-            return requests.request(method, url, **kwargs)
-        except requests.exceptions.SSLError:
-            raise
-        except (requests.ConnectionError, requests.Timeout) as error:
-            if method != "GET" or attempt == 3:
-                raise
-            delay = 2 ** (attempt + 1)
-            print(
-                f"Provisioning GET to {urlparse(url).hostname} failed "
-                f"({type(error).__name__}); retry {attempt + 1}/3 in {delay}s.",
-                flush=True,
-            )
-            time.sleep(delay)
-    raise AssertionError("Unreachable provisioning retry state.")
 
 
 def definition_operation_url(location: str) -> str:

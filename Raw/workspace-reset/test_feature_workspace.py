@@ -599,9 +599,10 @@ class FeatureWorkspaceTests(unittest.TestCase):
         response = Mock(status_code=200)
         url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"
         with (
-            patch.object(feature.Fabric, "request", side_effect=[
+            patch.object(feature.requests.Session, "request", side_effect=[
                 feature.requests.ReadTimeout("temporary read timeout"), response,
             ]) as request,
+            patch.object(feature.Fabric, "_token", return_value="test-token"),
             patch.object(feature.time, "sleep") as sleep,
         ):
             client = feature.FeatureFabric(TENANT)
@@ -610,7 +611,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
         self.assertTrue(all(call.args == ("GET", url) for call in request.call_args_list))
         self.assertTrue(all(call.kwargs["allow_redirects"] is False for call in request.call_args_list))
         self.assertTrue(all("x-ms-fabric-skill" in call.kwargs["headers"] for call in request.call_args_list))
-        sleep.assert_called_once_with(5)
+        sleep.assert_called_once_with(1)
 
     def test_fabric_mutations_are_not_retried_after_transport_uncertainty(self):
         url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"

@@ -28,6 +28,11 @@ PIPELINE_PARAMS = {
     "ops_agent_teams_team_id": "team",
     "ops_agent_teams_channel_id": "channel",
 }
+PIPELINE_JOB_URL = (
+    "https://api.fabric.microsoft.com/v1/workspaces/11111111-1111-1111-1111-111111111111"
+    "/items/22222222-2222-2222-2222-222222222222/jobs/instances/"
+    "33333333-3333-3333-3333-333333333333"
+)
 
 
 class FullWorkflowResumeTests(unittest.TestCase):
@@ -89,6 +94,74 @@ class FullWorkflowResumeTests(unittest.TestCase):
         self.assertFalse(self.client.get(f"/api/jobs/{resumed.id}").get_json()["canResume"])
         self.assertFalse(self.client.get(f"/api/jobs/{failed.id}").get_json()["canResume"])
         self.assertNotIn("private-test-pat", json.dumps(original))
+
+    def test_interrupted_setup_keeps_accepted_job_across_restart_and_resumes_only_its_monitor(self):
+        failed = self.start()
+        def interrupted(job, name, *args):
+            if name == "Setup pipeline":
+                job.pipeline_job_url = PIPELINE_JOB_URL
+                return 2
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=interrupted) as run:
+            SERVER._workflow_worker(failed, self.steps())
+        self.assertEqual([entry.args[1] for entry in run.call_args_list], ["GitHub sync", "Setup pipeline"])
+        self.assertEqual(failed.completed_steps, ["GitHub sync"])
+        self.assertIn("outcome is unverified", "\n".join(failed.lines))
+        SERVER.JOBS.clear()
+        restored = SERVER._restore_workflow(failed.id)
+        self.assertEqual(restored.pipeline_job_url, PIPELINE_JOB_URL)
+        resumed = self.start({**self.target, "resumeJobId": failed.id, "pat": ""})
+        def completed(job, name, argv, *args):
+            if name == "Setup pipeline":
+                self.assertEqual(argv[-2:], ["--resume-job-url", PIPELINE_JOB_URL])
+                job.pipeline_job_state = "Completed"
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=completed) as run:
+            SERVER._workflow_worker(resumed, self.steps())
+        self.assertEqual([entry.args[1] for entry in run.call_args_list], ["Setup pipeline", SERVER.COMBINED_STEP])
+        self.assertEqual(resumed.status, "succeeded")
+
+    def test_accepted_setup_without_terminal_success_never_unlocks_dependencies(self):
+        job = self.start()
+        def accepted(current, name, *args):
+            if name == "Setup pipeline":
+                current.pipeline_job_url = PIPELINE_JOB_URL
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=accepted) as run:
+            SERVER._workflow_worker(job, self.steps())
+        self.assertEqual(job.returncode, 2)
+        self.assertEqual(job.completed_steps, ["GitHub sync"])
+        self.assertEqual(run.call_count, 2)
+
+    def test_accepted_job_marker_is_persisted_before_monitor_process_finishes(self):
+        job = self.start()
+        job.completed_steps = ["GitHub sync"]
+        job.component_timings["GitHub sync"] = {
+            "name": "GitHub sync", "status": "succeeded", "started": job.started, "ended": job.started,
+        }
+        process = Mock(stdout=io.StringIO(f"PIPELINE_JOB_URL={PIPELINE_JOB_URL}\n"), returncode=2)
+        with patch.object(SERVER.subprocess, "Popen", return_value=process), patch.object(SERVER.threading, "Timer"):
+            SERVER._run_workflow_step(job, "Setup pipeline", ["run_pipeline.py"], None, 60, [], 1)
+        record = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text())["workflowCheckpoints"][job.id]
+        self.assertEqual(record["pipelineJobUrl"], PIPELINE_JOB_URL)
+        self.assertIsNone(record["pipelineJobState"])
+        SERVER.JOBS.clear()
+        restored = SERVER._restore_workflow(job.id)
+        self.assertEqual(restored.status, "interrupted")
+        self.assertTrue(self.client.get(f"/api/jobs/{job.id}").get_json()["canResume"])
+
+    def test_invalid_pipeline_marker_stops_only_the_owned_local_monitor(self):
+        job = self.start()
+        process = Mock(stdout=io.StringIO("PIPELINE_JOB_URL=https://untrusted.example/job\n"), returncode=2)
+        with (
+            patch.object(SERVER.subprocess, "Popen", return_value=process),
+            patch.object(SERVER.threading, "Timer"),
+            patch.object(SERVER, "_terminate_owned_process") as terminate,
+            self.assertRaises(ValueError),
+        ):
+            SERVER._run_workflow_step(job, "Setup pipeline", ["run_pipeline.py"], None, 60, [], 1)
+        terminate.assert_called_once_with(process)
+        self.assertIsNone(job.pipeline_job_url)
 
     def test_retry_rejects_changed_effective_inputs_without_starting_anything(self):
         failed = self.fail_energy()
@@ -1888,6 +1961,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         }]}}
         for state, energy_code, expected_status, expected_code in (
             ("Completed", 0, "succeeded", 0), ("Failed", 0, "failed", 1),
+            ("Cancelled", 0, "cancelled", 1),
             ("Completed", 23, "failed", 23),
         ):
             with self.subTest(state=state, energy_code=energy_code):
@@ -1900,7 +1974,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                     Mock(status_code=200, json=Mock(return_value=definition)),
                 ]
                 fabric.find_pipeline.return_value = ("pipeline-id", "01_Pipe_Setup")
-                fabric.start_pipeline.return_value = "https://mock.invalid/job"
+                fabric.start_pipeline.return_value = PIPELINE_JOB_URL
                 reason = "Required Data Agent ontology runtime smoke failed: unsupported Ontology API"
                 fabric.poll_job.return_value = {"status": state, "failureReason": {"message": reason}}
                 started_scripts = []
@@ -1948,7 +2022,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                     self.assertNotIn("ontology_data_agent_mode", parameters)
                     self.assertNotIn("ontology_operations_agent_mode", parameters)
                     log = "\n".join(job["lines"])
-                    if state == "Failed":
+                    if state in {"Failed", "Cancelled"}:
                         self.assertIn(reason, log)
                         self.assertNotIn("run COMPLETED", log)
                         self.assertEqual(started_scripts, ["run_pipeline.py"])
