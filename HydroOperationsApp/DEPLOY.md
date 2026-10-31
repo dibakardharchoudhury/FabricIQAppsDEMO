@@ -215,10 +215,14 @@ source** line and the local version API identify the actual checkout.
 | **Key Vault URI** | `https://contoso-demo-kv.vault.azure.net/` | An existing vault holding notebook SPN credentials. The vault, secrets, access and connectivity must already be prepared. |
 | **Teams team id** | The full GUID after `groupId=` in a Teams channel link | Team receiving Operations Agent notifications. Not the tenant ID or team display name. |
 | **Teams channel id** | Full URL-decoded `19:...@thread.tacv2` value | Channel receiving notifications. Not its display name. [Find both IDs](#find-your-teams-team-and-channel-ids). |
-| **Alert email recipient** | `operations@contoso.com` | Email alert destination. Review any signed-in-user suggestion; this does not set the agent's identity. |
+| **Alert email recipient** | `operations@contoso.com` | Default `alert_email_to` for Send Email's **To** field. Review the signed-in-user suggestion; this is not the agent's identity. |
 
 Key Vault URI, both Teams IDs and alert email are required by the local Core/Full
 Deploy form. Unknown destination values stay blank rather than being guessed.
+The **Alerts** badges identify Teams and email destinations. NB10 applies the email
+recipient as a pipeline parameter default; the **To** expression reads it at runtime.
+Existing pipelines need updated NB10 source and a setup rerun. Changing the local
+form alone does not update Fabric or attest email/Teams delivery.
 The same vault must contain `ukmet-global-spot-api-key` and
 `ukmet-land-observations-api-key` for the required initial weather refresh. Aurora is optional.
 Disabling the future Weather schedule does not skip initial ingestion or ontology validation.

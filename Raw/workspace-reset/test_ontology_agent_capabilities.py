@@ -65,6 +65,58 @@ class NotebookExit(Exception):
     pass
 
 
+class EmailRecipientParameterTests(unittest.TestCase):
+    def namespace(self, raw=False):
+        if raw:
+            notebook = json.loads((ROOT / "Raw" / "RTI_Notebooks" / (NAMES["010"] + ".ipynb")).read_text(encoding="utf-8"))
+            text = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+        else:
+            text = source("010")
+        names = {"_EMAIL_SUBJECT_EXPR", "_EMAIL_BODY_EXPR", "EMBEDDED_PIPELINE_CONTENT", "ACTION_PARAMETERS"}
+        nodes = [node for node in ast.parse(text).body
+                 if (isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names))
+                 or (isinstance(node, ast.FunctionDef) and node.name == "build_email_pipeline_content")]
+        namespace = {"json": json}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "email-recipient", "exec"), namespace)
+        return namespace
+
+    def test_recipient_is_a_runtime_pipeline_parameter_in_both_notebook_copies(self):
+        definitions = []
+        for raw in (False, True):
+            with self.subTest(raw=raw):
+                namespace = self.namespace(raw)
+                result = namespace["build_email_pipeline_content"]("outlook-connection", " operations@example.test ")
+                properties = result["properties"]
+                activity = properties["activities"][0]
+                self.assertEqual(activity["typeProperties"]["to"], "@pipeline().parameters.alert_email_to")
+                self.assertEqual(properties["parameters"]["alert_email_to"],
+                                 {"type": "string", "defaultValue": "operations@example.test"})
+                self.assertEqual(activity["externalReferences"]["connection"], "outlook-connection")
+                self.assertIsInstance(activity["typeProperties"]["body"], str)
+                expected = json.loads(json.dumps(namespace["EMBEDDED_PIPELINE_CONTENT"]))
+                expected["properties"]["activities"][0]["externalReferences"]["connection"] = "outlook-connection"
+                expected["properties"]["parameters"]["alert_email_to"]["defaultValue"] = "operations@example.test"
+                self.assertEqual(result, expected)
+                self.assertEqual({item["name"] for item in namespace["ACTION_PARAMETERS"]},
+                                 set(properties["parameters"]) - {"alert_email_to"})
+                self.assertEqual(namespace["EMBEDDED_PIPELINE_CONTENT"]["properties"]["parameters"]["alert_email_to"]["defaultValue"], "")
+                definitions.append(result)
+        self.assertEqual(definitions[0], definitions[1])
+
+    def test_rerun_changes_only_the_recipient_default_not_alert_content(self):
+        namespace = self.namespace()
+        first = namespace["build_email_pipeline_content"]("connection", "first@example.test")
+        second = namespace["build_email_pipeline_content"]("connection", "second@example.test")
+        self.assertEqual(first["properties"]["activities"], second["properties"]["activities"])
+        self.assertEqual(second["properties"]["parameters"]["alert_email_to"]["defaultValue"], "second@example.test")
+        self.assertEqual(first["properties"]["parameters"]["alert_email_to"]["defaultValue"], "first@example.test")
+
+    def test_blank_pipeline_recipient_fails_explicitly(self):
+        for raw in (False, True):
+            with self.subTest(raw=raw), self.assertRaisesRegex(RuntimeError, "recipient is required"):
+                self.namespace(raw)["build_email_pipeline_content"]("connection", " ")
+
+
 class DashboardQueryRetryTests(unittest.TestCase):
     def namespace(self, responses):
         requests = SimpleNamespace(

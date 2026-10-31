@@ -1633,6 +1633,12 @@ for(const prefix of ["pp_","wf_pp_"]){
   const html=renderPipelineFields(prefix);
   assert.equal(html.split(">Find ID</a>").length-1,2);
   assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
+  assert.equal(html.split('class="alert-routing-label"').length-1,3);
+  for(const name of ["ops_agent_teams_team_id","ops_agent_teams_channel_id","alert_email_to"]){
+    assert.ok(html.includes(`for="${prefix}${name}" class="plabel"`));
+    const label=html.split(`for="${prefix}${name}"`)[1].split("</label>")[0];
+    assert.ok(label.includes('class="alert-routing-label">Alerts</span>'));
+  }
   const visible=html.split("<details")[0];
   assert.ok(visible.includes("Required:"));
   assert.ok(visible.includes("existing Key Vault"));
