@@ -608,6 +608,47 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertIn("renderSectionDuration", html)
         self.assertIn("Combined · Energy + Foundry concurrently", SERVER.WORKFLOW_PHASES)
 
+    def test_workflow_source_manifest_loads_in_an_isolated_launcher_interpreter(self):
+        script = """
+import importlib.util
+import sys
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location("isolated_launcher", sys.argv[1])
+server = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = server
+spec.loader.exec_module(server)
+assert "Foundry multi-agent setup" in server._workflow_source_keys()
+with patch.object(server, "_sync_invocation", return_value=(["sync"], None)), \
+     patch.object(server, "_pipeline_invocation", return_value=(["pipeline"], None)), \
+     patch.object(server, "_deploy_invocation", return_value=["python", "deploy"]), \
+     patch.object(server, "_deploy_environment", return_value={}), \
+     patch.object(server, "_start_workflow", return_value="not-started") as start:
+    response = server.app.test_client().post("/api/full-workflow", json={"tenant": "tenant.example", "workspace": "Demo"})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    start.assert_called_once()
+"""
+        with TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, "-I", "-c", script, str(Path(SERVER.__file__).resolve())],
+                cwd=directory, capture_output=True, text=True, timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_workflow_source_import_failure_returns_json_and_starts_no_job(self):
+        with patch.object(SERVER, "_sync_invocation", return_value=(["sync"], None)), \
+                patch.object(SERVER, "_pipeline_invocation", return_value=(["pipeline"], None)), \
+                patch.object(SERVER, "_deploy_invocation", return_value=["python", "deploy"]), \
+                patch.object(SERVER, "_deploy_environment", return_value={}), \
+                patch.object(SERVER, "_workflow_source_keys", side_effect=ModuleNotFoundError("missing local helper")), \
+                patch.object(SERVER, "_start_workflow") as start, \
+                self.assertLogs(SERVER.app.logger, level="ERROR") as logged:
+            response = self.client.post("/api/full-workflow", json={"tenant": "tenant.example", "workspace": "Demo"})
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("missing local helper", response.get_json()["error"])
+        self.assertIn("No steps were started", response.get_json()["error"])
+        self.assertIn("Full Deploy source initialization failed", logged.output[0])
+        start.assert_not_called()
+
     def test_full_workflow_prepares_energy_and_foundry_before_final_app(self):
         target = {
             "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo", "connectionId": "yes",

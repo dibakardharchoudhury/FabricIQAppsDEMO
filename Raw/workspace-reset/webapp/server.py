@@ -49,6 +49,8 @@ from flask import Flask, jsonify, request, send_from_directory
 # Repo layout: this file lives in .../workspace-reset/webapp/, the CLI scripts
 # live one level up in .../workspace-reset/.
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 SYNC_SCRIPT = SCRIPT_DIR / "sync_workspace_from_git.py"
 DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
 PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
@@ -1456,7 +1458,11 @@ def api_full_workflow():
                        "Restore the original inputs to resume, or explicitly start a new Full Deploy. "
                        "No steps were started."), 409
     try:
-        sources = _workflow_source_keys()
+        try:
+            sources = _workflow_source_keys()
+        except (ImportError, RuntimeError) as exc:
+            app.logger.exception("Full Deploy source initialization failed.")
+            return jsonify(error=f"Could not initialize Full Deploy sources: {exc}. No steps were started."), 500
         restart_at = None
         pending_notebooks = list(resume_from.pending_notebook_sync) if resume_from else []
         if resume_from:

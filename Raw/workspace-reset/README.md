@@ -106,6 +106,9 @@ not deleted or retargeted. App-only publication still verifies compatible older
 unsuffixed deployments. Shared model rate limits and hosted compute costs remain.
 The existing checkpoint flow and Energy/Foundry overlap within one workspace remain.
 
+Full Deploy loads local CLI helpers from the launcher's own checkout. Source
+initialization failures report the underlying local error and start no deployment stage.
+
 The deployer retains Node 24 for npm, lifecycle scripts and spawned build tools.
 Locked installs prefer cached packages without bypassing integrity checks.
 On Windows, an overlong native-tool path fails early with a shorter-path message;
