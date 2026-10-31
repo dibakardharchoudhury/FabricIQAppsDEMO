@@ -94,11 +94,14 @@ as blocked and ontology graph materialization remain explicit operator prerequis
   App publication waits for both. Each completed component is checkpointed; the
   combined component reruns idempotently if either branch or publication fails.
 
-All launcher actions target one workspace. Multi-workspace fan-out and its
-workspace-suffixed Foundry agent copies have been reverted. Existing private
-worker records, generated state and cloud resources are not removed automatically.
-Single-workspace setup uses the canonical agent names and existing checkpoint flow.
-Energy/Foundry preparation can still overlap within that one workspace.
+All launcher actions target one workspace; multi-workspace fan-out remains removed.
+Foundry setup uses stable workspace-GUID suffixes for agents, connections, toolbox
+and hosted state. Select the same existing account, project and ready model
+deployment to share its model allocation without reserving more quota. Reruns
+reuse that workspace's set; other workspace and older unsuffixed resources are
+not deleted or retargeted. App-only publication still verifies compatible older
+unsuffixed deployments. Shared model rate limits and hosted compute costs remain.
+The existing checkpoint flow and Energy/Foundry overlap within one workspace remain.
 
 The deployer retains Node 24 for npm, lifecycle scripts and spawned build tools.
 Locked installs prefer cached packages without bypassing integrity checks.

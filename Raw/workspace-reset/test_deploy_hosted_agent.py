@@ -216,6 +216,35 @@ class PackagingTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_shared_project_uses_separate_runtime_configuration_names_and_azd_state(self):
+        directories = set()
+        for workspace in (GUIDS["workspace"], GUIDS["ontology"]):
+            suffix = provision.foundry_resource_suffix(workspace)
+            configuration_value, _sources = hosted.compose_runtime_configuration(
+                tenant=GUIDS["tenant"], workspace=workspace, ontology=GUIDS["ontology"],
+                spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
+                values=VALUES, source_digest=configuration()[1],
+                production_writes=False, resource_suffix=suffix,
+            )
+            binding = configuration_value["native_binding"]
+            self.assertEqual(binding["agent_name_suffix"], suffix)
+            self.assertEqual(binding["connections"]["data-agent"], "hydro-fabric-iq" + suffix)
+            name = hosted.AGENT_NAME + suffix
+            directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name)
+            yaml = (directory / "azure.yaml").read_text(encoding="utf-8")
+            self.assertIn("    " + name + ":", yaml)
+            self.assertIn("        name: " + name, yaml)
+            self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name), directory)
+            directories.add(directory)
+        self.assertEqual(len(directories), 2)
+        with self.assertRaises(ValueError):
+            hosted.compose_runtime_configuration(
+                tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"],
+                spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
+                values=VALUES, source_digest=configuration()[1],
+                production_writes=False, resource_suffix="-" + "0" * 32,
+            )
+
     def test_runtime_configuration_matches_the_documented_contract(self):
         (orchestrator, fabric), digest = configuration()
         self.assertEqual(orchestrator["source"], {
@@ -316,6 +345,29 @@ class DecisionTests(unittest.TestCase):
 
 
 class ConvergenceTests(unittest.TestCase):
+    def test_scoped_hosted_agent_reuses_model_and_image_and_publishes_only_its_service(self):
+        suffix = provision.foundry_resource_suffix(GUIDS["workspace"])
+        configuration_value, fabric_source = hosted.compose_runtime_configuration(
+            tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"],
+            spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
+            values=VALUES, source_digest=configuration()[1], production_writes=True,
+            resource_suffix=suffix,
+        )
+        expected = {
+            **environment(),
+            "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(configuration_value, separators=(",", ":")),
+            "HYDRO_FABRIC_SOURCE_CONFIG": json.dumps(fabric_source, separators=(",", ":")),
+        }
+        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
+        run(fake, [None, agent(DIGEST_A, env=expected)], resource_suffix=suffix)
+        commands = fake.commands("azd", "deploy")
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][2], "hydro-orchestrator" + suffix)
+        self.assertFalse(fake.commands("az", "acr", "build"))
+        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
+        run(fake, [agent(DIGEST_A, env=expected)], resource_suffix=suffix)
+        self.assertFalse(fake.commands("azd", "deploy"))
+
     def tag(self):
         return hosted.image_tag(REPO_ROOT)
 

@@ -2268,6 +2268,8 @@ console.log(JSON.stringify([
             self.assertIn(f'aria-describedby="{prefix}FoundryCreateHelp"', form)
             self.assertIn(f'id="{prefix}FoundryCreateHelp"', form)
             self.assertIn("Global inference may apply. Existing projects are reused.", form)
+            self.assertIn("Stable workspace suffixes isolate agents, connections and hosted state", form)
+            self.assertIn("no extra model deployment is allocated", form)
             self.assertNotIn("Leave blank unless", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
             self.assertEqual(len(identifiers), len(set(identifiers)))

@@ -2225,6 +2225,7 @@ class DeployOrderTests(unittest.TestCase):
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": "/subscriptions/subscription/projects/project",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://account.services.ai.azure.com/api/projects/project",
                     "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "chat-model",
+                    "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX": "-" + "a" * 32,
                     "RAYFIN_PUBLIC_ORCHESTRATOR_VERSION": "old-version",
                     "RAYFIN_PUBLIC_API_URL": "old-capacity-endpoint",
                 }
@@ -2243,6 +2244,7 @@ class DeployOrderTests(unittest.TestCase):
                 for key in (
                     "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+                    "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX",
                 ):
                     if same_tenant and same_workspace:
                         self.assertIn(f"{key}={old[key]}", restored)

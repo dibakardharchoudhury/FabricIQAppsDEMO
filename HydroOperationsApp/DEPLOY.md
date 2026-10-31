@@ -22,11 +22,11 @@ Operations website.
 | Agent update | **Set up Foundry agents**, then **Deploy app** |
 | Energy data refresh | **Refresh energy sources** |
 
-Deployment targets **one workspace at a time**. The multi-workspace checkbox,
-fan-out workers and workspace-suffixed Foundry agent provisioning have been removed.
-Existing canonical agent names are reused/updated by the single-workspace setup.
-Previously created cloud agents and private worker state are retained; reverting
-the feature does not delete them or start another deployment.
+Deployment targets **one workspace at a time**; there is no multi-workspace checkbox
+or fan-out worker. Foundry agents, connections, toolbox and hosted state now use a
+stable suffix derived from the verified workspace GUID. Reruns reuse/update that
+workspace's set without overwriting another workspace's bindings. Previously
+created cloud agents and private state are retained, not deleted automatically.
 
 The engine retains Node 24 for npm and build-tool children. On Windows, use a short
 repository path if a native executable exceeds the path limit. Current-hosting
@@ -456,12 +456,27 @@ price area also matched the independently queried imported source row.
 ### Persistent Foundry agents
 
 Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
-specialists and `hydro-orchestrator` against this checkout and the selected Fabric target.
+specialists and `hydro-orchestrator`, each suffixed with the workspace GUID without
+hyphens, against this checkout and the selected Fabric target.
 An existing project/model may still contain missing or older agents. Setup reuses matching
 connections and specialists, creates versions only for changed/missing agents, builds only
 missing source-fingerprinted images, and republishes the hosted coordinator only when its
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
+
+**Share an existing model allocation across workspaces:** select the same existing
+Foundry account, project and ready model deployment for each single-workspace run.
+Leave **Allow project creation (billable)** off. Setup reads and reuses that model
+without creating another model deployment or changing its quota allocation.
+Each workspace gets its own stable agent set, native connections/toolbox and
+hosted runtime configuration. Generated azd state is isolated by project endpoint
+and hosted agent name; container images are reused by source fingerprint.
+
+The model's TPM/RPM limits are shared across all agent sets; model inference and
+hosted compute remain billable. Resource names do not provide security isolation
+between users with access to the same project. Existing unsuffixed deployments
+remain supported by read-only app publication; running Foundry setup creates the
+workspace-scoped set without deleting or retargeting the older set.
 
 **Foundry setup can create Fabric resources.** Before configuring the Hosted Agent,
 setup creates or reuses its required AppBackend gateway. On a fresh target this uses
@@ -480,10 +495,10 @@ compatible deployed agents are reused without provisioning or republishing them.
 does not certify new agent features or execution. Run **Set up Foundry agents** separately
 to update agent code; missing or incompatible configuration still blocks app publication.
 
-Model preflight requires a verified allocation of at least **40,000 tokens/minute**
-for the planner, source catalog and structured output. The catalog minimum/default
-can be too small even for the first question; setup rejects undersized or
-unverifiable limits rather than publishing a known-throttled coordinator.
+Model preflight requires a verifiable positive token limit. New allocations prefer
+**75,000 tokens/minute** within the selected model/SKU's available regional quota.
+Existing smaller allocations are reused with a warning, not silently increased;
+they may throttle the planner, source catalog or concurrent workspace requests.
 For a new project, `HYDRO_FOUNDRY_MODEL_CAPACITY` can override the catalog capacity
 before the canonical deployment command. Capacity units are model/SKU-specific:
 verify the resulting live token limit and available regional quota. Existing model

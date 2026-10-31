@@ -20,6 +20,14 @@ from urllib.parse import quote, urlparse
 import requests
 
 from deploy_foundry_project import PREFERRED_ORCHESTRATION_TPM
+from foundry_resource_names import foundry_resource_suffix
+
+
+def saved_resource_suffix(deploy, values: dict[str, str], workspace: str) -> str:
+    suffix = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX")
+    if suffix and suffix != foundry_resource_suffix(workspace):
+        raise deploy.DeployError("The saved Foundry resource suffix belongs to another workspace.")
+    return suffix
 
 
 def request_with_read_retry(method: str, url: str, **kwargs) -> requests.Response:
@@ -150,16 +158,17 @@ def linked_application_insights(connections: list[dict]) -> str:
     return resource_id
 
 
-def hosted_invocations_url(agent: dict, endpoint: str) -> str:
+def hosted_invocations_url(agent: dict, endpoint: str, *, resource_suffix: str = "") -> str:
     latest = agent.get("versions", {}).get("latest", {})
     definition = latest.get("definition", {})
-    if (agent.get("name") != "hydro-orchestrator" or definition.get("kind") != "hosted"
+    name = "hydro-orchestrator" + resource_suffix
+    if (agent.get("name") != name or definition.get("kind") != "hosted"
             or latest.get("status") != "active"):
         raise RuntimeError("The existing Hydro Agent Framework runtime must be an active hosted agent.")
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(".services.ai.azure.com"):
         raise RuntimeError("The Foundry project endpoint is invalid.")
-    return endpoint.rstrip("/") + "/agents/hydro-orchestrator/endpoint/protocols/invocations?api-version=v1"
+    return endpoint.rstrip("/") + f"/agents/{name}/endpoint/protocols/invocations?api-version=v1"
 
 
 def hosted_runtime_identity(agent: dict) -> tuple[str, str]:
@@ -203,7 +212,9 @@ def source_configuration_digest(tenant: str, workspace: str, ontology: str, valu
     return hashlib.sha256(json.dumps(config, separators=(",", ":")).encode()).hexdigest()
 
 
-def verify_hosted_source(agent: dict, tenant: str, workspace: str, ontology: str, digest: str) -> None:
+def verify_hosted_source(
+    agent: dict, tenant: str, workspace: str, ontology: str, digest: str, *, resource_suffix: str = "",
+) -> None:
     try:
         raw = agent["versions"]["latest"]["definition"]["environment_variables"]["HYDRO_ORCHESTRATOR_CONFIG"]
         configuration = json.loads(raw)
@@ -220,8 +231,13 @@ def verify_hosted_source(agent: dict, tenant: str, workspace: str, ontology: str
     }
     if source != expected:
         raise RuntimeError("The active hosted runtime source identity does not match the selected Fabric deployment.")
-    if native_binding != {"source": expected, "connections": {"data-agent": "hydro-fabric-iq"},
-                          "toolbox": "hydro-fabric-iq-tools"}:
+    if resource_suffix and resource_suffix != foundry_resource_suffix(workspace):
+        raise RuntimeError("Foundry resource names do not match the selected workspace.")
+    if native_binding != {
+        "source": expected, "connections": {"data-agent": "hydro-fabric-iq" + resource_suffix},
+        "toolbox": "hydro-fabric-iq-tools" + resource_suffix,
+        **({"agent_name_suffix": resource_suffix} if resource_suffix else {}),
+    }:
         raise RuntimeError("The active hosted runtime must retain only the verified Data Agent native binding.")
 
 
@@ -320,11 +336,14 @@ def fabric_iq_connection_properties(target: str) -> dict:
         "metadata": {"type": "fabric_iq_preview"},
     }
 
-def ensure_native_toolbox(endpoint: str, headers: dict, *, verify_only: bool = False) -> str:
-    url = endpoint.rstrip("/") + "/toolboxes/hydro-fabric-iq-tools"
+def ensure_native_toolbox(
+    endpoint: str, headers: dict, *, verify_only: bool = False, resource_suffix: str = "",
+) -> str:
+    name = "hydro-fabric-iq-tools" + resource_suffix
+    url = endpoint.rstrip("/") + "/toolboxes/" + name
     tools = [{
         "type": "fabric_iq_preview", "name": "hydro-data", "server_label": "fabriciq-data-agent",
-        "project_connection_id": "hydro-fabric-iq", "require_approval": "never",
+        "project_connection_id": "hydro-fabric-iq" + resource_suffix, "require_approval": "never",
     }]
     response = request_with_read_retry("GET", url + "?api-version=v1", headers=headers, timeout=60)
     if response.status_code not in (200, 404):
@@ -341,7 +360,7 @@ def ensure_native_toolbox(endpoint: str, headers: dict, *, verify_only: bool = F
             raise RuntimeError(f"Native Foundry toolbox version read failed: HTTP {response.status_code}.")
         current = response.json()
         if current.get("tools") == tools:
-            print(f"Foundry: reusing native toolbox hydro-fabric-iq-tools:{version}.", flush=True)
+            print(f"Foundry: reusing native toolbox {name}:{version}.", flush=True)
             return version
     if verify_only:
         raise RuntimeError("The native Foundry toolbox is missing or its Data Agent binding has drifted.")
@@ -360,7 +379,7 @@ def ensure_native_toolbox(endpoint: str, headers: dict, *, verify_only: bool = F
     )
     if not response.ok:
         raise RuntimeError(f"Native Foundry toolbox publication failed: HTTP {response.status_code}.")
-    if ensure_native_toolbox(endpoint, headers, verify_only=True) != version:
+    if ensure_native_toolbox(endpoint, headers, verify_only=True, resource_suffix=resource_suffix) != version:
         raise RuntimeError("Native Foundry toolbox publication readback differs from the requested version.")
     return version
 
@@ -373,6 +392,7 @@ def verify_prepared_connections(
     value = lambda key: deploy._public_config_value(values, key)
     project_id = value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID")
     agent_id = value("RAYFIN_PUBLIC_FOUNDRY_DATA_AGENT_ID")
+    suffix = saved_resource_suffix(deploy, values, workspace)
     if (not re.fullmatch(
             r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/?#]+/providers/"
             r"Microsoft\.CognitiveServices/accounts/[^/?#]+/projects/[^/?#]+", project_id)
@@ -399,6 +419,7 @@ def verify_prepared_connections(
     for name, item, is_ontology in (
         ("hydro-fabric-iq", agent_id, False), ("hydro-fabric-ontology", ontology, True),
     ):
+        name += suffix
         connection = read(f"{project_id}/connections/{name}?api-version=2025-10-01-preview")
         target = connection.get("target", "")
         if (not fabric_iq_target_matches(target, workspace, item, ontology=is_ontology)
@@ -417,7 +438,7 @@ def verify_prepared_connections(
             raise deploy.DeployError("No delegated Foundry token was returned.")
         foundry_headers = {"Authorization": f"Bearer {token}"}
     ensure_native_toolbox(value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"),
-                          foundry_headers, verify_only=True)
+                          foundry_headers, verify_only=True, resource_suffix=suffix)
 
 
 def verify_existing(deploy, tenant: str, workspace: str) -> None:
@@ -429,6 +450,7 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
         raise deploy.DeployError(f"Foundry configuration belongs to a different target. {guidance}")
     endpoint = value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT").rstrip("/")
     model = value("RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT")
+    suffix = saved_resource_suffix(deploy, values, workspace)
     if not re.fullmatch(r"https://[a-z0-9-]+\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_.-]+", endpoint) or not model:
         raise deploy.DeployError(f"Verified Foundry project/model configuration is missing. {guidance}")
     try:
@@ -467,10 +489,12 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     except RuntimeError as error:
         raise deploy.DeployError(f"{error} {guidance}") from error
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
-        deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, "hydro-fabric-iq",
+        deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, "hydro-fabric-iq" + suffix,
     ), cwd=deploy.APP_DIR))
+    definitions = {name + suffix: definition for name, definition in definitions.items()}
+    hosted_name = "hydro-orchestrator" + suffix
     print("Foundry: read-only verification of prepared specialists and Hosted coordinator.", flush=True)
-    for name in (*definitions, "hydro-orchestrator"):
+    for name in (*definitions, hosted_name):
         response = request_with_read_retry(
             "GET", f"{endpoint}/agents/{name}?api-version=v1", headers=headers, timeout=60,
         )
@@ -478,14 +502,14 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
             raise deploy.DeployError(f"Cannot verify Foundry agent {name}: HTTP {response.status_code}. {guidance}")
         agent = response.json()
         latest = agent.get("versions", {}).get("latest", {})
-        if name != "hydro-orchestrator":
+        if name != hosted_name:
             if not definition_matches(latest.get("definition", {}), definitions[name]):
                 raise deploy.DeployError(f"Foundry specialist {name} is stale. {guidance}")
             continue
         try:
-            verify_hosted_source(agent, tenant, workspace, ontology, digest)
+            verify_hosted_source(agent, tenant, workspace, ontology, digest, resource_suffix=suffix)
             version, image = hosted_runtime_identity(agent)
-            url = hosted_invocations_url(agent, endpoint)
+            url = hosted_invocations_url(agent, endpoint, resource_suffix=suffix)
         except RuntimeError as error:
             raise deploy.DeployError(f"{error} {guidance}") from error
         if (version != value("RAYFIN_PUBLIC_ORCHESTRATOR_VERSION")
@@ -882,9 +906,13 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
     if len(selected) != 1:
         raise deploy.DeployError("Exactly one published Data Agent must match the verified v2 ontology.")
 
-    iq_name = "hydro-fabric-iq"
+    suffix = foundry_resource_suffix(workspace)
+    hosted_name = "hydro-orchestrator" + suffix
+    print(f"Foundry: workspace-scoped agent set {suffix}; reusing model deployment {model}, "
+          "without allocating another model deployment.", flush=True)
+    iq_name = "hydro-fabric-iq" + suffix
     iq_url = fabric_iq_target(workspace, selected[0]["id"], connections)
-    ontology_connection = "hydro-fabric-ontology"
+    ontology_connection = "hydro-fabric-ontology" + suffix
     ontology_url = fabric_iq_target(workspace, ontology, connections, ontology=True)
     for connection_name, target in ((iq_name, iq_url), (ontology_connection, ontology_url)):
         connection_url = f"https://management.azure.com{project_id}/connections/{connection_name}?api-version=2025-10-01-preview"
@@ -904,6 +932,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
         deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, iq_name,
     ), cwd=deploy.APP_DIR))
+    definitions = {name + suffix: definition for name, definition in definitions.items()}
     print("Foundry: agents - comparing live specialists with the current source definitions.", flush=True)
     reused = updated = created = 0
     for name, definition in definitions.items():
@@ -928,7 +957,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
             raise deploy.DeployError(f"Foundry definition readback failed for {name}.")
         print(f"Verified persistent Foundry agent {name}:{live['version']}", flush=True)
     print(f"Foundry: specialists current={reused}, updated={updated}, created={created}.", flush=True)
-    ensure_native_toolbox(endpoint, agent_headers)
+    ensure_native_toolbox(endpoint, agent_headers, resource_suffix=suffix)
 
     kql = request(
         "GET", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/kqlDatabases/{public_values['RAYFIN_PUBLIC_KQL_DATABASE_ID']}",
@@ -940,7 +969,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
 
     def get_agent():
         response = request_with_read_retry(
-            "GET", f"{endpoint}/agents/hydro-orchestrator?api-version=v1", headers=agent_headers, timeout=60,
+            "GET", f"{endpoint}/agents/{hosted_name}?api-version=v1", headers=agent_headers, timeout=60,
         )
         if response.status_code == 404:
             return None
@@ -949,23 +978,24 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         return response.json()
 
     hosted_module = _load_sibling("deploy_hosted_agent")
-    print("Foundry: Hosted Agent - converging hydro-orchestrator.", flush=True)
+    print(f"Foundry: Hosted Agent - converging {hosted_name}.", flush=True)
     hosted = hosted_module.ensure_hosted_agent(
         deploy, get_agent=get_agent, endpoint=endpoint, project_id=project_id, model=model, tenant=tenant,
         workspace=workspace, ontology=ontology,
         spa_client_id=deploy._public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID"),
         values=public_values, source_digest=source_digest, kusto_origin=f"https://{query_uri.netloc}",
-        connections=connections,
+        connections=connections, resource_suffix=suffix,
     )
     try:
-        invocations_url = hosted_invocations_url(hosted, endpoint)
+        invocations_url = hosted_invocations_url(hosted, endpoint, resource_suffix=suffix)
         runtime_version, runtime_image_digest = hosted_runtime_identity(hosted)
-        verify_hosted_source(hosted, tenant, workspace, ontology, source_digest)
+        verify_hosted_source(hosted, tenant, workspace, ontology, source_digest, resource_suffix=suffix)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
     env_path = deploy.RAYFIN_DIR / ".env"
     env_path.write_text(deploy._rebind_public_env(env_path.read_text(encoding="utf-8"), {
         "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
+        "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX": suffix,
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project_id,
         "RAYFIN_PUBLIC_FOUNDRY_DATA_AGENT_ID": selected[0]["id"],
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,

@@ -741,6 +741,44 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertFalse(owner.evidence)
 
+    async def test_scoped_native_toolbox_manifest_rejects_a_foreign_workspace_connection(self):
+        suffix = "-" + SOURCE.workspace_id.hex
+        name = "hydro-fabric-iq-tools" + suffix
+        connection = "hydro-fabric-iq" + suffix
+        binding = NativeBinding(
+            source=SOURCE, connections={"data-agent": connection}, toolbox=name, agent_name_suffix=suffix,
+        )
+        owner = self.make_owner(native_binding=binding)
+        tools = [{"type": "fabric_iq_preview", "server_label": "fabriciq-data-agent",
+                  "project_connection_id": connection}]
+        requests = []
+
+        def respond(request):
+            requests.append(str(request.url))
+            self.assertIn("/toolboxes/" + name, request.url.path)
+            body = {"name": name, "default_version": "2"}
+            if "/versions/" in request.url.path:
+                body = {"name": name, "version": "2", "tools": tools}
+            return httpx.Response(200, json=body)
+
+        real_client = httpx.AsyncClient
+
+        def client(**kwargs):
+            return real_client(transport=httpx.MockTransport(respond), **kwargs)
+
+        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient", side_effect=client):
+            versions = await owner.versions(
+                RunJournal(self.root / "scoped-toolbox-manifest"), roles=frozenset({"fabric-iq"}),
+            )
+            self.assertEqual(versions["fabric-iq"].name, name)
+            self.assertEqual(versions["fabric-iq"].version, "2")
+            tools[0]["project_connection_id"] = "hydro-fabric-iq-" + "0" * 32
+            with self.assertRaises(SourceFailure):
+                await owner.versions(
+                    RunJournal(self.root / "foreign-toolbox-manifest"), roles=frozenset({"fabric-iq"}),
+                )
+        self.assertEqual(len(requests), 4)
+
     async def test_native_toolbox_manifest_pins_the_verified_immutable_version(self):
         binding = NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
                                 toolbox="hydro-fabric-iq-tools")
@@ -923,6 +961,40 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             versions = await owner.versions(journal)
         self.assertEqual(versions["weather"].name, "hydro-weather-agent")
         self.assertEqual(versions["weather"].tools[0]["name"], "hydro_query")
+
+    async def test_shared_project_reads_only_workspace_scoped_specialists(self):
+        suffix = "-" + SOURCE.workspace_id.hex
+        binding = NativeBinding(
+            source=SOURCE, connections={"data-agent": "hydro-fabric-iq" + suffix},
+            toolbox="hydro-fabric-iq-tools" + suffix, agent_name_suffix=suffix,
+        )
+        for invalid in ("-wrong", "-" + "0" * 32):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                NativeBinding(source=SOURCE, connections={}, agent_name_suffix=invalid)
+        requests = []
+
+        def read_agent(request):
+            name = self.versions["weather"].name + suffix
+            requests.append(request.url.path)
+            self.assertTrue(request.url.path.endswith("/agents/" + name))
+            version = self.versions["weather"]
+            return httpx.Response(200, json={
+                "name": name, "versions": {"latest": {
+                    "version": version.version,
+                    "definition": {"kind": "prompt", "model": version.model, "tools": list(version.tools)},
+                }},
+            })
+
+        owner = self.make_owner(native_binding=binding)
+        journal = RunJournal(self.root / "shared-project-readback")
+        network = httpx.AsyncClient(transport=httpx.MockTransport(read_agent))
+        self.addAsyncCleanup(network.aclose)
+        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient", return_value=network):
+            versions = await owner.versions(journal, roles=frozenset({"weather"}))
+            recovered = await owner.versions(journal, roles=frozenset({"weather"}))
+        self.assertEqual(versions["weather"].name, "hydro-weather-agent" + suffix)
+        self.assertEqual(recovered["weather"], versions["weather"])
+        self.assertEqual(len(requests), 1)
 
     async def test_only_selected_model_agents_are_live_dependencies(self):
         requests = []

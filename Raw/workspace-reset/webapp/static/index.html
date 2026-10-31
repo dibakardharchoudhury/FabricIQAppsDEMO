@@ -591,7 +591,8 @@ function renderFoundryFields(prefix, clientId) {
       <summary>Setup details</summary>
       <p id="${prefix}FoundryModeSummary" class="phelp">Automatic multi-agent setup.</p>
       <p class="phelp">A Foundry account is the parent Azure resource; projects live inside it. Blank uses automatic discovery.</p>
-      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents, connections and hosted orchestrator. Missing backends create Fabric App/SQL/GraphQL resources, not the website. Existing canonical agent names are retained; no workspace-suffixed copies are created.</p>
+      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents and a hosted orchestrator. Stable workspace suffixes isolate agents, connections and hosted state; reruns reuse that set. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
+      <p class="phelp">To share model quota, select the same existing account, project and model deployment. Leave creation off. All workspace agent sets share that model's rate limits; no extra model deployment is allocated.</p>
       <p class="phelp">New models prefer 75,000 TPM where quota permits; lower allocations remain supported.</p>
     </details>
     ${renderSpaFields(clientId)}`;
