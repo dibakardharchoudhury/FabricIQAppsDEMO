@@ -40,8 +40,6 @@ DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 ENDPOINT = "https://res.services.ai.azure.com/api/projects/proj"
 PROJECT_ID = ("/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.CognitiveServices/accounts/res/projects/proj")
-REGISTRY_CONNECTION_NAME = "reg-conn"
-REGISTRY_CONNECTION_ID = PROJECT_ID + "/connections/" + REGISTRY_CONNECTION_NAME
 VALUES = {
     "RAYFIN_PUBLIC_EVENTHOUSE_ID": GUIDS["eventhouse"], "RAYFIN_PUBLIC_KQL_DATABASE_ID": GUIDS["database"],
     "RAYFIN_PUBLIC_LAKEHOUSE_ID": GUIDS["graphql"], "RAYFIN_PUBLIC_ITEM_ID": GUIDS["appbackend"],
@@ -50,8 +48,7 @@ VALUES = {
     "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-test",
 }
 KUSTO = "https://kusto.example.fabric.microsoft.com"
-CONNECTIONS = [{"name": "reg-conn", "id": REGISTRY_CONNECTION_ID,
-                "properties": {"category": "ContainerRegistry", "target": "myreg.azurecr.io"}},
+CONNECTIONS = [{"name": "reg-conn", "properties": {"category": "ContainerRegistry", "target": "myreg.azurecr.io"}},
                {"name": "other", "properties": {"category": "AppInsights", "target": "/x"}}]
 
 
@@ -76,8 +73,7 @@ def environment(writes=True, state="/home/session/hydro"):
 
 def agent(digest=DIGEST_A, env=None, status="active", kind="hosted", version=7):
     return {"versions": {"latest": {"status": status, "version": version, "definition": {
-        "kind": kind, "container_configuration": {"image": f"myreg.azurecr.io/hydro-orchestrator@{digest}",
-                                                "registry_connection_id": REGISTRY_CONNECTION_NAME},
+        "kind": kind, "container_configuration": {"image": f"myreg.azurecr.io/hydro-orchestrator@{digest}"},
         "environment_variables": environment() if env is None else env}}}}
 
 
@@ -235,14 +231,11 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(binding["agent_name_suffix"], suffix)
             self.assertEqual(binding["connections"]["data-agent"], "hydro-fabric-iq" + suffix)
             name = hosted.AGENT_NAME + suffix
-            directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
-                                               registry_connection=REGISTRY_CONNECTION_NAME, agent_name=name)
+            directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name)
             yaml = (directory / "azure.yaml").read_text(encoding="utf-8")
             self.assertIn("    " + name + ":", yaml)
             self.assertIn("        name: " + name, yaml)
-            self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
-                                                    registry_connection=REGISTRY_CONNECTION_NAME, agent_name=name),
-                             directory)
+            self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name), directory)
             directories.add(directory)
         self.assertEqual(len(directories), 2)
         with self.assertRaises(ValueError):
@@ -308,18 +301,21 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
-    def test_an_unbound_private_image_is_not_a_current_deployment(self):
-        live = agent()
-        del live["versions"]["latest"]["definition"]["container_configuration"]["registry_connection_id"]
-        self.assertRegex(
-            hosted.needs_publish(live, image_digest=DIGEST_A, environment=environment(),
-                                 registry_connection_id=REGISTRY_CONNECTION_NAME),
-            "registry",
-        )
+    def test_python_startup_isolation_is_checked_even_for_the_current_image(self):
+        live_environment = environment()
+        del live_environment["PYTHONNOUSERSITE"]
+        self.assertRegex(hosted.needs_publish(agent(env=live_environment), image_digest=DIGEST_A,
+                                              environment=environment()), "PYTHONNOUSERSITE differs")
+
+    def test_acr_template_uses_project_identity_and_explicit_python_isolation(self):
+        import yaml
+
+        service = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"))["services"]["hydro-orchestrator"]
+        self.assertNotIn("registryConnectionId", service)
+        self.assertEqual(service["env"]["PYTHONNOUSERSITE"], "1")
 
     def test_a_current_agent_needs_nothing(self):
-        self.assertIsNone(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment(),
-                                              registry_connection_id=REGISTRY_CONNECTION_NAME))
+        self.assertIsNone(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment()))
 
     def test_each_kind_of_drift_is_reported(self):
         expected = environment()
@@ -333,39 +329,11 @@ class DecisionTests(unittest.TestCase):
         }
         for message, (live, digest) in cases.items():
             with self.subTest(message):
-                self.assertRegex(hosted.needs_publish(live, image_digest=digest, environment=expected,
-                                                      registry_connection_id=REGISTRY_CONNECTION_NAME), message)
+                self.assertRegex(hosted.needs_publish(live, image_digest=digest, environment=expected), message)
 
     def test_json_documents_compare_by_value_not_formatting(self):
         spaced = {**environment(), "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(json.loads(environment()["HYDRO_ORCHESTRATOR_CONFIG"]), indent=2)}
-        self.assertIsNone(hosted.needs_publish(agent(env=spaced), image_digest=DIGEST_A, environment=environment(),
-                                              registry_connection_id=REGISTRY_CONNECTION_NAME))
-
-    def test_registry_binding_cannot_be_inherited_from_another_project(self):
-        other_project = PROJECT_ID + "-other"
-        other_name = "other-registry"
-        other_id = other_project + "/connections/" + other_name
-        foreign = {**CONNECTIONS[0], "id": other_id}
-        self.assertEqual(hosted.registry_connection_name([foreign, *CONNECTIONS], PROJECT_ID, "myreg"),
-                         REGISTRY_CONNECTION_NAME)
-        self.assertEqual(hosted.registry_connection_name([foreign, *CONNECTIONS], other_project, "myreg"), other_name)
-        with self.assertRaisesRegex(RuntimeError, "project-owned"):
-            hosted.registry_connection_name([foreign], PROJECT_ID, "myreg")
-        self.assertRegex(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment(),
-                                              registry_connection_id=other_name), "registry")
-
-    def test_duplicate_owned_registry_bindings_are_rejected(self):
-        duplicate = {**CONNECTIONS[0], "id": PROJECT_ID + "/connections/duplicate"}
-        with self.assertRaisesRegex(RuntimeError, "found 2"):
-            hosted.registry_connection_name([*CONNECTIONS, duplicate], PROJECT_ID, "myreg")
-
-    def test_generated_template_declares_registry_binding_and_python_isolation(self):
-        import yaml
-
-        definition = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"))
-        service = definition["services"]["hydro-orchestrator"]
-        self.assertEqual(service["registryConnectionId"], "${HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID}")
-        self.assertEqual(service["env"]["PYTHONNOUSERSITE"], "1")
+        self.assertIsNone(hosted.needs_publish(agent(env=spaced), image_digest=DIGEST_A, environment=environment()))
 
     def test_registry_resolution_prefers_override_then_the_single_project_connection(self):
         self.assertEqual(hosted.registry_name(CONNECTIONS, "myreg"), "myreg")
@@ -385,24 +353,12 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(values["AZURE_AI_ACCOUNT_NAME"], "res")
         self.assertEqual(values["AZURE_CONTAINER_REGISTRY_ENDPOINT"], "myreg.azurecr.io")
         self.assertEqual(values["AZURE_AI_PROJECT_ACR_CONNECTION_NAME"], "reg-conn")
-        self.assertEqual(values["HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID"], REGISTRY_CONNECTION_NAME)
-        self.assertRegex(values["HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID"], r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
         with self.assertRaises(RuntimeError):
             hosted.azd_bootstrap_values(project_id="/bad", endpoint="e", tenant="t", location="l", registry="r",
                                         registry_id="i", connection="c")
 
 
 class ConvergenceTests(unittest.TestCase):
-    def test_binding_drift_publishes_without_rebuilding_the_current_image(self):
-        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        unbound = agent()
-        del unbound["versions"]["latest"]["definition"]["container_configuration"]["registry_connection_id"]
-        run(fake, [unbound, agent()])
-        self.assertEqual(len(fake.commands("azd", "deploy")), 1)
-        self.assertFalse(fake.commands("az", "acr", "build"))
-        self.assertEqual(fake.environment_settings()["HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID"],
-                         REGISTRY_CONNECTION_NAME)
-
     def test_scoped_hosted_agent_reuses_model_and_image_and_publishes_only_its_service(self):
         suffix = provision.foundry_resource_suffix(GUIDS["workspace"])
         configuration_value, fabric_source = hosted.compose_runtime_configuration(
@@ -586,36 +542,25 @@ class ProjectRoutingTests(unittest.TestCase):
         template = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
         self.assertEqual(hosted.PINNED_ENDPOINT_RE.search(template)["value"], "${AZURE_AI_PROJECT_ENDPOINT}")
         self.assertNotIn(".services.ai.azure.com", template)
-        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
-                                                  registry_connection=REGISTRY_CONNECTION_NAME), REPO_ROOT)
+        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT), REPO_ROOT)
 
     def test_distinct_project_endpoints_cannot_collide_in_generated_state(self):
         first = "https://res.services.ai.azure.com/api/projects/a.b"
         second = "https://res.services.ai.azure.com/api/projects/a-b"
-        self.assertNotEqual(
-            hosted.azd_project_dir(FakeDeploy(), first, registry_connection=REGISTRY_CONNECTION_NAME),
-            hosted.azd_project_dir(FakeDeploy(), second, registry_connection=REGISTRY_CONNECTION_NAME),
-        )
-        self.assertEqual(
-            hosted.azd_project_dir(FakeDeploy(), first, registry_connection=REGISTRY_CONNECTION_NAME),
-            hosted.azd_project_dir(FakeDeploy(), first + "/", registry_connection=REGISTRY_CONNECTION_NAME),
-        )
+        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), first), hosted.azd_project_dir(FakeDeploy(), second))
+        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), first), hosted.azd_project_dir(FakeDeploy(), first + "/"))
 
     def test_another_project_gets_a_generated_untracked_azd_project_never_a_repo_edit(self):
         before = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
-        directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT, registry_connection=REGISTRY_CONNECTION_NAME)
+        directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT)
         self.assertNotEqual(directory, REPO_ROOT)
         self.assertTrue(str(directory).startswith(os.environ["HYDRO_STATE_DIR"]))
         generated = (directory / "azure.yaml").read_text(encoding="utf-8")
         self.assertIn(f"endpoint: {ENDPOINT}", generated)
-        self.assertIn("registryConnectionId: " + REGISTRY_CONNECTION_NAME, generated)
-        self.assertNotIn(hosted.REGISTRY_PLACEHOLDER, generated)
         self.assertEqual(generated.replace(ENDPOINT, "X"), hosted.PINNED_ENDPOINT_RE.sub(
-            lambda match: match["head"] + "X", before, count=1).replace(
-                hosted.REGISTRY_PLACEHOLDER, REGISTRY_CONNECTION_NAME))
+            lambda match: match["head"] + "X", before, count=1))
         self.assertEqual((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"), before)
-        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
-                                                registry_connection=REGISTRY_CONNECTION_NAME), directory)
+        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT), directory)
 
     def test_publishing_to_another_project_runs_every_azd_command_in_its_generated_project(self):
         fake = FakeDeploy()

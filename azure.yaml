@@ -16,7 +16,6 @@ services:
         host: azure.ai.agent
         language: docker
         image: ${HYDRO_ORCHESTRATOR_IMAGE}
-        registryConnectionId: ${HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID}
         docker:
             path: HydroOperationsService/Dockerfile
             context: .

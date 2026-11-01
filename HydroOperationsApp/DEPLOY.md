@@ -492,16 +492,11 @@ Registry connections use `ManagedIdentity` credentials containing the verified
 project principal ID and shared registry resource ID. Existing connections are
 reused; a failed connection setup retains the project for retry without reallocating
 model TPM. Errors identify the exact ARM resource and API version.
-The hosted definition explicitly references the selected project's verified
-registry connection. The hosted API's `registry_connection_id` field accepts the
-short connection name, not its ARM ID; full ARM ownership is verified before
-submitting that name. Immutable-version convergence checks that binding as well
-as the image and runtime configuration; an unbound or foreign-project connection
-is not considered current. The generated target-specific azd project contains a
-literal verified connection name: custom service properties are not automatically
-expanded from azd environment variables. The repository template stays target-independent.
-Python containers disable user-site package loading
-with `PYTHONNOUSERSITE=1`; session uploads cannot supply startup dependencies.
+Hosted ACR images use the platform's project managed identity; the generic
+`registryConnectionId` field is omitted for this deployment path.
+Python containers set `PYTHONNOUSERSITE=1` in both the image and hosted environment
+to prevent session-uploaded user-site packages from affecting startup. Immutable
+version convergence verifies this environment setting as well as the image and source bindings.
 Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
 not its instrumentation key. It is validated before project changes and rechecked
 on retry; credential values are not saved in the preflight plan.
