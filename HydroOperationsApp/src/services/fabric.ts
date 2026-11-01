@@ -99,9 +99,9 @@ async function silentToken(scopes: string[], forceRefresh = false, minimumLifeti
 
 /** Acquire a token interactively via popup (redirects are blocked inside the Fabric iframe).
  *  Must be invoked from a user gesture. */
-async function popupToken(scopes: string[], extraScopesToConsent: string[] = []): Promise<string> {
+async function popupToken(scopes: string[]): Promise<string> {
   if (!entraTokens) throw new Error('Microsoft Entra client configuration is missing.')
-  return entraTokens.popup(scopes, extraScopesToConsent)
+  return entraTokens.popup(scopes)
 }
 
 /** Fabric discovery/read token. Job execution explicitly requests its additional scope. */

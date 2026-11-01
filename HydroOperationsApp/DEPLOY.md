@@ -131,6 +131,10 @@ Power BI and the verified Kusto cluster. First-use consent is serial and
 audience-specific; tokens are revalidated before an agent request is sent.
 Do not combine all four audiences into one consent request: this can produce
 Entra `AADSTS28004`. Cancellation or failed authorization sends no agent request.
+The shared MSAL boundary also rejects mixed-resource scopes before network access;
+it has no aggregated `extraScopesToConsent` path. Verify the published build in
+each workspace: an already-open older SPA continues running its old authorization
+code until reloaded. Cached-token acceptance does not certify first-use consent.
 
 ## 2. Start the local app
 
