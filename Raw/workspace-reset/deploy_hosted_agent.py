@@ -215,17 +215,19 @@ def registry_name(connections: list[dict], override: str) -> str:
     )
 
 
-def registry_connection_id(connections: list[dict], project_id: str, registry: str) -> str:
+def registry_connection_name(connections: list[dict], project_id: str, registry: str) -> str:
     matching = []
     for connection in connections:
         properties = connection.get("properties", {})
         target = str(properties.get("target") or "")
         host = urlparse(target if "//" in target else f"https://{target}").hostname
         identity = connection.get("id")
-        if (properties.get("category") == "ContainerRegistry" and host == f"{registry}.azurecr.io"
-                and isinstance(identity, str)
-                and re.fullmatch(re.escape(project_id) + r"/connections/[A-Za-z0-9_.-]+", identity, re.IGNORECASE)):
-            matching.append(identity)
+        owned = re.fullmatch(
+            re.escape(project_id) + r"/connections/(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]{0,127})",
+            identity, re.IGNORECASE,
+        ) if isinstance(identity, str) else None
+        if properties.get("category") == "ContainerRegistry" and host == f"{registry}.azurecr.io" and owned:
+            matching.append(owned["name"])
     if len(matching) != 1:
         raise RuntimeError(
             f"Expected exactly one project-owned connection to registry {registry}, found {len(matching)}."
@@ -271,7 +273,7 @@ def azd_bootstrap_values(
         "AZURE_OPENAI_ENDPOINT": f"https://{match['account']}.openai.azure.com/",
         "AZURE_CONTAINER_REGISTRY_NAME": registry, "AZURE_CONTAINER_REGISTRY_ENDPOINT": login_server,
         "AZURE_CONTAINER_REGISTRY_RESOURCE_ID": registry_id, "AZURE_AI_PROJECT_ACR_CONNECTION_NAME": connection,
-        "HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID": project_id + "/connections/" + connection,
+        "HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID": connection,
         "ENABLE_HOSTED_AGENTS": "true", "USE_EXISTING_AI_PROJECT": "true", "ENABLE_CAPABILITY_HOST": "false",
     }
 
@@ -324,7 +326,7 @@ def ensure_hosted_agent(
     override = os.environ.get("HYDRO_ACR_NAME", "")
     try:
         registry = registry_name(connections, override)
-        connection_id = registry_connection_id(connections, project_id, registry)
+        connection_name = registry_connection_name(connections, project_id, registry)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
     subscription = project_id.split("/")[2]
@@ -348,7 +350,7 @@ def ensure_hosted_agent(
 
     tag, digest = ensure_hosted_image(deploy, registry=registry, subscription=subscription)
     reason = needs_publish(
-        existing, image_digest=digest, environment=environment, registry_connection_id=connection_id,
+        existing, image_digest=digest, environment=environment, registry_connection_id=connection_name,
     )
     if reason is None:
         print(f"Hosted agent {agent_name} is current (image {tag}); nothing to publish.", flush=True)
@@ -375,7 +377,7 @@ def ensure_hosted_agent(
     while True:
         agent = get_agent()
         reason = needs_publish(
-            agent, image_digest=digest, environment=environment, registry_connection_id=connection_id,
+            agent, image_digest=digest, environment=environment, registry_connection_id=connection_name,
         )
         if reason is None:
             print(f"Hosted Agent {agent_name} version {hosted_state(agent)[1]} is active on {tag}.", flush=True)
@@ -447,7 +449,7 @@ def _configure_azd_environment(
         "acr", "show", "--name", registry, "--subscription", subscription, "--query", "id", "-o", "tsv",
     ))
     try:
-        connection_id = registry_connection_id(connections, project_id, registry)
+        connection_name = registry_connection_name(connections, project_id, registry)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
     if create:
@@ -459,5 +461,5 @@ def _configure_azd_environment(
         print(f"Refreshing the azd environment {AZD_ENVIRONMENT} from the live Foundry project.", flush=True)
     return azd_bootstrap_values(
         project_id=project_id, endpoint=endpoint, tenant=tenant, location=location, registry=registry,
-        registry_id=registry_id, connection=connection_id.rsplit("/", 1)[-1],
+        registry_id=registry_id, connection=connection_name,
     )

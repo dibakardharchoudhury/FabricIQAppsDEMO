@@ -493,7 +493,9 @@ project principal ID and shared registry resource ID. Existing connections are
 reused; a failed connection setup retains the project for retry without reallocating
 model TPM. Errors identify the exact ARM resource and API version.
 The hosted definition explicitly references the selected project's verified
-registry connection. Immutable-version convergence checks that binding as well
+registry connection. The hosted API's `registry_connection_id` field accepts the
+short connection name, not its ARM ID; full ARM ownership is verified before
+submitting that name. Immutable-version convergence checks that binding as well
 as the image and runtime configuration; an unbound or foreign-project connection
 is not considered current. Python containers disable user-site package loading
 with `PYTHONNOUSERSITE=1`; session uploads cannot supply startup dependencies.
