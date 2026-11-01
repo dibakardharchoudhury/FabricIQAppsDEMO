@@ -380,30 +380,21 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(fake.commands("az", "acr", "build"), [])
         self.assertEqual(fake.commands("azd"), [])
 
-    def test_unroutable_current_agent_republishes_once_and_waits_for_a_new_version(self):
+    def test_current_runtime_recovery_does_not_republish_an_identical_definition(self):
         fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        refresh = Mock(return_value=True)
-        waiting = Mock()
+        refresh = Mock()
         result = run(
-            fake, [agent(version=7), agent(version=7), agent(version=8)],
-            needs_runtime_refresh=refresh, sleep=waiting,
+            fake, [agent(version=7)], verify_current_runtime=refresh,
         )
         refresh.assert_called_once()
-        self.assertEqual(hosted.hosted_state(result)[1:3], ("8", DIGEST_A))
-        self.assertEqual(len(fake.commands("azd", "deploy")), 1)
+        self.assertEqual(hosted.hosted_state(result)[1:3], ("7", DIGEST_A))
+        self.assertFalse(fake.commands("azd", "deploy"))
         self.assertFalse(fake.commands("az", "acr", "build"))
-        waiting.assert_called_once()
-        settings = fake.environment_settings()
-        for key, value in environment().items():
-            if key in ("HYDRO_ORCHESTRATOR_CONFIG", "HYDRO_FABRIC_SOURCE_CONFIG"):
-                self.assertEqual(json.loads(settings[key]), json.loads(value))
-            else:
-                self.assertEqual(settings[key], value)
 
     def test_routable_current_agent_is_not_republished(self):
         fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        refresh = Mock(return_value=False)
-        self.assertEqual(run(fake, [agent()], needs_runtime_refresh=refresh), agent())
+        refresh = Mock()
+        self.assertEqual(run(fake, [agent()], verify_current_runtime=refresh), agent())
         refresh.assert_called_once()
         self.assertFalse(fake.commands("azd"))
 
@@ -411,13 +402,13 @@ class ConvergenceTests(unittest.TestCase):
         fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
         refresh = Mock(side_effect=RuntimeError("HTTP 403"))
         with self.assertRaisesRegex(RuntimeError, "HTTP 403"):
-            run(fake, [agent()], needs_runtime_refresh=refresh)
+            run(fake, [agent()], verify_current_runtime=refresh)
         self.assertFalse(fake.commands("azd"))
 
     def test_new_agent_publication_does_not_also_request_runtime_refresh(self):
         fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        refresh = Mock(return_value=True)
-        run(fake, [None, agent(version=1)], needs_runtime_refresh=refresh)
+        refresh = Mock()
+        run(fake, [None, agent(version=1)], verify_current_runtime=refresh)
         refresh.assert_not_called()
         self.assertEqual(len(fake.commands("azd", "deploy")), 1)
 
