@@ -533,6 +533,12 @@ by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds sh
 Registry and monitoring resources stay shared, but new infrastructure connection
 names are project-specific. Compatible connections already owned by the selected
 project are retained; sibling-project connections are never updated or claimed.
+Native Fabric IQ and ontology connections are also named from both the project
+ARM identity and workspace GUID, since Azure enforces account-wide name ownership.
+Existing workspace-only names are retained only when their ARM identity proves
+selected-project ownership. Setup persists the verified connection names and uses
+them consistently in specialists, the toolbox, hosted configuration and publication
+readback; changing projects never updates the old project's private connections.
 Setup and app publication also probe the real invocation URL with an empty body.
 Only the runtime's exact HTTP 422 admission rejection passes; no question, decision
 or source tokens are submitted. This verifies routing, not answers or delivery.

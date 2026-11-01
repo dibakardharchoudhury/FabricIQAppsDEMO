@@ -1,4 +1,5 @@
 """Stable Foundry resource identities for independently bound workspace deployments."""
+import hashlib
 import re
 
 
@@ -12,3 +13,14 @@ def foundry_resource_suffix(workspace: str) -> str:
 
 def workspace_project_name(workspace: str) -> str:
     return "hydro-workspace" + foundry_resource_suffix(workspace)
+
+
+def native_connection_name(project_id: str, workspace: str, kind: str) -> str:
+    if kind not in ("iq", "ontology") or not re.fullmatch(
+        r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/?#]+/providers/"
+        r"Microsoft\.CognitiveServices/accounts/[^/?#]+/projects/[A-Za-z0-9_.-]+",
+        project_id, re.IGNORECASE,
+    ):
+        raise ValueError("Native connection names require a verified project ARM identity and kind.")
+    identity = project_id.casefold() + "/" + foundry_resource_suffix(workspace)
+    return "hydro-fabric-" + kind + "-" + hashlib.sha256(identity.encode()).hexdigest()[:32]

@@ -20,7 +20,7 @@ from urllib.parse import quote, urlparse
 import requests
 
 from deploy_foundry_project import PREFERRED_ORCHESTRATION_TPM
-from foundry_resource_names import foundry_resource_suffix, workspace_project_name
+from foundry_resource_names import foundry_resource_suffix, native_connection_name, workspace_project_name
 from http_retries import request_with_read_retry
 
 
@@ -29,6 +29,31 @@ def saved_resource_suffix(deploy, values: dict[str, str], workspace: str) -> str
     if suffix and suffix != foundry_resource_suffix(workspace):
         raise deploy.DeployError("The saved Foundry resource suffix belongs to another workspace.")
     return suffix
+
+
+def saved_native_connection(deploy, values: dict[str, str], workspace: str, kind: str) -> str:
+    legacy = "hydro-fabric-" + kind + saved_resource_suffix(deploy, values, workspace)
+    saved = deploy._public_config_value(values, f"RAYFIN_PUBLIC_FOUNDRY_{kind.upper()}_CONNECTION_NAME")
+    if not saved:
+        return legacy
+    scoped = native_connection_name(
+        deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID"), workspace, kind,
+    )
+    if saved not in (legacy, scoped):
+        raise deploy.DeployError("The saved native Foundry connection belongs to another project/workspace.")
+    return saved
+
+
+def select_native_connection(project_id: str, workspace: str, kind: str, connections: list[dict]) -> str:
+    legacy = "hydro-fabric-" + kind + foundry_resource_suffix(workspace)
+    matching = [item for item in connections if item.get("name") == legacy]
+    if len(matching) > 1:
+        raise RuntimeError(f"Foundry connection {legacy} has duplicate live entries.")
+    if matching and str(matching[0].get("id", "")).casefold() == (
+        project_id + "/connections/" + legacy
+    ).casefold():
+        return legacy
+    return native_connection_name(project_id, workspace, kind)
 
 
 def definition_operation_url(location: str) -> str:
@@ -226,6 +251,7 @@ def source_configuration_digest(tenant: str, workspace: str, ontology: str, valu
 
 def verify_hosted_source(
     agent: dict, tenant: str, workspace: str, ontology: str, digest: str, *, resource_suffix: str = "",
+    data_agent_connection: str = "",
 ) -> None:
     try:
         raw = agent["versions"]["latest"]["definition"]["environment_variables"]["HYDRO_ORCHESTRATOR_CONFIG"]
@@ -246,7 +272,7 @@ def verify_hosted_source(
     if resource_suffix and resource_suffix != foundry_resource_suffix(workspace):
         raise RuntimeError("Foundry resource names do not match the selected workspace.")
     if native_binding != {
-        "source": expected, "connections": {"data-agent": "hydro-fabric-iq" + resource_suffix},
+        "source": expected, "connections": {"data-agent": data_agent_connection or "hydro-fabric-iq" + resource_suffix},
         "toolbox": "hydro-fabric-iq-tools" + resource_suffix,
         **({"agent_name_suffix": resource_suffix} if resource_suffix else {}),
     }:
@@ -350,12 +376,14 @@ def fabric_iq_connection_properties(target: str) -> dict:
 
 def ensure_native_toolbox(
     endpoint: str, headers: dict, *, verify_only: bool = False, resource_suffix: str = "",
+    data_agent_connection: str = "",
 ) -> str:
     name = "hydro-fabric-iq-tools" + resource_suffix
     url = endpoint.rstrip("/") + "/toolboxes/" + name
     tools = [{
         "type": "fabric_iq_preview", "name": "hydro-data", "server_label": "fabriciq-data-agent",
-        "project_connection_id": "hydro-fabric-iq" + resource_suffix, "require_approval": "never",
+        "project_connection_id": data_agent_connection or "hydro-fabric-iq" + resource_suffix,
+        "require_approval": "never",
     }]
     response = request_with_read_retry("GET", url + "?api-version=v1", headers=headers, timeout=60)
     if response.status_code not in (200, 404):
@@ -391,7 +419,10 @@ def ensure_native_toolbox(
     )
     if not response.ok:
         raise RuntimeError(f"Native Foundry toolbox publication failed: HTTP {response.status_code}.")
-    if ensure_native_toolbox(endpoint, headers, verify_only=True, resource_suffix=resource_suffix) != version:
+    if ensure_native_toolbox(
+        endpoint, headers, verify_only=True, resource_suffix=resource_suffix,
+        data_agent_connection=data_agent_connection,
+    ) != version:
         raise RuntimeError("Native Foundry toolbox publication readback differs from the requested version.")
     return version
 
@@ -417,13 +448,16 @@ def verify_prepared_connections(
     if not token:
         raise RuntimeError("No delegated Azure management token was returned.")
 
-    def read(path: str) -> dict:
+    def read(path: str, *, connection_id: str = "") -> dict:
         response = request_with_read_retry(
             "GET", f"https://management.azure.com{path}", headers={"Authorization": f"Bearer {token}"}, timeout=60,
         )
         if not response.ok:
             raise RuntimeError(f"Prepared Foundry metadata read failed: HTTP {response.status_code}.")
-        return response.json().get("properties", {})
+        body = response.json()
+        if connection_id and str(body.get("id", "")).casefold() != connection_id.casefold():
+            raise RuntimeError("Prepared Foundry connection is not owned by the selected project.")
+        return body.get("properties", {})
 
     project = read(project_id + "?api-version=2025-06-01")
     if project.get("endpoints", {}).get("AI Foundry API", "").rstrip("/") != value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT").rstrip("/"):
@@ -431,8 +465,9 @@ def verify_prepared_connections(
     for name, item, is_ontology in (
         ("hydro-fabric-iq", agent_id, False), ("hydro-fabric-ontology", ontology, True),
     ):
-        name += suffix
-        connection = read(f"{project_id}/connections/{name}?api-version=2025-10-01-preview")
+        name = saved_native_connection(deploy, values, workspace, "ontology" if is_ontology else "iq")
+        connection_id = f"{project_id}/connections/{name}"
+        connection = read(connection_id + "?api-version=2025-10-01-preview", connection_id=connection_id)
         target = connection.get("target", "")
         if (not fabric_iq_target_matches(target, workspace, item, ontology=is_ontology)
                 or not definition_matches(connection, fabric_iq_connection_properties(target))):
@@ -450,7 +485,8 @@ def verify_prepared_connections(
             raise deploy.DeployError("No delegated Foundry token was returned.")
         foundry_headers = {"Authorization": f"Bearer {token}"}
     ensure_native_toolbox(value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"),
-                          foundry_headers, verify_only=True, resource_suffix=suffix)
+                          foundry_headers, verify_only=True, resource_suffix=suffix,
+                          data_agent_connection=saved_native_connection(deploy, values, workspace, "iq"))
 
 
 def verify_existing(deploy, tenant: str, workspace: str) -> None:
@@ -501,7 +537,8 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     except RuntimeError as error:
         raise deploy.DeployError(f"{error} {guidance}") from error
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
-        deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, "hydro-fabric-iq" + suffix,
+        deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model,
+        saved_native_connection(deploy, values, workspace, "iq"),
     ), cwd=deploy.APP_DIR))
     definitions = {name + suffix: definition for name, definition in definitions.items()}
     hosted_name = "hydro-orchestrator" + suffix
@@ -519,7 +556,10 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
                 raise deploy.DeployError(f"Foundry specialist {name} is stale. {guidance}")
             continue
         try:
-            verify_hosted_source(agent, tenant, workspace, ontology, digest, resource_suffix=suffix)
+            verify_hosted_source(
+                agent, tenant, workspace, ontology, digest, resource_suffix=suffix,
+                data_agent_connection=saved_native_connection(deploy, values, workspace, "iq"),
+            )
             version, image = hosted_runtime_identity(agent)
             url = hosted_invocations_url(agent, endpoint, resource_suffix=suffix)
         except RuntimeError as error:
@@ -962,9 +1002,9 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
     hosted_name = "hydro-orchestrator" + suffix
     print(f"Foundry: workspace-scoped agent set {suffix}; reusing model deployment {model}, "
           "without allocating another model deployment.", flush=True)
-    iq_name = "hydro-fabric-iq" + suffix
+    iq_name = select_native_connection(project_id, workspace, "iq", connections)
     iq_url = fabric_iq_target(workspace, selected[0]["id"], connections)
-    ontology_connection = "hydro-fabric-ontology" + suffix
+    ontology_connection = select_native_connection(project_id, workspace, "ontology", connections)
     ontology_url = fabric_iq_target(workspace, ontology, connections, ontology=True)
     for connection_name, target in ((iq_name, iq_url), (ontology_connection, ontology_url)):
         connection_url = f"https://management.azure.com{project_id}/connections/{connection_name}?api-version=2025-10-01-preview"
@@ -972,13 +1012,19 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         matching = [item for item in connections if item.get("name") == connection_name]
         if len(matching) > 1:
             raise deploy.DeployError(f"Foundry connection {connection_name} has duplicate live entries.")
+        if matching and str(matching[0].get("id", "")).casefold() != (
+            project_id + "/connections/" + connection_name
+        ).casefold():
+            raise deploy.DeployError(f"Foundry connection {connection_name} is not owned by the selected project.")
         if matching and definition_matches(matching[0].get("properties", {}), connection):
             print(f"Foundry: reusing current connection {connection_name}; no update needed.", flush=True)
         else:
             print(f"Foundry: updating connection {connection_name}; source or authentication differs.", flush=True)
             request("PUT", connection_url, arm_headers, json={"properties": connection})
-            readback = request("GET", connection_url, arm_headers).json()["properties"]
-            if not definition_matches(readback, connection):
+            readback = request("GET", connection_url, arm_headers).json()
+            if (str(readback.get("id", "")).casefold() != (
+                    project_id + "/connections/" + connection_name
+                ).casefold() or not definition_matches(readback.get("properties", {}), connection)):
                 raise deploy.DeployError(f"Fabric IQ connection {connection_name} readback did not match its requested identity/authentication.")
 
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
@@ -1009,7 +1055,9 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
             raise deploy.DeployError(f"Foundry definition readback failed for {name}.")
         print(f"Verified persistent Foundry agent {name}:{live['version']}", flush=True)
     print(f"Foundry: specialists current={reused}, updated={updated}, created={created}.", flush=True)
-    ensure_native_toolbox(endpoint, agent_headers, resource_suffix=suffix)
+    ensure_native_toolbox(
+        endpoint, agent_headers, resource_suffix=suffix, data_agent_connection=iq_name,
+    )
 
     kql = request(
         "GET", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/kqlDatabases/{public_values['RAYFIN_PUBLIC_KQL_DATABASE_ID']}",
@@ -1036,12 +1084,15 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         workspace=workspace, ontology=ontology,
         spa_client_id=deploy._public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID"),
         values=public_values, source_digest=source_digest, kusto_origin=f"https://{query_uri.netloc}",
-        connections=connections, resource_suffix=suffix,
+        connections=connections, resource_suffix=suffix, data_agent_connection=iq_name,
     )
     try:
         invocations_url = hosted_invocations_url(hosted, endpoint, resource_suffix=suffix)
         runtime_version, runtime_image_digest = hosted_runtime_identity(hosted)
-        verify_hosted_source(hosted, tenant, workspace, ontology, source_digest, resource_suffix=suffix)
+        verify_hosted_source(
+            hosted, tenant, workspace, ontology, source_digest, resource_suffix=suffix,
+            data_agent_connection=iq_name,
+        )
         verify_hosted_admission(invocations_url, agent_headers)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
@@ -1049,6 +1100,8 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
     env_path.write_text(deploy._rebind_public_env(env_path.read_text(encoding="utf-8"), {
         "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
         "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX": suffix,
+        "RAYFIN_PUBLIC_FOUNDRY_IQ_CONNECTION_NAME": iq_name,
+        "RAYFIN_PUBLIC_FOUNDRY_ONTOLOGY_CONNECTION_NAME": ontology_connection,
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project_id,
         "RAYFIN_PUBLIC_FOUNDRY_DATA_AGENT_ID": selected[0]["id"],
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,

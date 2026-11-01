@@ -52,12 +52,12 @@ CONNECTIONS = [{"name": "reg-conn", "properties": {"category": "ContainerRegistr
                {"name": "other", "properties": {"category": "AppInsights", "target": "/x"}}]
 
 
-def configuration(writes=False):
+def configuration(writes=False, *, data_agent_connection=""):
     digest = provision.source_configuration_digest(GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], VALUES)
     return hosted.compose_runtime_configuration(
         tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"], spa_client_id=GUIDS["spa"],
         kusto_origin=KUSTO + "/", project_endpoint=ENDPOINT + "/", values=VALUES, source_digest=digest,
-        production_writes=writes,
+        production_writes=writes, data_agent_connection=data_agent_connection,
     ), digest
 
 
@@ -75,6 +75,22 @@ def agent(digest=DIGEST_A, env=None, status="active", kind="hosted", version=7):
     return {"versions": {"latest": {"status": status, "version": version, "definition": {
         "kind": kind, "container_configuration": {"image": f"myreg.azurecr.io/hydro-orchestrator@{digest}"},
         "environment_variables": environment() if env is None else env}}}}
+
+
+class NativeBindingTests(unittest.TestCase):
+    def test_project_scoped_connection_is_used_and_verified_without_source_drift(self):
+        connection = "hydro-fabric-iq-" + "c" * 32
+        (orchestrator, _), digest = configuration(data_agent_connection=connection)
+        self.assertEqual(orchestrator["native_binding"]["connections"], {"data-agent": connection})
+        live = agent(env={"HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator)})
+        provision.verify_hosted_source(
+            live, GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], digest,
+            data_agent_connection=connection,
+        )
+        with self.assertRaisesRegex(RuntimeError, "native binding"):
+            provision.verify_hosted_source(
+                live, GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], digest,
+            )
 
 
 class FakeDeploy:

@@ -38,6 +38,33 @@ def admission_response(status=422, body=None):
 
 
 class FabricIQConnectionTests(unittest.TestCase):
+    def test_native_names_include_project_and_workspace_and_preserve_owned_legacy(self):
+        workspace = "20000000-0000-0000-0000-000000000001"
+        project = ("/subscriptions/10000000-0000-0000-0000-000000000001/resourceGroups/rg/"
+                   "providers/Microsoft.CognitiveServices/accounts/a/projects/p")
+        legacy = "hydro-fabric-iq" + module.foundry_resource_suffix(workspace)
+        connection = {"name": legacy, "id": project + "/connections/" + legacy}
+        self.assertEqual(module.select_native_connection(project, workspace, "iq", [connection]), legacy)
+        moved = module.select_native_connection(project + "-recovery", workspace, "iq", [connection])
+        self.assertNotEqual(moved, legacy)
+        self.assertEqual(moved, module.native_connection_name(project + "-recovery", workspace, "iq"))
+        self.assertNotEqual(moved, module.native_connection_name(project, workspace, "iq"))
+        self.assertNotEqual(moved, module.native_connection_name(project + "-recovery",
+                                                               workspace[:-1] + "2", "iq"))
+        self.assertEqual(moved, module.native_connection_name((project + "-recovery").upper(),
+                                                            workspace.upper(), "iq"))
+        self.assertLessEqual(len(module.native_connection_name(project, workspace, "ontology")), 64)
+        unknown = {"name": legacy}
+        self.assertNotEqual(module.select_native_connection(project, workspace, "iq", [unknown]), legacy)
+        deploy = Mock(DeployError=RuntimeError, _public_config_value=lambda values, key: values.get(key, ""))
+        values = {"RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX": module.foundry_resource_suffix(workspace),
+                  "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": project + "-recovery",
+                  "RAYFIN_PUBLIC_FOUNDRY_IQ_CONNECTION_NAME": moved}
+        self.assertEqual(module.saved_native_connection(deploy, values, workspace, "iq"), moved)
+        values["RAYFIN_PUBLIC_FOUNDRY_IQ_CONNECTION_NAME"] = module.native_connection_name(project, workspace, "iq")
+        with self.assertRaisesRegex(RuntimeError, "another project/workspace"):
+            module.saved_native_connection(deploy, values, workspace, "iq")
+
     def test_project_connection_inventory_preserves_pagination_and_rejects_foreign_pages(self):
         project = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p"
         next_page = f"https://management.azure.com{project}/connections?api-version=2025-10-01-preview&skip=next"
@@ -208,17 +235,23 @@ class NativeToolboxProvisionTests(unittest.TestCase):
 class IncrementalProvisionTests(unittest.TestCase):
     def run_provision(
         self, *, drift=None, missing=None, broken_readback=False, denied=False,
-        target_workspace=None, foreign_connections=False, admission_failure=False,
+        target_workspace=None, foreign_connections=False, admission_failure=False, moved_project=False,
     ):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
         endpoint = values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]
         ontology = values["RAYFIN_PUBLIC_ONTOLOGY_ID"]
         project_id = f"/subscriptions/{tenant}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/hydro/projects/hydro"
+        previous_project_id = project_id
+        if moved_project:
+            project_id += "-recovery"
+            endpoint += "-recovery"
         selection = module.FoundrySelection(tenant, project_id, endpoint, "model")
         if target_workspace:
             workspace = target_workspace
             values["RAYFIN_PUBLIC_WORKSPACE_ID"] = workspace
         suffix = module.foundry_resource_suffix(workspace)
+        iq_name = (module.native_connection_name(project_id, workspace, "iq") if moved_project
+                   else "hydro-fabric-iq" + suffix)
         hosted["name"] += suffix
         environment = hosted["versions"]["latest"]["definition"]["environment_variables"]
         configuration = json.loads(environment["HYDRO_ORCHESTRATOR_CONFIG"])
@@ -228,7 +261,7 @@ class IncrementalProvisionTests(unittest.TestCase):
         })
         configuration["native_binding"] = {
             "source": copy.deepcopy(configuration["source"]),
-            "connections": {"data-agent": "hydro-fabric-iq" + suffix},
+            "connections": {"data-agent": iq_name},
             "toolbox": "hydro-fabric-iq-tools" + suffix,
             "agent_name_suffix": suffix,
         }
@@ -258,6 +291,9 @@ class IncrementalProvisionTests(unittest.TestCase):
         if drift == "connection":
             connections["hydro-fabric-iq" + suffix]["target"] = "https://old.example/agent"
         untouched = {}
+        owners = {name: previous_project_id for name in connections}
+        if moved_project:
+            untouched.update(copy.deepcopy(connections))
         if foreign_connections:
             for name in ("hydro-fabric-iq", "hydro-fabric-iq-" + "f" * 32):
                 untouched[name] = module.fabric_iq_connection_properties(
@@ -293,17 +329,19 @@ class IncrementalProvisionTests(unittest.TestCase):
                 if "/versions/" in url:
                     body = {"tools": [{
                         "type": "fabric_iq_preview", "name": "hydro-data", "server_label": "fabriciq-data-agent",
-                        "project_connection_id": "hydro-fabric-iq" + suffix, "require_approval": "never",
+                        "project_connection_id": iq_name, "require_approval": "never",
                     }]}
             elif url == f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview":
                 body = {"value": [
-                    {"name": name, "properties": copy.deepcopy(properties)} for name, properties in connections.items()
+                    {"name": name, "id": owners.get(name, project_id) + "/connections/" + name,
+                     "properties": copy.deepcopy(properties)} for name, properties in connections.items()
                 ] + [insights]}
             elif "/connections/" in url:
                 name = url.split("/connections/", 1)[1].split("?")[0]
                 if method == "PUT":
                     connections[name] = kwargs["json"]["properties"]
-                body = {"properties": connections[name]}
+                    owners[name] = project_id
+                body = {"id": owners[name] + "/connections/" + name, "properties": connections[name]}
             elif "/agents/" in url:
                 name = url.split("/agents/", 1)[1].split("/")[0].split("?")[0]
                 if denied:
@@ -341,13 +379,24 @@ class IncrementalProvisionTests(unittest.TestCase):
             resolve.assert_called_once_with(deploy, tenant, workspace, allow_create=True)
             hosted_module.ensure_hosted_agent.assert_called_once()
             self.assertEqual(hosted_module.ensure_hosted_agent.call_args.kwargs["resource_suffix"], suffix)
+            self.assertEqual(hosted_module.ensure_hosted_agent.call_args.kwargs["data_agent_connection"], iq_name)
             updates = deploy._rebind_public_env.call_args.args[1]
             self.assertEqual(updates["RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX"], suffix)
+            self.assertEqual(updates["RAYFIN_PUBLIC_FOUNDRY_IQ_CONNECTION_NAME"], iq_name)
             self.assertIn("/agents/hydro-orchestrator" + suffix + "/",
                           updates["RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL"])
             for name, properties in untouched.items():
                 self.assertEqual(connections[name], properties)
         return request.call_args_list
+
+    def test_project_move_creates_native_connections_without_updating_previous_owner(self):
+        calls = self.run_provision(moved_project=True)
+        writes = [entry for entry in calls if entry.args[0] == "PUT"]
+        self.assertEqual(len(writes), 2)
+        for entry in writes:
+            self.assertIn("/projects/hydro-recovery/connections/", entry.args[1])
+            self.assertNotIn("/connections/hydro-fabric-iq-00000002", entry.args[1])
+            self.assertNotIn("/connections/hydro-fabric-ontology-00000002", entry.args[1])
 
     def test_ten_workspaces_share_one_project_and_model_without_touching_foreign_resources(self):
         projects = set()
@@ -985,7 +1034,10 @@ class PreparedFoundryTests(unittest.TestCase):
                         props = {"category": "RemoteTool", "authType": "UserEntraToken", "target": target,
                                  "audience": "https://api.fabric.microsoft.com", "isSharedToAll": False,
                                  "metadata": {"type": "fabric_iq_preview"}}
-                    return Mock(ok=True, json=lambda: {"properties": props})
+                    body = {"properties": props}
+                    if "/connections/" in url:
+                        body["id"] = url.removeprefix("https://management.azure.com").split("?")[0]
+                    return Mock(ok=True, json=lambda: body)
                 ontology = values["RAYFIN_PUBLIC_ONTOLOGY_ID"]
                 with patch.object(module, "request_with_read_retry", side_effect=respond) as request, \
                         patch.object(module, "read_data_agent_definition", return_value=definition(

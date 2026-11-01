@@ -117,6 +117,7 @@ def compose_runtime_configuration(
     *, tenant: str, workspace: str, ontology: str, spa_client_id: str, kusto_origin: str,
     project_endpoint: str, values: dict[str, str], source_digest: str, production_writes: bool,
     resource_suffix: str = "",
+    data_agent_connection: str = "",
 ) -> tuple[dict[str, object], dict[str, object]]:
     """The two JSON documents the runtime requires, built only from the verified deployment target."""
     if resource_suffix and resource_suffix != foundry_resource_suffix(workspace):
@@ -141,7 +142,9 @@ def compose_runtime_configuration(
         },
         "project_endpoint": project_endpoint.rstrip("/"),
         "native_binding": {
-            "source": source, "connections": {"data-agent": "hydro-fabric-iq" + resource_suffix},
+            "source": source, "connections": {
+                "data-agent": data_agent_connection or "hydro-fabric-iq" + resource_suffix,
+            },
             "toolbox": "hydro-fabric-iq-tools" + resource_suffix,
             **({"agent_name_suffix": resource_suffix} if resource_suffix else {}),
         },
@@ -285,6 +288,7 @@ def ensure_hosted_agent(
     deploy, *, get_agent, endpoint: str, project_id: str, model: str, tenant: str, workspace: str, ontology: str,
     spa_client_id: str, values: dict[str, str], source_digest: str, kusto_origin: str, connections: list[dict],
     resource_suffix: str = "",
+    data_agent_connection: str = "",
     sleep=time.sleep,
 ) -> dict:
     """Return the active hosted agent after converging it on the current source and deployment target.
@@ -309,7 +313,7 @@ def ensure_hosted_agent(
     orchestrator, fabric_source = compose_runtime_configuration(
         tenant=tenant, workspace=workspace, ontology=ontology, spa_client_id=spa_client_id, kusto_origin=kusto_origin,
         project_endpoint=endpoint, values=values, source_digest=source_digest, production_writes=production_writes,
-        resource_suffix=resource_suffix,
+        resource_suffix=resource_suffix, data_agent_connection=data_agent_connection,
     )
     environment = {
         "PYTHONNOUSERSITE": "1",
