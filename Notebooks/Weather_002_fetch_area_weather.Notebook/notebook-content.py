@@ -493,6 +493,36 @@ def load_station_points(
     return points
 
 
+def persist_station_locations(points, updated_at):
+    location_rows = [
+        {
+            "location_id": point["location_id"],
+            "location_name": point["location_name"],
+            "latitude": float(point["latitude"]),
+            "longitude": float(point["longitude"]),
+            "elevation_m": None,
+            "metadata_json": json.dumps({
+                "facility_id": point["location_id"],
+                "generation_method": "facility_inventory",
+            }),
+            "updated_at_utc": updated_at,
+        }
+        for point in points
+    ]
+    locations_df = spark.createDataFrame(
+        location_rows,
+        "location_id string, location_name string, latitude double, longitude double, "
+        "elevation_m double, metadata_json string, updated_at_utc timestamp",
+    )
+    locations_df.createOrReplaceTempView("incoming_weather_locations")
+    spark.sql(f"""
+MERGE INTO {TABLES['locations']} target USING incoming_weather_locations source
+ON target.location_id = source.location_id
+WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
+""")
+    return locations_df
+
+
 def persist_station_areas(areas, updated_at, selected_facility_ids):
     area_rows = []
     for area in areas:
@@ -560,7 +590,9 @@ areas = [
 print(f"Created {len(areas)} station aggregation areas at {aggregation_radius_km:g} km radius")
 
 started_at = pd.Timestamp.now(tz="UTC").to_pydatetime()
+locations_df = persist_station_locations(points, started_at)
 areas_df = persist_station_areas(areas, started_at, selected_facility_ids)
+display(locations_df.orderBy("location_id"))
 display(areas_df.orderBy("area_id"))
 if prepare_only:
     notebookutils.notebook.exit(json.dumps({

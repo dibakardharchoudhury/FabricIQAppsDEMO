@@ -105,6 +105,8 @@ class WeatherSourceContractTests(unittest.TestCase):
 
     def test_metadata_preparation_never_reads_aurora_credentials(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertLess(source.index("persist_station_locations(points, started_at)"),
+                        source.index("persist_station_areas(areas, started_at, selected_facility_ids)"))
         self.assertLess(source.index("persist_station_areas(areas, started_at, selected_facility_ids)"),
                         source.index("if prepare_only:"))
         self.assertLess(source.index("if prepare_only:"), source.index("if not key_vault_uri.strip():"))
@@ -129,6 +131,43 @@ class WeatherSourceContractTests(unittest.TestCase):
         self.assertEqual(json.loads(str(result.exception)), {
             "status": "prepared", "areas": 3, "aurora": "disabled",
         })
+
+    def test_station_locations_are_prepared_without_a_vendor_response(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        function = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef) and node.name == "persist_station_locations")
+        queries = []
+        rows = []
+        schemas = []
+
+        class Frame:
+            def createOrReplaceTempView(self, name):
+                self.name = name
+
+        class Spark:
+            @staticmethod
+            def createDataFrame(values, schema):
+                rows.extend(values)
+                schemas.append(schema)
+                return Frame()
+
+            @staticmethod
+            def sql(query):
+                queries.append(query)
+
+        context = {"spark": Spark, "json": json, "TABLES": {"locations": "weather_locations"}}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "station_locations", "exec"), context)
+        point = {
+            "location_id": "F001", "location_name": "Station",
+            "latitude": 59.9, "longitude": 10.7,
+        }
+        context["persist_station_locations"]([point], datetime(2026, 10, 27))
+        self.assertEqual(rows[0]["location_id"], point["location_id"])
+        self.assertEqual(rows[0]["latitude"], point["latitude"])
+        self.assertEqual(json.loads(rows[0]["metadata_json"])["facility_id"], point["location_id"])
+        self.assertIn("elevation_m double", schemas[0])
+        self.assertEqual(len(queries), 1)
+        self.assertIn("MERGE INTO weather_locations", queries[0])
 
     def test_station_areas_are_prepared_without_a_vendor_response(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
