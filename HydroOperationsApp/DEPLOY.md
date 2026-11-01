@@ -532,8 +532,15 @@ Setup and app publication also probe the real invocation URL with an empty body.
 Only the runtime's exact HTTP 422 admission rejection passes; no question, decision
 or source tokens are submitted. This verifies routing, not answers or delivery.
 `404 ResourceNotFound: Subdomain does not map to a resource` blocks publication.
-If the URL matches Azure's project endpoint, contact Azure support; do not reset
-Fabric, replay a request or treat an active agent as proof of runtime readiness.
+When Foundry setup finds this exact failure on a configuration-current hosted agent,
+it attempts one supported redeployment of the same immutable image and verified
+source configuration. It preserves runtime state configuration and waits for a new
+active version before probing admission again. Healthy agents are not republished;
+other failures propagate without this recovery attempt. A continued failure blocks
+publication and requires Azure support. This is a recovery attempt, not a certified
+answer or proof of delivery. Do not reset Fabric or replay a failed question/write
+to work around unavailable runtime routing. Read-only app publication does not
+redeploy the runtime.
 
 **Deploy app** checks the prepared source/authentication bindings,
 specialist definitions and active immutable Hosted runtime identity. A packaged-code

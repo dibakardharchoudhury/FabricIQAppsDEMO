@@ -6,10 +6,10 @@ separate deployment path. It converges the agent on the current source and targe
 1. fingerprint every file the Dockerfile packages and build ``hydro-orchestrator:src-<fingerprint>`` in the
    project's ACR only when that tag does not exist yet;
 2. compose both runtime configurations from the verified target (never copied from another one);
-3. publish a new immutable version with azd only when the live agent differs; and
+3. publish a new immutable version when the live agent differs or its verified runtime requires refresh; and
 4. wait until the active version carries exactly the expected image digest and configuration.
 
-An agent that is already current costs one registry lookup and changes nothing.
+An agent that is already current and routable changes nothing.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 from foundry_resource_names import foundry_resource_suffix
 
@@ -285,6 +286,7 @@ def ensure_hosted_agent(
     deploy, *, get_agent, endpoint: str, project_id: str, model: str, tenant: str, workspace: str, ontology: str,
     spa_client_id: str, values: dict[str, str], source_digest: str, kusto_origin: str, connections: list[dict],
     resource_suffix: str = "",
+    needs_runtime_refresh: Callable[[dict], bool] | None = None,
     sleep=time.sleep,
 ) -> dict:
     """Return the active hosted agent after converging it on the current source and deployment target.
@@ -320,9 +322,15 @@ def ensure_hosted_agent(
 
     tag, digest = ensure_hosted_image(deploy, registry=registry, subscription=subscription)
     reason = needs_publish(existing, image_digest=digest, environment=environment)
-    if reason is None:
+    refresh_requested = (
+        reason is None and existing is not None
+        and needs_runtime_refresh is not None and needs_runtime_refresh(existing)
+    )
+    if reason is None and not refresh_requested:
         print(f"Hosted agent {agent_name} is current (image {tag}); nothing to publish.", flush=True)
         return existing  # type: ignore[return-value]
+    if refresh_requested:
+        reason = "current image/configuration has unavailable runtime routing; refreshing one immutable version"
     print(f"Publishing Hosted Agent {agent_name}: {reason}.", flush=True)
 
     project_dir = azd_project_dir(deploy, endpoint, agent_name=agent_name)
@@ -345,6 +353,10 @@ def ensure_hosted_agent(
     while True:
         agent = get_agent()
         reason = needs_publish(agent, image_digest=digest, environment=environment)
+        if reason is None and refresh_requested and (
+            not hosted_state(agent)[1] or hosted_state(agent)[1] == _version
+        ):
+            reason = "the newly published immutable runtime version is not visible yet"
         if reason is None:
             print(f"Hosted Agent {agent_name} version {hosted_state(agent)[1]} is active on {tag}.", flush=True)
             return agent  # type: ignore[return-value]

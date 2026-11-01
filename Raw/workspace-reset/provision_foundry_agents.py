@@ -162,6 +162,10 @@ def hosted_runtime_identity(agent: dict) -> tuple[str, str]:
     return version, match.group("digest")
 
 
+class HostedRoutingUnavailable(RuntimeError):
+    """The authoritative hosted endpoint has no serving resource mapping."""
+
+
 def verify_hosted_admission(invocations_url: str, headers: dict) -> None:
     """Probe the real invocation route without a question, decision or source tokens."""
     response = request_with_read_retry(
@@ -189,6 +193,9 @@ def verify_hosted_admission(invocations_url: str, headers: dict) -> None:
         message += (
             " Foundry runtime routing returned ResourceNotFound: Subdomain does not map to a resource."
             " Verify the authoritative project endpoint and request Azure support if it matches."
+        )
+        raise HostedRoutingUnavailable(
+            message + " Agent execution is not certified; app publication is blocked."
         )
     raise RuntimeError(message + " Agent execution is not certified; app publication is blocked.")
 
@@ -533,6 +540,7 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
         except RuntimeError as error:
             raise deploy.DeployError(str(error)) from error
     hosted_module = _load_sibling("deploy_hosted_agent")
+
     if value("RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST") != hosted_module.source_fingerprint(deploy.REPO_ROOT):
         print(
             "Foundry: WARNING - prepared runtime passed configuration readback, but its packaged code "
@@ -1030,6 +1038,21 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         return response.json()
 
     hosted_module = _load_sibling("deploy_hosted_agent")
+    def needs_runtime_refresh(agent: dict) -> bool:
+        url = hosted_invocations_url(agent, endpoint, resource_suffix=suffix)
+        hosted_runtime_identity(agent)
+        verify_hosted_source(agent, tenant, workspace, ontology, source_digest, resource_suffix=suffix)
+        try:
+            verify_hosted_admission(url, agent_headers)
+        except HostedRoutingUnavailable as error:
+            print(
+                f"Foundry: {error} Attempting one supported hosted redeployment with the same image and "
+                "source configuration; no question or write is replayed.",
+                flush=True,
+            )
+            return True
+        return False
+
     print(f"Foundry: Hosted Agent - converging {hosted_name}.", flush=True)
     hosted = hosted_module.ensure_hosted_agent(
         deploy, get_agent=get_agent, endpoint=endpoint, project_id=project_id, model=model, tenant=tenant,
@@ -1037,6 +1060,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         spa_client_id=deploy._public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID"),
         values=public_values, source_digest=source_digest, kusto_origin=f"https://{query_uri.netloc}",
         connections=connections, resource_suffix=suffix,
+        needs_runtime_refresh=needs_runtime_refresh,
     )
     try:
         invocations_url = hosted_invocations_url(hosted, endpoint, resource_suffix=suffix)

@@ -209,6 +209,7 @@ class IncrementalProvisionTests(unittest.TestCase):
     def run_provision(
         self, *, drift=None, missing=None, broken_readback=False, denied=False,
         target_workspace=None, foreign_connections=False, admission_failure=False,
+        check_recovery=False, recover_after_publish=False,
     ):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
         endpoint = values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]
@@ -278,12 +279,20 @@ class IncrementalProvisionTests(unittest.TestCase):
         deploy._rebind_public_env.side_effect = lambda content, updates: content
         hosted_module = Mock(source_fingerprint=Mock(return_value="code"))
         hosted_module.ensure_hosted_agent.return_value = hosted
+        republished = []
+        if check_recovery:
+            def converge(_deploy, **kwargs):
+                if kwargs["needs_runtime_refresh"](hosted):
+                    republished.append(1)
+                    hosted["versions"]["latest"]["version"] = "8"
+                return hosted
+            hosted_module.ensure_hosted_agent.side_effect = converge
 
         def response(method, url, **kwargs):
             if "/endpoint/protocols/invocations?" in url:
                 self.assertEqual(method, "POST")
                 self.assertEqual(kwargs["json"], {})
-                if admission_failure:
+                if admission_failure and not (recover_after_publish and republished):
                     return admission_response(404, {"error": {
                         "code": "ResourceNotFound", "message": "Subdomain does not map to a resource.",
                     }})
@@ -331,15 +340,19 @@ class IncrementalProvisionTests(unittest.TestCase):
                 patch.object(module, "request_with_read_retry", side_effect=response) as request:
             deploy.RAYFIN_DIR = Path(directory)
             (deploy.RAYFIN_DIR / ".env").write_text("", encoding="utf-8")
-            if admission_failure:
+            if admission_failure and not recover_after_publish:
                 with self.assertRaisesRegex(RuntimeError, "Subdomain does not map"):
                     module.provision(deploy, tenant, workspace)
                 deploy._rebind_public_env.assert_not_called()
                 self.assertEqual((deploy.RAYFIN_DIR / ".env").read_text(encoding="utf-8"), "")
+                if check_recovery:
+                    self.assertEqual(len(republished), 1)
                 return request.call_args_list
             module.provision(deploy, tenant, workspace)
             resolve.assert_called_once_with(deploy, tenant, workspace, allow_create=True)
             hosted_module.ensure_hosted_agent.assert_called_once()
+            if check_recovery:
+                self.assertEqual(len(republished), int(admission_failure))
             self.assertEqual(hosted_module.ensure_hosted_agent.call_args.kwargs["resource_suffix"], suffix)
             updates = deploy._rebind_public_env.call_args.args[1]
             self.assertEqual(updates["RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX"], suffix)
@@ -411,6 +424,17 @@ class IncrementalProvisionTests(unittest.TestCase):
         calls = self.run_provision(admission_failure=True)
         self.assertEqual(calls[-1].args[0], "POST")
         self.assertEqual(calls[-1].kwargs["json"], {})
+
+    def test_current_routing_failure_is_redeployed_then_rechecked_without_business_requests(self):
+        calls = self.run_provision(
+            admission_failure=True, check_recovery=True, recover_after_publish=True,
+        )
+        probes = [entry for entry in calls if "/endpoint/protocols/invocations?" in entry.args[1]]
+        self.assertEqual(len(probes), 2)
+        self.assertTrue(all(entry.args[0] == "POST" and entry.kwargs["json"] == {} for entry in probes))
+
+    def test_failed_redeployment_admission_still_cannot_persist_ready_configuration(self):
+        self.run_provision(admission_failure=True, check_recovery=True)
 
 
 class PreparedFoundryTests(unittest.TestCase):
