@@ -3982,6 +3982,11 @@ class FoundrySupervisor:
                 )
             source_rows: list[tuple[ToolEvidence, EvidenceDataset, int, dict[str, object]]] = []
             seen: set[tuple[str, ...]] = set()
+            open_work_view = view.kind == "work_orders" and any(
+                item.kind == view.kind and item.scope == view.scope
+                and item.authority == view.authority and item.purpose == "coverage"
+                for item in contract.requirements
+            )
             for receipt, dataset in matches:
                 records = receipt.result.get(dataset.field)
                 if not isinstance(records, list) or not all(isinstance(item, dict) for item in records):
@@ -3989,6 +3994,14 @@ class FoundrySupervisor:
                         f"Governed dataset {dataset.kind} does not expose its declared record collection."
                     )
                 for index, record in enumerate(records):
+                    if open_work_view:
+                        status = record.get("status")
+                        if not isinstance(status, str) or not status.strip():
+                            raise SourceFailure(
+                                f"Required work coverage view {view.id} is missing status evidence."
+                            )
+                        if status.strip().lower() in CLOSED_WORK_STATUSES:
+                            continue
                     identity = tuple(str(record.get(key, "")) for key in dataset.identity_fields)
                     if any(identity):
                         if identity in seen:

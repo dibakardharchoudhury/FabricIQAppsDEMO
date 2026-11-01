@@ -1312,6 +1312,79 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.owner.evidence), {"quality-population"})
         self.owner.contract_answer_plan(request)
 
+    def test_work_coverage_view_excludes_closed_history_without_mutating_receipts(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "work_orders_focus_direct", "purpose": "coverage",
+            }],
+            "views": [{
+                "id": "open-work", "title": "Open work", "kind": "work_orders",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        rows = [
+            {"workOrderNumber": f"WO-{index}", "equipmentId": "EQUIP_RTI_T005", "status": status}
+            for index, status in enumerate((
+                "In progress", "Scheduled", "Ready", "Completed", " CANCELLED ", "canceled", "Closed",
+            ))
+        ]
+        receipt = ToolEvidence(
+            id="work-history", source=SOURCE, tool="query_operations",
+            arguments={"entity": "work_orders"}, completed_at=utc_now(),
+            result={"rows": rows, "row_count": len(rows), "truncated": False},
+            datasets=(EvidenceDataset(
+                kind="work_orders", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("workOrderNumber",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+
+        plan = self.owner.contract_answer_plan(self.request)
+        answer = self.owner.answer(self.request, plan, use_projected_summary=True)
+
+        self.assertEqual(len(answer.tables[0].rows), 3)
+        self.assertIn("3 verified records", plan.summary)
+        self.assertEqual(self.owner.evidence[receipt.id].result["rows"], rows)
+        self.assertEqual(
+            [row.cells[0].source.path for row in plan.tables[0].rows],
+            ["/rows/0/workOrderNumber", "/rows/1/workOrderNumber", "/rows/2/workOrderNumber"],
+        )
+
+        self.owner.answer_contract = self.owner.answer_contract.model_copy(update={
+            "requirements": (self.owner.answer_contract.requirements[0].model_copy(
+                update={"purpose": "facts"},
+            ),),
+        })
+        history = self.owner.contract_answer_plan(self.request)
+        self.assertEqual(len(history.tables[0].rows), len(rows))
+
+    def test_work_coverage_view_requires_status_evidence(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "work_orders_focus_direct", "purpose": "coverage",
+            }],
+            "views": [{
+                "id": "open-work", "title": "Open work", "kind": "work_orders",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        for status in (None, "", " ", 1):
+            with self.subTest(status=status):
+                receipt = ToolEvidence(
+                    id="missing-work-status", source=SOURCE, tool="query_operations",
+                    arguments={"entity": "work_orders"}, completed_at=utc_now(),
+                    result={"rows": [{"workOrderNumber": "WO-1", "status": status}]},
+                    datasets=(EvidenceDataset(
+                        kind="work_orders", field="rows", authority="direct", scope="focus",
+                        complete=True, identity_fields=("workOrderNumber",),
+                    ),),
+                )
+                self.owner.evidence = {receipt.id: receipt}
+                with self.assertRaisesRegex(SourceFailure, "status evidence"):
+                    self.owner.contract_answer_plan(self.request)
+
     def test_analysis_preserves_complete_bounded_fleet_rows_and_source_receipt(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
             "version": 3,

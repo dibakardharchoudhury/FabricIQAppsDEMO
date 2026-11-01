@@ -135,6 +135,10 @@ Verified prose-only answers are native evidence too; the workflow does not requi
 or invent a business-record table to accept them.
 Independent source tables and explicitly
 requested charts retain their existing presentation and exact source values.
+Work-order views bound to a coverage requirement show only open work under the
+same closed-status policy as maintenance review. Historical source receipts remain
+immutable; factual history views retain completed work. Missing status evidence
+blocks coverage presentation instead of assuming the record is open.
 Model-authored KQL is validated before any source execution. A rejected read-only
 query receives one bounded argument correction with the shared validator's guidance;
 it is not misreported as a source outage. Repeated invalid input and actual source
