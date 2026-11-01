@@ -356,6 +356,22 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                               priority="Medium", work_read_at=clock, expires_at=clock + timedelta(minutes=15),
                               existing_work=())
 
+    async def test_empty_deployment_probe_rejects_before_credentials_sources_or_run_state(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, leases, namespaces, contexts = self.ingress(root)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test",
+            ) as client:
+                response = await client.post("/invocations", json={})
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json(), {"detail": "Invalid invocation body."})
+            self.assertEqual(leases, [])
+            self.assertEqual(namespaces, [])
+            self.assertEqual(contexts, [])
+            self.assertEqual(list(root.iterdir()), [])
+            self.assertEqual(self.reads, 0)
+
     async def test_delegated_run_uses_bounded_ten_minute_lease(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

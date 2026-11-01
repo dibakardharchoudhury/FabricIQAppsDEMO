@@ -162,6 +162,37 @@ def hosted_runtime_identity(agent: dict) -> tuple[str, str]:
     return version, match.group("digest")
 
 
+def verify_hosted_admission(invocations_url: str, headers: dict) -> None:
+    """Probe the real invocation route without a question, decision or source tokens."""
+    response = request_with_read_retry(
+        "POST", invocations_url, headers=headers, json={}, timeout=120, allow_redirects=False,
+    )
+    message = f"Hosted invocation admission check failed: HTTP {response.status_code}."
+    request_id = response.headers.get("apim-request-id") or response.headers.get("x-ms-request-id")
+    if isinstance(request_id, str) and re.fullmatch(
+        r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", request_id,
+    ):
+        message += f" Request ID: {request_id}."
+    if "application/json" not in response.headers.get("content-type", ""):
+        raise RuntimeError(message + " No verified invocation admission response.")
+    try:
+        body = response.json()
+    except requests.exceptions.JSONDecodeError as error:
+        raise RuntimeError(message + " Invalid JSON admission response.") from error
+    if response.status_code == 422 and body == {"detail": "Invalid invocation body."}:
+        print("Hosted invocation route verified by empty-body rejection; no agent work was submitted.", flush=True)
+        return
+    error = body.get("error") if isinstance(body, dict) else None
+    if (response.status_code == 404 and isinstance(error, dict)
+            and error.get("code") == "ResourceNotFound"
+            and error.get("message") == "Subdomain does not map to a resource."):
+        message += (
+            " Foundry runtime routing returned ResourceNotFound: Subdomain does not map to a resource."
+            " Verify the authoritative project endpoint and request Azure support if it matches."
+        )
+    raise RuntimeError(message + " Agent execution is not certified; app publication is blocked.")
+
+
 def definition_matches(actual: dict, expected: dict) -> bool:
     return all(actual.get(key) == value for key, value in expected.items())
 
@@ -497,6 +528,10 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
                 or image != value("RAYFIN_PUBLIC_ORCHESTRATOR_IMAGE_DIGEST")
                 or url != value("RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL")):
             raise deploy.DeployError(f"Foundry Hosted runtime identity changed. {guidance}")
+        try:
+            verify_hosted_admission(url, headers)
+        except RuntimeError as error:
+            raise deploy.DeployError(str(error)) from error
     hosted_module = _load_sibling("deploy_hosted_agent")
     if value("RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST") != hosted_module.source_fingerprint(deploy.REPO_ROOT):
         print(
@@ -1002,6 +1037,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         invocations_url = hosted_invocations_url(hosted, endpoint, resource_suffix=suffix)
         runtime_version, runtime_image_digest = hosted_runtime_identity(hosted)
         verify_hosted_source(hosted, tenant, workspace, ontology, source_digest, resource_suffix=suffix)
+        verify_hosted_admission(invocations_url, agent_headers)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
     env_path = deploy.RAYFIN_DIR / ".env"

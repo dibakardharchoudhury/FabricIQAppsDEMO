@@ -27,6 +27,16 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
     }]}}
 
 
+def admission_response(status=422, body=None):
+    response = requests.Response()
+    response.status_code = status
+    response.headers["Content-Type"] = "application/json"
+    response._content = json.dumps(
+        {"detail": "Invalid invocation body."} if status == 422 and body is None else body,
+    ).encode()
+    return response
+
+
 class FabricIQConnectionTests(unittest.TestCase):
     def test_project_connection_inventory_preserves_pagination_and_rejects_foreign_pages(self):
         project = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p"
@@ -198,7 +208,7 @@ class NativeToolboxProvisionTests(unittest.TestCase):
 class IncrementalProvisionTests(unittest.TestCase):
     def run_provision(
         self, *, drift=None, missing=None, broken_readback=False, denied=False,
-        target_workspace=None, foreign_connections=False,
+        target_workspace=None, foreign_connections=False, admission_failure=False,
     ):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
         endpoint = values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]
@@ -270,7 +280,15 @@ class IncrementalProvisionTests(unittest.TestCase):
         hosted_module.ensure_hosted_agent.return_value = hosted
 
         def response(method, url, **kwargs):
-            if "/toolboxes/" in url:
+            if "/endpoint/protocols/invocations?" in url:
+                self.assertEqual(method, "POST")
+                self.assertEqual(kwargs["json"], {})
+                if admission_failure:
+                    return admission_response(404, {"error": {
+                        "code": "ResourceNotFound", "message": "Subdomain does not map to a resource.",
+                    }})
+                return admission_response()
+            elif "/toolboxes/" in url:
                 body = {"default_version": "1"}
                 if "/versions/" in url:
                     body = {"tools": [{
@@ -313,6 +331,12 @@ class IncrementalProvisionTests(unittest.TestCase):
                 patch.object(module, "request_with_read_retry", side_effect=response) as request:
             deploy.RAYFIN_DIR = Path(directory)
             (deploy.RAYFIN_DIR / ".env").write_text("", encoding="utf-8")
+            if admission_failure:
+                with self.assertRaisesRegex(RuntimeError, "Subdomain does not map"):
+                    module.provision(deploy, tenant, workspace)
+                deploy._rebind_public_env.assert_not_called()
+                self.assertEqual((deploy.RAYFIN_DIR / ".env").read_text(encoding="utf-8"), "")
+                return request.call_args_list
             module.provision(deploy, tenant, workspace)
             resolve.assert_called_once_with(deploy, tenant, workspace, allow_create=True)
             hosted_module.ensure_hosted_agent.assert_called_once()
@@ -333,7 +357,7 @@ class IncrementalProvisionTests(unittest.TestCase):
             suffix = module.foundry_resource_suffix(workspace)
             with self.subTest(workspace=workspace):
                 calls = self.run_provision(target_workspace=workspace, drift="connection", foreign_connections=True)
-                writes = [item for item in calls if item.args[0] != "GET"]
+                writes = [item for item in calls if item.args[0] != "GET" and item.kwargs.get("json") != {}]
                 self.assertEqual(len(writes), 1)
                 self.assertIn("/connections/hydro-fabric-iq" + suffix + "?", writes[0].args[1])
                 projects.add(writes[0].args[1].split("/connections/")[0])
@@ -347,8 +371,10 @@ class IncrementalProvisionTests(unittest.TestCase):
 
     def test_current_agents_with_server_defaults_and_connections_are_read_only(self):
         calls = self.run_provision()
-        self.assertTrue(all(entry.args[0] == "GET" for entry in calls))
-        agent_reads = [entry for entry in calls if "/agents/" in entry.args[1]]
+        self.assertTrue(all(entry.args[0] == "GET" for entry in calls[:-1]))
+        self.assertEqual(calls[-1].args[0], "POST")
+        self.assertEqual(calls[-1].kwargs["json"], {})
+        agent_reads = [entry for entry in calls if entry.args[0] == "GET" and "/agents/" in entry.args[1]]
         self.assertEqual(len(agent_reads), 5)
         self.assertFalse(any("/deployments" in entry.args[1] for entry in calls))
 
@@ -356,20 +382,20 @@ class IncrementalProvisionTests(unittest.TestCase):
         for drift in ("model", "instructions", "tools"):
             with self.subTest(drift=drift):
                 calls = self.run_provision(drift=drift)
-                writes = [entry for entry in calls if entry.args[0] != "GET"]
+                writes = [entry for entry in calls if entry.args[0] != "GET" and entry.kwargs.get("json") != {}]
                 self.assertEqual(len(writes), 1)
                 self.assertEqual(writes[0].args[0], "POST")
                 self.assertRegex(writes[0].args[1], r"/agents/hydro-qa-agent-[0-9a-f]{32}/versions\?")
 
     def test_only_a_missing_agent_is_created(self):
         calls = self.run_provision(missing="hydro-weather-agent")
-        writes = [entry for entry in calls if entry.args[0] != "GET"]
+        writes = [entry for entry in calls if entry.args[0] != "GET" and entry.kwargs.get("json") != {}]
         self.assertEqual(len(writes), 1)
         self.assertRegex(writes[0].args[1], r"/agents/hydro-weather-agent-[0-9a-f]{32}/versions\?")
 
     def test_only_a_drifted_connection_is_updated(self):
         calls = self.run_provision(drift="connection")
-        writes = [entry for entry in calls if entry.args[0] != "GET"]
+        writes = [entry for entry in calls if entry.args[0] != "GET" and entry.kwargs.get("json") != {}]
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0].args[0], "PUT")
         self.assertRegex(writes[0].args[1], r"/connections/hydro-fabric-iq-[0-9a-f]{32}\?")
@@ -379,6 +405,12 @@ class IncrementalProvisionTests(unittest.TestCase):
             self.run_provision(denied=True)
         with self.assertRaisesRegex(RuntimeError, "definition readback failed"):
             self.run_provision(drift="instructions", broken_readback=True)
+
+
+    def test_active_hosted_agent_without_runtime_routing_never_persists_ready_configuration(self):
+        calls = self.run_provision(admission_failure=True)
+        self.assertEqual(calls[-1].args[0], "POST")
+        self.assertEqual(calls[-1].kwargs["json"], {})
 
 
 class PreparedFoundryTests(unittest.TestCase):
@@ -465,13 +497,15 @@ class PreparedFoundryTests(unittest.TestCase):
         responses = [
             Mock(ok=True, json=lambda: {"versions": {"latest": {"definition": {"model": "model"}}}}),
             Mock(ok=True, json=lambda: agent),
+            admission_response(),
         ]
         with patch.object(module, "_load_sibling", return_value=Mock(
             source_fingerprint=Mock(return_value="code"),
         )), patch.object(module, "verify_prepared_connections"), \
                 patch.object(module, "request_with_read_retry", side_effect=responses) as request:
             module.verify_existing(deploy, tenant, workspace)
-        self.assertTrue(all(item.args[0] == "GET" for item in request.call_args_list))
+        self.assertEqual([item.args[0] for item in request.call_args_list], ["GET", "GET", "POST"])
+        self.assertEqual(request.call_args.kwargs["json"], {})
         self.assertTrue(all(suffix in item.args[1] for item in request.call_args_list))
         deploy.run_stream.assert_not_called()
 
@@ -807,12 +841,13 @@ class PreparedFoundryTests(unittest.TestCase):
         deploy.run_capture.side_effect = ["token", json.dumps({"hydro-weather-agent": {"model": "model"}})]
         return deploy, values, agent, tenant, workspace
 
-    def test_app_verifies_prepared_agents_using_get_only(self):
+    def test_app_verifies_prepared_agents_and_inert_invocation_admission(self):
         deploy, _, agent, tenant, workspace = self.prepared()
         hosted = Mock(source_fingerprint=Mock(return_value="code"))
         responses = [
             Mock(ok=True, json=lambda: {"versions": {"latest": {"definition": {"model": "model"}}}}),
             Mock(ok=True, json=lambda: agent),
+            admission_response(),
         ]
         with patch.object(module, "_load_sibling", return_value=hosted), \
                 patch.object(module, "verify_prepared_connections") as connections, \
@@ -826,7 +861,8 @@ class PreparedFoundryTests(unittest.TestCase):
             deploy._published_operational_source_ready.call_args.kwargs["definition_cache"],
         )
         self.assertEqual(connections.call_args.kwargs["foundry_headers"], {"Authorization": "Bearer token"})
-        self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "GET"])
+        self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "GET", "POST"])
+        self.assertEqual(request.call_args.kwargs["json"], {})
         self.assertEqual([call.args[:2] for call in deploy.az.call_args_list], [("account", "get-access-token")])
         self.assertNotIn("WARNING", str(output.call_args_list))
 
@@ -839,6 +875,7 @@ class PreparedFoundryTests(unittest.TestCase):
                 responses = [
                     Mock(ok=True, json=lambda: {"versions": {"latest": {"definition": {"model": "model"}}}}),
                     Mock(ok=True, json=lambda: agent),
+                    admission_response(),
                 ]
                 with patch.object(module, "_load_sibling", return_value=hosted), \
                         patch.object(module, "verify_prepared_connections") as connections, \
@@ -847,11 +884,28 @@ class PreparedFoundryTests(unittest.TestCase):
                     module.verify_existing(deploy, tenant, workspace)
                 connections.assert_called_once()
                 deploy._published_operational_source_ready.assert_called_once()
-                self.assertEqual([item.args[0] for item in request.call_args_list], ["GET", "GET"])
+                self.assertEqual([item.args[0] for item in request.call_args_list], ["GET", "GET", "POST"])
                 self.assertIn("new agent features are not certified", str(output.call_args_list))
                 self.assertIn("setup module separately", str(output.call_args_list))
                 deploy.run_stream.assert_not_called()
                 deploy.write_env_values.assert_not_called()
+
+    def test_prepared_app_publication_is_blocked_by_runtime_routing_failure(self):
+        deploy, _, agent, tenant, workspace = self.prepared()
+        responses = [
+            Mock(ok=True, json=lambda: {"versions": {"latest": {"definition": {"model": "model"}}}}),
+            Mock(ok=True, json=lambda: agent),
+            admission_response(404, {"error": {
+                "code": "ResourceNotFound", "message": "Subdomain does not map to a resource.",
+            }}),
+        ]
+        with patch.object(module, "verify_prepared_connections"), \
+                patch.object(module, "request_with_read_retry", side_effect=responses) as request:
+            with self.assertRaisesRegex(RuntimeError, "app publication is blocked"):
+                module.verify_existing(deploy, tenant, workspace)
+        self.assertEqual(request.call_count, 3)
+        deploy.run_stream.assert_not_called()
+        deploy.write_env_values.assert_not_called()
 
     def test_stale_sources_and_specialists_fail_even_with_older_packaged_code(self):
         for stale in ("source", "specialist", "hosted"):
@@ -950,6 +1004,52 @@ class PreparedFoundryTests(unittest.TestCase):
 
 
 class PublishedIdentityTests(unittest.TestCase):
+    def test_hosted_admission_accepts_only_exact_runtime_rejection_and_never_replays(self):
+        url = "https://hydro.services.ai.azure.com/api/projects/hydro/agents/hydro/endpoint/protocols/invocations?api-version=v1"
+        for response in [
+            admission_response(),
+            admission_response(404, {"error": {
+                "code": "ResourceNotFound", "message": "Subdomain does not map to a resource.",
+                "private": "provider-secret",
+            }}),
+            admission_response(200, {"status": "active"}),
+            admission_response(401, {"detail": "provider-secret"}),
+            admission_response(403, {"detail": "provider-secret"}),
+            admission_response(429, {"detail": "provider-secret"}),
+            admission_response(500, {"detail": "provider-secret"}),
+            admission_response(422, {"detail": "Other rejection."}),
+            admission_response(422, {"detail": "Invalid invocation body.", "extra": True}),
+        ]:
+            with self.subTest(status=response.status_code), \
+                    patch.object(module, "request_with_read_retry", return_value=response) as request:
+                if response.status_code == 422 and response.json() == {"detail": "Invalid invocation body."}:
+                    module.verify_hosted_admission(url, {"Authorization": "test-token"})
+                else:
+                    with self.assertRaisesRegex(RuntimeError, f"HTTP {response.status_code}") as caught:
+                        module.verify_hosted_admission(url, {"Authorization": "test-token"})
+                    self.assertNotIn("provider-secret", str(caught.exception))
+                    if response.status_code == 404:
+                        self.assertIn("Subdomain does not map", str(caught.exception))
+                request.assert_called_once_with(
+                    "POST", url, headers={"Authorization": "test-token"},
+                    json={}, timeout=120, allow_redirects=False,
+                )
+
+    def test_hosted_admission_rejects_redirects_html_and_malformed_json(self):
+        for status, content_type, content in [
+            (302, "text/html", b"sign-in"),
+            (200, "text/html", b"hosted page"),
+            (422, "application/json", b"invalid-json"),
+        ]:
+            response = admission_response(status)
+            response.headers["Content-Type"] = content_type
+            response._content = content
+            with self.subTest(status=status), \
+                    patch.object(module, "request_with_read_retry", return_value=response) as request:
+                with self.assertRaisesRegex(RuntimeError, f"HTTP {status}"):
+                    module.verify_hosted_admission("https://example.test/invocations", {})
+                self.assertEqual(request.call_count, 1)
+
     def test_prepared_project_uses_direct_read_without_subscription_discovery(self):
         subscription = "11111111-2222-3333-4444-555555555555"
         project_id = f"/subscriptions/{subscription}/resourceGroups/hydro/providers/Microsoft.CognitiveServices/accounts/hydro/projects/demo"

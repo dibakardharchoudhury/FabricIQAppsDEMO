@@ -525,8 +525,14 @@ the Foundry agents are ready. Progress labels it **Fabric backend gateway**, fol
 by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds should
 **Deploy app** publish the website and run its authentication/CORS/connector checks.
 `FOUNDRY_SETUP_SUCCESS` confirms configuration readback, not agent execution.
+Setup and app publication also probe the real invocation URL with an empty body.
+Only the runtime's exact HTTP 422 admission rejection passes; no question, decision
+or source tokens are submitted. This verifies routing, not answers or delivery.
+`404 ResourceNotFound: Subdomain does not map to a resource` blocks publication.
+If the URL matches Azure's project endpoint, contact Azure support; do not reset
+Fabric, replay a request or treat an active agent as proof of runtime readiness.
 
-**Deploy app** performs read-only checks of the prepared source/authentication bindings,
+**Deploy app** checks the prepared source/authentication bindings,
 specialist definitions and active immutable Hosted runtime identity. A packaged-code
 fingerprint difference (or missing fingerprint) alone is a warning, not missing setup:
 compatible deployed agents are reused without provisioning or republishing them. This
