@@ -162,10 +162,6 @@ def hosted_runtime_identity(agent: dict) -> tuple[str, str]:
     return version, match.group("digest")
 
 
-class HostedRoutingUnavailable(RuntimeError):
-    """The authoritative hosted endpoint has no serving resource mapping."""
-
-
 def verify_hosted_admission(invocations_url: str, headers: dict) -> None:
     """Probe the real invocation route without a question, decision or source tokens."""
     response = request_with_read_retry(
@@ -193,9 +189,6 @@ def verify_hosted_admission(invocations_url: str, headers: dict) -> None:
         message += (
             " Foundry runtime routing returned ResourceNotFound: Subdomain does not map to a resource."
             " Verify the authoritative project endpoint and request Azure support if it matches."
-        )
-        raise HostedRoutingUnavailable(
-            message + " Agent execution is not certified; app publication is blocked."
         )
     raise RuntimeError(message + " Agent execution is not certified; app publication is blocked.")
 
@@ -540,7 +533,6 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
         except RuntimeError as error:
             raise deploy.DeployError(str(error)) from error
     hosted_module = _load_sibling("deploy_hosted_agent")
-
     if value("RAYFIN_PUBLIC_ORCHESTRATOR_CODE_DIGEST") != hosted_module.source_fingerprint(deploy.REPO_ROOT):
         print(
             "Foundry: WARNING - prepared runtime passed configuration readback, but its packaged code "
@@ -1038,67 +1030,6 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         return response.json()
 
     hosted_module = _load_sibling("deploy_hosted_agent")
-    runtime_recovery_attempted = False
-
-    def verify_current_runtime(agent: dict) -> None:
-        nonlocal runtime_recovery_attempted
-        url = hosted_invocations_url(agent, endpoint, resource_suffix=suffix)
-        identity = hosted_runtime_identity(agent)
-        definition_before = json.dumps(
-            agent.get("versions", {}).get("latest", {}).get("definition"), sort_keys=True,
-        )
-        endpoint_before = json.dumps(agent.get("agent_endpoint"), sort_keys=True)
-        verify_hosted_source(agent, tenant, workspace, ontology, source_digest, resource_suffix=suffix)
-        try:
-            verify_hosted_admission(url, agent_headers)
-        except HostedRoutingUnavailable as error:
-            if runtime_recovery_attempted:
-                raise
-            if agent.get("state") != "enabled" or agent.get("configuration_state") != "enabled":
-                raise RuntimeError(
-                    "Hosted routing recovery requires an authoritatively enabled agent; "
-                    "disabled or transitional configuration will not be silently changed."
-                ) from error
-            runtime_recovery_attempted = True
-            print(
-                f"Foundry: {error} Attempting one supported disable/enable cycle. "
-                "Existing sessions drain without deletion; no question or write is replayed.",
-                flush=True,
-            )
-            try:
-                disabled = request_with_read_retry(
-                    "POST", f"{endpoint}/agents/{hosted_name}:disable?api-version=v1",
-                    headers=agent_headers, timeout=60, allow_redirects=False,
-                )
-                if disabled.status_code != 204:
-                    raise RuntimeError(
-                        f"Hosted disable failed: HTTP {disabled.status_code}. "
-                        "Enablement restoration will still be attempted."
-                    )
-            finally:
-                enabled = request_with_read_retry(
-                    "POST", f"{endpoint}/agents/{hosted_name}:enable?api-version=v1",
-                    headers=agent_headers, timeout=60, allow_redirects=False,
-                )
-                if enabled.status_code != 204:
-                    raise RuntimeError(
-                        f"Hosted enablement restoration failed: HTTP {enabled.status_code}; "
-                        "the agent's enabled state is unverified."
-                    )
-            restored = get_agent()
-            if (restored is None or restored.get("state") != "enabled"
-                    or restored.get("configuration_state") != "enabled"):
-                raise RuntimeError("Hosted lifecycle recovery did not read back an enabled agent.")
-            if (hosted_runtime_identity(restored) != identity
-                    or json.dumps(
-                        restored.get("versions", {}).get("latest", {}).get("definition"), sort_keys=True,
-                    ) != definition_before
-                    or json.dumps(restored.get("agent_endpoint"), sort_keys=True) != endpoint_before):
-                raise RuntimeError("Hosted lifecycle recovery changed the immutable runtime or source configuration.")
-            verify_hosted_source(restored, tenant, workspace, ontology, source_digest, resource_suffix=suffix)
-            restored_url = hosted_invocations_url(restored, endpoint, resource_suffix=suffix)
-            verify_hosted_admission(restored_url, agent_headers)
-
     print(f"Foundry: Hosted Agent - converging {hosted_name}.", flush=True)
     hosted = hosted_module.ensure_hosted_agent(
         deploy, get_agent=get_agent, endpoint=endpoint, project_id=project_id, model=model, tenant=tenant,
@@ -1106,13 +1037,12 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
         spa_client_id=deploy._public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID"),
         values=public_values, source_digest=source_digest, kusto_origin=f"https://{query_uri.netloc}",
         connections=connections, resource_suffix=suffix,
-        verify_current_runtime=verify_current_runtime,
     )
     try:
         invocations_url = hosted_invocations_url(hosted, endpoint, resource_suffix=suffix)
         runtime_version, runtime_image_digest = hosted_runtime_identity(hosted)
         verify_hosted_source(hosted, tenant, workspace, ontology, source_digest, resource_suffix=suffix)
-        verify_current_runtime(hosted)
+        verify_hosted_admission(invocations_url, agent_headers)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
     env_path = deploy.RAYFIN_DIR / ".env"

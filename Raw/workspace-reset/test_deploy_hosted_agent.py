@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
@@ -379,38 +379,6 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(len(fake.commands("az", "acr", "repository")), 1)
         self.assertEqual(fake.commands("az", "acr", "build"), [])
         self.assertEqual(fake.commands("azd"), [])
-
-    def test_current_runtime_recovery_does_not_republish_an_identical_definition(self):
-        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        refresh = Mock()
-        result = run(
-            fake, [agent(version=7)], verify_current_runtime=refresh,
-        )
-        refresh.assert_called_once()
-        self.assertEqual(hosted.hosted_state(result)[1:3], ("7", DIGEST_A))
-        self.assertFalse(fake.commands("azd", "deploy"))
-        self.assertFalse(fake.commands("az", "acr", "build"))
-
-    def test_routable_current_agent_is_not_republished(self):
-        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        refresh = Mock()
-        self.assertEqual(run(fake, [agent()], verify_current_runtime=refresh), agent())
-        refresh.assert_called_once()
-        self.assertFalse(fake.commands("azd"))
-
-    def test_runtime_check_failure_propagates_without_republishing(self):
-        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        refresh = Mock(side_effect=RuntimeError("HTTP 403"))
-        with self.assertRaisesRegex(RuntimeError, "HTTP 403"):
-            run(fake, [agent()], verify_current_runtime=refresh)
-        self.assertFalse(fake.commands("azd"))
-
-    def test_new_agent_publication_does_not_also_request_runtime_refresh(self):
-        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
-        refresh = Mock()
-        run(fake, [None, agent(version=1)], verify_current_runtime=refresh)
-        refresh.assert_not_called()
-        self.assertEqual(len(fake.commands("azd", "deploy")), 1)
 
     def test_changed_source_builds_sets_the_environment_deploys_and_waits_for_activation(self):
         fake = FakeDeploy()

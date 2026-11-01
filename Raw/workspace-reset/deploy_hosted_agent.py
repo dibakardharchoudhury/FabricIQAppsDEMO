@@ -6,10 +6,10 @@ separate deployment path. It converges the agent on the current source and targe
 1. fingerprint every file the Dockerfile packages and build ``hydro-orchestrator:src-<fingerprint>`` in the
    project's ACR only when that tag does not exist yet;
 2. compose both runtime configurations from the verified target (never copied from another one);
-3. verify the runtime before reusing a current agent, or publish when the live definition differs; and
+3. publish a new immutable version with azd only when the live agent differs; and
 4. wait until the active version carries exactly the expected image digest and configuration.
 
-An agent that is already current and routable changes nothing.
+An agent that is already current costs one registry lookup and changes nothing.
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Callable
 from urllib.parse import urlparse
 from foundry_resource_names import foundry_resource_suffix
 
@@ -286,7 +285,6 @@ def ensure_hosted_agent(
     deploy, *, get_agent, endpoint: str, project_id: str, model: str, tenant: str, workspace: str, ontology: str,
     spa_client_id: str, values: dict[str, str], source_digest: str, kusto_origin: str, connections: list[dict],
     resource_suffix: str = "",
-    verify_current_runtime: Callable[[dict], None] | None = None,
     sleep=time.sleep,
 ) -> dict:
     """Return the active hosted agent after converging it on the current source and deployment target.
@@ -323,8 +321,6 @@ def ensure_hosted_agent(
     tag, digest = ensure_hosted_image(deploy, registry=registry, subscription=subscription)
     reason = needs_publish(existing, image_digest=digest, environment=environment)
     if reason is None:
-        if existing is not None and verify_current_runtime is not None:
-            verify_current_runtime(existing)
         print(f"Hosted agent {agent_name} is current (image {tag}); nothing to publish.", flush=True)
         return existing  # type: ignore[return-value]
     print(f"Publishing Hosted Agent {agent_name}: {reason}.", flush=True)

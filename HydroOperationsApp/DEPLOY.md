@@ -532,17 +532,13 @@ Setup and app publication also probe the real invocation URL with an empty body.
 Only the runtime's exact HTTP 422 admission rejection passes; no question, decision
 or source tokens are submitted. This verifies routing, not answers or delivery.
 `404 ResourceNotFound: Subdomain does not map to a resource` blocks publication.
-When Foundry setup finds this exact failure on a verified, enabled hosted agent,
-it attempts one supported disable/enable lifecycle cycle. Existing sessions are
-allowed to drain without deletion; enablement restoration is attempted even if
-disable fails. Setup verifies enabled-state readback, unchanged immutable runtime
-and source configuration, then probes admission again. Healthy agents are untouched;
-other failures propagate without this recovery attempt. An identical-definition
-`azd deploy` can be deduplicated by Azure and is not a runtime restart. A continued failure blocks
-publication and requires Azure support. This is a recovery attempt, not a certified
-answer or proof of delivery. Do not reset Fabric or replay a failed question/write
-to work around unavailable runtime routing. Read-only app publication does not
-redeploy the runtime.
+If the URL matches Azure's project endpoint, contact Azure support; do not reset
+Fabric, replay a request or treat an active agent as proof of runtime readiness.
+Model inference and agent metadata can succeed while hosted invocation and session
+provisioning fail. Retain Azure request IDs for those separate serving failures.
+An identical-definition redeployment can reuse the existing version, and an
+enabled-state readback after a lifecycle restart does not verify serving recovery.
+Do not automate either as a claimed repair without successful invocation admission.
 
 **Deploy app** checks the prepared source/authentication bindings,
 specialist definitions and active immutable Hosted runtime identity. A packaged-code

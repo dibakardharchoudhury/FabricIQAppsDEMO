@@ -209,8 +209,6 @@ class IncrementalProvisionTests(unittest.TestCase):
     def run_provision(
         self, *, drift=None, missing=None, broken_readback=False, denied=False,
         target_workspace=None, foreign_connections=False, admission_failure=False,
-        check_recovery=False, recover_after_cycle=False,
-        recovery_fault=None,
     ):
         deploy, values, hosted, tenant, workspace = PreparedFoundryTests.prepared(self)
         endpoint = values["RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT"]
@@ -280,38 +278,16 @@ class IncrementalProvisionTests(unittest.TestCase):
         deploy._rebind_public_env.side_effect = lambda content, updates: content
         hosted_module = Mock(source_fingerprint=Mock(return_value="code"))
         hosted_module.ensure_hosted_agent.return_value = hosted
-        republished = []
-        hosted.update(state="enabled", configuration_state="enabled")
-        if recovery_fault == "disabled":
-            hosted.update(state="disabled", configuration_state="disabled")
-        if check_recovery:
-            def converge(_deploy, **kwargs):
-                kwargs["verify_current_runtime"](hosted)
-                return hosted
-            hosted_module.ensure_hosted_agent.side_effect = converge
 
         def response(method, url, **kwargs):
             if "/endpoint/protocols/invocations?" in url:
                 self.assertEqual(method, "POST")
                 self.assertEqual(kwargs["json"], {})
-                if admission_failure and not (recover_after_cycle and republished):
+                if admission_failure:
                     return admission_response(404, {"error": {
                         "code": "ResourceNotFound", "message": "Subdomain does not map to a resource.",
                     }})
                 return admission_response()
-            elif ":disable?" in url or ":enable?" in url:
-                self.assertEqual(method, "POST")
-                self.assertNotIn("json", kwargs)
-                state = "disabled" if ":disable?" in url else "enabled"
-                hosted.update(state=state, configuration_state=state)
-                if state == "enabled":
-                    republished.append(1)
-                    if recovery_fault == "readback":
-                        hosted["versions"]["latest"]["definition"]["environment_variables"]["HYDRO_FABRIC_SOURCE_CONFIG"] = "{}"
-                if (state == "disabled" and recovery_fault == "disable"
-                        or state == "enabled" and recovery_fault == "enable"):
-                    return admission_response(500, {"error": {"code": "InternalError"}})
-                return admission_response(204, None)
             elif "/toolboxes/" in url:
                 body = {"default_version": "1"}
                 if "/versions/" in url:
@@ -330,8 +306,6 @@ class IncrementalProvisionTests(unittest.TestCase):
                 body = {"properties": connections[name]}
             elif "/agents/" in url:
                 name = url.split("/agents/", 1)[1].split("/")[0].split("?")[0]
-                if name == hosted["name"] and method == "GET":
-                    return Mock(status_code=200, ok=True, json=lambda: copy.deepcopy(hosted))
                 if denied:
                     return Mock(status_code=403, ok=False, text="access denied")
                 if method == "POST":
@@ -357,25 +331,15 @@ class IncrementalProvisionTests(unittest.TestCase):
                 patch.object(module, "request_with_read_retry", side_effect=response) as request:
             deploy.RAYFIN_DIR = Path(directory)
             (deploy.RAYFIN_DIR / ".env").write_text("", encoding="utf-8")
-            if admission_failure and (not recover_after_cycle or recovery_fault):
-                expected_failure = {
-                    "disable": "Hosted disable failed",
-                    "enable": "enablement restoration failed",
-                    "readback": "changed the immutable runtime",
-                    "disabled": "authoritatively enabled agent",
-                }.get(recovery_fault, "Subdomain does not map")
-                with self.assertRaisesRegex(RuntimeError, expected_failure):
+            if admission_failure:
+                with self.assertRaisesRegex(RuntimeError, "Subdomain does not map"):
                     module.provision(deploy, tenant, workspace)
                 deploy._rebind_public_env.assert_not_called()
                 self.assertEqual((deploy.RAYFIN_DIR / ".env").read_text(encoding="utf-8"), "")
-                if check_recovery:
-                    self.assertEqual(len(republished), int(recovery_fault != "disabled"))
                 return request.call_args_list
             module.provision(deploy, tenant, workspace)
             resolve.assert_called_once_with(deploy, tenant, workspace, allow_create=True)
             hosted_module.ensure_hosted_agent.assert_called_once()
-            if check_recovery:
-                self.assertEqual(len(republished), int(admission_failure))
             self.assertEqual(hosted_module.ensure_hosted_agent.call_args.kwargs["resource_suffix"], suffix)
             updates = deploy._rebind_public_env.call_args.args[1]
             self.assertEqual(updates["RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX"], suffix)
@@ -447,35 +411,6 @@ class IncrementalProvisionTests(unittest.TestCase):
         calls = self.run_provision(admission_failure=True)
         self.assertEqual(calls[-1].args[0], "POST")
         self.assertEqual(calls[-1].kwargs["json"], {})
-
-    def test_current_routing_failure_is_reenabled_then_rechecked_without_business_requests(self):
-        calls = self.run_provision(
-            admission_failure=True, check_recovery=True, recover_after_cycle=True,
-        )
-        probes = [entry for entry in calls if "/endpoint/protocols/invocations?" in entry.args[1]]
-        self.assertEqual(len(probes), 3)
-        self.assertTrue(all(entry.args[0] == "POST" and entry.kwargs["json"] == {} for entry in probes))
-        actions = [entry for entry in calls if ":disable?" in entry.args[1] or ":enable?" in entry.args[1]]
-        self.assertEqual(len(actions), 2)
-        self.assertIn(":disable?", actions[0].args[1])
-        self.assertIn(":enable?", actions[1].args[1])
-
-    def test_failed_lifecycle_admission_still_cannot_persist_ready_configuration(self):
-        self.run_provision(admission_failure=True, check_recovery=True)
-
-    def test_lifecycle_errors_restore_enablement_and_never_persist_readiness(self):
-        for fault in ("disable", "enable", "readback", "disabled"):
-            with self.subTest(fault=fault):
-                calls = self.run_provision(
-                    admission_failure=True, check_recovery=True,
-                    recover_after_cycle=True, recovery_fault=fault,
-                )
-                actions = [
-                    entry for entry in calls if ":disable?" in entry.args[1] or ":enable?" in entry.args[1]
-                ]
-                self.assertEqual(len(actions), 0 if fault == "disabled" else 2)
-                if actions:
-                    self.assertIn(":enable?", actions[-1].args[1])
 
 
 class PreparedFoundryTests(unittest.TestCase):
