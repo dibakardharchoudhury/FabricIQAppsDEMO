@@ -225,6 +225,29 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.owner.evidence)
         self.assertFalse(self.owner.specialists)
 
+    async def test_unsupported_dataset_presentation_is_corrected_before_execution(self):
+        invalid = decision()
+        invalid["plan"]["answer_contract"]["views"][0]["presentation"] = "direct_grouped_by_equipment_table"
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        api.responses.create.side_effect = [
+            SimpleNamespace(status="completed", id="resp_bad_view", output_text=json.dumps(invalid)),
+            SimpleNamespace(status="completed", id="resp_fixed_view", output_text=json.dumps(decision())),
+        ]
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            await self.owner.plan_semantically(self.request, self.journal)
+
+        self.assertEqual(api.responses.create.await_count, 2)
+        feedback = json.loads(api.responses.create.call_args_list[1].kwargs["input"])["validation_feedback"]
+        self.assertIn("unsupported presentation", feedback["errors"][0]["msg"])
+        self.assertEqual(self.journal.read("semantic_decision")["response_id"], "resp_fixed_view")
+        self.assertEqual(self.journal.read("semantic_decision")["model_round_count"], 2)
+        self.owner.bridge.call.assert_not_called()
+        self.assertFalse(self.owner.evidence)
+        self.assertFalse(self.owner.specialists)
+
     def test_native_answer_alone_cannot_certify_independent_verification(self):
         self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
         raw = decision("fabric-iq", "native_claims", reader=False)

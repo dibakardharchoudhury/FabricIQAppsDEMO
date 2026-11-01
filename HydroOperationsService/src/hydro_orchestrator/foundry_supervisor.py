@@ -1341,6 +1341,20 @@ def semantic_output_schema(catalog: SourceCatalog) -> dict[str, object]:
     return strict_output_schema(schema)
 
 
+def _validate_governed_presentations(
+    contract: OperatorAnswerContract, governed: dict[str, DomainDatasetDefinition],
+) -> None:
+    for view in contract.views:
+        if view.authority == "reconciled":
+            continue
+        layout = view.presentation.removeprefix(f"{view.authority}_")
+        if layout not in governed[view.kind].presentations:
+            raise SourceFailure(
+                f"Deterministic orchestration requested unsupported presentation "
+                f"{view.id}:{view.kind}/{layout}."
+            )
+
+
 SEMANTIC_PLANNER_INSTRUCTIONS = """You plan Hydro Operations work; you do not answer factual questions.
 Interpret the current operator message semantically, including paraphrases, negation, aliases and conversation
 references. Do not select roles by keywords or force a fixed crew/order. Return only the typed decision.
@@ -2616,6 +2630,7 @@ class FoundrySupervisor:
             if dataset is None or requirement.scope not in dataset.evidence_scopes \
                     or requirement.authority not in dataset.evidence_authorities:
                 raise SourceFailure(f"Semantic plan requested ungoverned evidence: {requirement.evidence}.")
+        _validate_governed_presentations(decision.plan.answer_contract, governed)
         if (
             any(item.purpose == "verification" for item in decision.plan.answer_contract.requirements)
             and not any(
@@ -2721,15 +2736,7 @@ class FoundrySupervisor:
                 "Deterministic orchestration requested unsupported evidence combinations: "
                 + ", ".join(unsupported_requirements)
             )
-        for view in plan.answer_contract.views:
-            if view.authority == "reconciled":
-                continue
-            layout = view.presentation.removeprefix(f"{view.authority}_")
-            if layout not in governed[view.kind].presentations:
-                raise SourceFailure(
-                    f"Deterministic orchestration requested unsupported presentation "
-                    f"{view.id}:{view.kind}/{layout}."
-                )
+        _validate_governed_presentations(plan.answer_contract, governed)
         delegations = []
         for step in plan.steps:
             parsed = await self.bridge.call({

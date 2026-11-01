@@ -140,6 +140,10 @@ not a workspace-wide population fallback. Focus tables retain only records whose
 returned or captured row identity belongs to that selection; missing membership
 evidence fails explicitly. Population history and immutable source receipts remain
 unchanged.
+Dataset-specific presentation validation runs inside the bounded semantic-planning
+correction step, before any source or specialist execution, and is shared with
+orchestration compilation. Unsupported grouping cannot become a committed plan
+that fails only after planning has finished.
 Work-order views bound to a coverage requirement show only open work under the
 same closed-status policy as maintenance review. Historical source receipts remain
 immutable; factual history views retain completed work. Missing status evidence
