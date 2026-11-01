@@ -109,7 +109,7 @@ controls Fabric Git import, not local app or agent source.
 | SPA | Verified target-tenant registration, redirect-update access and delegated consent |
 | Key Vault | Existing SPN tenant ID, client ID and client secret; notebook read access and connectivity |
 | Foundry | Project/model access, connected registry, monitoring and scoped roles; creation also needs resource/role-assignment rights |
-| Teams/email | Authorized team/channel and mailbox-backed Outlook OAuth connection |
+| Teams/email | Authorized team/channel and, by default, a mailbox-backed Outlook OAuth connection |
 
 Global Administrator and subscription Owner are not routine requirements.
 For scoped access without subscription-wide discovery, use the existing project's
@@ -235,6 +235,12 @@ That mode does not call a weather provider: it prepares location/area metadata, 
 weather and serving rows, marks providers inactive, records coverage/freshness as `not_attested`,
 keeps the schedule disabled, and still provisions both mandatory agents. Normal deployments
 retain `require_initial_weather=true`.
+The same isolated config may explicitly set `require_outlook_connection` to `false` when mailbox
+OAuth is intentionally unavailable. NB10 still provisions and verifies the ontology Operations
+Agent, full playbook/actions, Teams destination and `Pipe_SendEmailAlert`, but leaves the pipeline
+connection empty and persists `outlook_connection_status=not_configured` plus
+`email_delivery_status=unavailable`. Normal deployments retain `require_outlook_connection=true`;
+neither mode certifies agent execution, Teams delivery or email delivery.
 Stage 1 also binds the **parent** `RTI_Orchestrator_Setup` notebook to the published Weather
 Environment. Binding only Weather child notebooks is insufficient: `runMultiple` uses the
 parent Spark session. A missing `numcodecs`, `pyproj` or `shapely` now fails before the DAG
@@ -902,6 +908,9 @@ publication does not configure provider authentication or ingest data.
 Set `"require_initial_weather": false` only when the isolated copy must deploy without UKMet
 credentials. The app then reports weather as unavailable until an explicit successful refresh;
 it does not use placeholder or stale serving values.
+Set `"require_outlook_connection": false` only when that isolated copy must proceed without
+mailbox OAuth. The Operations Agent and email action remain configured, but email delivery is
+unavailable until the named OAuth connection is created and setup is rerun with the default.
 
 ## Troubleshooting
 

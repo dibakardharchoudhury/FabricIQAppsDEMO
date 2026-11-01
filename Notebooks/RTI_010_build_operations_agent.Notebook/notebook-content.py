@@ -38,13 +38,25 @@
 # Shared Eventhouse telemetry, silver tables, Teams, connections, and the email pipeline remain.
 # The retained agent remains STOPPED by default. Successful definition
 # readback means configured, not that monitoring, queries, Teams, or email delivery were exercised.
-# An OAuth2 Outlook connection requires interactive sign-in; missing connection fails setup
-# truthfully after creating the pipeline/agent scaffolding for completion and rerun.
+# An OAuth2 Outlook connection requires interactive sign-in and is required by default.
+# An explicit isolated `require_outlook_connection=false` run still creates and verifies the
+# agent, actions, Teams destination, and unwired pipeline, but records email delivery unavailable.
 #
 # The ontology agent uses the October 23 working playbook, including its SQL/KQL grounding
 # and direct action bindings. Query endpoints and table names are resolved for the target.
 # Its state conditions do not implement timed alert suppression. Grouping by opcua_node_id
 # is not a 15-minute cooldown; do not claim throttling from instructions or time binning.
+
+# PARAMETERS CELL ********************
+
+require_outlook_connection = True
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
 
 # CELL ********************
 
@@ -54,6 +66,9 @@
 # =========================
 
 from pyspark.sql import functions as F
+
+if type(require_outlook_connection) is not bool:
+    raise ValueError("require_outlook_connection must be a Boolean notebook parameter.")
 
 settings_table_name = "rti_demo_settings"
 
@@ -526,7 +541,8 @@ def resolve_email_connection_id():
     the connection API and shows "Online", but the pipeline activity CANNOT load or use it (a service
     principal has no mailbox) -> "Failed to load the connection". A notebook cannot create an OAuth2
     connection (Fabric only creates those through an interactive sign-in), so when none is found we
-    print one-time setup guidance and return None; deployment records incomplete setup and fails.
+    print one-time setup guidance and return None. Setup fails by default; only an explicit isolated
+    require_outlook_connection=false run records the connection and delivery as unavailable.
 
     Precedence: `alert_email_connection_id` setting -> an OAuth2 Office 365 connection (configured
     name first, then any) -> None (warn + guide).
@@ -1458,12 +1474,15 @@ def deploy_operations_agent(ontology_id: str) -> dict:
         datasource_id=ontology_id, pipeline_id=pipeline_id)
     update_operations_agent_definition(agent_id, configuration)
     verify_operations_readback(agent_id, ontology_id, configuration)
-    if not connection_id:
+    if not connection_id and require_outlook_connection:
         raise RuntimeError("Agent and email pipeline configured, but Outlook OAuth2 connection is missing. "
                            "Sign in to an Outlook connection in Fabric and rerun; alerts cannot send yet.")
     return {"ops_agent_id": agent_id, "ops_agent_name": ops_agent_name,
             "email_pipeline_id": pipeline_id, "ops_agent_ontology_datasource_id": ontology_id,
-            "ops_agent_should_run": str(ops_agent_should_run).lower()}
+            "ops_agent_should_run": str(ops_agent_should_run).lower(),
+            "outlook_connection_required": str(require_outlook_connection).lower(),
+            "outlook_connection_status": "configured" if connection_id else "not_configured",
+            "email_delivery_status": "not_tested" if connection_id else "unavailable"}
 
 
 result = check_agent_capability()
@@ -1476,12 +1495,19 @@ try:
     ).withColumn("updated_utc", F.current_timestamp())
     merge_settings_with_retry(source)
     reason = ("Ontology configuration/playbook retained by readback; "
-              "agent stopped; retired Eventhouse agent/settings removed. Runtime actions not tested."
+              "agent stopped; retired Eventhouse agent/settings removed. "
               if ops_agent_copy_playbook else
               "Ontology configuration retained by readback; generate its playbook in the portal as requested. "
-              "Retired Eventhouse agent/settings removed. Runtime actions not tested.")
+              "Retired Eventhouse agent/settings removed. ")
+    reason += ("Outlook connection configured; runtime actions and email delivery not tested."
+               if persist["outlook_connection_status"] == "configured" else
+               "Outlook connection explicitly not required; email delivery unavailable and runtime actions not tested.")
     persist_agent_status("configured", reason)
-    result.update(status="configured", reason=reason)
+    result.update(
+        status="configured", reason=reason,
+        outlook_connection_status=persist["outlook_connection_status"],
+        email_delivery_status=persist["email_delivery_status"],
+    )
 except Exception as exc:
     persist_agent_status("failed", str(exc))
     raise

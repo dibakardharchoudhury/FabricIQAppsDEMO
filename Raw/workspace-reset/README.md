@@ -516,6 +516,10 @@ an isolated copy that must proceed without UKMet credentials. The bootstrap then
 weather location/area metadata, clears dynamic weather rows, marks providers inactive,
 persists `not_attested` readiness, leaves the schedule disabled, and continues through both
 mandatory agents without inventing forecasts or observations.
+`require_outlook_connection` is also optional and defaults to `true`. Set it to `false` only
+for an isolated copy that must proceed without mailbox OAuth. NB10 still verifies the Operations
+Agent, playbook/actions, Teams destination and unwired `Pipe_SendEmailAlert`, then persists
+Outlook as `not_configured` and email delivery as `unavailable`; no delivery is attested.
 Fabric setup runs before public artifact discovery and Foundry provisioning. The
 bootstrap verifies workspace Runtime 2.0 and rejects incompatible published
 Environment overrides before setup or Geo notebook execution. A confirmed terminal

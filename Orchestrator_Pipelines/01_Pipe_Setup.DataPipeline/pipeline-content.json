@@ -131,6 +131,13 @@
               },
               "type": "bool"
             },
+            "require_outlook_connection": {
+              "value": {
+                "value": "@pipeline().parameters.require_outlook_connection",
+                "type": "Expression"
+              },
+              "type": "bool"
+            },
             "workspace_id": {
               "value": {
                 "value": "@pipeline().parameters.workspace_id",
@@ -301,6 +308,10 @@
         "defaultValue": true
       },
       "require_initial_weather": {
+        "type": "bool",
+        "defaultValue": true
+      },
+      "require_outlook_connection": {
         "type": "bool",
         "defaultValue": true
       }

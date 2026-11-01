@@ -34,6 +34,7 @@ def functions(number, *names, **overrides):
     namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib, "re": re,
                  "provision_shared_store": False, "OPERATIONAL_STORE_NAME": "HydroOperationalStore",
                  "sql_db_item_name": "sql", "project_ontology_item_id": "", "setup_phase": "all",
+                 "require_outlook_connection": True,
                  "require_complete_project_ontology": Mock(return_value={"status": "verified"}),
                  "refresh_ontology_context": Mock(side_effect=lambda parts, _ontology: parts)}
     namespace.update(overrides)
@@ -1221,15 +1222,19 @@ class CapabilityTests(unittest.TestCase):
                     check["verify_operations_readback"]("agent", "ontology", expected)
 
     def test_operations_provisioning_attempts_all_business_components_and_raises_actual_failure(self):
-        for outcome in ("success", "manual_playbook", "product_rejection", "missing_mailbox"):
+        for outcome in (
+                "success", "manual_playbook", "product_rejection",
+                "missing_mailbox_required", "missing_mailbox_allowed"):
             ns = functions(
                 "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
                 get_ontology_generation=Mock(return_value=2),
                 ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
                 ops_agent_copy_playbook=outcome != "manual_playbook", ops_agent_should_run=False,
+                require_outlook_connection=outcome != "missing_mailbox_allowed",
                 ops_agent_run_as_user="", ops_agent_name="agent", OPS_AGENT_DESCRIPTION="description",
                 get_access_token_for_fabric=Mock(), check_run_as=Mock(),
-                resolve_email_connection_id=Mock(return_value=None if outcome == "missing_mailbox" else "mailbox"),
+                resolve_email_connection_id=Mock(
+                    return_value=None if outcome.startswith("missing_mailbox") else "mailbox"),
                 ALERT_EMAIL_TO="operations@example.test", get_signed_in_upn=Mock(),
                 PIPELINE_NAME="Pipe_SendEmailAlert", PIPELINE_DESCRIPTION="alerts",
                 build_email_pipeline_content=Mock(return_value={"properties": {}}),
@@ -1240,10 +1245,18 @@ class CapabilityTests(unittest.TestCase):
                 update_operations_agent_definition=Mock(), verify_operations_readback=Mock())
             if outcome == "product_rejection":
                 ns["update_operations_agent_definition"].side_effect = RuntimeError("actual product failure")
-            if outcome in ("success", "manual_playbook"):
+            if outcome in ("success", "manual_playbook", "missing_mailbox_allowed"):
                 result = ns["deploy_operations_agent"]("ontology")
                 self.assertEqual(result["email_pipeline_id"], "pipeline")
                 self.assertEqual(result["ops_agent_id"], "agent")
+                self.assertEqual(
+                    result["outlook_connection_status"],
+                    "not_configured" if outcome == "missing_mailbox_allowed" else "configured",
+                )
+                self.assertEqual(
+                    result["email_delivery_status"],
+                    "unavailable" if outcome == "missing_mailbox_allowed" else "not_tested",
+                )
             else:
                 with self.assertRaisesRegex(RuntimeError, "actual product failure|OAuth2 connection is missing"):
                     ns["deploy_operations_agent"]("ontology")

@@ -35,6 +35,10 @@
 #   workspaces may set `require_initial_weather=false`; this still prepares weather
 #   metadata, clears dynamic weather rows, marks every provider inactive, records
 #   weather as un-attested, and continues through both mandatory agents.
+# - Normal setup also requires the delegated Outlook connection. Deliberate isolated
+#   feature workspaces may set `require_outlook_connection=false`; NB10 still provisions
+#   the Operations Agent, playbook/actions, Teams destination, and unwired email pipeline,
+#   while recording Outlook delivery as unavailable rather than claiming it was tested.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
 # - **Energy ingestion (Geo_001)** runs alongside this DAG as a separate pipeline branch,
@@ -87,11 +91,13 @@
 #   lakehouseName             -> consumed by the %%configure cell above (session default lakehouse).
 #   per_notebook_timeout_secs -> max seconds any single child notebook may run before timeout.
 #   require_initial_weather   -> false only for an explicit weather-unavailable isolated deployment.
+#   require_outlook_connection -> false only for an explicit Outlook-unavailable isolated deployment.
 #   workspace/key-vault values -> used only to enable the Weather schedule after setup succeeds.
 # lakehouseName has no Python default here because %%configure resolves it before Python runs.
 per_notebook_timeout_secs = 3600
 enable_weather_schedule = True
 require_initial_weather = True
+require_outlook_connection = True
 workspace_id = ""
 key_vault_uri = ""
 key_vault_tenant_id_secret_name = "tenantid"
@@ -117,6 +123,8 @@ if type(enable_weather_schedule) is not bool:
     raise ValueError("enable_weather_schedule must be a Boolean notebook parameter.")
 if type(require_initial_weather) is not bool:
     raise ValueError("require_initial_weather must be a Boolean notebook parameter.")
+if type(require_outlook_connection) is not bool:
+    raise ValueError("require_outlook_connection must be a Boolean notebook parameter.")
 if not require_initial_weather and enable_weather_schedule:
     raise ValueError("Weather scheduling cannot be enabled when initial weather is explicitly unavailable.")
 
@@ -157,7 +165,7 @@ setup_dag = {
         {"name": "NBW02_weather_refresh", "path": "Weather_Orchestrator", "dependencies": ["NBW01_weather", "NB03_medallion"], "args": {**_lh, "enable_aurora": False, "require_initial_weather": require_initial_weather, "per_notebook_timeout_secs": per_notebook_timeout_secs}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB11_model", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB06_tsbind", "NBW02_weather_refresh"], "args": {**_lh, "setup_phase": "model", "seed_demo_data": True, "provision_shared_store": True, "require_current_weather": require_initial_weather}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent", "dependencies": ["NB11_model"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent", "dependencies": ["NB11_model"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent", "dependencies": ["NB11_model"], "args": {**_lh, "require_outlook_connection": require_outlook_connection}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB11_operations", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB09_dataagent"], "args": {**_lh, "setup_phase": "agent", "seed_demo_data": False, "provision_shared_store": True, "require_current_weather": require_initial_weather}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,

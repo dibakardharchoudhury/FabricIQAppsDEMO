@@ -26,10 +26,15 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
   set `require_initial_weather=false`; this is not an agent skip mode. It must prepare weather
   metadata, clear dynamic/serving rows, mark providers inactive, persist weather readiness as
   un-attested, keep scheduling disabled, and continue through both mandatory agents.
+- The delegated Outlook connection remains required by default. A deliberate isolated feature
+  deployment may set `require_outlook_connection=false`; this is not an agent/action skip mode.
+  NB10 must still verify the ontology-backed Operations Agent, playbook/actions, Teams destination,
+  and `Pipe_SendEmailAlert`, persist Outlook as `not_configured` and email delivery as `unavailable`,
+  and never claim runtime action or delivery success.
 - Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10 verifies the retained
   ontology agent, then removes only the exact retired agent after checking folder/source identity
   and clears its obsolete settings. Preserve the shared Eventhouse, SQL/KQL grounding, email
-  pipeline, Outlook connection, and Teams destination.
+  pipeline, any configured Outlook connection, and Teams destination.
 - RTI_011 directly mounts the operational SQL Database as a temporary execution workaround for
   omitted ontology-inherited SQL. Reuse a matching profile; preserve ontology bindings, operator
   instructions, selections and custom sources. The artifact ID is the SQL Database item, not its

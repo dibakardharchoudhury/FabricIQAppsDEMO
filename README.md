@@ -97,7 +97,10 @@ operational SQL, inserts only missing demo rows, checks actual cross-source keys
 coverage and verifies all required bindings and relationships by readback. An explicit isolated
 feature deployment may set `require_initial_weather=false`; that path records weather as
 un-attested and unavailable, clears dynamic weather data, and still preserves the mandatory
-model and agent gates. The baseline is
+model and agent gates. An isolated deployment may also set `require_outlook_connection=false`;
+NB10 still creates and verifies the Operations Agent, playbook/actions, Teams destination, and
+unwired email pipeline, while persisting Outlook as not configured and delivery as unavailable.
+The baseline is
 16 meaningful business types and 21 relationships; compatible custom content is retained.
 NB09 and NB10 each check the successful selected-model receipt and its live definition.
 NB11's later `agent` phase mounts the same operational SQL Database directly as an execution
@@ -245,7 +248,7 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then performs bounded real MCP facility-record validation; only the exact temporary unsupported-Ontology-v2 product response is non-fatal. | ✅ |
 | **RTI_010_build_operations_agent** | Provisions the ontology-backed Operations Agent, playbook/actions, Teams, and email-alert pipeline against v2; retires the verified obsolete Eventhouse-Knowledge agent/settings without deleting shared dependencies; failures propagate. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | Builds and verifies the complete SQL/weather business model before agents (`model` phase); publishes ontology-backed operational guidance afterward (`agent` phase), without adding a separate SQL source or STID API. Standalone app/deployer calls retain `all`; `seed_demo_data=False` preserves operational rows. | — |
-| **RTI_Orchestrator_Setup** | Stage 2 driver: shares the Weather Environment/default Lakehouse, runs core bindings and default initial UKMet ingestion, completes the model before both agents, then enables the schedule after all required activities succeed. Explicit isolated no-weather mode records un-attested weather and never enables the schedule. | Stage 2 |
+| **RTI_Orchestrator_Setup** | Stage 2 driver: shares the Weather Environment/default Lakehouse, runs core bindings and default initial UKMet ingestion, completes the model before both agents, then enables the schedule after all required activities succeed. Explicit isolated no-weather mode records un-attested weather and never enables the schedule; explicit isolated no-Outlook mode preserves the Operations Agent/action pipeline while recording delivery unavailable. | Stage 2 |
 
 NB09 and NB10 persist diagnostic agent status in the same `rti_demo_settings` Delta table. Their
 execution order is **NB06 → NB09 → NB10**:
@@ -291,7 +294,9 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > **Email-alert delivery prerequisite (OAuth2).**
 >
 > RTI_010 retains Operations Agent and `Pipe_SendEmailAlert` provisioning. Email delivery requires
-> the mailbox connection below. There is no Operations Agent skip flag.
+> the mailbox connection below. There is no Operations Agent skip flag. Normal setup requires the
+> connection; only an explicit isolated feature config may set `require_outlook_connection=false`,
+> which keeps the action/pipeline but records delivery as unavailable rather than reporting success.
 >
 > The `Pipe_SendEmailAlert` pipeline sends mail via the **Office 365 Outlook “Send an email”** activity,
 > which posts **from a mailbox** and so needs an **OAuth2** connection. It **cannot** be created from a
