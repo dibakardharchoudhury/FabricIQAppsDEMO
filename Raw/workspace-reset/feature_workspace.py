@@ -195,15 +195,7 @@ class FeatureFabric(Fabric):
         headers = dict(kwargs.pop("headers", {}))
         headers["x-ms-fabric-skill"] = "git-integration-operations-cli"
         kwargs["allow_redirects"] = False
-        for attempt in range(3):
-            try:
-                return super().request(method, url, headers=dict(headers), **kwargs)
-            except (requests.Timeout, requests.ConnectionError):
-                if method.upper() != "GET" or attempt == 2:
-                    raise
-                print(f"  Fabric read interrupted; retrying the same read ({attempt + 1}/2).", flush=True)
-                time.sleep(5 * (attempt + 1))
-        raise FeatureWorkspaceError("Fabric read retry budget exhausted.")
+        return super().request(method, url, headers=headers, **kwargs)
 
     def poll_lro(self, response: requests.Response) -> requests.Response:
         if response.status_code != 202:

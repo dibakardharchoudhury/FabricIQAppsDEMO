@@ -22,38 +22,25 @@ Operations website.
 | Agent update | **Set up Foundry agents**, then **Deploy app** |
 | Energy data refresh | **Refresh energy sources** |
 
-**Multiple workspaces:** enable **Deploy to multiple workspaces in parallel** in
-the sidebar and fill up to three slots in the same tenant. Blank slots are ignored,
-even the first slot. Full Deploy and individual setup/deploy modules use the same
-form settings, but show separate workspace progress and logs. Delete and connection
-tests also use all populated targets. Deletion defaults to dry run; actual deletion
-requires confirming every selected workspace, one per line, in the displayed order.
-The backend rejects missing/partial confirmation before starting any worker.
-To share a Foundry account and project, enter the project name/resource ID and
-select **Reuse the entered project**. Workspace-specific agents, connections and
-invocation URLs prevent source retargeting. Alternatively, select **Separate
-projects (short workspace suffix)**: the entered base name receives a stable
-eight-character suffix per workspace. Blank project fields keep target-specific
-discovery. Creating missing resources still requires your explicit approval;
-sharing a model also shares its quota.
-Commit source changes first: workers use isolated committed checkouts and retain
-private per-workspace state, without overwriting this checkout's Rayfin files.
-Shared Entra writes are serialized to preserve all SPA redirects; other work can
-overlap subject to capacity/quota. A failed workspace does not stop the others.
-Use its retry control after the batch finishes to preserve completed Full Deploy
-stages. See [parallel execution and state](../Raw/workspace-reset/README.md#optional-up-to-three-workspaces-in-parallel).
+Deployment targets **one workspace at a time**; there is no multi-workspace checkbox
+or fan-out worker. Foundry agents, connections, toolbox and hosted state now use a
+stable suffix derived from the verified workspace GUID. Reruns reuse/update that
+workspace's set without overwriting another workspace's bindings. Previously
+created cloud agents and private state are retained, not deleted automatically.
 
-If parallel deployment fails during `npm ci` with `spawnSync ... esbuild.exe ENOENT`,
-update/restart the launcher and resume the failed workspace. Workers now use short
-private checkout paths; older deeply nested paths can exceed Windows' native
-executable limit. Node 24 is also propagated to npm lifecycle scripts and build-tool
-children, rather than falling back to a globally installed Node version. Existing
-workspace state and successful Git sync/Core checkpoints are retained. Do not delete
-deployment state, reimport the workspace or change Windows registry settings for this error.
+The engine retains Node 24 for npm and build-tool children. On Windows, use a short
+repository path if a native executable exceeds the path limit. Current-hosting
+redirect preservation and the bounded static-upload HTTP 401 refresh/retry remain
+enabled; other failures still propagate. Do not reset deployment state or repeat
+Core setup just to repair local dependencies or app publication.
 
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.
+Related REST status reads share bounded retries for resets, timeouts and transient HTTP errors.
+An interrupted Setup monitor resumes its recorded job URL, never submits a duplicate.
+Failure, cancellation or an unverified outcome blocks dependent stages. Persistent errors
+still propagate; this is not a blanket retry of deployment/start requests.
 Changed notebook code requires **Sync updated definitions and resume**: only those notebooks
 are updated from this checkout, retaining live bindings and unrelated workspace items.
 A Geo-only fix resumes the combined Energy/Foundry/app stage without repeating
@@ -76,7 +63,7 @@ endings; do not recreate the ontology or change its source bindings for this err
 |---|---|
 | Tenant / workspace | Tenant may be remembered; workspace always starts empty |
 | Repository / branch | This checkout; confirm the branch is pushed |
-| Key Vault URI / Teams IDs | Reused within the tenant, with workspace overrides; unknown values stay blank |
+| Key Vault URI / Teams IDs | Saved for this target; unknown values stay blank |
 | Alert email | Signed-in user's email when the tenant matches; confirm the recipient |
 | Azure subscription | Active or sole subscription in the target tenant; otherwise choose |
 | Foundry project name / Model deployment name | Saved selection, target-named project, or unambiguous discovery |
@@ -84,9 +71,8 @@ endings; do not recreate the ontology or change its source bindings for this err
 
 Core/Full Deploy values autosave on this machine in gitignored
 [`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json).
-Wait for **Settings saved on this machine** before closing. Setup defaults are
-reused only within the same tenant; workspace overrides and explicit clears take
-precedence. Foundry overrides remain workspace-specific. Foundry choices and sidebar preferences use
+Wait for **Settings saved on this machine** before closing. Values are isolated by
+target; explicit clears persist. Foundry overrides and sidebar preferences use
 browser storage. PATs and credential values are never saved by these forms.
 
 Use **Hide sidebar** for more space. Connection tests run only when you click
@@ -233,10 +219,14 @@ source** line and the local version API identify the actual checkout.
 | **Key Vault URI** | `https://contoso-demo-kv.vault.azure.net/` | An existing vault holding notebook SPN credentials. The vault, secrets, access and connectivity must already be prepared. |
 | **Teams team id** | The full GUID after `groupId=` in a Teams channel link | Team receiving Operations Agent notifications. Not the tenant ID or team display name. |
 | **Teams channel id** | Full URL-decoded `19:...@thread.tacv2` value | Channel receiving notifications. Not its display name. [Find both IDs](#find-your-teams-team-and-channel-ids). |
-| **Alert email recipient** | `operations@contoso.com` | Email alert destination. Review any signed-in-user suggestion; this does not set the agent's identity. |
+| **Alert email recipient** | `operations@contoso.com` | Default `alert_email_to` for Send Email's **To** field. Review the signed-in-user suggestion; this is not the agent's identity. |
 
 Key Vault URI, both Teams IDs and alert email are required by the local Core/Full
 Deploy form. Unknown destination values stay blank rather than being guessed.
+The **Operations Agent** badges identify its run-as user, Teams IDs and email recipient. NB10 applies the email
+recipient as a pipeline parameter default; the **To** expression reads it at runtime.
+Existing pipelines need updated NB10 source and a setup rerun. Changing the local
+form alone does not update Fabric or attest email/Teams delivery.
 By default, the same vault must contain `ukmet-global-spot-api-key` and
 `ukmet-land-observations-api-key` for the required initial weather refresh. Aurora is optional.
 Disabling the future Weather schedule alone does not skip initial ingestion or ontology validation.
@@ -265,7 +255,7 @@ an answer format. It records runtime as `not_checked`; a successful publish is n
 certification. NB11 publishes operational guidance afterward, and interactive app requests
 use Supervisor → Sparky → Fabric Responses. That sequence is expected; no extra SQL/KQL/
 combined-source runtime or Teams/email delivery checks are required to complete setup.
-Expand **Key Vault secret names and notebook settings** only when defaults differ:
+Key Vault secret-name fields stay visible. Review defaults before running:
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -273,7 +263,8 @@ Expand **Key Vault secret names and notebook settings** only when defaults diffe
 | **KV secret · client id** | `clientid` | Name of the vault secret containing the SPN application/client ID. |
 | **KV secret · client secret** | `clientsecret` | Name of the vault secret containing the SPN credential. **Never paste the credential value here.** |
 | **Agent run-as user** | Blank | Uses the deploying signed-in user. An explicit UPN is an identity guard, not a way to impersonate another user or grant permissions. |
-| **Per-notebook timeout (secs)** | `3600` | Maximum runtime in seconds for each child notebook, not the entire deployment. |
+
+The launcher omits the timeout control; child notebooks retain the pipeline's `3600`-second default.
 
 #### D. Foundry agents: subscription, then project and model
 
@@ -478,16 +469,62 @@ price area also matched the independently queried imported source row.
 
 ### Persistent Foundry agents
 
+**Project creation:** check only for a missing project. **Redeploy:** leave unchecked;
+keep the same workspace/account/project/model. Agent updates still run.
+A missing project stops deployment when creation is unchecked.
+
 Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
-specialists and `hydro-orchestrator` against this checkout and the selected Fabric target.
-New setup appends the workspace GUID (without hyphens) to agents, connections and
-the toolbox so multiple workspaces can safely reuse one project. App-only deployment
-continues to verify existing unsuffixed configurations without renaming them.
+specialists and `hydro-orchestrator`, each suffixed with the workspace GUID without
+hyphens, against this checkout and the selected Fabric target.
 An existing project/model may still contain missing or older agents. Setup reuses matching
 connections and specialists, creates versions only for changed/missing agents, builds only
 missing source-fingerprinted images, and republishes the hosted coordinator only when its
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
+
+**Separate project lifecycles while sharing one model allocation:** select the same
+existing Foundry account and ready model deployment for each single-workspace run.
+Leave the project name blank for `hydro-workspace-<full-workspace-GUID-without-hyphens>`,
+or enter an exact project name. Enable **Allow project creation (billable)** only
+when that project is missing. Setup first verifies the existing account/model,
+then creates only the project and its managed identity, scoped access and
+connections to the shared registry/monitoring. It does not run model catalog/quota
+allocation, resize the model, or change account networking. Partial project setup
+is retained and converged on retry; project endpoint/access and connection readback
+must succeed. A model/region mismatch, denied access, missing/ambiguous shared
+infrastructure or changed model allocation is a hard failure, not bootstrap.
+Registry connections use `ManagedIdentity` credentials containing the verified
+project principal ID and shared registry resource ID. Existing connections are
+reused; a failed connection setup retains the project for retry without reallocating
+model TPM. Errors identify the exact ARM resource and API version.
+Hosted ACR images use the platform's project managed identity; the generic
+`registryConnectionId` field is omitted for this deployment path.
+Python containers set `PYTHONNOUSERSITE=1` in both the image and hosted environment
+to prevent session-uploaded user-site packages from affecting startup. Immutable
+version convergence verifies this environment setting as well as the image and source bindings.
+Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
+not its instrumentation key. It is validated before project changes and rechecked
+on retry; credential values are not saved in the preflight plan.
+
+An explicitly selected existing project remains supported, including the former
+shared-project arrangement. Same-target saved project identities are preserved;
+blanking the field does not migrate or delete an existing deployment. New targets
+with an explicit account and no project selection use the stable workspace project.
+Only a genuinely missing account with creation approval uses the original
+account/model/registry/monitoring bootstrap and its regional quota preflight.
+Each workspace gets its own stable agent set, native connections/toolbox and
+hosted runtime configuration. Generated azd state is isolated by project endpoint
+and hosted agent name; container images are reused by source fingerprint.
+
+The model's TPM/RPM limits are shared across all agent sets; model inference and
+hosted compute remain billable. Projects allow scoped permissions and separate agent lifecycles, but share
+account-level networking/governance and model capacity. A busy project can throttle
+other projects; projects do not multiply TPM. Shared account/model resources are
+not owned by the project-only provisioning path and must not be included in project
+cleanup. Resource names alone do not provide security isolation between users with
+access to the same project. Existing unsuffixed deployments
+remain supported by read-only app publication; running Foundry setup creates the
+workspace-scoped set without deleting or retargeting the older set.
 
 **Foundry setup can create Fabric resources.** Before configuring the Hosted Agent,
 setup creates or reuses its required AppBackend gateway. On a fresh target this uses
@@ -498,19 +535,39 @@ the Foundry agents are ready. Progress labels it **Fabric backend gateway**, fol
 by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds should
 **Deploy app** publish the website and run its authentication/CORS/connector checks.
 `FOUNDRY_SETUP_SUCCESS` confirms configuration readback, not agent execution.
+Registry and monitoring resources stay shared, but new infrastructure connection
+names are project-specific. Compatible connections already owned by the selected
+project are retained; sibling-project connections are never updated or claimed.
+Native Fabric IQ and ontology connections are also named from both the project
+ARM identity and workspace GUID, since Azure enforces account-wide name ownership.
+Existing workspace-only names are retained only when their ARM identity proves
+selected-project ownership. Setup persists the verified connection names and uses
+them consistently in specialists, the toolbox, hosted configuration and publication
+readback; changing projects never updates the old project's private connections.
+Setup and app publication also probe the real invocation URL with an empty body.
+Only the runtime's exact HTTP 422 admission rejection passes; no question, decision
+or source tokens are submitted. This verifies routing, not answers or delivery.
+`404 ResourceNotFound: Subdomain does not map to a resource` blocks publication.
+If the URL matches Azure's project endpoint, contact Azure support; do not reset
+Fabric, replay a request or treat an active agent as proof of runtime readiness.
+Model inference and agent metadata can succeed while hosted invocation and session
+provisioning fail. Retain Azure request IDs for those separate serving failures.
+An identical-definition redeployment can reuse the existing version, and an
+enabled-state readback after a lifecycle restart does not verify serving recovery.
+Do not automate either as a claimed repair without successful invocation admission.
 
-**Deploy app** performs read-only checks of the prepared source/authentication bindings,
+**Deploy app** checks the prepared source/authentication bindings,
 specialist definitions and active immutable Hosted runtime identity. A packaged-code
 fingerprint difference (or missing fingerprint) alone is a warning, not missing setup:
 compatible deployed agents are reused without provisioning or republishing them. This
 does not certify new agent features or execution. Run **Set up Foundry agents** separately
 to update agent code; missing or incompatible configuration still blocks app publication.
 
-Model preflight requires a verified allocation of at least **40,000 tokens/minute**
-for the planner, source catalog and structured output. The catalog minimum/default
-can be too small even for the first question; setup rejects undersized or
-unverifiable limits rather than publishing a known-throttled coordinator.
-For a new project, `HYDRO_FOUNDRY_MODEL_CAPACITY` can override the catalog capacity
+Model preflight requires a verifiable positive token limit. New allocations prefer
+**75,000 tokens/minute** within the selected model/SKU's available regional quota.
+Existing smaller allocations are reused with a warning, not silently increased;
+they may throttle the planner, source catalog or concurrent workspace requests.
+For new account/model bootstrap only, `HYDRO_FOUNDRY_MODEL_CAPACITY` can override the catalog capacity
 before the canonical deployment command. Capacity units are model/SKU-specific:
 verify the resulting live token limit and available regional quota. Existing model
 allocation is never silently changed, and concurrent requests can require more.

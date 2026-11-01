@@ -34,6 +34,7 @@ from typing import Any
 
 try:
     import requests
+    from http_retries import request_with_read_retry
     from azure.core.exceptions import ClientAuthenticationError
     from azure.identity import AzureCliCredential
 except ImportError as exc:  # pragma: no cover - dependency guard
@@ -77,15 +78,10 @@ class Fabric:
         # Fetch a fresh token per request so long deletes don't fail on expiry.
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self._token()}"
-        for attempt in range(6):
-            resp = self._session.request(method, url, headers=headers, timeout=60, **kwargs)
-            if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", "10"))
-                print(f"  throttled (429); waiting {wait}s...")
-                time.sleep(wait)
-                continue
-            return resp
-        return resp
+        return request_with_read_retry(
+            method, url, send=self._session.request, headers=headers, timeout=60,
+            retry_throttled_writes=True, **kwargs,
+        )
 
     def resolve_workspace_id(self, workspace: str) -> tuple[str, str]:
         """Return (workspace_id, display_name) for a GUID or a display name."""

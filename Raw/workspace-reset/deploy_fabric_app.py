@@ -30,6 +30,7 @@ from typing import Any, Callable, Generator, TypeVar
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
+from http_retries import get_with_read_retry
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -195,7 +196,7 @@ def validate_hosted_page(
         raise DeployError("Hosting verification requires the generated HTTPS Fabric hosting origin.")
     try:
         # Protected hosting negotiates a browser gate for HTML; */* instead returns JSON 401.
-        response = requests.get(
+        response = get_with_read_retry(
             hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False
         )
     except requests.RequestException as exc:
@@ -534,8 +535,7 @@ def ensure_deploy_dependencies() -> None:
     if os.name == "nt" and len(str(native_tool)) >= 260:
         raise DeployError(
             f"Windows native-tool path is too long ({len(str(native_tool))} characters): {native_tool}. "
-            "Use a shorter repository path. Parallel retries through the updated launcher "
-            "allocate short isolated checkouts automatically; existing deployment state is retained."
+            "Use a shorter repository path, then retry; existing deployment state is retained."
         )
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
     missing = [path.name for path in manifests if not path.is_file()]
@@ -594,7 +594,7 @@ def resolve_tenant_id(tenant: str) -> str:
         return tenant.lower()
     if not TENANT_RE.fullmatch(tenant):
         raise DeployError("Tenant must be a GUID or domain name.")
-    response = requests.get(
+    response = get_with_read_retry(
         f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration",
         timeout=30, allow_redirects=False,
     )
@@ -624,9 +624,6 @@ def ensure_azure_tenant(tenant: str) -> str:
 
 def isolated_azure_cli_config(tenant: str) -> Path:
     """Return the tenant-scoped cache used only for CAE reauthentication."""
-    parallel_cache = os.environ.get("HYDRO_PARALLEL_AZURE_CONFIG_DIR", "").strip()
-    if parallel_cache:
-        return Path(parallel_cache)
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
@@ -804,7 +801,7 @@ def fabric_headers(tenant: str) -> dict[str, str]:
 
 
 def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
-    response = requests.get(f"{FABRIC_BASE}/{path.lstrip('/')}", headers=headers, timeout=60)
+    response = get_with_read_retry(f"{FABRIC_BASE}/{path.lstrip('/')}", headers=headers, timeout=60)
     if not response.ok:
         raise DeployError(f"Fabric API GET {path} failed: HTTP {response.status_code} {response.text}")
     return response.json()
@@ -814,7 +811,7 @@ def check_capacity_availability(capacity_id: str, headers: dict[str, str]) -> No
     url = f"{FABRIC_BASE}/capacities"
     seen_tokens: set[str] = set()
     while True:
-        response = requests.get(url, headers=headers, timeout=60)
+        response = get_with_read_retry(url, headers=headers, timeout=60)
         if response.status_code == 403:
             print(
                 "WARNING: Capacity-list access is unavailable. Capacity state is unverified; "
@@ -875,7 +872,7 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
     matches: list[dict[str, Any]] = []
     url: str | None = f"{FABRIC_BASE}/workspaces"
     while url:
-        response = requests.get(url, headers=headers, timeout=60)
+        response = get_with_read_retry(url, headers=headers, timeout=60)
         if not response.ok:
             raise DeployError(f"Could not list Fabric workspaces: HTTP {response.status_code} {response.text}")
         page = response.json()
@@ -1077,7 +1074,7 @@ def fabric_item_exists(workspace_id: str, item_id: str, tenant: str) -> bool:
     """Return false for deleted saved items; fail for other Fabric API errors."""
     if not GUID_RE.fullmatch(item_id):
         return False
-    response = requests.get(
+    response = get_with_read_retry(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item_id}",
         headers=fabric_headers(tenant),
         timeout=60,
@@ -1662,6 +1659,7 @@ def prepare_rayfin_env(
             "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
             "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
             "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX",
+            "RAYFIN_PUBLIC_FOUNDRY_IQ_CONNECTION_NAME", "RAYFIN_PUBLIC_FOUNDRY_ONTOLOGY_CONNECTION_NAME",
         )
         if same_workspace and _public_config_value(values, key)
     }
@@ -1926,20 +1924,22 @@ def export_frontend_env() -> None:
 
 
 def run_rayfin_deployment(command: list[str], tenant: str) -> str:
-    from deployment_locks import resource_lock
-
-    with resource_lock(tenant, "entra-spa"):
-        if os.environ.get("HYDRO_PARALLEL_DEPLOY") == "1":
-            values, _ = current_rayfin_target()
-            client_id = _public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID")
-            redirects = read_entra_spa_redirects_with_reauth(client_id, tenant)
-            write_rayfin_redirects(_unique_redirect_uris(redirects, ["http://localhost:5173"]))
-        return _run_rayfin_deployment(command, tenant)
-
-
-def _run_rayfin_deployment(command: list[str], tenant: str) -> str:
     try:
-        return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+        try:
+            return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+        except DeployError as exc:
+            if (command[-3:] != ["up", "staticapp", "deploy"]
+                    or not re.search(r"Static deploy failed:[^\r\n]*\b401\b", str(exc))):
+                raise
+            print(
+                "WARNING: Fabric rejected the static-app upload with HTTP 401. "
+                "Refreshing the tenant-scoped token and retrying the upload once without rebuilding.",
+                flush=True,
+            )
+            _FABRIC_TOKEN_CACHE.pop((tenant.casefold(), os.environ.get("AZURE_CONFIG_DIR", "")), None)
+            return run_stream(
+                [*command, "--skip-build"], cwd=APP_DIR, env=rayfin_environment(tenant),
+            )
     finally:
         # Rayfin also rewrites .env after the prebuild hook and on failed up runs.
         # Regenerate through the repository producer; never patch generated files.
@@ -2089,6 +2089,11 @@ def _unique_redirect_uris(*groups: list[str]) -> list[str]:
             seen.add(uri)
             result.append(uri)
     return result
+
+
+def _redirects_with_current_hosting(redirects: list[str], hosting_url: str) -> list[str]:
+    # setup-live-auth selects the last Fabric origin; only the returned deployment URL is authoritative.
+    return _unique_redirect_uris([uri for uri in redirects if uri != hosting_url], [hosting_url])
 
 
 def read_entra_spa_redirects(client_id: str) -> list[str]:
@@ -2596,10 +2601,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             raise DeployError(f"Feature bootstrap configuration failed: {exc}") from exc
 
     timings.stage(2, "Resolving the tenant SPA app registration")
-    from deployment_locks import resource_lock
-
-    with resource_lock(tenant_id, "entra-spa"):
-        client_id = resolve_spa(args.client_id, tenant_id)
+    client_id = resolve_spa(args.client_id, tenant_id)
     if not client_id:
         raise DeployError(
             "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
@@ -2710,11 +2712,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
 
     timings.stage(6, "Adding the current app URL to the preserved redirect configuration")
     rayfin_redirects = write_rayfin_redirects(
-        _unique_redirect_uris(
-            original_entra_redirects,
-            [hosting_url],
-            ["http://localhost:5173"],
-        )
+        _redirects_with_current_hosting(original_entra_redirects, hosting_url)
     )
     # Only this tenant's own URIs can be asserted against Entra; teammate origins are not registered here.
     required_entra_redirects = _unique_redirect_uris(original_entra_redirects, [hosting_url])
@@ -2746,16 +2744,18 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
         try:
-            with resource_lock(tenant_id, "entra-spa"):
-                run_with_azure_cli_reauthentication(
-                    tenant_id,
-                    "configuring browser sign-in",
-                    lambda: run_stream(
-                        node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
-                        cwd=APP_DIR,
-                        env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
-                    ),
-                )
+            write_rayfin_redirects(_redirects_with_current_hosting(
+                read_entra_spa_redirects_with_reauth(client_id, tenant_id), hosting_url,
+            ))
+            run_with_azure_cli_reauthentication(
+                tenant_id,
+                "configuring browser sign-in",
+                lambda: run_stream(
+                    node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
+                    cwd=APP_DIR,
+                    env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
+                ),
+            )
         except DeployError as exc:
             if feature_workspace:
                 raise DeployError("Feature deployment stopped: browser sign-in setup failed.") from exc

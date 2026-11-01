@@ -812,8 +812,8 @@ class DeployOrderTests(unittest.TestCase):
                     DEPLOY.check_capacity_availability("target", {})
         for status in (401, 429, 500):
             with self.subTest(status=status), patch.object(
-                DEPLOY.requests, "get", return_value=Mock(status_code=status, ok=False, text="service failure")
-            ):
+                DEPLOY.requests, "get", return_value=Mock(status_code=status, ok=False, text="service failure", headers={})
+            ), patch.object(DEPLOY.time, "sleep"):
                 with self.assertRaisesRegex(DEPLOY.DeployError, f"HTTP {status}"):
                     DEPLOY.check_capacity_availability("target", {})
 
@@ -884,6 +884,48 @@ class DeployOrderTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(DEPLOY.DeployError, "invalid frontend config"):
                 DEPLOY.run_rayfin_deployment(["rayfin", "up"], "tenant")
+
+    def test_static_upload_401_refreshes_only_its_token_and_retries_without_rebuilding(self):
+        command = ["node24", "rayfin", "up", "staticapp", "deploy"]
+        key = ("tenant", "private-cli")
+        with (
+            patch.dict(os.environ, {"AZURE_CONFIG_DIR": "private-cli"}),
+            patch.dict(DEPLOY._FABRIC_TOKEN_CACHE, {key: (9999999999, "old"),
+                                                   ("other-tenant", "other-cli"): (9999999999, "other")}),
+            patch.object(DEPLOY, "rayfin_environment", side_effect=[
+                {"RAYFIN_TOKEN": "old"}, {"RAYFIN_TOKEN": "refreshed"},
+            ]),
+            patch.object(DEPLOY, "run_stream", side_effect=[
+                DEPLOY.DeployError("Static deploy failed: Static deploy failed: 401 Unauthorized"),
+                "Hosting URL: https://current.webapp.fabricapps.net",
+            ]) as run,
+            patch.object(DEPLOY, "export_frontend_env") as export,
+        ):
+            result = DEPLOY.run_rayfin_deployment(command, "TENANT")
+            self.assertNotIn(key, DEPLOY._FABRIC_TOKEN_CACHE)
+            self.assertIn(("other-tenant", "other-cli"), DEPLOY._FABRIC_TOKEN_CACHE)
+        self.assertIn("Hosting URL:", result)
+        self.assertEqual(command[-1], "deploy")
+        self.assertEqual(run.call_args_list[1].args[0], [*command, "--skip-build"])
+        self.assertEqual(run.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
+        export.assert_called_once()
+
+    def test_static_upload_authentication_recovery_is_bounded_and_not_a_general_mutation_retry(self):
+        cases = [
+            (["up", "staticapp", "deploy"], "Static deploy failed: 401 Unauthorized", 2),
+            (["up", "staticapp", "deploy"], "Static deploy failed: 403 Forbidden", 1),
+            (["up", "staticapp", "deploy"], "Build failed: 401 errors", 1),
+            (["up", "--yes"], "Static deploy failed: 401 Unauthorized", 1),
+        ]
+        for command, message, expected_calls in cases:
+            with self.subTest(command=command, message=message), \
+                    patch.object(DEPLOY, "rayfin_environment", return_value={}), \
+                    patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError(message)) as run, \
+                    patch.object(DEPLOY, "export_frontend_env") as export:
+                with self.assertRaisesRegex(DEPLOY.DeployError, message):
+                    DEPLOY.run_rayfin_deployment(command, "tenant")
+                self.assertEqual(run.call_count, expected_calls)
+                export.assert_called_once()
 
     def test_rayfin_commands_export_validated_configuration_on_success_and_failure(self):
         for fails in (False, True):
@@ -2183,6 +2225,7 @@ class DeployOrderTests(unittest.TestCase):
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": "/subscriptions/subscription/projects/project",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://account.services.ai.azure.com/api/projects/project",
                     "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "chat-model",
+                    "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX": "-" + "a" * 32,
                     "RAYFIN_PUBLIC_ORCHESTRATOR_VERSION": "old-version",
                     "RAYFIN_PUBLIC_API_URL": "old-capacity-endpoint",
                 }
@@ -2201,6 +2244,7 @@ class DeployOrderTests(unittest.TestCase):
                 for key in (
                     "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+                    "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX",
                 ):
                     if same_tenant and same_workspace:
                         self.assertIn(f"{key}={old[key]}", restored)
@@ -2230,6 +2274,14 @@ class DeployOrderTests(unittest.TestCase):
                             "tenant", "workspace", "Demo", "capacity", "client", enable_energy_map=selection,
                         ))
                     self.assertIn(f"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP={expected}", (rayfin / ".env").read_text())
+
+    def test_current_hosting_remains_last_without_losing_existing_redirects(self):
+        current = "https://current.webapp.fabricapps.net"
+        other = "https://other.webapp.fabricapps.net"
+        self.assertEqual(
+            DEPLOY._redirects_with_current_hosting([current, other, current], current),
+            [other, current],
+        )
 
     def test_write_rayfin_redirects_retains_current_entra_origin(self):
         current = "https://current-app-swedencentral.webapp.fabricapps.net"

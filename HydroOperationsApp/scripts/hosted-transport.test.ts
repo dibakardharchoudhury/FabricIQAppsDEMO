@@ -18,6 +18,26 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
 
+test('Foundry subdomain routing failures are explicit and never replay a question or source read', async () => {
+  const operations: string[] = []
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    operations.push(JSON.parse(String(init?.body)).operation)
+    return response({ error: {
+      code: 'ResourceNotFound', message: 'Subdomain does not map to a resource.', private: 'provider secret',
+    } }, 404)
+  })
+  await assert.rejects(client.run({ question: 'List facilities.' }), error => {
+    assert.ok(error instanceof HostedInvocationError)
+    assert.equal(error.status, 404)
+    assert.equal(error.detail?.category, 'platform_routing')
+    assert.match(error.message, /Subdomain does not map to a resource/)
+    assert.match(error.message, /No answer or write outcome is certified/)
+    assert.doesNotMatch(error.message, /provider secret/)
+    return true
+  })
+  assert.deepEqual(operations, ['run'])
+})
+
 test('native timeouts and transport failures retain their real boundary without provider secrets', () => {
   for (const [status, category] of [[504, 'native_timeout'], [502, 'native_transport']] as const) {
     const error = new HostedInvocationError(status, { category, message: 'private provider diagnostic' })

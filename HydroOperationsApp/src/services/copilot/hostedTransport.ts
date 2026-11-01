@@ -56,6 +56,10 @@ export class HostedInvocationError extends Error {
       : detail?.category === 'native_provider_error'
         ? 'The Foundry/Fabric native provider failed during output moderation. This is not a confirmed Data Agent refusal. ' +
           'No direct-source fallback was used. No answer or write outcome is certified.'
+        : detail?.category === 'platform_routing'
+        ? 'Foundry could not route the hosted endpoint (HTTP 404: ResourceNotFound - Subdomain does not map to a resource). ' +
+          'The service owner must verify the deployed project endpoint and restore Azure runtime routing. ' +
+          'No answer or write outcome is certified.'
         : `Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
     this.status = status
     this.detail = detail
@@ -309,6 +313,12 @@ export class HostedTransport {
           throw new HostedInvocationError(response.status)
         }
         const error = record(await response.json())
+        const provider = error.error
+        if (response.status === 404 && provider && typeof provider === 'object' && !Array.isArray(provider)
+          && record(provider).code === 'ResourceNotFound'
+          && record(provider).message === 'Subdomain does not map to a resource.') {
+          throw new HostedInvocationError(response.status, { category: 'platform_routing' })
+        }
         const detail = error.detail
         throw new HostedInvocationError(response.status,
           detail && typeof detail === 'object' && !Array.isArray(detail) ? record(detail) : undefined)

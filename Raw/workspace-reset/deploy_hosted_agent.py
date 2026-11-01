@@ -22,6 +22,7 @@ import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+from foundry_resource_names import foundry_resource_suffix
 
 AGENT_NAME = "hydro-orchestrator"
 IMAGE_REPOSITORY = "hydro-orchestrator"
@@ -56,13 +57,13 @@ def azd_project_dir(deploy, endpoint: str, *, agent_name: str = AGENT_NAME) -> P
             or not re.fullmatch(r"/api/projects/[A-Za-z0-9_.-]+", parsed.path)):
         raise deploy.DeployError("The selected Foundry project endpoint is invalid.")
     label = re.sub(r"[^a-z0-9-]", "-", f"{(parsed.hostname or 'project').split('.')[0]}-{parsed.path.rsplit('/', 1)[-1]}".lower())
+    if agent_name != AGENT_NAME and not re.fullmatch(re.escape(AGENT_NAME) + r"-[0-9a-f]{32}", agent_name):
+        raise deploy.DeployError("The hosted agent name must use the verified workspace suffix.")
     identity = wanted if agent_name == AGENT_NAME else wanted + "/" + agent_name
     directory = state_root() / "hosted-agent" / f"{label}-{hashlib.sha256(identity.encode()).hexdigest()[:12]}"
     directory.mkdir(parents=True, exist_ok=True)
     generated = PINNED_ENDPOINT_RE.sub(lambda match: match["head"] + wanted, text, count=1)
     if agent_name != AGENT_NAME:
-        if not re.fullmatch(re.escape(AGENT_NAME) + r"-[0-9a-f]{32}", agent_name):
-            raise deploy.DeployError("The hosted agent name must use the verified workspace suffix.")
         for original, replacement in (
             (f"    {AGENT_NAME}:", f"    {agent_name}:"),
             (f"        name: {AGENT_NAME}", f"        name: {agent_name}"),
@@ -116,10 +117,9 @@ def compose_runtime_configuration(
     *, tenant: str, workspace: str, ontology: str, spa_client_id: str, kusto_origin: str,
     project_endpoint: str, values: dict[str, str], source_digest: str, production_writes: bool,
     resource_suffix: str = "",
+    data_agent_connection: str = "",
 ) -> tuple[dict[str, object], dict[str, object]]:
     """The two JSON documents the runtime requires, built only from the verified deployment target."""
-    from deployment_locks import foundry_resource_suffix
-
     if resource_suffix and resource_suffix != foundry_resource_suffix(workspace):
         raise ValueError("Foundry resource names must use the verified workspace suffix.")
     kusto = kusto_origin.rstrip("/")
@@ -142,7 +142,9 @@ def compose_runtime_configuration(
         },
         "project_endpoint": project_endpoint.rstrip("/"),
         "native_binding": {
-            "source": source, "connections": {"data-agent": "hydro-fabric-iq" + resource_suffix},
+            "source": source, "connections": {
+                "data-agent": data_agent_connection or "hydro-fabric-iq" + resource_suffix,
+            },
             "toolbox": "hydro-fabric-iq-tools" + resource_suffix,
             **({"agent_name_suffix": resource_suffix} if resource_suffix else {}),
         },
@@ -252,13 +254,6 @@ def azd_bootstrap_values(
 
 
 def ensure_hosted_image(deploy, *, registry: str, subscription: str) -> tuple[str, str]:
-    from deployment_locks import resource_lock
-
-    with resource_lock(subscription, "foundry-image:" + registry + ":" + image_tag(deploy.REPO_ROOT)):
-        return _ensure_hosted_image(deploy, registry=registry, subscription=subscription)
-
-
-def _ensure_hosted_image(deploy, *, registry: str, subscription: str) -> tuple[str, str]:
     root = deploy.REPO_ROOT
     tag = image_tag(root)
     digest = _registry_digest(deploy, registry, subscription, tag)
@@ -293,13 +288,16 @@ def ensure_hosted_agent(
     deploy, *, get_agent, endpoint: str, project_id: str, model: str, tenant: str, workspace: str, ontology: str,
     spa_client_id: str, values: dict[str, str], source_digest: str, kusto_origin: str, connections: list[dict],
     resource_suffix: str = "",
+    data_agent_connection: str = "",
     sleep=time.sleep,
 ) -> dict:
     """Return the active hosted agent after converging it on the current source and deployment target.
 
     ``values`` are the already-verified public deployment values (RAYFIN_PUBLIC_*), unquoted."""
-    existing = get_agent()
+    if resource_suffix and resource_suffix != foundry_resource_suffix(workspace):
+        raise deploy.DeployError("Foundry resource names must use the verified workspace suffix.")
     agent_name = AGENT_NAME + resource_suffix
+    existing = get_agent()
     _kind, _version, _digest, live_environment = hosted_state(existing)
     override = os.environ.get("HYDRO_ACR_NAME", "")
     try:
@@ -315,9 +313,10 @@ def ensure_hosted_agent(
     orchestrator, fabric_source = compose_runtime_configuration(
         tenant=tenant, workspace=workspace, ontology=ontology, spa_client_id=spa_client_id, kusto_origin=kusto_origin,
         project_endpoint=endpoint, values=values, source_digest=source_digest, production_writes=production_writes,
-        resource_suffix=resource_suffix,
+        resource_suffix=resource_suffix, data_agent_connection=data_agent_connection,
     )
     environment = {
+        "PYTHONNOUSERSITE": "1",
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": model,
         "HYDRO_RUNTIME_STATE_DIR": live_environment.get("HYDRO_RUNTIME_STATE_DIR") or DEFAULT_STATE_DIR,
         "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator, separators=(",", ":")),

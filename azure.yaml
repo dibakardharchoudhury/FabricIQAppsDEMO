@@ -24,6 +24,7 @@ services:
         uses:
             - ai-project
         env:
+            PYTHONNOUSERSITE: "1"
             AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
             HYDRO_ORCHESTRATOR_CONFIG: ${HYDRO_ORCHESTRATOR_CONFIG}
             HYDRO_FABRIC_SOURCE_CONFIG: ${HYDRO_FABRIC_SOURCE_CONFIG}

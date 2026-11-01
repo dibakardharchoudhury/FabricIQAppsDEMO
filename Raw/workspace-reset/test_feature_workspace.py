@@ -612,9 +612,10 @@ class FeatureWorkspaceTests(unittest.TestCase):
         response = Mock(status_code=200)
         url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"
         with (
-            patch.object(feature.Fabric, "request", side_effect=[
+            patch.object(feature.requests.Session, "request", side_effect=[
                 feature.requests.ReadTimeout("temporary read timeout"), response,
             ]) as request,
+            patch.object(feature.Fabric, "_token", return_value="test-token"),
             patch.object(feature.time, "sleep") as sleep,
         ):
             client = feature.FeatureFabric(TENANT)
@@ -623,7 +624,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
         self.assertTrue(all(call.args == ("GET", url) for call in request.call_args_list))
         self.assertTrue(all(call.kwargs["allow_redirects"] is False for call in request.call_args_list))
         self.assertTrue(all("x-ms-fabric-skill" in call.kwargs["headers"] for call in request.call_args_list))
-        sleep.assert_called_once_with(5)
+        sleep.assert_called_once_with(1)
 
     def test_fabric_mutations_are_not_retried_after_transport_uncertainty(self):
         url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"
@@ -823,7 +824,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         patch.object(deploy, "npm24", return_value=["validate"]),
                         patch.object(deploy, "node24_script", return_value=["auth"]),
                         patch.object(deploy, "run_stream", side_effect=lambda argv, **_: events.append(argv[0]) or url),
-                        patch.object(deploy, "run_rayfin_deployment", side_effect=lambda argv, tenant: events.append(argv[0]) or url),
+                        patch.object(deploy, "run_rayfin_deployment", side_effect=lambda argv, tenant, **_: events.append(argv[0]) or url),
                         patch.object(deploy.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
                         patch.object(deploy, "validate_fabric_app", return_value=item_id),
                         patch.object(deploy, "validate_hosted_page", return_value="verified"),

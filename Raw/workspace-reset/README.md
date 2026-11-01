@@ -94,72 +94,26 @@ as blocked and ontology graph materialization remain explicit operator prerequis
   App publication waits for both. Each completed component is checkpointed; the
   combined component reruns idempotently if either branch or publication fails.
 
-## Optional: up to three workspaces in parallel
+All launcher actions target one workspace; multi-workspace fan-out remains removed.
+Foundry setup uses stable workspace-GUID suffixes for agents, connections, toolbox
+and hosted state. Select the same existing account and ready model deployment,
+leaving the project field blank to use `hydro-workspace-<full-workspace-GUID-hex>`.
+Approve creation of a missing project: setup creates only that project and its
+scoped access/shared-infrastructure connections, not another model allocation.
+Explicit existing project selections and same-target saved identities remain supported. Reruns
+reuse that workspace's set; other workspace and older unsuffixed resources are
+not deleted or retargeted. App-only publication still verifies compatible older
+unsuffixed deployments. Shared model rate limits and hosted compute costs remain.
+The existing checkpoint flow and Energy/Foundry overlap within one workspace remain.
 
-In the sidebar, enable **Deploy to multiple workspaces in parallel** and enter one,
-two or three workspace names/GUIDs in the same tenant. Empty slots are ignored,
-including an empty first slot. Full Deploy, GitHub Sync, Core setup, Energy setup,
-Foundry setup, Deploy app, Delete workspace items and connection tests fan out only
-to the populated targets. Every module button shows the selected workspace count.
-The Core setup forms, including Full Deploy, list every selected workspace on its
-own line. This is a read-only target preview; each worker supplies its own resolved
-workspace ID to the setup pipeline, not the combined display text.
-Deletion defaults to dry run. To actually delete items, repeat every selected
-workspace name/GUID, one per line in the displayed order; the backend rejects the
-entire batch unless all targets are confirmed. A failed deletion requires fresh
-confirmation of that target's canonical GUID before retrying. Retrying a failed
-dry run remains a dry run even if the form's checkbox has since changed.
+Full Deploy loads local CLI helpers from the launcher's own checkout. Source
+initialization failures report the underlying local error and start no deployment stage.
 
-The form settings apply to every selected workspace. Tenant setup defaults remain
-available regardless of workspace name; explicit form values take precedence.
-To share an existing Foundry account and project, enter that project name or full
-resource ID and keep **Reuse the entered project** selected. Each workspace gets
-its own GUID-suffixed connections, native toolbox, five specialists and hosted
-orchestrator inside that project. Existing unsuffixed resources are left untouched,
-and each app saves its own hosted invocation URL. Shared model quota remains shared.
-App-only publication continues to verify existing legacy bindings without migrating them.
-
-Alternatively, choose **Separate projects (short workspace suffix)** and enter a
-project base name. A stable eight-character workspace suffix is appended, with
-names bounded to 64 characters. Missing projects are created only when the existing
-creation checkbox is explicitly approved. Blank project fields retain target-specific
-saved binding/convention discovery; a sole unrelated project is not a safe fallback.
-Parallel mode never approves billable creation.
-
-Each worker uses a separate checkout, Azure CLI cache, hosted-agent state and
-Rayfin deployment files. Private workspace state stays under
-`~/.fabric-demo/parallel-deployments/`; checkouts use the shorter private
-`~/.fabric-demo/parallel-checkouts/<unique-id>/` path so nested Windows native tools
-stay below the executable path limit. Workspace records retain the checkout identity.
-Only matching tenant/workspace state is reused, including state from older checkout
-locations; the main checkout's generated files are not changed. Workers use
-one committed source snapshot, so commit source changes first. Existing generated
-changes to `HydroOperationsApp/rayfin/rayfin.yml` need not be discarded. State and
-checkouts are retained, not deleted after completion.
-
-The deployer pins Node 24 for npm, lifecycle scripts and spawned build tools, even
-when another Node version is installed globally. Locked installs prefer cached
-packages without bypassing integrity checks. An overlong Windows native-tool path
-fails before installation; only file-lock/cleanup failures are retried once.
-Other failures report the underlying diagnostic instead of repeating an identical
-restore. After updating the launcher, resume a failed workspace to allocate a short
-checkout and retain successful Full Deploy checkpoints; do not repeat Git sync/Core
-solely to repair local npm installation.
-
-Each workspace has its own status, timings, live output and cancellation control.
-One failure does not stop the other workspaces. After the batch finishes, retry
-only the failed/cancelled workspace; Full Deploy retains its successful component
-checkpoints and requires explicit synchronization when definitions changed. A
-server interruption is not proof that remote Fabric jobs stopped: verify those
-jobs before starting another run. Cancellation stops owned local processes, not
-necessarily already-submitted remote Fabric jobs.
-
-Workspace names/GUID aliases are resolved before deployment; duplicate targets
-are rejected. Shared Entra mutations and Foundry bootstrap operations are locked
-across processes, and Entra redirects are reread inside the mutation lock to avoid
-losing another workspace's newly published origin. Workspace pipelines, builds and
-agent deployment work otherwise overlap. Fabric capacity, Spark concurrency and
-Azure quotas still apply; three targets do not imply three times the throughput.
+The deployer retains Node 24 for npm, lifecycle scripts and spawned build tools.
+Locked installs prefer cached packages without bypassing integrity checks.
+On Windows, an overlong native-tool path fails early with a shorter-path message;
+only file-lock/cleanup failures are retried once. Sign-in redirect preservation and
+the bounded static-upload HTTP 401 token refresh/retry remain in effect.
 
 ## Easiest start — just launch it (no commands to type)
 
@@ -249,11 +203,24 @@ This choice is shared across Foundry, full workflow and app publication, scoped 
 the tenant/workspace. Registration verification and automated auth setup remain required.
 The launcher preserves the target's existing work-order write policy; it does not
 offer or submit a write-permission override. Enabled writes still require human approval.
-**Check this box if you want to create a new Foundry project with the multi-agent
-setup.** is explicit, billable approval, never remembered. It does not discard or
+**Allow project creation (billable):** check only for a missing project. For redeployments,
+leave unchecked and keep the same workspace/account/project/model. Agent updates still
+run; a missing project stops deployment. Approval is never remembered. It does not discard or
 disable either shared name; existing projects
-are reused even with approval enabled. A missing project uses the exact
-project name entered above. A deployment alias is resolved to its underlying
+are reused even with approval enabled. With an existing account, a missing project
+uses the exact name entered above, or the stable full workspace-GUID project name.
+The existing ready account-level model deployment is verified before project-only
+creation. Its model/version/SKU/capacity fingerprint is checked again during setup;
+no model catalog, quota allocation or model resize runs on this path.
+The existing account's region, connected registry and monitoring are reused;
+ambiguous/missing infrastructure, invalid model identity, access denial or allocation
+drift fails explicitly. Project managed identities receive scoped registry/model/project
+access; the operator receives project access. Shared account/model/registry/monitoring
+resources are outside project-only cleanup ownership. Project agent access is verified
+after bounded endpoint/RBAC propagation waits, not inferred from project creation.
+
+Only an approved genuinely missing account uses full infrastructure/model bootstrap.
+On that bootstrap path a deployment alias is resolved to its underlying
 model/version in the selected subscription; a catalog chat model name also works.
 Region, model version, pay-as-you-go SKU and minimum/default capacity are automatic.
 Regional Standard is preferred, followed by DataZoneStandard and GlobalStandard;
@@ -762,7 +729,12 @@ suffixes such as `V6` and `V9` are environment names, not ontology generations. 
 or unused suffix when an existing target ontology is v1: setup rejects it without migration.
 `ops_agent_run_as_user`, `ops_agent_teams_team_id`, and `ops_agent_teams_channel_id` configure the
 restored Operations Agent run-as identity and Teams delivery. `alert_email_to` separately configures
-the `Pipe_SendEmailAlert` recipient and is required by the local launcher. A direct RTI_010 run
+the `Pipe_SendEmailAlert` recipient and is required by the local launcher. Setup stores it as the
+pipeline parameter default; To reads `@pipeline().parameters.alert_email_to`. The launcher marks
+the run-as user, email and Teams destinations with **Operations Agent** labels. Key Vault secret-name
+fields stay visible; the launcher omits the notebook timeout control and retains the pipeline default.
+Sync updated RTI_010 and rerun setup to update
+existing pipelines. A direct RTI_010 run
 falls back to the configured run-as user, or the deploying user when both fields are blank. Email alerts
 also require the Office 365 Outlook OAuth2 connection described in the root README. Review status/reasons and
 verify actual playbook execution and delivery separately from app-deployment success.
@@ -841,6 +813,13 @@ failed/cancelled component runs again through its existing idempotent command.
 Completed component/subphase timings remain visible; the overall timer measures
 the current retry attempt.
 
+Related deployment REST clients share bounded GET/HEAD recovery: up to six attempts for
+connection resets, timeouts and transient HTTP errors. Ambiguous start/write requests are
+never replayed; permanent authorization, certificate and terminal job failures propagate.
+Dependent stages require verified success, never an interrupted monitor or cancelled run.
+The Setup runner prints its accepted job URL. `--resume-job-url <url>` validates the
+workspace/pipeline and monitors that existing job without starting another one.
+
 Resume requires the original effective tenant, workspace, Git source/connection,
 pipeline parameters, SPA and Foundry/app settings. Changed inputs reject the retry
 without starting anything; restore those inputs or explicitly choose **Run Full
@@ -849,12 +828,13 @@ enter it again only when retrying an incomplete Git sync that needs one.
 The browser remembers only the last Full Deploy job ID and reconnects after page
 reload. Full Deploy checkpoints and measured timings are saved atomically in the
 existing gitignored `webapp/pipeline-defaults.local.json` settings file (or its
-`FABRIC_UI_PIPELINE_DEFAULTS_FILE` override). Only job identity, successful component
-prefix, status, timings and input/source hashes are saved, never PATs, child
+`FABRIC_UI_PIPELINE_DEFAULTS_FILE` override). Only job identity, accepted Setup job URL/outcome,
+successful component prefix, status, timings and input/source hashes are saved, never PATs, child
 environments or live logs. Failed/cancelled runs can resume after restarting the
-local server. A checkpoint that was still running when the server stopped is
-reported as interrupted, not safe to retry automatically: check Fabric's Monitoring
-hub before starting another run. The older five-stage checkpoint layout explicitly
+local server. An interrupted Setup monitor with an accepted URL resumes that same job;
+it does not rerun Setup. Other interrupted checkpoints require checking Fabric's Monitoring
+hub before starting another run. New Setup submissions reject active/unverified runs.
+The older five-stage checkpoint layout explicitly
 refuses automatic resume and retains its recorded completion information; its
 boundaries cannot safely certify completion of the new combined component.
 Reloading such a run displays **Previous deployment history**, including its recorded
@@ -989,10 +969,7 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
   Existing state is not deleted.
    In the independent **Set up Foundry agents** module (or the combined CLI flow),
    the deployer converges the **Foundry** side: the
-   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent.
-   New setup scopes these resource names and the native toolbox with the workspace GUID (without hyphens),
-   allowing a shared project without overwriting another workspace's bindings. App-only deployment retains
-   compatibility with existing unsuffixed configurations. The
+   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
    Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,

@@ -52,18 +52,19 @@ CONNECTIONS = [{"name": "reg-conn", "properties": {"category": "ContainerRegistr
                {"name": "other", "properties": {"category": "AppInsights", "target": "/x"}}]
 
 
-def configuration(writes=False):
+def configuration(writes=False, *, data_agent_connection=""):
     digest = provision.source_configuration_digest(GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], VALUES)
     return hosted.compose_runtime_configuration(
         tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"], spa_client_id=GUIDS["spa"],
         kusto_origin=KUSTO + "/", project_endpoint=ENDPOINT + "/", values=VALUES, source_digest=digest,
-        production_writes=writes,
+        production_writes=writes, data_agent_connection=data_agent_connection,
     ), digest
 
 
 def environment(writes=True, state="/home/session/hydro"):
     (orchestrator, fabric), _ = configuration(writes)
     return {
+        "PYTHONNOUSERSITE": "1",
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": "model-x", "HYDRO_RUNTIME_STATE_DIR": state,
         "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator, separators=(",", ":")),
         "HYDRO_FABRIC_SOURCE_CONFIG": json.dumps(fabric, separators=(",", ":")),
@@ -74,6 +75,22 @@ def agent(digest=DIGEST_A, env=None, status="active", kind="hosted", version=7):
     return {"versions": {"latest": {"status": status, "version": version, "definition": {
         "kind": kind, "container_configuration": {"image": f"myreg.azurecr.io/hydro-orchestrator@{digest}"},
         "environment_variables": environment() if env is None else env}}}}
+
+
+class NativeBindingTests(unittest.TestCase):
+    def test_project_scoped_connection_is_used_and_verified_without_source_drift(self):
+        connection = "hydro-fabric-iq-" + "c" * 32
+        (orchestrator, _), digest = configuration(data_agent_connection=connection)
+        self.assertEqual(orchestrator["native_binding"]["connections"], {"data-agent": connection})
+        live = agent(env={"HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator)})
+        provision.verify_hosted_source(
+            live, GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], digest,
+            data_agent_connection=connection,
+        )
+        with self.assertRaisesRegex(RuntimeError, "native binding"):
+            provision.verify_hosted_source(
+                live, GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], digest,
+            )
 
 
 class FakeDeploy:
@@ -220,11 +237,10 @@ class ConfigurationTests(unittest.TestCase):
         directories = set()
         for workspace in (GUIDS["workspace"], GUIDS["ontology"]):
             suffix = provision.foundry_resource_suffix(workspace)
-            (base, _), _digest = configuration()
             configuration_value, _sources = hosted.compose_runtime_configuration(
                 tenant=GUIDS["tenant"], workspace=workspace, ontology=GUIDS["ontology"],
                 spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
-                values=VALUES, source_digest=base["source"]["configuration_digest"],
+                values=VALUES, source_digest=configuration()[1],
                 production_writes=False, resource_suffix=suffix,
             )
             binding = configuration_value["native_binding"]
@@ -235,8 +251,16 @@ class ConfigurationTests(unittest.TestCase):
             yaml = (directory / "azure.yaml").read_text(encoding="utf-8")
             self.assertIn("    " + name + ":", yaml)
             self.assertIn("        name: " + name, yaml)
+            self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name), directory)
             directories.add(directory)
         self.assertEqual(len(directories), 2)
+        with self.assertRaises(ValueError):
+            hosted.compose_runtime_configuration(
+                tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"],
+                spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
+                values=VALUES, source_digest=configuration()[1],
+                production_writes=False, resource_suffix="-" + "0" * 32,
+            )
 
     def test_runtime_configuration_matches_the_documented_contract(self):
         (orchestrator, fabric), digest = configuration()
@@ -293,6 +317,19 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
+    def test_python_startup_isolation_is_checked_even_for_the_current_image(self):
+        live_environment = environment()
+        del live_environment["PYTHONNOUSERSITE"]
+        self.assertRegex(hosted.needs_publish(agent(env=live_environment), image_digest=DIGEST_A,
+                                              environment=environment()), "PYTHONNOUSERSITE differs")
+
+    def test_acr_template_uses_project_identity_and_explicit_python_isolation(self):
+        import yaml
+
+        service = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"))["services"]["hydro-orchestrator"]
+        self.assertNotIn("registryConnectionId", service)
+        self.assertEqual(service["env"]["PYTHONNOUSERSITE"], "1")
+
     def test_a_current_agent_needs_nothing(self):
         self.assertIsNone(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment()))
 
@@ -338,10 +375,7 @@ class DecisionTests(unittest.TestCase):
 
 
 class ConvergenceTests(unittest.TestCase):
-    def tag(self):
-        return hosted.image_tag(REPO_ROOT)
-
-    def test_scoped_hosted_agent_publication_uses_its_own_service(self):
+    def test_scoped_hosted_agent_reuses_model_and_image_and_publishes_only_its_service(self):
         suffix = provision.foundry_resource_suffix(GUIDS["workspace"])
         configuration_value, fabric_source = hosted.compose_runtime_configuration(
             tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"],
@@ -359,6 +393,13 @@ class ConvergenceTests(unittest.TestCase):
         commands = fake.commands("azd", "deploy")
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0][2], "hydro-orchestrator" + suffix)
+        self.assertFalse(fake.commands("az", "acr", "build"))
+        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
+        run(fake, [agent(DIGEST_A, env=expected)], resource_suffix=suffix)
+        self.assertFalse(fake.commands("azd", "deploy"))
+
+    def tag(self):
+        return hosted.image_tag(REPO_ROOT)
 
     def test_a_current_agent_costs_one_registry_lookup_and_changes_nothing(self):
         fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})

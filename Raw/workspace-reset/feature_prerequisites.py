@@ -48,6 +48,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import requests
+from http_retries import request_with_read_retry
 from azure.identity import AzureCliCredential
 
 Json = dict[str, Any]
@@ -413,9 +414,9 @@ class _Client:
             if scope == FABRIC_SCOPE:
                 headers["x-ms-fabric-skill"] = FABRIC_SKILL
             try:
-                response = self.session.request(
-                    method, url, headers=headers, json=body,
-                    timeout=(10, 60), allow_redirects=False,
+                response = request_with_read_retry(
+                    method, url, send=self.session.request, headers=headers, json=body,
+                    timeout=(10, 60), allow_redirects=False, retry_http=False,
                 )
             except requests.RequestException:
                 raise FeaturePrerequisiteError(
