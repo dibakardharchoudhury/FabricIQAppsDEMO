@@ -135,6 +135,11 @@ Verified prose-only answers are native evidence too; the workflow does not requi
 or invent a business-record table to accept them.
 Independent source tables and explicitly
 requested charts retain their existing presentation and exact source values.
+Facility-scoped equipment and signal inventories use verified equipment focus,
+not a workspace-wide population fallback. Focus tables retain only records whose
+returned or captured row identity belongs to that selection; missing membership
+evidence fails explicitly. Population history and immutable source receipts remain
+unchanged.
 Work-order views bound to a coverage requirement show only open work under the
 same closed-status policy as maintenance review. Historical source receipts remain
 immutable; factual history views retain completed work. Missing status evidence

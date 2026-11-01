@@ -1359,6 +1359,84 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         history = self.owner.contract_answer_plan(self.request)
         self.assertEqual(len(history.tables[0].rows), len(rows))
 
+    def test_focus_instrument_view_preserves_equipment_boundary_and_source_paths(self):
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T005"}
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "instruments_focus_direct", "purpose": "verification",
+            }],
+            "views": [{
+                "id": "signals", "title": "Selected signals", "kind": "instruments",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        rows = [
+            {"instrument_id": "I-other", "equipment_id": "EQUIP_RTI_T014"},
+            {"instrument_id": "I-selected", "equipment_id": "EQUIP_RTI_T005"},
+            {"instrument_id": "I-projected"},
+        ]
+        receipt = ToolEvidence(
+            id="instrument-read", source=SOURCE, tool="query_assets",
+            arguments={"entity": "instruments"}, completed_at=utc_now(),
+            result={"rows": rows, "truncated": False},
+            row_identities={"/rows/2": {"equipment_id": "EQUIP_RTI_T005"}},
+            datasets=(EvidenceDataset(
+                kind="instruments", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("instrument_id",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+
+        plan = self.owner.contract_answer_plan(self.request)
+
+        self.assertEqual(len(plan.tables[0].rows), 2)
+        self.assertEqual(
+            [row.cells[0].source.path for row in plan.tables[0].rows],
+            ["/rows/1/instrument_id", "/rows/2/instrument_id"],
+        )
+        self.assertEqual(self.owner.evidence[receipt.id].result["rows"], rows)
+
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "instruments_population_direct", "purpose": "facts",
+            }],
+            "views": [{
+                "id": "signals", "title": "All signals", "kind": "instruments",
+                "scope": "population", "presentation": "direct_records_table",
+            }],
+        })
+        self.owner.evidence = {receipt.id: receipt.model_copy(update={
+            "datasets": (receipt.datasets[0].model_copy(update={"scope": "population"}),),
+        })}
+        self.assertEqual(len(self.owner.contract_answer_plan(self.request).tables[0].rows), 3)
+
+    def test_focus_instrument_view_requires_equipment_identity(self):
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T005"}
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "instruments_focus_direct", "purpose": "verification",
+            }],
+            "views": [{
+                "id": "signals", "title": "Selected signals", "kind": "instruments",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        receipt = ToolEvidence(
+            id="unbound-instrument", source=SOURCE, tool="query_assets",
+            arguments={"entity": "instruments"}, completed_at=utc_now(),
+            result={"rows": [{"instrument_id": "I-unknown"}]},
+            datasets=(EvidenceDataset(
+                kind="instruments", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("instrument_id",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+        with self.assertRaisesRegex(SourceFailure, "equipment identity"):
+            self.owner.contract_answer_plan(self.request)
+
     def test_work_coverage_view_requires_status_evidence(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
             "version": 3,

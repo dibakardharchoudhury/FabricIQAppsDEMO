@@ -630,7 +630,8 @@ class EquipmentSelection(Contract):
 class EvidenceRequirement(Contract):
     evidence: str = Field(
         pattern=r"^[a-z][a-z0-9_]{0,63}_(?:population|focus)_(?:direct|native)$",
-        description="Exact catalog key followed by scope and authority, e.g. facilities_population_direct.",
+        description="Exact catalog key followed by scope and authority. Focus includes all verified "
+                    "equipment in a resolved facility; population means the workspace-wide dataset.",
     )
     purpose: Literal["facts", "identity", "coverage", "investigation", "verification"]
 
@@ -660,7 +661,10 @@ class AnswerViewContract(Contract):
     id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,63}$")
     title: str = Field(min_length=1, max_length=120)
     kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    scope: Literal["population", "focus"]
+    scope: Literal["population", "focus"] = Field(
+        description="Focus is the verified equipment selection, including all equipment resolved in a "
+                    "named facility. Population is workspace-wide, not every signal within that facility.",
+    )
     presentation: Literal[
         "direct_records_table", "direct_records_bar", "direct_records_line", "direct_records_scatter",
         "direct_grouped_by_equipment_table", "direct_grouped_by_equipment_bar",
@@ -1414,7 +1418,14 @@ writer merely to summarize, certify or reformat that answer.
 View kind never includes the evidence suffix. Its kind/scope/authority must exactly match a requirement.
 An unfiltered query_assets(entity="facilities") reader returns the complete governed facility population;
 use that one reader, not an agent or telemetry query, for a simple facility list/count.
-Use exactly the catalog's evidence scopes/authorities/presentations. Counts need complete population evidence;
+Use exactly the catalog's evidence scopes/authorities/presentations. Counts need complete evidence for the
+requested scope; a count within verified equipment focus does not require a workspace-wide population read.
+For all turbines or registered signals within a named facility, resolve its equipment and use
+equipment_focus_direct and instruments_focus_direct with focus views. Focus can contain many turbines;
+"all registered signals at Sloy" is not instruments_population_direct. Population inventory is workspace-wide.
+Independent verification uses purpose=verification even for equipment and instrument identity requirements,
+not purpose=identity or facts. Keep the same verified equipment boundary through signal, telemetry and work
+reads. Never add an unfiltered population read merely to satisfy a focused inventory requirement.
 never substitute telemetry for an unspecified kind. Charts only if requested. Scope focus means verified
 equipment focus, not a guessed facility filter. An RCA or maintenance review must include its relevant factual
 evidence; do not require unrelated datasets. Ask one focused clarification with mode=clarify when necessary
@@ -3987,6 +3998,11 @@ class FoundrySupervisor:
                 and item.authority == view.authority and item.purpose == "coverage"
                 for item in contract.requirements
             )
+            focus_entity_view = (
+                view.scope == "focus" and view.authority == "direct"
+                and view.kind in ("equipment", "instruments", "work_orders")
+                and bool(self.selected_equipment_ids)
+            )
             for receipt, dataset in matches:
                 records = receipt.result.get(dataset.field)
                 if not isinstance(records, list) or not all(isinstance(item, dict) for item in records):
@@ -3994,6 +4010,18 @@ class FoundrySupervisor:
                         f"Governed dataset {dataset.kind} does not expose its declared record collection."
                     )
                 for index, record in enumerate(records):
+                    if focus_entity_view:
+                        equipment = record.get("equipment_id", record.get("equipmentId"))
+                        if equipment is None:
+                            row_path = f"/{dataset.field.replace('~', '~0').replace('/', '~1')}/{index}"
+                            row_identity = receipt.row_identities.get(row_path, {})
+                            equipment = row_identity.get("equipment_id", row_identity.get("equipmentId"))
+                        if not isinstance(equipment, str) or not equipment.strip():
+                            raise SourceFailure(
+                                f"Required focus view {view.id} is missing equipment identity."
+                            )
+                        if equipment not in self.selected_equipment_ids:
+                            continue
                     if open_work_view:
                         status = record.get("status")
                         if not isinstance(status, str) or not status.strip():
