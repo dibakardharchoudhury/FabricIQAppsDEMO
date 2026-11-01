@@ -268,11 +268,16 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertEqual(config.ops_agent_teams_team_id, TEAM_ID)
             self.assertEqual(config.ops_agent_teams_channel_id, CHANNEL_ID)
             self.assertEqual(config.alert_email_to, ALERT_EMAIL)
+            self.assertTrue(config.require_initial_weather)
+            path.write_text(json.dumps({**raw, "require_initial_weather": False}))
+            self.assertFalse(feature.FeatureConfig.load(path, TENANT, WORKSPACE).require_initial_weather)
+            path.write_text(json.dumps(raw))
             with self.assertRaisesRegex(feature.FeatureWorkspaceError, "match"):
                 feature.FeatureConfig.load(path, TENANT, SUBSCRIPTION)
             for key, value in (
                 ("client_secret", "must-not-be-accepted"),
                 ("allow_public_api_group", "true"),
+                ("require_initial_weather", "false"),
                 ("enable_energy_map", "true"),
                 ("enable_map_chat", "true"),
                 ("workspace_id", "not-a-guid"),
@@ -723,6 +728,10 @@ class FeatureWorkspaceTests(unittest.TestCase):
         stage_two = pipeline["properties"]["activities"][1]
         self.assertEqual(pipeline["properties"]["parameters"]["enable_weather_schedule"]["defaultValue"], True)
         self.assertEqual(stage_two["typeProperties"]["parameters"]["enable_weather_schedule"]["type"], "bool")
+        self.assertEqual(pipeline["properties"]["parameters"]["require_initial_weather"]["defaultValue"], True)
+        self.assertEqual(stage_two["typeProperties"]["parameters"]["require_initial_weather"]["type"], "bool")
+        self.assertIn('"require_initial_weather": self.config.require_initial_weather',
+                      (ROOT / "Raw/workspace-reset/feature_workspace.py").read_text(encoding="utf-8"))
 
     def test_setup_preserves_teams_contract_and_mirrors_remain_valid(self):
         for name in ("RTI_001_create_lakehouse_SelfContained", "RTI_010_build_operations_agent",

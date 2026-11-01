@@ -36,6 +36,12 @@ class WeatherSourceContractTests(unittest.TestCase):
             if aurora:
                 self.assertIs(stages[3]["args"]["prepare_only"], False)
                 self.assertEqual(stages[4]["path"], "Weather_020_area_calculations")
+        unavailable = ns["weather_dag"](False, 3600, False)
+        self.assertEqual([stage["name"] for stage in unavailable["activities"]], ["Prepare_areas"])
+        self.assertEqual(unavailable["activities"][0]["path"], "Weather_002_fetch_area_weather")
+        self.assertTrue(unavailable["activities"][0]["args"]["prepare_only"])
+        with self.assertRaises(ValueError):
+            ns["weather_dag"](True, 3600, False)
 
     def orchestrator_functions(self):
         source = (ROOT / "Notebooks/Weather_Orchestrator.Notebook/notebook-content.py").read_text(encoding="utf-8")
@@ -59,6 +65,8 @@ class WeatherSourceContractTests(unittest.TestCase):
         for aurora, timeout in (("false", 3600), (False, 0), (False, True)):
             with self.assertRaises(ValueError):
                 ns["weather_dag"](aurora, timeout)
+        with self.assertRaises(ValueError):
+            ns["weather_dag"](False, 3600, "false")
 
     def test_forecast_refresh_uses_one_atomic_merge_with_exact_replacement_scopes(self):
         import pandas as pd
@@ -389,6 +397,18 @@ class WeatherSourceContractTests(unittest.TestCase):
         self.assertEqual(pipeline["properties"]["activities"][0]["policy"]["retry"], 0)
         rayfin = (ROOT / "HydroOperationsApp/rayfin/rayfin.yml").read_text(encoding="utf-8")
         self.assertNotIn("right-forge-2c0b55c94f", rayfin)
+        orchestrator = (ROOT / "Notebooks/Weather_Orchestrator.Notebook/notebook-content.py").read_text(
+            encoding="utf-8")
+        for table in (
+            "weather_ingestion_runs", "weather_observations", "weather_forecasts",
+            "weather_area_metrics", "weather_latest_forecasts", "weather_latest_observations",
+        ):
+            self.assertIn(f'"{table}"', orchestrator)
+        self.assertIn("SET active = false", orchestrator)
+        self.assertIn('"weather_readiness_attested": require_initial_weather', orchestrator)
+        fabric = (ROOT / "HydroOperationsApp/src/services/fabric.ts").read_text(encoding="utf-8")
+        self.assertIn("value.observations.length === 0 && value.forecasts.length === 0", fabric)
+        self.assertIn("weatherDataCache = undefined\n    return null", fabric)
 
 
     def test_remaining_review_remediation_contracts(self):

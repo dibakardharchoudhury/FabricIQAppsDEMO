@@ -544,6 +544,11 @@ The JSON configuration must include `ops_agent_teams_team_id`,
 `ops_agent_teams_channel_id`, and `alert_email_to`; `ops_agent_run_as_user` is optional.
 These values are passed unchanged to the setup pipeline so isolated bootstrap retains
 the mandatory Operations Agent Teams and delegated Outlook delivery configuration.
+`require_initial_weather` is optional and defaults to `true`. Set it to `false` only for
+an isolated copy that must proceed without UKMet credentials. The bootstrap then prepares
+weather location/area metadata, clears dynamic weather rows, marks providers inactive,
+persists `not_attested` readiness, leaves the schedule disabled, and continues through both
+mandatory agents without inventing forecasts or observations.
 Fabric setup runs before public artifact discovery and Foundry provisioning. The
 bootstrap verifies workspace Runtime 2.0 and rejects incompatible published
 Environment overrides before setup or Geo notebook execution. A confirmed terminal
@@ -736,8 +741,10 @@ requests, reads, or stores their values.
 Provisioning also creates `03_Pipe_Weather` with its UTC schedule disabled. Stage 2 enables the
 six-hour schedule only after every setup activity, including initial UKMet ingestion, current
 eligible-facility coverage and full ontology validation, succeeds and `enable_weather_schedule`
-is true (the default). Setting it false disables future scheduling, not the required initial
-UKMet bootstrap; feature workspaces also need valid UKMet credentials. Aurora remains optional.
+is true (the default). Setting only the schedule flag false disables future scheduling, not the
+default required UKMet bootstrap. An isolated feature config may additionally set
+`require_initial_weather=false`; that explicit mode never enables the schedule, performs no
+provider call, clears dynamic weather data and records readiness as un-attested. Aurora remains optional.
 The Stage 2 root notebook inherits the published Weather Environment so nested weather stages
 use the same compatible Spark session and default Lakehouse. The schedule aligns to the
 00/06/12/18 UTC model runs both vendors derive from. Each run executes area preparation,

@@ -31,6 +31,10 @@
 # - Runs **NB02–NB06, NB08–NB11** and the standard **Weather** bootstrap in one Weather Environment
 #   Spark session (VNet cold start paid once); independent
 #   branches run in parallel per the DAG.
+# - Normal setup requires the initial UKMet refresh. Deliberate isolated feature
+#   workspaces may set `require_initial_weather=false`; this still prepares weather
+#   metadata, clears dynamic weather rows, marks every provider inactive, records
+#   weather as un-attested, and continues through both mandatory agents.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
 # - **Energy ingestion (Geo_001)** runs alongside this DAG as a separate pipeline branch,
@@ -82,10 +86,12 @@
 # Supplied by the Pipe_Setup pipeline (Stage 2 activity) at runtime:
 #   lakehouseName             -> consumed by the %%configure cell above (session default lakehouse).
 #   per_notebook_timeout_secs -> max seconds any single child notebook may run before timeout.
+#   require_initial_weather   -> false only for an explicit weather-unavailable isolated deployment.
 #   workspace/key-vault values -> used only to enable the Weather schedule after setup succeeds.
 # lakehouseName has no Python default here because %%configure resolves it before Python runs.
 per_notebook_timeout_secs = 3600
 enable_weather_schedule = True
+require_initial_weather = True
 workspace_id = ""
 key_vault_uri = ""
 key_vault_tenant_id_secret_name = "tenantid"
@@ -106,6 +112,13 @@ import requests
 import notebookutils
 from notebookutils.mssparkutils.handlers.notebookHandler import RunMultipleFailedException
 from urllib.parse import quote
+
+if type(enable_weather_schedule) is not bool:
+    raise ValueError("enable_weather_schedule must be a Boolean notebook parameter.")
+if type(require_initial_weather) is not bool:
+    raise ValueError("require_initial_weather must be a Boolean notebook parameter.")
+if not require_initial_weather and enable_weather_schedule:
+    raise ValueError("Weather scheduling cannot be enabled when initial weather is explicitly unavailable.")
 
 
 def require_weather_dependencies():
@@ -141,11 +154,11 @@ setup_dag = {
         # NB08 shortcuts the Lakehouse silver tables into the Eventhouse, so it needs NB03 as well as NB02.
         {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse", "NB03_medallion"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NBW01_weather",   "path": "Weather_001_create_lakehouse",                    "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NBW02_weather_refresh", "path": "Weather_Orchestrator", "dependencies": ["NBW01_weather", "NB03_medallion"], "args": {**_lh, "enable_aurora": False, "per_notebook_timeout_secs": per_notebook_timeout_secs}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB11_model", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB06_tsbind", "NBW02_weather_refresh"], "args": {**_lh, "setup_phase": "model", "seed_demo_data": True, "provision_shared_store": True}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NBW02_weather_refresh", "path": "Weather_Orchestrator", "dependencies": ["NBW01_weather", "NB03_medallion"], "args": {**_lh, "enable_aurora": False, "require_initial_weather": require_initial_weather, "per_notebook_timeout_secs": per_notebook_timeout_secs}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB11_model", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB06_tsbind", "NBW02_weather_refresh"], "args": {**_lh, "setup_phase": "model", "seed_demo_data": True, "provision_shared_store": True, "require_current_weather": require_initial_weather}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent", "dependencies": ["NB11_model"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent", "dependencies": ["NB11_model"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB11_operations", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB09_dataagent"], "args": {**_lh, "setup_phase": "agent", "seed_demo_data": False, "provision_shared_store": True}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB11_operations", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB09_dataagent"], "args": {**_lh, "setup_phase": "agent", "seed_demo_data": False, "provision_shared_store": True, "require_current_weather": require_initial_weather}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
     "concurrency": 4,

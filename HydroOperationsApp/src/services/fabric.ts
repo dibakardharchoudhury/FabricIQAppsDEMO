@@ -788,7 +788,7 @@ export type WeatherData = {
 
 const WEATHER_DATA_CACHE_TTL_MS = 5 * 60_000
 let weatherDataCache: { key: string; expiresAt: number; value: WeatherData } | undefined
-let weatherDataPromise: { key: string; promise: Promise<WeatherData> } | undefined
+let weatherDataPromise: { key: string; promise: Promise<WeatherData | null> } | undefined
 
 export function isStidConfigured() {
   return Boolean(import.meta.env.VITE_RAYFIN_API_URL && import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID)
@@ -870,6 +870,10 @@ export async function queryWeatherData(forceRefresh = false): Promise<WeatherDat
     }),
   }
   if (lakehouseConnectionKey() !== key) throw new Error('Lakehouse connector identity changed during the weather read.')
+  if (value.observations.length === 0 && value.forecasts.length === 0) {
+    weatherDataCache = undefined
+    return null
+  }
   weatherDataCache = { key, expiresAt: Date.now() + WEATHER_DATA_CACHE_TTL_MS, value }
   return value
   })().catch(error => {

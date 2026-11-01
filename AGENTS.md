@@ -22,6 +22,10 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
   deployment/publication `published` and runtime `not_checked`. Do not add duplicate source
   attachments to satisfy a smoke response. Actual deployment/publication/readback failures
   propagate. NB11 preserves compatible SQL/custom content; publication does not certify runtime.
+- Initial UKMet weather remains required by default. A deliberate isolated feature deployment may
+  set `require_initial_weather=false`; this is not an agent skip mode. It must prepare weather
+  metadata, clear dynamic/serving rows, mark providers inactive, persist weather readiness as
+  un-attested, keep scheduling disabled, and continue through both mandatory agents.
 - Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10 verifies the retained
   ontology agent, then removes only the exact retired agent after checking folder/source identity
   and clears its obsolete settings. Preserve the shared Eventhouse, SQL/KQL grounding, email

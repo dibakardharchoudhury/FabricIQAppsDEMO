@@ -37,7 +37,8 @@
 # 
 # 1. **Prepare** (`setup_phase="model"`) — initialize the shared schema and perform the explicitly identified legacy
 #    cutover only when an explicit legacy SQL item ID is supplied. Fresh setup needs no app SQL.
-#    Insert missing demo rows, validate actual operational/weather keys and current UKMet coverage,
+#    Insert missing demo rows, validate actual operational/weather keys and current UKMet coverage
+#    when explicitly required (or record weather as un-attested for an isolated no-weather setup),
 #    then build/read back all required business types, bindings and relationships before either agent.
 # 2. **Data Agent** (`setup_phase="agent"`) — verifies the same complete live model, then adds the
 #    operational SQL Database source and guidance to the ontology-backed agent and
@@ -70,6 +71,7 @@ provision_shared_store = True
 legacy_sql_db_item_id = ""
 project_ontology_item_id = ""
 setup_phase = "all"
+require_current_weather = False
 
 # METADATA ********************
 
@@ -94,6 +96,8 @@ if not isinstance(seed_demo_data, bool):
     raise ValueError("seed_demo_data must be a Boolean notebook parameter.")
 if not isinstance(provision_shared_store, bool):
     raise ValueError("provision_shared_store must be a Boolean notebook parameter.")
+if type(require_current_weather) is not bool:
+    raise ValueError("require_current_weather must be a Boolean notebook parameter.")
 if setup_phase not in ("all", "model", "agent"):
     raise ValueError("setup_phase must be 'all', 'model', or 'agent'.")
 if setup_phase != "all" and not provision_shared_store:
@@ -3885,9 +3889,9 @@ try:
                     equipment_table = first_setting("silver_equipment_table", required=True)
                     prepare_project_relationship_sources(spark, equipment_table)
                     verify_project_relationship_sources(
-                        spark, target_connection, equipment_table, require_current_weather=setup_phase == "model")
+                        spark, target_connection, equipment_table, require_current_weather=require_current_weather)
                     verify_project_relationship_sources(
-                        spark, source_connection, equipment_table, require_current_weather=setup_phase == "model")
+                        spark, source_connection, equipment_table, require_current_weather=require_current_weather)
                     step_results["project_ontology"] = extend_selected_project_ontology()
                     migration_receipt = copy_operational_records(
                         source_connection, target_connection, legacy_sql_db_item_id, shared_store["id"])
@@ -3925,7 +3929,7 @@ try:
             try:
                 step_results["project_relationships"] = verify_project_relationship_sources(
                     spark, target_connection, equipment_table,
-                    require_current_weather=setup_phase == "model")
+                    require_current_weather=require_current_weather)
             finally:
                 target_connection.close()
             step_results["project_ontology"] = extend_selected_project_ontology()
@@ -3955,13 +3959,17 @@ if provision_shared_store and step_errors:
         f"Complete ontology preparation failed: {step_errors[0]}; agent publication was not attempted."
     ) from step_errors[0]
 if provision_shared_store and setup_phase != "agent":
+    relationship_receipt = step_results["project_relationships"]
     model_persist = {
         "operational_sql_db_id": sql_db_item_id,
         "operational_sql_db_name": sql_db_item_name,
         "project_ontology_id": project_ontology_item_id,
         "project_ontology_status": "verified",
         "project_ontology_receipt": json.dumps(step_results["project_ontology"], sort_keys=True),
-        "project_relationships_receipt": json.dumps(step_results["project_relationships"], sort_keys=True),
+        "project_relationships_receipt": json.dumps(relationship_receipt, sort_keys=True),
+        "weather_readiness_attested": str(relationship_receipt["weather_readiness_attested"]).lower(),
+        "weather_coverage_status": relationship_receipt["weather_coverage_status"],
+        "weather_freshness_status": relationship_receipt["weather_freshness_status"],
     }
     if seed_demo_data:
         model_persist["operational_sql_seed_status"] = step_results["sql_seed"]["status"]

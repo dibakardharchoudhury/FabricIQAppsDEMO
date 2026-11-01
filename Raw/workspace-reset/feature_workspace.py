@@ -57,6 +57,7 @@ class FeatureConfig:
     state_path: Path
     ops_agent_run_as_user: str = ""
     env_suffix: str = "V6"
+    require_initial_weather: bool = True
     enable_energy_map: bool = False
     enable_map_chat: bool = False
 
@@ -71,7 +72,8 @@ class FeatureConfig:
         if not isinstance(raw, dict) or not required.issubset(raw):
             raise FeatureWorkspaceError("Feature bootstrap config is missing required fields.")
         if set(raw) - required - {
-            "ops_agent_run_as_user", "env_suffix", "enable_energy_map", "enable_map_chat",
+            "ops_agent_run_as_user", "env_suffix", "require_initial_weather",
+            "enable_energy_map", "enable_map_chat",
         }:
             raise FeatureWorkspaceError("Feature bootstrap config contains unsupported fields.")
         for key in ("tenant_id", "workspace_id", "subscription_id"):
@@ -96,6 +98,8 @@ class FeatureConfig:
                 raise FeatureWorkspaceError(f"Invalid feature bootstrap {key}.")
         if type(raw["allow_public_api_group"]) is not bool:
             raise FeatureWorkspaceError("allow_public_api_group must be a JSON boolean.")
+        if type(raw.get("require_initial_weather", True)) is not bool:
+            raise FeatureWorkspaceError("require_initial_weather must be a JSON boolean.")
         if type(raw.get("enable_energy_map", False)) is not bool:
             raise FeatureWorkspaceError("enable_energy_map must be a JSON boolean.")
         if type(raw.get("enable_map_chat", False)) is not bool:
@@ -535,6 +539,7 @@ class FeatureWorkspace:
             "ops_agent_run_as_user": self.config.ops_agent_run_as_user,
             "alert_email_to": self.config.alert_email_to,
             "enable_weather_schedule": False,
+            "require_initial_weather": self.config.require_initial_weather,
             "enable_energy_map": self.config.enable_energy_map,
             "per_notebook_timeout_secs": 3600,
         }

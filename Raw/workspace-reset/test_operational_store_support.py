@@ -384,6 +384,7 @@ class OperationalItemLifecycleTests(unittest.TestCase):
                                and call.func.id == "ensure_operational_item" for call in ast.walk(node)))
         namespace = {
             "provision_shared_store": True, "seed_demo_data": True, "env_suffix": "V11", "setup_phase": "all",
+            "require_current_weather": False,
             "sql_db_item_name": support.operational_store_name("V11"), "legacy_sql_db_item_id": "",
             "project_ontology_item_id": "ontology", "workspace_id": "workspace", "get_sql_token": Mock(),
             "ensure_operational_item": Mock(return_value={

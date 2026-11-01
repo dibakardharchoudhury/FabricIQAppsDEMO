@@ -237,9 +237,14 @@ source** line and the local version API identify the actual checkout.
 
 Key Vault URI, both Teams IDs and alert email are required by the local Core/Full
 Deploy form. Unknown destination values stay blank rather than being guessed.
-The same vault must contain `ukmet-global-spot-api-key` and
+By default, the same vault must contain `ukmet-global-spot-api-key` and
 `ukmet-land-observations-api-key` for the required initial weather refresh. Aurora is optional.
-Disabling the future Weather schedule does not skip initial ingestion or ontology validation.
+Disabling the future Weather schedule alone does not skip initial ingestion or ontology validation.
+An isolated `FABRIC_FEATURE_CONFIG` may explicitly set `require_initial_weather` to `false`.
+That mode does not call a weather provider: it prepares location/area metadata, clears dynamic
+weather and serving rows, marks providers inactive, records coverage/freshness as `not_attested`,
+keeps the schedule disabled, and still provisions both mandatory agents. Normal deployments
+retain `require_initial_weather=true`.
 Stage 1 also binds the **parent** `RTI_Orchestrator_Setup` notebook to the published Weather
 Environment. Binding only Weather child notebooks is insufficient: `runMultiple` uses the
 parent Spark session. A missing `numcodecs`, `pyproj` or `shapely` now fails before the DAG
@@ -837,6 +842,9 @@ publication does not configure provider authentication or ingest data.
 
 `FABRIC_FEATURE_CONFIG` is for deliberate isolated bootstrap, not routine updates.
 [Feature bootstrap reference](../Raw/workspace-reset/README.md).
+Set `"require_initial_weather": false` only when the isolated copy must deploy without UKMet
+credentials. The app then reports weather as unavailable until an explicit successful refresh;
+it does not use placeholder or stale serving values.
 
 ## Troubleshooting
 
