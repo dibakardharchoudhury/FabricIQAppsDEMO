@@ -2267,6 +2267,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 if self.mode == "repeat_invalid":
                     arguments["equipmentId"] = "TEST_T005"
                 output = [self.function("hydro_query", {"tool_name": "query_telemetry", "arguments": arguments})]
+            if self.mode in ("repair_kql", "repeat_invalid_kql") and (
+                round_number == 0 or self.mode == "repeat_invalid_kql" and round_number == 1
+            ):
+                output = [self.function("hydro_query", {
+                    "tool_name": "run_kql",
+                    "arguments": {"query": "let start=ago(6h); OPCUAEvents | count"},
+                })]
+            elif self.mode == "repair_kql" and round_number == 1:
+                output = [self.function("hydro_query", {
+                    "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T005"},
+                })]
             if self.mode == "qa_rate_limit_after_source" and round_number == 2:
                 output = [self.message("The captured source read is complete; no physical fault is established.")]
         elif name == "hydro-rca-agent":
@@ -3726,6 +3737,37 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         payload = json.dumps(self.payloads)
         self.assertIn("invalid_arguments", payload)
         self.assertIn("source_executed", payload)
+
+    async def test_kql_correction_precedes_source_execution_without_poisoning_the_run(self):
+        self.mode = "repair_kql"
+        catalog = await self.tools.catalog(self.request)
+        catalog["tools"].append({"name": "run_kql", "parameters": {
+            "type": "object", "properties": {"query": {"type": "string"}},
+            "required": ["query"], "additionalProperties": False,
+        }})
+        with patch.object(self.tools, "catalog", AsyncMock(return_value=catalog)):
+            with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+                result = await self.owner.run(self.request)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(result.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(self.owner.failures, [])
+        payload = json.dumps(self.payloads)
+        self.assertIn("let statements are not allowed", payload)
+        self.assertIn("source_executed", payload)
+
+    async def test_repeated_invalid_kql_stops_before_any_source_execution(self):
+        self.mode = "repeat_invalid_kql"
+        catalog = await self.tools.catalog(self.request)
+        catalog["tools"].append({"name": "run_kql", "parameters": {
+            "type": "object", "properties": {"query": {"type": "string"}},
+            "required": ["query"], "additionalProperties": False,
+        }})
+        with patch.object(self.tools, "catalog", AsyncMock(return_value=catalog)):
+            with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+                with self.assertRaisesRegex(SourceFailure, "ToolInputError: source, handoff or validation failed"):
+                    await self.owner.run(self.request)
+        self.assertEqual(self.tools.calls, 0)
+        self.assertIn("let statements are not allowed", json.dumps(self.payloads))
 
     async def test_deterministic_answer_contract_does_not_depend_on_model_correction(self):
         self.mode = "answer_contract_repair"

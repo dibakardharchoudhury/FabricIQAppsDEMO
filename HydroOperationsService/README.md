@@ -135,6 +135,10 @@ Verified prose-only answers are native evidence too; the workflow does not requi
 or invent a business-record table to accept them.
 Independent source tables and explicitly
 requested charts retain their existing presentation and exact source values.
+Model-authored KQL is validated before any source execution. A rejected read-only
+query receives one bounded argument correction with the shared validator's guidance;
+it is not misreported as a source outage. Repeated invalid input and actual source
+failures still stop the run without an accepted answer or a replay.
 
 The retained compatibility prompt-agent path has additional wrapper-fidelity
 checks; it is not the production semantic transport. A tool-processing diagnostic

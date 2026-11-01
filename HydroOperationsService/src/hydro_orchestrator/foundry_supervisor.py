@@ -3209,6 +3209,11 @@ class FoundrySupervisor:
             parsed = await self.bridge.call({"action": "validate_hydro_query",
                                             "role": role,
                                             "report": json.dumps({"tool_name": tool_name, "arguments": arguments})})
+            if parsed.get("ok") is False:
+                error = parsed.get("error")
+                if not isinstance(error, str) or not error.strip() or len(error) > 2400:
+                    raise SourceFailure("Shared tool validation returned an invalid rejection.")
+                raise ToolInputError(error)
             if parsed.get("toolName") != tool_name:
                 raise SourceFailure("Shared tool validation changed the tool identity.")
             if tool_name == "visualize_dataset" and not request.charts_requested:

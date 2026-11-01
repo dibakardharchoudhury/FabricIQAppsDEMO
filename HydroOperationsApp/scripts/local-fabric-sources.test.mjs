@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
 import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, errorEnvelope, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, readWork, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
 import { requestsWorkOrderNeedAssessment, refersToPriorData } from '../src/services/copilot/orchestration.ts'
-import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
+import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS, validateKql } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 
@@ -24,6 +24,46 @@ test('agent contracts include every function specialist, including weather', asy
   const weather = contracts.tools.weather.find(tool => tool.name === 'hydro_query')
   assert.deepEqual(weather.parameters.properties.tool_name.enum,
     ['query_weather', 'query_assets', 'visualize_dataset'])
+})
+
+test('KQL input validation rejects unsafe queries before source discovery or execution', async t => {
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', async () => {
+    requests++
+    throw new Error('No source request is permitted during argument validation.')
+  })
+  for (const query of [
+    'let start=ago(6h); OPCUAEvents | count',
+    'TelemetryEnriched() | where opcua_node_id == "signal"',
+    '.show tables',
+  ]) {
+    const result = await handle({
+      action: 'validate_hydro_query', role: 'qa',
+      report: JSON.stringify({ tool_name: 'run_kql', arguments: { query } }),
+    })
+    assert.equal(result.ok, false)
+    assert.match(result.error, /Rejected:/)
+  }
+  const valid = await handle({
+    action: 'validate_hydro_query', role: 'qa',
+    report: JSON.stringify({
+      tool_name: 'run_kql',
+      arguments: { query: 'OPCUAEvents | where event_time >= ago(6h) | count' },
+    }),
+  })
+  assert.equal(valid.ok, true)
+  assert.equal(valid.toolName, 'run_kql')
+  assert.equal(requests, 0)
+})
+
+test('owned KQL validation errors retain safe correction guidance across the worker boundary', () => {
+  assert.throws(() => validateKql('let start=ago(6h); OPCUAEvents | count'), error => {
+    const envelope = errorEnvelope(error)
+    assert.equal(envelope.ok, false)
+    assert.match(envelope.error, /let statements are not allowed/)
+    assert.doesNotMatch(envelope.error, /Local source adapter failed/)
+    return true
+  })
 })
 
 const tokens = { graphql: 'test-graphql', kusto: 'test-kusto' }
