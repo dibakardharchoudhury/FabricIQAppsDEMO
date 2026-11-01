@@ -387,6 +387,16 @@ class DecisionTests(unittest.TestCase):
 
 
 class ConvergenceTests(unittest.TestCase):
+    def test_binding_drift_publishes_without_rebuilding_the_current_image(self):
+        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
+        unbound = agent()
+        del unbound["versions"]["latest"]["definition"]["container_configuration"]["registry_connection_id"]
+        run(fake, [unbound, agent()])
+        self.assertEqual(len(fake.commands("azd", "deploy")), 1)
+        self.assertFalse(fake.commands("az", "acr", "build"))
+        self.assertEqual(fake.environment_settings()["HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID"],
+                         REGISTRY_CONNECTION_ID)
+
     def test_scoped_hosted_agent_reuses_model_and_image_and_publishes_only_its_service(self):
         suffix = provision.foundry_resource_suffix(GUIDS["workspace"])
         configuration_value, fabric_source = hosted.compose_runtime_configuration(
