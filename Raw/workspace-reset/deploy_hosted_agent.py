@@ -168,7 +168,9 @@ def hosted_state(agent: dict | None) -> tuple[str, str, str, dict[str, str]]:
     )
 
 
-def needs_publish(agent: dict | None, *, image_digest: str, environment: dict[str, str]) -> str | None:
+def needs_publish(
+    agent: dict | None, *, image_digest: str, environment: dict[str, str], registry_connection_id: str,
+) -> str | None:
     """Why the live agent differs from the expected one, or None when it is current."""
     if agent is None:
         return "no hosted agent exists yet"
@@ -177,6 +179,11 @@ def needs_publish(agent: dict | None, *, image_digest: str, environment: dict[st
         return f"the latest version is {kind_status or 'unreadable'}, not an active hosted agent"
     if live_digest != image_digest:
         return "its image is not the one built from the current source"
+    binding = agent.get("versions", {}).get("latest", {}).get("definition", {}).get(
+        "container_configuration", {},
+    ).get("registry_connection_id")
+    if not isinstance(binding, str) or binding.casefold() != registry_connection_id.casefold():
+        return "its registry connection is not bound to the verified project"
     for key, expected in environment.items():
         live = live_environment.get(key)
         try:
@@ -206,6 +213,24 @@ def registry_name(connections: list[dict], override: str) -> str:
         "Could not determine the container registry: the Foundry project has "
         f"{len(names)} registry connection(s). Set HYDRO_ACR_NAME to the registry to build in."
     )
+
+
+def registry_connection_id(connections: list[dict], project_id: str, registry: str) -> str:
+    matching = []
+    for connection in connections:
+        properties = connection.get("properties", {})
+        target = str(properties.get("target") or "")
+        host = urlparse(target if "//" in target else f"https://{target}").hostname
+        identity = connection.get("id")
+        if (properties.get("category") == "ContainerRegistry" and host == f"{registry}.azurecr.io"
+                and isinstance(identity, str)
+                and re.fullmatch(re.escape(project_id) + r"/connections/[A-Za-z0-9_.-]+", identity, re.IGNORECASE)):
+            matching.append(identity)
+    if len(matching) != 1:
+        raise RuntimeError(
+            f"Expected exactly one project-owned connection to registry {registry}, found {len(matching)}."
+        )
+    return matching[0]
 
 
 def parse_azd_values(text: str) -> dict[str, str]:
@@ -246,6 +271,7 @@ def azd_bootstrap_values(
         "AZURE_OPENAI_ENDPOINT": f"https://{match['account']}.openai.azure.com/",
         "AZURE_CONTAINER_REGISTRY_NAME": registry, "AZURE_CONTAINER_REGISTRY_ENDPOINT": login_server,
         "AZURE_CONTAINER_REGISTRY_RESOURCE_ID": registry_id, "AZURE_AI_PROJECT_ACR_CONNECTION_NAME": connection,
+        "HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID": project_id + "/connections/" + connection,
         "ENABLE_HOSTED_AGENTS": "true", "USE_EXISTING_AI_PROJECT": "true", "ENABLE_CAPABILITY_HOST": "false",
     }
 
@@ -298,6 +324,7 @@ def ensure_hosted_agent(
     override = os.environ.get("HYDRO_ACR_NAME", "")
     try:
         registry = registry_name(connections, override)
+        connection_id = registry_connection_id(connections, project_id, registry)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
     subscription = project_id.split("/")[2]
@@ -312,6 +339,7 @@ def ensure_hosted_agent(
         resource_suffix=resource_suffix,
     )
     environment = {
+        "PYTHONNOUSERSITE": "1",
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": model,
         "HYDRO_RUNTIME_STATE_DIR": live_environment.get("HYDRO_RUNTIME_STATE_DIR") or DEFAULT_STATE_DIR,
         "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator, separators=(",", ":")),
@@ -319,7 +347,9 @@ def ensure_hosted_agent(
     }
 
     tag, digest = ensure_hosted_image(deploy, registry=registry, subscription=subscription)
-    reason = needs_publish(existing, image_digest=digest, environment=environment)
+    reason = needs_publish(
+        existing, image_digest=digest, environment=environment, registry_connection_id=connection_id,
+    )
     if reason is None:
         print(f"Hosted agent {agent_name} is current (image {tag}); nothing to publish.", flush=True)
         return existing  # type: ignore[return-value]
@@ -344,7 +374,9 @@ def ensure_hosted_agent(
     deadline = time.monotonic() + ACTIVATION_TIMEOUT_S
     while True:
         agent = get_agent()
-        reason = needs_publish(agent, image_digest=digest, environment=environment)
+        reason = needs_publish(
+            agent, image_digest=digest, environment=environment, registry_connection_id=connection_id,
+        )
         if reason is None:
             print(f"Hosted Agent {agent_name} version {hosted_state(agent)[1]} is active on {tag}.", flush=True)
             return agent  # type: ignore[return-value]
@@ -414,13 +446,10 @@ def _configure_azd_environment(
     registry_id = deploy.run_capture(deploy.az(
         "acr", "show", "--name", registry, "--subscription", subscription, "--query", "id", "-o", "tsv",
     ))
-    names = [
-        connection["name"] for connection in connections
-        if connection.get("properties", {}).get("category") == "ContainerRegistry"
-        and str(connection["properties"].get("target", "")).startswith(f"{registry}.azurecr.io")
-    ]
-    if len(names) != 1:
-        raise deploy.DeployError(f"Expected exactly one Foundry connection to registry {registry}, found {len(names)}.")
+    try:
+        connection_id = registry_connection_id(connections, project_id, registry)
+    except RuntimeError as error:
+        raise deploy.DeployError(str(error)) from error
     if create:
         print(f"Creating the azd environment {AZD_ENVIRONMENT} from the live Foundry project.", flush=True)
         deploy.run_capture(deploy.command_argv(
@@ -430,5 +459,5 @@ def _configure_azd_environment(
         print(f"Refreshing the azd environment {AZD_ENVIRONMENT} from the live Foundry project.", flush=True)
     return azd_bootstrap_values(
         project_id=project_id, endpoint=endpoint, tenant=tenant, location=location, registry=registry,
-        registry_id=registry_id, connection=names[0],
+        registry_id=registry_id, connection=connection_id.rsplit("/", 1)[-1],
     )

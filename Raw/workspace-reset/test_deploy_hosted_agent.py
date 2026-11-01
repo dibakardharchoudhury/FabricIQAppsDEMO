@@ -40,6 +40,7 @@ DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 ENDPOINT = "https://res.services.ai.azure.com/api/projects/proj"
 PROJECT_ID = ("/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.CognitiveServices/accounts/res/projects/proj")
+REGISTRY_CONNECTION_ID = PROJECT_ID + "/connections/reg-conn"
 VALUES = {
     "RAYFIN_PUBLIC_EVENTHOUSE_ID": GUIDS["eventhouse"], "RAYFIN_PUBLIC_KQL_DATABASE_ID": GUIDS["database"],
     "RAYFIN_PUBLIC_LAKEHOUSE_ID": GUIDS["graphql"], "RAYFIN_PUBLIC_ITEM_ID": GUIDS["appbackend"],
@@ -48,7 +49,8 @@ VALUES = {
     "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-test",
 }
 KUSTO = "https://kusto.example.fabric.microsoft.com"
-CONNECTIONS = [{"name": "reg-conn", "properties": {"category": "ContainerRegistry", "target": "myreg.azurecr.io"}},
+CONNECTIONS = [{"name": "reg-conn", "id": REGISTRY_CONNECTION_ID,
+                "properties": {"category": "ContainerRegistry", "target": "myreg.azurecr.io"}},
                {"name": "other", "properties": {"category": "AppInsights", "target": "/x"}}]
 
 
@@ -64,6 +66,7 @@ def configuration(writes=False):
 def environment(writes=True, state="/home/session/hydro"):
     (orchestrator, fabric), _ = configuration(writes)
     return {
+        "PYTHONNOUSERSITE": "1",
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": "model-x", "HYDRO_RUNTIME_STATE_DIR": state,
         "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator, separators=(",", ":")),
         "HYDRO_FABRIC_SOURCE_CONFIG": json.dumps(fabric, separators=(",", ":")),
@@ -72,7 +75,8 @@ def environment(writes=True, state="/home/session/hydro"):
 
 def agent(digest=DIGEST_A, env=None, status="active", kind="hosted", version=7):
     return {"versions": {"latest": {"status": status, "version": version, "definition": {
-        "kind": kind, "container_configuration": {"image": f"myreg.azurecr.io/hydro-orchestrator@{digest}"},
+        "kind": kind, "container_configuration": {"image": f"myreg.azurecr.io/hydro-orchestrator@{digest}",
+                                                "registry_connection_id": REGISTRY_CONNECTION_ID},
         "environment_variables": environment() if env is None else env}}}}
 
 
@@ -300,8 +304,18 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
+    def test_an_unbound_private_image_is_not_a_current_deployment(self):
+        live = agent()
+        del live["versions"]["latest"]["definition"]["container_configuration"]["registry_connection_id"]
+        self.assertRegex(
+            hosted.needs_publish(live, image_digest=DIGEST_A, environment=environment(),
+                                 registry_connection_id=REGISTRY_CONNECTION_ID),
+            "registry",
+        )
+
     def test_a_current_agent_needs_nothing(self):
-        self.assertIsNone(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment()))
+        self.assertIsNone(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment(),
+                                              registry_connection_id=REGISTRY_CONNECTION_ID))
 
     def test_each_kind_of_drift_is_reported(self):
         expected = environment()
@@ -315,11 +329,38 @@ class DecisionTests(unittest.TestCase):
         }
         for message, (live, digest) in cases.items():
             with self.subTest(message):
-                self.assertRegex(hosted.needs_publish(live, image_digest=digest, environment=expected), message)
+                self.assertRegex(hosted.needs_publish(live, image_digest=digest, environment=expected,
+                                                      registry_connection_id=REGISTRY_CONNECTION_ID), message)
 
     def test_json_documents_compare_by_value_not_formatting(self):
         spaced = {**environment(), "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(json.loads(environment()["HYDRO_ORCHESTRATOR_CONFIG"]), indent=2)}
-        self.assertIsNone(hosted.needs_publish(agent(env=spaced), image_digest=DIGEST_A, environment=environment()))
+        self.assertIsNone(hosted.needs_publish(agent(env=spaced), image_digest=DIGEST_A, environment=environment(),
+                                              registry_connection_id=REGISTRY_CONNECTION_ID))
+
+    def test_registry_binding_cannot_be_inherited_from_another_project(self):
+        other_project = PROJECT_ID + "-other"
+        other_id = other_project + "/connections/reg-conn"
+        foreign = {**CONNECTIONS[0], "id": other_id}
+        self.assertEqual(hosted.registry_connection_id([foreign, *CONNECTIONS], PROJECT_ID, "myreg"),
+                         REGISTRY_CONNECTION_ID)
+        self.assertEqual(hosted.registry_connection_id([foreign, *CONNECTIONS], other_project, "myreg"), other_id)
+        with self.assertRaisesRegex(RuntimeError, "project-owned"):
+            hosted.registry_connection_id([foreign], PROJECT_ID, "myreg")
+        self.assertRegex(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment(),
+                                              registry_connection_id=other_id), "registry")
+
+    def test_duplicate_owned_registry_bindings_are_rejected(self):
+        duplicate = {**CONNECTIONS[0], "id": PROJECT_ID + "/connections/duplicate"}
+        with self.assertRaisesRegex(RuntimeError, "found 2"):
+            hosted.registry_connection_id([*CONNECTIONS, duplicate], PROJECT_ID, "myreg")
+
+    def test_generated_template_declares_registry_binding_and_python_isolation(self):
+        import yaml
+
+        definition = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"))
+        service = definition["services"]["hydro-orchestrator"]
+        self.assertEqual(service["registryConnectionId"], "${HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID}")
+        self.assertEqual(service["env"]["PYTHONNOUSERSITE"], "1")
 
     def test_registry_resolution_prefers_override_then_the_single_project_connection(self):
         self.assertEqual(hosted.registry_name(CONNECTIONS, "myreg"), "myreg")
@@ -339,6 +380,7 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(values["AZURE_AI_ACCOUNT_NAME"], "res")
         self.assertEqual(values["AZURE_CONTAINER_REGISTRY_ENDPOINT"], "myreg.azurecr.io")
         self.assertEqual(values["AZURE_AI_PROJECT_ACR_CONNECTION_NAME"], "reg-conn")
+        self.assertEqual(values["HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID"], REGISTRY_CONNECTION_ID)
         with self.assertRaises(RuntimeError):
             hosted.azd_bootstrap_values(project_id="/bad", endpoint="e", tenant="t", location="l", registry="r",
                                         registry_id="i", connection="c")

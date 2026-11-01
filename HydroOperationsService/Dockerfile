@@ -73,6 +73,7 @@ RUN groupadd --gid 10001 hydro \
     && chown hydro:hydro /var/lib/hydro /home/session /home/session/hydro \
     && chmod 700 /var/lib/hydro /home/session /home/session/hydro
 ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/home/session \
     HYDRO_LOCAL_NODE=/usr/local/bin/node \

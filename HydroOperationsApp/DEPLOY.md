@@ -492,6 +492,11 @@ Registry connections use `ManagedIdentity` credentials containing the verified
 project principal ID and shared registry resource ID. Existing connections are
 reused; a failed connection setup retains the project for retry without reallocating
 model TPM. Errors identify the exact ARM resource and API version.
+The hosted definition explicitly references the selected project's verified
+registry connection. Immutable-version convergence checks that binding as well
+as the image and runtime configuration; an unbound or foreign-project connection
+is not considered current. Python containers disable user-site package loading
+with `PYTHONNOUSERSITE=1`; session uploads cannot supply startup dependencies.
 Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
 not its instrumentation key. It is validated before project changes and rechecked
 on retry; credential values are not saved in the preflight plan.
