@@ -139,6 +139,11 @@ Model-authored KQL is validated before any source execution. A rejected read-onl
 query receives one bounded argument correction with the shared validator's guidance;
 it is not misreported as a source outage. Repeated invalid input and actual source
 failures still stop the run without an accepted answer or a replay.
+Q&A and Weather return short receipt summaries; the Supervisor renders all verified
+records. If their completion is truncated, its one recovery attempt receives the
+newly captured immutable evidence and refreshed receipt IDs in the original scope.
+Source tools are disabled during that completion-only recovery. It cannot reread
+data, broaden scope or lose initial-reader evidence through a later RCA projection.
 
 The retained compatibility prompt-agent path has additional wrapper-fidelity
 checks; it is not the production semantic transport. A tool-processing diagnostic

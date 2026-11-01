@@ -2280,6 +2280,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 })]
             if self.mode == "qa_rate_limit_after_source" and round_number == 2:
                 output = [self.message("The captured source read is complete; no physical fault is established.")]
+            if self.mode == "qa_incomplete_once" and round_number == 2:
+                output = [self.message("Captured receipt reading-1 completes the assigned telemetry read.")]
+            if self.mode == "qa_incomplete_read_again" and round_number == 2:
+                output = [self.function("hydro_query", {
+                    "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T999"},
+                })]
         elif name == "hydro-rca-agent":
             ref = {"evidence_id": "reading-1", "path": "/rows/0"}
             if self.mode == "multiple_proposals":
@@ -2451,7 +2457,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         else:
             raise AssertionError(name)
         incomplete = (
-            self.mode == "qa_incomplete_once" and name == "hydro-qa-agent" and round_number == 1
+            self.mode in ("qa_incomplete_once", "qa_incomplete_read_again")
+            and name == "hydro-qa-agent" and round_number == 1
             or self.mode == "native_text_truncated" and name == "hydro-fabric-iq-agent"
         )
         return httpx.Response(200, json={
@@ -2581,11 +2588,39 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner = self.make_owner()
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["qa"])
-        self.assertEqual(self.calls["hydro-qa-agent"], 4)
+        self.assertEqual(self.calls["hydro-qa-agent"], 3)
         self.assertEqual(self.tools.calls, 1)
         repair_payload = json.dumps(self.payloads)
         self.assertIn("prior completion was incomplete", repair_payload)
         self.assertIn("Do not call another source tool", repair_payload)
+        contexts = [
+            json.loads(payload["input"][0]["content"][0]["text"])
+            for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-qa-agent"
+            and payload["input"][0].get("content", [{}])[0].get("type") == "input_text"
+        ]
+        repair = next(context for context in contexts if "completion_repair" in context)
+        self.assertEqual(repair["allowed_evidence_ids"], ["reading-1"])
+        self.assertEqual(repair["evidence"][0]["id"], "reading-1")
+        self.assertEqual(repair["evidence"][0]["result"]["rows"][0]["value"], 75.0)
+        self.assertEqual(repair["permitted_source_catalog"]["tools"], [])
+        self.assertLessEqual(len(_encoded(repair["permitted_source_catalog"])), 128)
+
+    async def test_reader_completion_repair_cannot_execute_a_new_source_scope(self):
+        self.mode = "qa_incomplete_read_again"
+        request = self.request.model_copy(update={
+            "question": "Read and verify current telemetry.",
+            "required_specialists": ("qa",),
+            "required_specialist_steps": {"qa": 1},
+        })
+        self.seed(request)
+        owner = self.make_owner()
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+            result = await owner.run(request)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(result.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(owner.failures, [])
+        self.assertIn("may only cite the supplied captured evidence", json.dumps(self.payloads))
 
     async def test_foundry_service_calls_have_a_finite_network_timeout(self):
         with patch(

@@ -3130,6 +3130,7 @@ class FoundrySupervisor:
                         f"The pinned Foundry native request failed (HTTP {error.status_code}); no answer was certified."
                     ) from error
         completed_report: dict[str, object] | None = None
+        reader_completion_only = False
 
         input_repairs: dict[str, int] = {}
 
@@ -3154,6 +3155,11 @@ class FoundrySupervisor:
                 raise
 
         async def query(tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
+            if reader_completion_only:
+                raise ToolInputError(
+                    "This completion repair may only cite the supplied captured evidence. "
+                    "Do not call another source tool or change the read scope."
+                )
             arguments = canonical_source_arguments(request, arguments)
             if self.semantic_decision is None and tool_name == "query_signal_quality_snapshot" \
                     and "signal_quality" in request.required_evidence_kinds:
@@ -3433,9 +3439,15 @@ class FoundrySupervisor:
             "allowed_evidence_ids": list(self.evidence),
             "allowed_evidence_references": rca_reference_examples(self.evidence) if role == "rca" else (),
             "completed_specialists": self.model_specialists(role, compact=targeted_context),
-            "output_policy": "Tables by default. Values must be source references, never authored cells. "
-                             "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
-                             "Only an in-memory proposal is permitted; no SQL writes or dispatch.",
+            "output_policy": (
+                "Return a brief retrieval/verification completion (at most 120 words), citing captured evidence IDs "
+                "and source limitations. Do not reproduce source rows or construct tables: the Supervisor presents "
+                "the complete immutable source records. Do not perform another specialist's analysis or prepare work."
+                if role in ("qa", "weather")
+                else "Tables by default. Values must be source references, never authored cells. "
+                     "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
+                     "Only an in-memory proposal is permitted; no SQL writes or dispatch."
+            ),
             "charts_requested": request.charts_requested, "native_source": native_source,
             "required_specialists": request.required_specialists,
             "required_specialist_steps": request.required_specialist_steps,
@@ -3622,14 +3634,24 @@ class FoundrySupervisor:
                         )
                         active_context = {
                             **context,
-                            "evidence": self.model_evidence(role, targeted=True),
-                            "completed_specialists": self.model_specialists(role, compact=True),
+                            "evidence": self.model_evidence(role, targeted=targeted_context),
+                            "allowed_evidence_ids": list(self.evidence),
+                            "allowed_evidence_references": (
+                                rca_reference_examples(self.evidence) if role == "rca" else ()
+                            ),
+                            "completed_specialists": self.model_specialists(role, compact=targeted_context),
                             "completion_repair": (
                                 "The prior completion was incomplete after its source calls. Use only the captured "
                                 "immutable evidence below and finish the assigned factual response now. Do not call "
-                                "another source tool, broaden scope, or repeat completed work."
+                                "another source tool, broaden scope, or repeat completed work. Reader roles return "
+                                "only a brief completion citing receipt IDs and limitations, not duplicated tables."
                             ),
                         }
+                        if role in ("qa", "weather"):
+                            reader_completion_only = True
+                            active_context["permitted_source_catalog"] = {
+                                "tools": [], "context": {"mode": "captured-evidence-only"},
+                            }
                         continue
                     raise SourceFailure("Foundry response has no completed, inspectable service identity.")
                 if response.finish_reason == "content_filter":
