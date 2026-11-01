@@ -497,7 +497,10 @@ registry connection. The hosted API's `registry_connection_id` field accepts the
 short connection name, not its ARM ID; full ARM ownership is verified before
 submitting that name. Immutable-version convergence checks that binding as well
 as the image and runtime configuration; an unbound or foreign-project connection
-is not considered current. Python containers disable user-site package loading
+is not considered current. The generated target-specific azd project contains a
+literal verified connection name: custom service properties are not automatically
+expanded from azd environment variables. The repository template stays target-independent.
+Python containers disable user-site package loading
 with `PYTHONNOUSERSITE=1`; session uploads cannot supply startup dependencies.
 Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
 not its instrumentation key. It is validated before project changes and rechecked

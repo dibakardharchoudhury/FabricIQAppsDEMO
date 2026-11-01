@@ -36,6 +36,7 @@ IMAGE_DIGEST_RE = re.compile(r"^[^@\s]+@(?P<digest>sha256:[0-9a-f]{64})$")
 MISSING_RE = re.compile(r"does not exist|not found|unknown|404", re.IGNORECASE)
 JSON_VARIABLES = ("HYDRO_ORCHESTRATOR_CONFIG", "HYDRO_FABRIC_SOURCE_CONFIG")
 PINNED_ENDPOINT_RE = re.compile(r"^(?P<head>\s*endpoint:\s*)(?P<value>\S+)\s*$", re.MULTILINE)
+REGISTRY_PLACEHOLDER = "${HYDRO_ORCHESTRATOR_REGISTRY_CONNECTION_ID}"
 
 
 def state_root() -> Path:
@@ -43,13 +44,18 @@ def state_root() -> Path:
     return Path(os.environ.get("HYDRO_STATE_DIR", "").strip() or Path.home() / ".fabric-demo")
 
 
-def azd_project_dir(deploy, endpoint: str, *, agent_name: str = AGENT_NAME) -> Path:
+def azd_project_dir(
+    deploy, endpoint: str, *, registry_connection: str, agent_name: str = AGENT_NAME,
+) -> Path:
     """Generate isolated azd state for the verified project, never reuse repository-local target state."""
     root = deploy.REPO_ROOT
     text = (root / "azure.yaml").read_text(encoding="utf-8")
     pinned = PINNED_ENDPOINT_RE.search(text)
     if not pinned or pinned["value"] != "${AZURE_AI_PROJECT_ENDPOINT}":
         raise deploy.DeployError("azure.yaml must use the target-independent ${AZURE_AI_PROJECT_ENDPOINT} placeholder.")
+    if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", registry_connection)
+            or text.count("registryConnectionId: " + REGISTRY_PLACEHOLDER) != 1):
+        raise deploy.DeployError("Hosted registry binding requires one template field and a verified connection name.")
     wanted = endpoint.rstrip("/")
     parsed = urlparse(wanted)
     if (parsed.scheme != "https" or not (parsed.hostname or "").endswith(".services.ai.azure.com")
@@ -63,6 +69,8 @@ def azd_project_dir(deploy, endpoint: str, *, agent_name: str = AGENT_NAME) -> P
     directory = state_root() / "hosted-agent" / f"{label}-{hashlib.sha256(identity.encode()).hexdigest()[:12]}"
     directory.mkdir(parents=True, exist_ok=True)
     generated = PINNED_ENDPOINT_RE.sub(lambda match: match["head"] + wanted, text, count=1)
+    # Custom service properties are not env-expanded by the Foundry extension.
+    generated = generated.replace(REGISTRY_PLACEHOLDER, registry_connection, 1)
     if agent_name != AGENT_NAME:
         for original, replacement in (
             (f"    {AGENT_NAME}:", f"    {agent_name}:"),
@@ -357,7 +365,7 @@ def ensure_hosted_agent(
         return existing  # type: ignore[return-value]
     print(f"Publishing Hosted Agent {agent_name}: {reason}.", flush=True)
 
-    project_dir = azd_project_dir(deploy, endpoint, agent_name=agent_name)
+    project_dir = azd_project_dir(deploy, endpoint, registry_connection=connection_name, agent_name=agent_name)
     ensure_azd_ready(deploy, tenant)
     bootstrap = _configure_azd_environment(
         deploy, project_dir=project_dir, project_id=project_id, endpoint=endpoint, tenant=tenant,

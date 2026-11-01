@@ -235,11 +235,14 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(binding["agent_name_suffix"], suffix)
             self.assertEqual(binding["connections"]["data-agent"], "hydro-fabric-iq" + suffix)
             name = hosted.AGENT_NAME + suffix
-            directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name)
+            directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
+                                               registry_connection=REGISTRY_CONNECTION_NAME, agent_name=name)
             yaml = (directory / "azure.yaml").read_text(encoding="utf-8")
             self.assertIn("    " + name + ":", yaml)
             self.assertIn("        name: " + name, yaml)
-            self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name), directory)
+            self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
+                                                    registry_connection=REGISTRY_CONNECTION_NAME, agent_name=name),
+                             directory)
             directories.add(directory)
         self.assertEqual(len(directories), 2)
         with self.assertRaises(ValueError):
@@ -583,25 +586,36 @@ class ProjectRoutingTests(unittest.TestCase):
         template = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
         self.assertEqual(hosted.PINNED_ENDPOINT_RE.search(template)["value"], "${AZURE_AI_PROJECT_ENDPOINT}")
         self.assertNotIn(".services.ai.azure.com", template)
-        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT), REPO_ROOT)
+        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
+                                                  registry_connection=REGISTRY_CONNECTION_NAME), REPO_ROOT)
 
     def test_distinct_project_endpoints_cannot_collide_in_generated_state(self):
         first = "https://res.services.ai.azure.com/api/projects/a.b"
         second = "https://res.services.ai.azure.com/api/projects/a-b"
-        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), first), hosted.azd_project_dir(FakeDeploy(), second))
-        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), first), hosted.azd_project_dir(FakeDeploy(), first + "/"))
+        self.assertNotEqual(
+            hosted.azd_project_dir(FakeDeploy(), first, registry_connection=REGISTRY_CONNECTION_NAME),
+            hosted.azd_project_dir(FakeDeploy(), second, registry_connection=REGISTRY_CONNECTION_NAME),
+        )
+        self.assertEqual(
+            hosted.azd_project_dir(FakeDeploy(), first, registry_connection=REGISTRY_CONNECTION_NAME),
+            hosted.azd_project_dir(FakeDeploy(), first + "/", registry_connection=REGISTRY_CONNECTION_NAME),
+        )
 
     def test_another_project_gets_a_generated_untracked_azd_project_never_a_repo_edit(self):
         before = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
-        directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT)
+        directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT, registry_connection=REGISTRY_CONNECTION_NAME)
         self.assertNotEqual(directory, REPO_ROOT)
         self.assertTrue(str(directory).startswith(os.environ["HYDRO_STATE_DIR"]))
         generated = (directory / "azure.yaml").read_text(encoding="utf-8")
         self.assertIn(f"endpoint: {ENDPOINT}", generated)
+        self.assertIn("registryConnectionId: " + REGISTRY_CONNECTION_NAME, generated)
+        self.assertNotIn(hosted.REGISTRY_PLACEHOLDER, generated)
         self.assertEqual(generated.replace(ENDPOINT, "X"), hosted.PINNED_ENDPOINT_RE.sub(
-            lambda match: match["head"] + "X", before, count=1))
+            lambda match: match["head"] + "X", before, count=1).replace(
+                hosted.REGISTRY_PLACEHOLDER, REGISTRY_CONNECTION_NAME))
         self.assertEqual((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"), before)
-        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT), directory)
+        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT,
+                                                registry_connection=REGISTRY_CONNECTION_NAME), directory)
 
     def test_publishing_to_another_project_runs_every_azd_command_in_its_generated_project(self):
         fake = FakeDeploy()
