@@ -713,13 +713,18 @@ def resolve_project(
         )
     shared_setup_needed = not candidates
     if len(candidates) == 1 and enabled() and account_name:
+        from shared_foundry_project import owned_infrastructure_connections
+
         access = deploy.run_capture(deploy.az(
             "account", "get-access-token", "--tenant", tenant, "--resource", "https://management.azure.com/",
             "--query", "accessToken", "-o", "tsv",
         ))
         if not access:
             raise deploy.DeployError("No delegated Azure management token was returned.")
-        connected = read_project_connections(deploy, candidates[0][0], {"Authorization": f"Bearer {access}"})
+        connected = owned_infrastructure_connections(
+            deploy, candidates[0][0],
+            read_project_connections(deploy, candidates[0][0], {"Authorization": f"Bearer {access}"}),
+        )
         shared_setup_needed = not {"ContainerRegistry", "AppInsights"}.issubset({
             item.get("properties", {}).get("category") for item in connected
         })

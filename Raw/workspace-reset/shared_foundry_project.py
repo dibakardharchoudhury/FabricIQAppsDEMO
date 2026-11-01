@@ -17,6 +17,26 @@ OPENAI_USER = "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
 FOUNDRY_USER = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
 
 
+def infrastructure_connection_name(project_id: str, kind: str) -> str:
+    account, separator, project = project_id.casefold().rpartition("/projects/")
+    if (not separator or not ACCOUNT_RE.fullmatch(account)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", project)
+            or kind not in ("registry", "monitoring")):
+        raise ValueError("Infrastructure connection names require a verified project ARM identity and kind.")
+    suffix = hashlib.sha256(project_id.casefold().encode()).hexdigest()[:32]
+    return f"hydro-shared-{kind}-{suffix}"
+
+
+def owned_infrastructure_connections(deploy, project_id: str, connections: list[dict]) -> list[dict]:
+    infrastructure = [item for item in connections
+                      if item.get("properties", {}).get("category") in ("ContainerRegistry", "AppInsights")]
+    if any(not isinstance(item.get("id"), str) or not item["id"] for item in infrastructure):
+        raise deploy.DeployError("Project infrastructure connection ownership identity is missing.")
+    return [item for item in infrastructure if re.fullmatch(
+        re.escape(project_id) + r"/connections/[^/?#]+", item["id"], re.IGNORECASE,
+    )]
+
+
 def _headers(deploy, tenant, resource="https://management.azure.com/"):
     token = deploy.run_capture(deploy.az(
         "account", "get-access-token", "--tenant", tenant, "--resource", resource,
@@ -197,16 +217,18 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
     _assign_role(deploy, project_id, principal, FOUNDRY_USER, "ServicePrincipal")
     operator = deploy.run_capture(deploy.az("ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"))
     _assign_role(deploy, project_id, operator, FOUNDRY_USER, "User")
-    connected = read_project_connections(deploy, project_id, headers)
+    connected = owned_infrastructure_connections(
+        deploy, project_id, read_project_connections(deploy, project_id, headers),
+    )
     for name, properties in (
-        ("hydro-shared-registry", {
+        (infrastructure_connection_name(project_id, "registry"), {
             "category": "ContainerRegistry", "authType": "ManagedIdentity",
             # ContainerRegistry uses the project principal as clientId, matching the azd template.
             "credentials": {"clientId": principal, "resourceId": settings["registry_id"]},
             "target": settings["registry_host"], "isSharedToAll": False,
             "metadata": {"ResourceId": settings["registry_id"]},
         }),
-        ("hydro-shared-monitoring", {
+        (infrastructure_connection_name(project_id, "monitoring"), {
             "category": "AppInsights", "authType": "ApiKey", "target": settings["insights_id"],
             "credentials": {"key": connection_string}, "isSharedToAll": False,
             "metadata": {"ApiType": "Azure", "ResourceId": settings["insights_id"]},
@@ -217,9 +239,10 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
         if len(matching) > 1:
             raise deploy.DeployError("Project infrastructure has duplicate live connections.")
         if matching:
-            compatible = {field: properties[field] for field in ("category", "authType", "target", "metadata")}
-            compatible["metadata"] = {"ResourceId": properties["metadata"]["ResourceId"]}
-            if not definition_matches(matching[0].get("properties", {}), compatible):
+            compatible = {field: properties[field] for field in ("category", "authType", "target")}
+            actual = matching[0].get("properties", {})
+            if (not definition_matches(actual, compatible)
+                    or not definition_matches(actual.get("metadata", {}), properties["metadata"])):
                 raise deploy.DeployError(
                     f"Existing {properties['category']} connection authentication/resource identity "
                     "does not match the shared infrastructure; refusing replacement."
@@ -236,7 +259,8 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
         if not current.ok:
             _request(deploy, "PUT", path, headers, api="2025-10-01-preview", json={"properties": properties})
         readback = _request(deploy, "GET", path, headers, api="2025-10-01-preview")
-        if not definition_matches(readback.get("properties", {}), expected):
+        if (str(readback.get("id", "")).casefold() != path.casefold()
+                or not definition_matches(readback.get("properties", {}), expected)):
             raise deploy.DeployError("Project infrastructure connection readback does not match; refusing replacement.")
     agent_headers = _headers(deploy, tenant, "https://ai.azure.com")
     deadline = time.monotonic() + 600
