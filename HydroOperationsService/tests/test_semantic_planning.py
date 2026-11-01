@@ -225,6 +225,31 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.owner.evidence)
         self.assertFalse(self.owner.specialists)
 
+    def test_native_answer_alone_cannot_certify_independent_verification(self):
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        raw = decision("fabric-iq", "native_claims", reader=False)
+        raw["plan"]["answer_contract"]["requirements"][0]["purpose"] = "verification"
+        with self.assertRaisesRegex(SourceFailure, "direct-source verification receipt"):
+            self.owner.validate_semantic_plan(
+                SemanticDecision.model_validate(raw), SourceCatalog.model_validate(catalog()),
+            )
+        self.owner.bridge.call.assert_not_called()
+        self.assertFalse(self.owner.evidence)
+
+    def test_independent_verification_can_retain_native_facts_with_a_planned_direct_read(self):
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        raw = decision("fabric-iq", "native_claims", reader=False)
+        direct = decision()
+        direct["plan"]["answer_contract"]["views"][0]["id"] = "independent-facilities"
+        direct["plan"]["answer_contract"]["requirements"][0]["purpose"] = "verification"
+        raw["plan"]["steps"].extend(direct["plan"]["steps"])
+        raw["plan"]["answer_contract"]["requirements"].extend(direct["plan"]["answer_contract"]["requirements"])
+        raw["plan"]["answer_contract"]["views"].extend(direct["plan"]["answer_contract"]["views"])
+        self.owner.validate_semantic_plan(
+            SemanticDecision.model_validate(raw), SourceCatalog.model_validate(catalog()),
+        )
+        self.owner.bridge.call.assert_not_called()
+
     async def test_explicit_rca_and_drafts_cannot_be_downgraded_to_native_prose(self):
         question = (
             "Which turbines had BAD telemetry quality today, and what work is already open for these? "

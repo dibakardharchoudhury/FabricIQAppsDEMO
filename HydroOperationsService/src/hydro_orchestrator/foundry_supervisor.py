@@ -1355,6 +1355,13 @@ Use the smallest complete plan:
   and business vocabulary. Do not select QA as a competing default to reconstruct those joins in the app.
 - QA/Gauge retrieves exact governed operational facts, explicit source queries, analytics and independent
   verification. It is not the default investigator, work-order author or compulsory pre/post-processing hop.
+  An explicitly independent verification requires purpose=verification with direct-authority evidence from
+  the governed source, not only the native answer being checked. Raw telemetry-quality and time-window
+  investigations use governed Eventhouse reads and authoritative asset identity; these are source-specific
+  operational investigations, not conceptual ontology joins. Read the relevant scoped evidence before RCA
+  and share its immutable receipts with maintenance review. Use an adaptive QA step when identity or query
+  arguments must first be resolved. If native facts are also requested, retain that separate native answer
+  unchanged; independent reads are planned up front, never a fallback after a native failure.
 - Weather handles forecast/observation interpretation with vendor, issue, target, valid time and units kept
   separate. Do not read turbine telemetry for a weather question or infer equipment faults from weather.
   Weather is a scoped capability, not a mandatory prompt-agent hop. When source arguments are known,
@@ -2598,6 +2605,14 @@ class FoundrySupervisor:
             if dataset is None or requirement.scope not in dataset.evidence_scopes \
                     or requirement.authority not in dataset.evidence_authorities:
                 raise SourceFailure(f"Semantic plan requested ungoverned evidence: {requirement.evidence}.")
+        if (
+            any(item.purpose == "verification" for item in decision.plan.answer_contract.requirements)
+            and not any(
+                item.purpose == "verification" and item.authority == "direct"
+                for item in decision.plan.answer_contract.requirements
+            )
+        ):
+            raise SourceFailure("Independent verification requires a declared direct-source verification receipt.")
         native = any(step.specialist == "fabric-iq" for step in decision.plan.steps)
         if sum(step.specialist == "fabric-iq" for step in decision.plan.steps) > 1:
             raise SourceFailure("Retrieve the original Fabric answer once and share its receipt with dependent specialists.")

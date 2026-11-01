@@ -102,9 +102,9 @@ test('normal Send acquires missing access before submitting exactly once, with n
     .map(kind => ({ kind, label: kind, scopes: [kind] }))
   const access = createHostedSourceAccess(requirements, {
     silent: async scopes => cached.get(scopes[0]) ?? null,
-    popup: async (scopes, extraScopes) => {
+    popup: async scopes => {
       popups++
-      for (const scope of [...scopes, ...extraScopes]) cached.set(scope, `${scope}-token`)
+      for (const scope of scopes) cached.set(scope, `${scope}-token`)
       return `${scopes[0]}-token`
     },
   })
@@ -117,10 +117,10 @@ test('normal Send acquires missing access before submitting exactly once, with n
   assert.equal(popups, 0)
   assert.equal(requests, 0)
   await client.run({ question: 'Count facilities.' })
-  assert.equal(popups, 1)
+  assert.equal(popups, 4)
   assert.equal(requests, 1)
   await client.run({ question: 'Count equipment.' })
-  assert.equal(popups, 1)
+  assert.equal(popups, 4)
   assert.equal(requests, 2)
 })
 

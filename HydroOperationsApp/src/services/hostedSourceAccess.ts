@@ -3,7 +3,7 @@ export type HostedAccessRequirement = { kind: HostedTokenKind; label: string; sc
 export type HostedAccessTokens = Record<HostedTokenKind, string>
 type TokenProvider = {
   silent: (scopes: string[]) => Promise<string | null>
-  popup: (scopes: string[], extraScopesToConsent: string[]) => Promise<string>
+  popup: (scopes: string[]) => Promise<string>
 }
 
 export class HostedSourceAccessError extends Error {
@@ -27,12 +27,15 @@ export function createHostedSourceAccess(requirements: HostedAccessRequirement[]
   return {
     async acquire(interactive = false): Promise<HostedAccessTokens> {
       let results = await inspect()
-      const next = results.find(result => !result.token)
-      if (next && interactive) {
-        const extraScopes = [...new Set(results.filter(result => !result.token && result.kind !== next.kind)
-          .flatMap(result => result.scopes))]
-        await provider.popup(next.scopes, extraScopes)
-        results = await inspect()
+      if (interactive) {
+        for (const requirement of requirements) {
+          if (results.find(result => result.kind === requirement.kind)?.token) continue
+          await provider.popup(requirement.scopes)
+          results = await inspect()
+          if (!results.find(result => result.kind === requirement.kind)?.token) {
+            throw new HostedSourceAccessError(results.filter(result => !result.token).map(result => result.label))
+          }
+        }
       }
       const missing = results.filter(result => !result.token)
       if (missing.length) throw new HostedSourceAccessError(missing.map(result => result.label))

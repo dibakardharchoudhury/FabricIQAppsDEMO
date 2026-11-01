@@ -126,6 +126,12 @@ Never paste credential values into the launcher or Git.
 them or remove existing redirects. App ownership alone does not grant tenant-wide
 consent. `npm run setup-live-auth:dry` previews changes without writing.
 
+Hydro Intelligence acquires delegated access separately for Fabric, Foundry,
+Power BI and the verified Kusto cluster. First-use consent is serial and
+audience-specific; tokens are revalidated before an agent request is sent.
+Do not combine all four audiences into one consent request: this can produce
+Entra `AADSTS28004`. Cancellation or failed authorization sends no agent request.
+
 ## 2. Start the local app
 
 ### Where to find it and how to launch it
