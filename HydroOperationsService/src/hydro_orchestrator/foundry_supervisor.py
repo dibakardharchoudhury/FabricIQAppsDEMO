@@ -1217,6 +1217,7 @@ class SupervisorTurn(Contract):
     model_round_count: int | None = Field(default=None, ge=1)
     evidence: tuple[ToolEvidence, ...]
     specialists: tuple[SpecialistResult, ...]
+    selected_equipment_ids: tuple[str, ...] = ()
     plan: dict[str, object] | None = None
     request_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     verified: bool = False
@@ -4857,6 +4858,8 @@ class FoundrySupervisor:
             committed = journal.read("answer")
             if committed is not None:
                 return ChatAnswer.model_validate(committed)
+            if journal.read("failure") is not None:
+                raise SourceFailure("This run has a terminal failure; execution cannot be replayed.")
             if (self.semantic_planning and request.native_sources == ("data-agent",)
                     and not request.required_specialists and not request.required_evidence_kinds
                     and not requests_new_work_order_proposal(request.question)):
@@ -4988,6 +4991,13 @@ class FoundrySupervisor:
             owner = self
             storage = RequiredCheckpointStorage(path / "checkpoints")
             request_digest = sha256(request.model_dump_json().encode()).hexdigest()
+            saved_checkpoint = await storage.get_latest(workflow_name="hydro-foundry-supervisor-v2")
+            if saved_checkpoint is not None:
+                saved_digest = saved_checkpoint.state.get("hydro_request_digest")
+                if saved_digest is not None and saved_digest != request_digest:
+                    raise SourceFailure("Checkpoint belongs to a different immutable run request.")
+            elif journal.read("supervisor_turn") is not None or journal.read("prepared_answer") is not None:
+                raise SourceFailure("Persisted supervisor progress requires its authoritative checkpoint.")
 
             def restore_turn(encoded_turn: str) -> SupervisorTurn:
                 turn = SupervisorTurn.model_validate_json(encoded_turn)
@@ -5001,6 +5011,7 @@ class FoundrySupervisor:
                     raise SourceFailure("Workflow stage contains a differently pinned specialist.")
                 owner.evidence = {item.id: item for item in turn.evidence}
                 owner.specialists = list(turn.specialists)
+                owner.selected_equipment_ids = set(turn.selected_equipment_ids)
                 if turn.plan is not None:
                     owner.orchestration_plan = OrchestrationPlan.model_validate(turn.plan)
                     owner.answer_contract = owner.orchestration_plan.answer_contract
@@ -5013,11 +5024,12 @@ class FoundrySupervisor:
                 @handler
                 async def handle(self, question: str, ctx: WorkflowContext[str]) -> None:
                     storage.require_healthy()
+                    ctx.set_state("hydro_request_digest", request_digest)
                     saved = journal.read("prepared_answer")
                     if saved is not None:
                         prepared = PreparedAnswer.model_validate(saved)
                         if (prepared.answer.run_id != request.run_id or prepared.answer.source != request.source
-                                or prepared.request_digest != sha256(request.model_dump_json().encode()).hexdigest()):
+                                or prepared.request_digest != request_digest):
                             raise SourceFailure("Prepared answer belongs to a different run or source.")
                         owner.evidence = {item.id: item for item in prepared.evidence}
                         if any(item.source != request.source for item in owner.evidence.values()):
@@ -5111,6 +5123,7 @@ class FoundrySupervisor:
                         version=versions["supervisor"].version, duration_ms=elapsed,
                         model_round_count=model_round_count,
                         evidence=tuple(owner.evidence.values()), specialists=tuple(owner.specialists),
+                        selected_equipment_ids=tuple(sorted(owner.selected_equipment_ids)),
                         plan=plan.model_dump(mode="json", by_alias=True),
                         request_digest=request_digest,
                     )
@@ -5126,7 +5139,7 @@ class FoundrySupervisor:
                 async def handle(self, encoded_turn: str, ctx: WorkflowContext[str]) -> None:
                     storage.require_healthy()
                     turn = restore_turn(encoded_turn)
-                    if turn.prepared is not None or turn.plan is None:
+                    if turn.verified or turn.prepared is not None or turn.plan is None:
                         await ctx.send_message(turn.model_dump_json())
                         return
                     plan = OrchestrationPlan.model_validate(turn.plan)
@@ -5287,6 +5300,7 @@ class FoundrySupervisor:
                     updated = turn.model_copy(update={
                         "evidence": tuple(owner.evidence.values()),
                         "specialists": tuple(owner.specialists),
+                        "selected_equipment_ids": tuple(sorted(owner.selected_equipment_ids)),
                     })
                     journal.save(
                         f"specialist_stage:{self.index + 1}",
@@ -5302,6 +5316,13 @@ class FoundrySupervisor:
                 async def handle(self, encoded_turn: str, ctx: WorkflowContext[str]) -> None:
                     storage.require_healthy()
                     turn = restore_turn(encoded_turn)
+                    saved = journal.read("verified_supervisor_turn")
+                    if saved is not None:
+                        verified = restore_turn(SupervisorTurn.model_validate(saved).model_dump_json())
+                        if not verified.verified:
+                            raise SourceFailure("Committed verification receipt is not verified.")
+                        await ctx.send_message(verified.model_dump_json())
+                        return
                     if turn.verified:
                         await ctx.send_message(turn.model_dump_json())
                         return
@@ -5324,6 +5345,7 @@ class FoundrySupervisor:
                     verified = turn.model_copy(update={
                         "verified": True, "evidence": tuple(owner.evidence.values()),
                         "specialists": tuple(owner.specialists),
+                        "selected_equipment_ids": tuple(sorted(owner.selected_equipment_ids)),
                     })
                     journal.save("verified_supervisor_turn", verified.model_dump(mode="json"))
                     await ctx.send_message(verified.model_dump_json())
@@ -5338,6 +5360,17 @@ class FoundrySupervisor:
                     turn = restore_turn(encoded_turn)
                     if not turn.verified:
                         raise SourceFailure("Presentation requires completed independent-evidence verification.")
+                    saved = journal.read("prepared_answer")
+                    if saved is not None:
+                        prepared = PreparedAnswer.model_validate(saved)
+                        if (prepared.request_digest != request_digest or prepared.answer.run_id != request.run_id
+                                or prepared.answer.source != request.source
+                                or prepared.supervisor_version != versions["supervisor"].version
+                                or any(item.source != request.source for item in prepared.evidence)):
+                            raise SourceFailure("Prepared answer belongs to a different run, source or pinned supervisor.")
+                        owner.evidence = {item.id: item for item in prepared.evidence}
+                        owner.specialists = list(prepared.answer.specialists)
+                        turn = turn.model_copy(update={"prepared": prepared})
                     native = owner.native_answer(request) or owner.native_passthrough_answer(request)
                     if turn.prepared is not None:
                         if (native or owner.answer(
@@ -5346,6 +5379,9 @@ class FoundrySupervisor:
                             analysis=turn.prepared.answer.analysis,
                         )) != turn.prepared.answer:
                             raise SourceFailure("Recovered presentation differs from immutable source projections.")
+                        ctx.set_state("hydro_answer_digest", sha256(
+                            _encoded(turn.prepared.answer.model_dump(mode="json")),
+                        ).hexdigest())
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
                         return
                     if native is not None:
@@ -5361,6 +5397,7 @@ class FoundrySupervisor:
                             supervisor_model_round_count=turn.model_round_count,
                             request_digest=request_digest,
                         ).model_dump(mode="json"))
+                        ctx.set_state("hydro_answer_digest", sha256(_encoded(native.model_dump(mode="json"))).hexdigest())
                         await ctx.yield_output(native.model_dump_json())
                         return
                     plan = owner.contract_answer_plan(request)
@@ -5405,6 +5442,7 @@ class FoundrySupervisor:
                         answer_projection=projection,
                         request_digest=request_digest,
                     ).model_dump(mode="json"))
+                    ctx.set_state("hydro_answer_digest", sha256(_encoded(result.model_dump(mode="json"))).hexdigest())
                     await ctx.yield_output(result.model_dump_json())
 
             chief, verifier, presenter = ExecuteSupervisor(), VerifyEvidence(), PresentGroundedAnswer()
@@ -5433,13 +5471,31 @@ class FoundrySupervisor:
             workflow = builder.add_edge(previous, verifier).add_edge(verifier, presenter).build()
             journal.save("workflow_graph", {"format": "mermaid",
                                            "definition": WorkflowViz(workflow).to_mermaid()})
-            result = await workflow.run(request.question)
+            result = await workflow.run(
+                None if saved_checkpoint else request.question,
+                checkpoint_id=saved_checkpoint.checkpoint_id if saved_checkpoint else None,
+            )
             storage.require_healthy()
             outputs = result.get_outputs()
+            # The SDK restores pending work, not outputs emitted before a terminal checkpoint.
+            if not outputs and saved_checkpoint is not None and not saved_checkpoint.messages:
+                prepared = PreparedAnswer.model_validate(journal.read("prepared_answer"))
+                if saved_checkpoint.state.get("hydro_answer_digest") != sha256(
+                    _encoded(prepared.answer.model_dump(mode="json")),
+                ).hexdigest():
+                    raise SourceFailure("Terminal checkpoint does not attest the immutable prepared answer.")
+                outputs = [prepared.answer.model_dump_json()]
             if len(outputs) != 1 or not isinstance(outputs[0], str):
                 raise SourceFailure("Supervisor workflow did not return exactly one typed answer.")
             answer = ChatAnswer.model_validate_json(outputs[0])
             prepared = PreparedAnswer.model_validate(journal.read("prepared_answer"))
+            if (prepared.request_digest != request_digest or prepared.answer != answer
+                    or answer.run_id != request.run_id or answer.source != request.source
+                    or prepared.supervisor_version != versions["supervisor"].version
+                    or any(item.source != request.source for item in prepared.evidence)):
+                raise SourceFailure("Completed checkpoint output differs from its immutable prepared answer.")
+            self.evidence = {item.id: item for item in prepared.evidence}
+            self.specialists = list(prepared.answer.specialists)
             journal.save("evidence", {
                 "receipts": [item.model_dump(mode="json") for item in self.evidence.values()],
                 "execution_manifest": journal.read("execution_manifest"),

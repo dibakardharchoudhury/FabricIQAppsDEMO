@@ -1223,6 +1223,28 @@ SQLite receipt without replaying the workflow; this recovery is explicitly journ
 The checkpoint decoder allows only the explicit Hydro contract classes.
 Checkpoint files must remain in a trusted, access-controlled local directory.
 
+The supervisor rebuilds the same named graph and executor IDs, validates every
+checkpoint file in the run's isolated directory, and supplies the authoritative
+latest `checkpoint_id` to Agent Framework. It does not restart the graph and treat
+cached model/source receipts as checkpoint recovery. The checkpointed turn carries
+the grounded equipment selection alongside its plan, evidence and pinned specialist
+versions; restored turns must match the immutable run request and source identity.
+If verification committed just before checkpoint saving failed, the resumed verifier
+uses that immutable verified-turn receipt without reentering completed delegations.
+Likewise, a prepared presentation can complete without rerunning models or sources.
+The SDK does not re-emit historical outputs from an already terminal checkpoint:
+Hydro recovers its immutable prepared answer only when the terminal checkpoint's
+workflow-state answer digest matches it. Missing or corrupt checkpoints cannot be
+replaced by an older snapshot or a prepared-answer shortcut.
+
+This is restart recovery of unfinished execution within the existing local filesystem
+boundary, not an automatic retry policy for source outages, model refusals, invalid
+input, or evidence/contract validation failures. Those failures remain explicit and
+are not classified as checkpoint corruption. A journaled terminal supervisor failure
+cannot replay execution; a new request needs a new run identity. Approval remains a
+separate explicit human decision and checkpoint recovery does not submit SQL writes.
+See Microsoft's [checkpoint capture, resume and rehydration guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints).
+
 ### Deliberately local
 
 One worker process owns the state directory; a file lock rejects a second owner.
