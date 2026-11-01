@@ -1355,6 +1355,13 @@ Use the smallest complete plan:
   and business vocabulary. Do not select QA as a competing default to reconstruct those joins in the app.
 - QA/Gauge retrieves exact governed operational facts, explicit source queries, analytics and independent
   verification. It is not the default investigator, work-order author or compulsory pre/post-processing hop.
+  An explicitly independent verification requires purpose=verification with direct-authority evidence from
+  the governed source, not only the native answer being checked. Raw telemetry-quality and time-window
+  investigations use governed Eventhouse reads and authoritative asset identity; these are source-specific
+  operational investigations, not conceptual ontology joins. Read the relevant scoped evidence before RCA
+  and share its immutable receipts with maintenance review. Use an adaptive QA step when identity or query
+  arguments must first be resolved. If native facts are also requested, retain that separate native answer
+  unchanged; independent reads are planned up front, never a fallback after a native failure.
 - Weather handles forecast/observation interpretation with vendor, issue, target, valid time and units kept
   separate. Do not read turbine telemetry for a weather question or infer equipment faults from weather.
   Weather is a scoped capability, not a mandatory prompt-agent hop. When source arguments are known,
@@ -2598,6 +2605,14 @@ class FoundrySupervisor:
             if dataset is None or requirement.scope not in dataset.evidence_scopes \
                     or requirement.authority not in dataset.evidence_authorities:
                 raise SourceFailure(f"Semantic plan requested ungoverned evidence: {requirement.evidence}.")
+        if (
+            any(item.purpose == "verification" for item in decision.plan.answer_contract.requirements)
+            and not any(
+                item.purpose == "verification" and item.authority == "direct"
+                for item in decision.plan.answer_contract.requirements
+            )
+        ):
+            raise SourceFailure("Independent verification requires a declared direct-source verification receipt.")
         native = any(step.specialist == "fabric-iq" for step in decision.plan.steps)
         if sum(step.specialist == "fabric-iq" for step in decision.plan.steps) > 1:
             raise SourceFailure("Retrieve the original Fabric answer once and share its receipt with dependent specialists.")
@@ -3115,6 +3130,7 @@ class FoundrySupervisor:
                         f"The pinned Foundry native request failed (HTTP {error.status_code}); no answer was certified."
                     ) from error
         completed_report: dict[str, object] | None = None
+        reader_completion_only = False
 
         input_repairs: dict[str, int] = {}
 
@@ -3139,6 +3155,11 @@ class FoundrySupervisor:
                 raise
 
         async def query(tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
+            if reader_completion_only:
+                raise ToolInputError(
+                    "This completion repair may only cite the supplied captured evidence. "
+                    "Do not call another source tool or change the read scope."
+                )
             arguments = canonical_source_arguments(request, arguments)
             if self.semantic_decision is None and tool_name == "query_signal_quality_snapshot" \
                     and "signal_quality" in request.required_evidence_kinds:
@@ -3194,6 +3215,11 @@ class FoundrySupervisor:
             parsed = await self.bridge.call({"action": "validate_hydro_query",
                                             "role": role,
                                             "report": json.dumps({"tool_name": tool_name, "arguments": arguments})})
+            if parsed.get("ok") is False:
+                error = parsed.get("error")
+                if not isinstance(error, str) or not error.strip() or len(error) > 2400:
+                    raise SourceFailure("Shared tool validation returned an invalid rejection.")
+                raise ToolInputError(error)
             if parsed.get("toolName") != tool_name:
                 raise SourceFailure("Shared tool validation changed the tool identity.")
             if tool_name == "visualize_dataset" and not request.charts_requested:
@@ -3413,9 +3439,15 @@ class FoundrySupervisor:
             "allowed_evidence_ids": list(self.evidence),
             "allowed_evidence_references": rca_reference_examples(self.evidence) if role == "rca" else (),
             "completed_specialists": self.model_specialists(role, compact=targeted_context),
-            "output_policy": "Tables by default. Values must be source references, never authored cells. "
-                             "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
-                             "Only an in-memory proposal is permitted; no SQL writes or dispatch.",
+            "output_policy": (
+                "Return a brief retrieval/verification completion (at most 120 words), citing captured evidence IDs "
+                "and source limitations. Do not reproduce source rows or construct tables: the Supervisor presents "
+                "the complete immutable source records. Do not perform another specialist's analysis or prepare work."
+                if role in ("qa", "weather")
+                else "Tables by default. Values must be source references, never authored cells. "
+                     "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
+                     "Only an in-memory proposal is permitted; no SQL writes or dispatch."
+            ),
             "charts_requested": request.charts_requested, "native_source": native_source,
             "required_specialists": request.required_specialists,
             "required_specialist_steps": request.required_specialist_steps,
@@ -3602,14 +3634,24 @@ class FoundrySupervisor:
                         )
                         active_context = {
                             **context,
-                            "evidence": self.model_evidence(role, targeted=True),
-                            "completed_specialists": self.model_specialists(role, compact=True),
+                            "evidence": self.model_evidence(role, targeted=targeted_context),
+                            "allowed_evidence_ids": list(self.evidence),
+                            "allowed_evidence_references": (
+                                rca_reference_examples(self.evidence) if role == "rca" else ()
+                            ),
+                            "completed_specialists": self.model_specialists(role, compact=targeted_context),
                             "completion_repair": (
                                 "The prior completion was incomplete after its source calls. Use only the captured "
                                 "immutable evidence below and finish the assigned factual response now. Do not call "
-                                "another source tool, broaden scope, or repeat completed work."
+                                "another source tool, broaden scope, or repeat completed work. Reader roles return "
+                                "only a brief completion citing receipt IDs and limitations, not duplicated tables."
                             ),
                         }
+                        if role in ("qa", "weather"):
+                            reader_completion_only = True
+                            active_context["permitted_source_catalog"] = {
+                                "tools": [], "context": {"mode": "captured-evidence-only"},
+                            }
                         continue
                     raise SourceFailure("Foundry response has no completed, inspectable service identity.")
                 if response.finish_reason == "content_filter":
@@ -3940,6 +3982,11 @@ class FoundrySupervisor:
                 )
             source_rows: list[tuple[ToolEvidence, EvidenceDataset, int, dict[str, object]]] = []
             seen: set[tuple[str, ...]] = set()
+            open_work_view = view.kind == "work_orders" and any(
+                item.kind == view.kind and item.scope == view.scope
+                and item.authority == view.authority and item.purpose == "coverage"
+                for item in contract.requirements
+            )
             for receipt, dataset in matches:
                 records = receipt.result.get(dataset.field)
                 if not isinstance(records, list) or not all(isinstance(item, dict) for item in records):
@@ -3947,6 +3994,14 @@ class FoundrySupervisor:
                         f"Governed dataset {dataset.kind} does not expose its declared record collection."
                     )
                 for index, record in enumerate(records):
+                    if open_work_view:
+                        status = record.get("status")
+                        if not isinstance(status, str) or not status.strip():
+                            raise SourceFailure(
+                                f"Required work coverage view {view.id} is missing status evidence."
+                            )
+                        if status.strip().lower() in CLOSED_WORK_STATUSES:
+                            continue
                     identity = tuple(str(record.get(key, "")) for key in dataset.identity_fields)
                     if any(identity):
                         if identity in seen:

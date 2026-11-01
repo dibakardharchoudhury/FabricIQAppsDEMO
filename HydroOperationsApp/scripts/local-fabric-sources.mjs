@@ -4,7 +4,7 @@ import { parseEnv } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { ConnectorsRayfinClient, RayfinClient } from '@microsoft/rayfin-client'
 import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
-import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql } from '../src/services/copilot/query.ts'
+import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql, KqlValidationError } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { lakehouseConnectorConfig } from '../src/services/lakehouseConnector.ts'
 import { operationalConnectorConfig } from '../src/services/operationalConnector.ts'
@@ -1361,9 +1361,17 @@ export async function handle(request, deps = {}) {
   }
   if (request.action === 'validate_hydro_query') {
     const parsed = parseHydroQuery(request.report)
-    if (!parsed.ok) throw new Error(parsed.error)
+    if (!parsed.ok) return parsed
     const allowed = Object.hasOwn(SPECIALIST_TOOLS, request.role) ? SPECIALIST_TOOLS[request.role] : undefined
     if (!allowed?.includes(parsed.toolName)) throw new Error('Tool is not permitted for this specialist.')
+    if (parsed.toolName === 'run_kql') {
+      try {
+        validateKql(parsed.args.query, KUSTO_SOURCE_NAMES)
+      } catch (error) {
+        if (!(error instanceof KqlValidationError)) throw error
+        return { ok: false, error: error.message }
+      }
+    }
     return parsed
   }
   const config = await configuration()
@@ -1489,7 +1497,7 @@ export async function handle(request, deps = {}) {
 export function errorEnvelope(error) {
   // Do not serialize SDK exceptions, request headers, tokens or response bodies.
   const message = error instanceof RcaEvidenceError || error instanceof WorkOrderSubmissionError
-    || error instanceof SourceReadError
+    || error instanceof SourceReadError || error instanceof KqlValidationError
     || (error instanceof Error && error.constructor === Error)
     ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
   return { ok: false, error: message,

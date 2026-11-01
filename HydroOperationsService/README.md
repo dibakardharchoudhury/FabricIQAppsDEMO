@@ -2,6 +2,21 @@
 
 ## Multi-agent responsibilities and selective execution
 
+The operational pattern is a **bounded, checkpointed supervisor workflow**:
+semantic planning selects the smallest complete set of capabilities; independent
+governed reads run concurrently with bounded concurrency; evidence-dependent
+RCA and maintenance delegation runs in order; deterministic validation precedes
+presentation. Production writes remain behind separate human approval. This is
+a custom Agent Framework workflow, not an unrestricted group chat or a claim
+that the built-in Magentic manager is in use.
+
+An explicit independent-verification requirement must include a direct-source
+verification receipt. A native answer alone cannot independently verify itself.
+Raw telemetry-quality investigations use scoped governed Eventhouse evidence
+and authoritative asset identity before RCA. When native facts are also requested,
+retain the original native answer unchanged and plan independent reads up front;
+never substitute them as a fallback after native failure.
+
 The chat represents the **Supervisor-led multi-agent team**, not just Sparky.
 Its **Team** menu lists available capabilities; the execution flow lists only
 participants selected for actual work. It does not imply every specialist runs.
@@ -25,6 +40,13 @@ The facility-list starter no longer forces Sparky: simple governed retrieval can
 use Gauge's reader path, while the explicit Fabric Data Agent starter remains.
 
 ## Model throughput and runtime failures
+
+Hosted source authorization acquires Fabric, Foundry, Power BI and the selected
+Kusto cluster tokens separately. Missing consent is requested serially per
+resource, never combined into a four-resource `extraScopesToConsent` request
+that Entra can reject with `AADSTS28004`. Each token is silently revalidated
+before advancing; cancellation, rejected consent or a failed refresh stops
+before any agent request or operational decision is submitted.
 
 Model throughput is shared across every internal call and concurrent conversation,
 not allocated per user prompt. The model-facing catalog factors repeated column
@@ -113,6 +135,19 @@ Verified prose-only answers are native evidence too; the workflow does not requi
 or invent a business-record table to accept them.
 Independent source tables and explicitly
 requested charts retain their existing presentation and exact source values.
+Work-order views bound to a coverage requirement show only open work under the
+same closed-status policy as maintenance review. Historical source receipts remain
+immutable; factual history views retain completed work. Missing status evidence
+blocks coverage presentation instead of assuming the record is open.
+Model-authored KQL is validated before any source execution. A rejected read-only
+query receives one bounded argument correction with the shared validator's guidance;
+it is not misreported as a source outage. Repeated invalid input and actual source
+failures still stop the run without an accepted answer or a replay.
+Q&A and Weather return short receipt summaries; the Supervisor renders all verified
+records. If their completion is truncated, its one recovery attempt receives the
+newly captured immutable evidence and refreshed receipt IDs in the original scope.
+Source tools are disabled during that completion-only recovery. It cannot reread
+data, broaden scope or lose initial-reader evidence through a later RCA projection.
 
 The retained compatibility prompt-agent path has additional wrapper-fidelity
 checks; it is not the production semantic transport. A tool-processing diagnostic

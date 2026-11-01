@@ -1312,6 +1312,79 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.owner.evidence), {"quality-population"})
         self.owner.contract_answer_plan(request)
 
+    def test_work_coverage_view_excludes_closed_history_without_mutating_receipts(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "work_orders_focus_direct", "purpose": "coverage",
+            }],
+            "views": [{
+                "id": "open-work", "title": "Open work", "kind": "work_orders",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        rows = [
+            {"workOrderNumber": f"WO-{index}", "equipmentId": "EQUIP_RTI_T005", "status": status}
+            for index, status in enumerate((
+                "In progress", "Scheduled", "Ready", "Completed", " CANCELLED ", "canceled", "Closed",
+            ))
+        ]
+        receipt = ToolEvidence(
+            id="work-history", source=SOURCE, tool="query_operations",
+            arguments={"entity": "work_orders"}, completed_at=utc_now(),
+            result={"rows": rows, "row_count": len(rows), "truncated": False},
+            datasets=(EvidenceDataset(
+                kind="work_orders", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("workOrderNumber",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+
+        plan = self.owner.contract_answer_plan(self.request)
+        answer = self.owner.answer(self.request, plan, use_projected_summary=True)
+
+        self.assertEqual(len(answer.tables[0].rows), 3)
+        self.assertIn("3 verified records", plan.summary)
+        self.assertEqual(self.owner.evidence[receipt.id].result["rows"], rows)
+        self.assertEqual(
+            [row.cells[0].source.path for row in plan.tables[0].rows],
+            ["/rows/0/workOrderNumber", "/rows/1/workOrderNumber", "/rows/2/workOrderNumber"],
+        )
+
+        self.owner.answer_contract = self.owner.answer_contract.model_copy(update={
+            "requirements": (self.owner.answer_contract.requirements[0].model_copy(
+                update={"purpose": "facts"},
+            ),),
+        })
+        history = self.owner.contract_answer_plan(self.request)
+        self.assertEqual(len(history.tables[0].rows), len(rows))
+
+    def test_work_coverage_view_requires_status_evidence(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "work_orders_focus_direct", "purpose": "coverage",
+            }],
+            "views": [{
+                "id": "open-work", "title": "Open work", "kind": "work_orders",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        for status in (None, "", " ", 1):
+            with self.subTest(status=status):
+                receipt = ToolEvidence(
+                    id="missing-work-status", source=SOURCE, tool="query_operations",
+                    arguments={"entity": "work_orders"}, completed_at=utc_now(),
+                    result={"rows": [{"workOrderNumber": "WO-1", "status": status}]},
+                    datasets=(EvidenceDataset(
+                        kind="work_orders", field="rows", authority="direct", scope="focus",
+                        complete=True, identity_fields=("workOrderNumber",),
+                    ),),
+                )
+                self.owner.evidence = {receipt.id: receipt}
+                with self.assertRaisesRegex(SourceFailure, "status evidence"):
+                    self.owner.contract_answer_plan(self.request)
+
     def test_analysis_preserves_complete_bounded_fleet_rows_and_source_receipt(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
             "version": 3,
@@ -2267,8 +2340,25 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 if self.mode == "repeat_invalid":
                     arguments["equipmentId"] = "TEST_T005"
                 output = [self.function("hydro_query", {"tool_name": "query_telemetry", "arguments": arguments})]
+            if self.mode in ("repair_kql", "repeat_invalid_kql") and (
+                round_number == 0 or self.mode == "repeat_invalid_kql" and round_number == 1
+            ):
+                output = [self.function("hydro_query", {
+                    "tool_name": "run_kql",
+                    "arguments": {"query": "let start=ago(6h); OPCUAEvents | count"},
+                })]
+            elif self.mode == "repair_kql" and round_number == 1:
+                output = [self.function("hydro_query", {
+                    "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T005"},
+                })]
             if self.mode == "qa_rate_limit_after_source" and round_number == 2:
                 output = [self.message("The captured source read is complete; no physical fault is established.")]
+            if self.mode == "qa_incomplete_once" and round_number == 2:
+                output = [self.message("Captured receipt reading-1 completes the assigned telemetry read.")]
+            if self.mode == "qa_incomplete_read_again" and round_number == 2:
+                output = [self.function("hydro_query", {
+                    "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T999"},
+                })]
         elif name == "hydro-rca-agent":
             ref = {"evidence_id": "reading-1", "path": "/rows/0"}
             if self.mode == "multiple_proposals":
@@ -2440,7 +2530,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         else:
             raise AssertionError(name)
         incomplete = (
-            self.mode == "qa_incomplete_once" and name == "hydro-qa-agent" and round_number == 1
+            self.mode in ("qa_incomplete_once", "qa_incomplete_read_again")
+            and name == "hydro-qa-agent" and round_number == 1
             or self.mode == "native_text_truncated" and name == "hydro-fabric-iq-agent"
         )
         return httpx.Response(200, json={
@@ -2570,11 +2661,39 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner = self.make_owner()
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["qa"])
-        self.assertEqual(self.calls["hydro-qa-agent"], 4)
+        self.assertEqual(self.calls["hydro-qa-agent"], 3)
         self.assertEqual(self.tools.calls, 1)
         repair_payload = json.dumps(self.payloads)
         self.assertIn("prior completion was incomplete", repair_payload)
         self.assertIn("Do not call another source tool", repair_payload)
+        contexts = [
+            json.loads(payload["input"][0]["content"][0]["text"])
+            for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-qa-agent"
+            and payload["input"][0].get("content", [{}])[0].get("type") == "input_text"
+        ]
+        repair = next(context for context in contexts if "completion_repair" in context)
+        self.assertEqual(repair["allowed_evidence_ids"], ["reading-1"])
+        self.assertEqual(repair["evidence"][0]["id"], "reading-1")
+        self.assertEqual(repair["evidence"][0]["result"]["rows"][0]["value"], 75.0)
+        self.assertEqual(repair["permitted_source_catalog"]["tools"], [])
+        self.assertLessEqual(len(_encoded(repair["permitted_source_catalog"])), 128)
+
+    async def test_reader_completion_repair_cannot_execute_a_new_source_scope(self):
+        self.mode = "qa_incomplete_read_again"
+        request = self.request.model_copy(update={
+            "question": "Read and verify current telemetry.",
+            "required_specialists": ("qa",),
+            "required_specialist_steps": {"qa": 1},
+        })
+        self.seed(request)
+        owner = self.make_owner()
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+            result = await owner.run(request)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(result.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(owner.failures, [])
+        self.assertIn("may only cite the supplied captured evidence", json.dumps(self.payloads))
 
     async def test_foundry_service_calls_have_a_finite_network_timeout(self):
         with patch(
@@ -3726,6 +3845,37 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         payload = json.dumps(self.payloads)
         self.assertIn("invalid_arguments", payload)
         self.assertIn("source_executed", payload)
+
+    async def test_kql_correction_precedes_source_execution_without_poisoning_the_run(self):
+        self.mode = "repair_kql"
+        catalog = await self.tools.catalog(self.request)
+        catalog["tools"].append({"name": "run_kql", "parameters": {
+            "type": "object", "properties": {"query": {"type": "string"}},
+            "required": ["query"], "additionalProperties": False,
+        }})
+        with patch.object(self.tools, "catalog", AsyncMock(return_value=catalog)):
+            with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+                result = await self.owner.run(self.request)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(result.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(self.owner.failures, [])
+        payload = json.dumps(self.payloads)
+        self.assertIn("let statements are not allowed", payload)
+        self.assertIn("source_executed", payload)
+
+    async def test_repeated_invalid_kql_stops_before_any_source_execution(self):
+        self.mode = "repeat_invalid_kql"
+        catalog = await self.tools.catalog(self.request)
+        catalog["tools"].append({"name": "run_kql", "parameters": {
+            "type": "object", "properties": {"query": {"type": "string"}},
+            "required": ["query"], "additionalProperties": False,
+        }})
+        with patch.object(self.tools, "catalog", AsyncMock(return_value=catalog)):
+            with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+                with self.assertRaisesRegex(SourceFailure, "ToolInputError: source, handoff or validation failed"):
+                    await self.owner.run(self.request)
+        self.assertEqual(self.tools.calls, 0)
+        self.assertIn("let statements are not allowed", json.dumps(self.payloads))
 
     async def test_deterministic_answer_contract_does_not_depend_on_model_correction(self):
         self.mode = "answer_contract_repair"
