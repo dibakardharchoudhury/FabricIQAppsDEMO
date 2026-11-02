@@ -23,6 +23,43 @@ SPEC.loader.exec_module(DEPLOY)
 
 
 class GraphClaimsChallengeTests(unittest.TestCase):
+    def setUp(self):
+        DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear()
+        self.addCleanup(DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear)
+
+    def test_graph_accepted_cached_token_never_opens_sign_in_or_creates_session(self):
+        with (
+            patch.object(DEPLOY, "graph_claims_challenge", return_value=""),
+            patch.object(DEPLOY, "run_stream") as login,
+            patch.object(DEPLOY.tempfile, "mkdtemp") as create,
+        ):
+            DEPLOY.reauthenticate_azure_cli("tenant", "reading Graph", graph=True)
+        login.assert_not_called()
+        create.assert_not_called()
+
+    def test_graph_challenge_reuses_cache_and_allows_only_one_interactive_attempt(self):
+        with (
+            patch.dict(os.environ, {"AZURE_CONFIG_DIR": "existing-tenant-cache"}),
+            patch.object(DEPLOY, "graph_claims_challenge", return_value="claims"),
+            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(DEPLOY, "run_stream") as login,
+            patch.object(DEPLOY.tempfile, "mkdtemp") as create,
+        ):
+            DEPLOY.reauthenticate_azure_cli("tenant", "reading Graph", graph=True)
+            self.assertEqual(os.environ["AZURE_CONFIG_DIR"], "existing-tenant-cache")
+            with self.assertRaisesRegex(DEPLOY.DeployError, "No further sign-in popup"):
+                DEPLOY.reauthenticate_azure_cli("tenant", "reading Graph again", graph=True)
+        login.assert_called_once()
+        self.assertIn("--claims-challenge", login.call_args.args[0])
+        create.assert_not_called()
+
+    def test_successful_graph_probe_reports_cached_token_accepted(self):
+        with (
+            patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"token"}'),
+            patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200)),
+        ):
+            self.assertEqual(DEPLOY.graph_claims_challenge("tenant"), "")
+
     def test_graph_claims_propagation_retries_reads_without_repeating_login(self):
         stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
         action = Mock(side_effect=[stale, stale, "verified"])
@@ -842,6 +879,8 @@ class HostedSourceBootstrapTests(unittest.TestCase):
 
 class DeployOrderTests(unittest.TestCase):
     def setUp(self):
+        DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear()
+        self.addCleanup(DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear)
         DEPLOY._FABRIC_TOKEN_CACHE.clear()
         self.addCleanup(DEPLOY._FABRIC_TOKEN_CACHE.clear)
         energy = patch.object(DEPLOY, "energy_workspace")
@@ -1316,7 +1355,8 @@ class DeployOrderTests(unittest.TestCase):
                 "--only-show-errors", "--output", "none",
             ]
         )
-        ensure_tenant.assert_called_once_with("tenant-id")
+        self.assertEqual(ensure_tenant.call_count, 2)
+        ensure_tenant.assert_called_with("tenant-id")
 
     def test_reauthenticates_after_stale_token_before_discovering_spa(self):
         stale = DEPLOY.DeployError(

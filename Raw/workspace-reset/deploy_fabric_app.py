@@ -83,6 +83,7 @@ RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
 AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
 _FABRIC_TOKEN_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+_GRAPH_INTERACTIVE_ATTEMPTS: set[str] = set()
 
 
 class DeploymentTimings:
@@ -735,8 +736,8 @@ def graph_claims_challenge(tenant: str) -> str | None:
     except requests.RequestException as exc:
         raise DeployError("Could not read the Microsoft Graph authentication challenge.") from exc
     if response.status_code == 200:
-        print("Graph challenge probe accepted the token; retrying with Graph-scoped sign-in.", flush=True)
-        return None
+        print("Microsoft Graph accepts the cached token; reusing the existing CLI session without sign-in.", flush=True)
+        return ""
     header = response.headers.get("WWW-Authenticate", "")
     match = re.search(r'\bclaims="([A-Za-z0-9_+/=-]+)"', header)
     if response.status_code != 401 or 'error="insufficient_claims"' not in header or not match:
@@ -757,6 +758,30 @@ def graph_claims_challenge(tenant: str) -> str | None:
 
 def reauthenticate_azure_cli(tenant: str, operation: str, *, graph: bool = False) -> None:
     challenge = graph_claims_challenge(tenant) if graph else None
+    if graph:
+        if challenge == "":
+            return
+        identity = tenant.casefold()
+        if identity in _GRAPH_INTERACTIVE_ATTEMPTS:
+            raise DeployError(
+                "Microsoft Graph still requires interaction after the deployment's sign-in attempt. "
+                "No further sign-in popup will be opened; verify the resource sign-in policy before retrying."
+            )
+        ensure_azure_tenant(tenant)
+        _GRAPH_INTERACTIVE_ATTEMPTS.add(identity)
+        print(
+            f"Microsoft Graph requires sign-in before {operation}; reusing the existing CLI cache. "
+            "One interactive Graph sign-in is allowed per deployment process.",
+            flush=True,
+        )
+        run_stream(az(
+            "login", "--tenant", tenant, "--allow-no-subscriptions",
+            "--scope", "https://graph.microsoft.com/.default",
+            *(("--claims-challenge", challenge) if challenge else ()),
+            "--only-show-errors", "--output", "none",
+        ))
+        ensure_azure_tenant(tenant)
+        return
     print(
         f"Azure CLI authentication needs to be refreshed before {operation}. "
         f"Opening Microsoft sign-in for tenant {tenant}...",
@@ -779,8 +804,6 @@ def reauthenticate_azure_cli(tenant: str, operation: str, *, graph: bool = False
                 "--tenant",
                 tenant,
                 "--allow-no-subscriptions",
-                *(("--scope", "https://graph.microsoft.com/.default") if graph else ()),
-                *(("--claims-challenge", challenge) if challenge else ()),
                 "--only-show-errors",
                 "--output",
                 "none",

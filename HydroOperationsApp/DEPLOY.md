@@ -37,13 +37,18 @@ Core setup just to repair local dependencies or app publication.
 Microsoft Graph can reject a still-unexpired CLI token with a Continuous Access
 Evaluation claims challenge. Graph recovery now reads the resource's actual
 `WWW-Authenticate` challenge and requests Graph-scoped sign-in with those claims,
-rather than repeating an ARM-only login. Complete the Microsoft sign-in prompt.
+rather than repeating an ARM-only login. It reuses the existing CLI cache:
+if Graph accepts its cached token, no sign-in opens. A genuine claims challenge
+allows at most one interactive Graph sign-in per deployment process; subsequent
+challenges stop with an explicit error instead of opening repeated account pickers.
+Complete that Microsoft sign-in prompt when required by tenant policy.
 Graph reads allow up to 37 seconds of bounded claims propagation after that single
 login; permission denials and other errors are not retried.
 This does not bypass Conditional Access: a repeated rejection stops deployment.
 After recovery, retry the failed final deployment stage; do not repeat successful
-Git sync/Core setup. Account metadata alone does not verify Graph authorization. Recovery creates a
-new owner-only CLI session directory; it never renames or deletes an active cache
+Git sync/Core setup. Account metadata alone does not verify Graph authorization.
+Non-Graph stale-session recovery creates a new owner-only CLI session directory;
+it never renames or deletes an active cache
 that Windows or another process may hold open. Only after successful login and
 tenant verification is the active-session pointer atomically updated for later
 deployments. Failed login leaves the previous session selection intact.
