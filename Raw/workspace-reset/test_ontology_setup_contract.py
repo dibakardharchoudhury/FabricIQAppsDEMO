@@ -6,7 +6,7 @@ import re
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -74,16 +74,25 @@ class OntologySetupContractTests(unittest.TestCase):
         namespace = {"_lh": {"useRootDefaultLakehouse": True}, "per_notebook_timeout_secs": 3600}
         exec(compile(ast.Module(body=[assignment], type_ignores=[]), ORCHESTRATOR, "exec"), namespace)
         activities = {activity["name"]: activity for activity in namespace["setup_dag"]["activities"]}
-        self.assertEqual(activities["NB09_dataagent"]["dependencies"], ["NB06_tsbind"])
-        self.assertEqual(activities["NB10_opsagent"]["dependencies"], ["NB06_tsbind"])
+        self.assertEqual(activities["NB09_dataagent"]["dependencies"], ["NB11_model"])
+        self.assertEqual(activities["NB10_opsagent"]["dependencies"], ["NB11_model"])
         for name in ("NB09_dataagent", "NB10_opsagent"):
             self.assertTrue(activities[name]["args"]["useRootDefaultLakehouse"])
         self.assertEqual(activities["NBW01_weather"]["dependencies"], [])
         self.assertEqual(
-            activities["NB11_operations"]["dependencies"],
-            ["NB09_dataagent", "NB10_opsagent", "NBW01_weather"],
+            activities["NBW02_weather_refresh"]["dependencies"], ["NBW01_weather", "NB03_medallion"],
         )
-        self.assertTrue(activities["NB11_operations"]["args"]["seed_demo_data"])
+        self.assertEqual(activities["NBW02_weather_refresh"]["path"], "Weather_Orchestrator")
+        self.assertIs(activities["NBW02_weather_refresh"]["args"]["enable_aurora"], False)
+        self.assertEqual(activities["NB11_model"]["dependencies"], ["NB06_tsbind", "NBW02_weather_refresh"])
+        self.assertEqual(activities["NB11_model"]["args"]["setup_phase"], "model")
+        self.assertTrue(activities["NB11_model"]["args"]["seed_demo_data"])
+        self.assertEqual(
+            activities["NB11_operations"]["dependencies"],
+            ["NB09_dataagent"],
+        )
+        self.assertEqual(activities["NB11_operations"]["args"]["setup_phase"], "agent")
+        self.assertFalse(activities["NB11_operations"]["args"]["seed_demo_data"])
         self.assertTrue(activities["NB11_operations"]["args"]["provision_shared_store"])
         self.assertTrue(activities["NB11_operations"]["args"]["useRootDefaultLakehouse"])
         self.assertGreater(namespace["setup_dag"]["concurrency"], 1)
@@ -104,6 +113,49 @@ class OntologySetupContractTests(unittest.TestCase):
         self.assertTrue(calls)
         self.assertTrue(all(isinstance(call.args[0], ast.Constant) and call.args[0].value == "GET"
                             for call in calls))
+
+    def test_stage_two_inherits_the_published_weather_environment(self):
+        chain = next(
+            node for node in ast.parse(source(SETUP_NAMES[0])).body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "chain_notebooks" for target in node.targets)
+        )
+        self.assertIn(ORCHESTRATOR, ast.literal_eval(chain.value))
+        notebook = Mock()
+        notebook.getDefinition.return_value = json.dumps({"metadata": {}, "cells": []})
+        notebook.updateDefinition.return_value = True
+        namespace = {
+            "json": json, "notebookutils": SimpleNamespace(notebook=notebook),
+            "lakehouse_id": "current", "lakehouse_name": "Current Lakehouse",
+            "workspace_id": "workspace", "weather_environment_name": "Weather",
+            "weather_environment_id": "weather-environment",
+        }
+        rebind = load_function(SETUP_NAMES[0], "_rebind_lakehouse", namespace)
+        self.assertTrue(rebind(ORCHESTRATOR)[1])
+        dependencies = json.loads(notebook.updateDefinition.call_args.kwargs["content"])["metadata"]["dependencies"]
+        self.assertEqual(dependencies["environment"], {
+            "environmentId": "weather-environment", "workspaceId": "workspace",
+        })
+        self.assertEqual(dependencies["lakehouse"]["default_lakehouse"], "current")
+
+    def test_missing_weather_dependency_fails_before_the_shared_dag_starts(self):
+        require = load_function(ORCHESTRATOR, "require_weather_dependencies", {})
+        with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'numcodecs'")) as load:
+            with self.assertRaisesRegex(RuntimeError, "Stage 2 root Spark session.*numcodecs") as error:
+                require()
+            self.assertIsInstance(error.exception.__cause__, ModuleNotFoundError)
+            load.assert_called_once_with("numcodecs")
+        with patch("importlib.import_module") as load:
+            require()
+            self.assertEqual([call.args[0] for call in load.call_args_list], ["numcodecs", "pyproj", "shapely"])
+        nodes = ast.parse(source(ORCHESTRATOR)).body
+        check = next(index for index, node in enumerate(nodes)
+                     if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                     and isinstance(node.value.func, ast.Name) and node.value.func.id == "require_weather_dependencies")
+        dag = next(index for index, node in enumerate(nodes)
+                   if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "setup_dag" for target in node.targets))
+        self.assertLess(check, dag)
 
     def test_rebinding_replaces_all_foreign_lakehouse_references(self):
         for name in SETUP_NAMES:

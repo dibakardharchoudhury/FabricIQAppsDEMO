@@ -47,14 +47,16 @@ import re
 import sys
 import time
 from typing import Any
+from urllib.parse import quote, urljoin, urlparse
 
 from key_vault_preflight import PreflightError, ensure_key_vault_access
-from sync_workspace_from_git import ensure_spark_runtime, verify_environment_runtimes, fabric_operation_url
+from sync_workspace_from_git import (
+    Fabric as FabricClient, ensure_spark_runtime, verify_environment_runtimes, fabric_operation_url,
+)
 
 try:
     import requests
     from azure.core.exceptions import ClientAuthenticationError
-    from azure.identity import AzureCliCredential
 except ImportError as exc:  # pragma: no cover - dependency guard
     sys.exit(
         f"Missing dependency: {exc.name}. Install requirements first:\n"
@@ -71,6 +73,22 @@ DEFAULT_PIPELINE = "01_Pipe_Setup"
 # labels it differently across regions.
 PIPELINE_TYPES = {"DataPipeline", "Pipeline"}
 TERMINAL_STATES = {"Completed", "Failed", "Cancelled", "Deduped"}
+
+
+def validate_pipeline_job_url(location: str, workspace: str | None = None, pipeline: str | None = None) -> str:
+    parsed = urlparse(urljoin(FABRIC_BASE + "/", location))
+    parts = parsed.path.strip("/").split("/")
+    if (parsed.scheme != "https" or parsed.hostname != "api.fabric.microsoft.com"
+            or parsed.port not in (None, 443) or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or len(parts) != 8
+            or parts[:2] != ["v1", "workspaces"] or parts[3] != "items"
+            or parts[5:7] != ["jobs", "instances"]
+            or any(not GUID_RE.fullmatch(parts[index]) for index in (2, 4, 7))):
+        raise ValueError("Pipeline job URL must identify a Fabric workspace, pipeline and job instance.")
+    if (workspace and parts[2].casefold() != workspace.casefold()
+            or pipeline and parts[4].casefold() != pipeline.casefold()):
+        raise ValueError("Pipeline job URL does not match the selected workspace and pipeline.")
+    return f"{FABRIC_BASE}/" + "/".join(parts[1:])
 
 
 def require_parallel_energy_setup(fab, workspace: str, pipeline: str) -> None:
@@ -107,39 +125,8 @@ def require_parallel_energy_setup(fab, workspace: str, pipeline: str) -> None:
     print("Verified parallel Core/Weather and energy setup branches.", flush=True)
 
 
-class Fabric:
+class Fabric(FabricClient):
     """Thin Fabric REST client that authenticates with the current az login context."""
-
-    def __init__(self, tenant_id: str) -> None:
-        # process_timeout is generous because az.cmd cold-starts (and AV scanning
-        # the spawned python) can easily exceed the 10s azure-identity default.
-        self._credential = AzureCliCredential(tenant_id=tenant_id, process_timeout=60)
-        self._session = requests.Session()
-        self._cached_token: str | None = None
-        self._token_expiry: float = 0.0
-
-    def _token(self) -> str:
-        # Cache the token and refresh only near expiry, so long pipeline polls don't
-        # invoke the (slow) Azure CLI on every single request.
-        now = time.time()
-        if not self._cached_token or now >= self._token_expiry - 300:
-            access = self._credential.get_token(FABRIC_SCOPE)
-            self._cached_token = access.token
-            self._token_expiry = float(access.expires_on)
-        return self._cached_token
-
-    def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
-        headers = kwargs.pop("headers", {})
-        headers["Authorization"] = f"Bearer {self._token()}"
-        for _ in range(6):
-            resp = self._session.request(method, url, headers=headers, timeout=120, **kwargs)
-            if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", "10"))
-                print(f"  throttled (429); waiting {wait}s...")
-                time.sleep(wait)
-                continue
-            return resp
-        return resp
 
     def resolve_workspace_id(self, workspace: str) -> tuple[str, str]:
         if GUID_RE.match(workspace):
@@ -210,7 +197,34 @@ class Fabric:
         location = resp.headers.get("Location") or resp.headers.get("Operation-Location")
         if not location:
             raise SystemExit("Pipeline accepted but no job-instance Location header was returned.")
-        return location
+        return validate_pipeline_job_url(location, ws_id, item_id)
+
+    def require_idle_pipeline(self, ws_id: str, item_id: str) -> None:
+        base = f"{FABRIC_BASE}/workspaces/{ws_id}/items/{item_id}/jobs/instances"
+        url = base
+        seen_tokens: set[str] = set()
+        while True:
+            response = self.request("GET", url)
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or not isinstance(body.get("value"), list):
+                raise RuntimeError("Cannot verify the pipeline's active job inventory; no run was submitted.")
+            for job in body["value"]:
+                if job.get("status") not in TERMINAL_STATES:
+                    raise RuntimeError(
+                        f"Pipeline already has an active or unverified run ({job.get('id')}, "
+                        f"{job.get('status')}); no duplicate was submitted. Verify it in Fabric "
+                        "or resume its explicit job URL."
+                    )
+            token = body.get("continuationToken")
+            if not token:
+                if body.get("continuationUri"):
+                    raise RuntimeError("Incomplete job inventory; no run was submitted.")
+                return
+            if not isinstance(token, str) or token in seen_tokens:
+                raise RuntimeError("Invalid job inventory continuation; no run was submitted.")
+            seen_tokens.add(token)
+            url = f"{base}?continuationToken={quote(token, safe='')}"
 
     def poll_job(self, status_url: str, first_wait: int) -> dict[str, Any]:
         """Poll a job instance until it reaches a terminal state; return the final body."""
@@ -266,6 +280,7 @@ def main() -> int:
     parser.add_argument("--pipeline", help=f"Pipeline display name or GUID (default: {DEFAULT_PIPELINE}).")
     parser.add_argument("--parameters-json", help="Pipeline parameters as a JSON object (name -> value). Alternatively set FABRIC_PIPELINE_PARAMS.")
     parser.add_argument("--no-wait", action="store_true", help="Start the run and exit without waiting for it to finish.")
+    parser.add_argument("--resume-job-url", help="Monitor this verified existing pipeline job without starting another run.")
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
     parser.add_argument("--require-parallel-energy", action="store_true",
                         help="Require the updated Core/energy parallel pipeline before starting setup.")
@@ -292,10 +307,11 @@ def main() -> int:
     # The action target is the source of truth. Notebooks require the canonical
     # GUID even when the user selected the workspace by display name.
     parameters["workspace_id"] = ws_id
-    ensure_spark_runtime(fab.request, ws_id)
-    verify_environment_runtimes(fab.request, ws_id)
+    if not args.resume_job_url:
+        ensure_spark_runtime(fab.request, ws_id)
+        verify_environment_runtimes(fab.request, ws_id)
     key_vault_uri = str(parameters.get("key_vault_uri") or "").strip()
-    if key_vault_uri:
+    if key_vault_uri and not args.resume_job_url:
         try:
             ensure_key_vault_access(args.tenant, ws_id, key_vault_uri)
         except PreflightError as exc:
@@ -303,11 +319,13 @@ def main() -> int:
             return 1
 
     item_id, pipe_name = fab.find_pipeline(ws_id, args.pipeline)
-    if args.require_parallel_energy:
+    if args.require_parallel_energy and not args.resume_job_url:
         require_parallel_energy_setup(fab, ws_id, item_id)
         parameters["enable_energy_map"] = True
     print(f"Pipeline '{pipe_name}' ({item_id}) in workspace '{ws_name}' ({ws_id}).")
-    if parameters:
+    if args.resume_job_url:
+        print("Existing run parameters are retained; supplied parameters are not reapplied.")
+    elif parameters:
         print("Parameters:")
         for key in sorted(parameters):
             print(f"  - {key} = {parameters[key]}")
@@ -320,9 +338,27 @@ def main() -> int:
             print("Aborted.")
             return 0
 
-    print(f"\nStarting pipeline '{pipe_name}'...")
-    status_url = fab.start_pipeline(ws_id, item_id, parameters)
-    print("  run queued.")
+    if args.resume_job_url:
+        try:
+            status_url = validate_pipeline_job_url(args.resume_job_url, ws_id, item_id)
+        except ValueError as exc:
+            print(f"Cannot resume: {exc}", file=sys.stderr)
+            return 1
+        print(f"\nResuming monitoring of pipeline '{pipe_name}'; no new run is submitted.")
+    else:
+        try:
+            fab.require_idle_pipeline(ws_id, item_id)
+        except (requests.RequestException, RuntimeError) as exc:
+            print(f"Pipeline not started: {exc}", file=sys.stderr)
+            return 1
+        print(f"\nStarting pipeline '{pipe_name}'...")
+        try:
+            status_url = fab.start_pipeline(ws_id, item_id, parameters)
+        except (requests.RequestException, ValueError) as exc:
+            print(f"Pipeline submission outcome is unverified: {exc}. Check Fabric before retrying.", file=sys.stderr)
+            return 2
+        print("  run queued.")
+    print(f"PIPELINE_JOB_URL={status_url}", flush=True)
 
     if args.no_wait:
         print("Started; not waiting for completion (--no-wait).")
@@ -330,8 +366,17 @@ def main() -> int:
         return 0
 
     print("Waiting for the pipeline to finish (this can take a while)...")
-    result = fab.poll_job(status_url, first_wait=10)
+    try:
+        result = fab.poll_job(status_url, first_wait=10)
+    except (requests.RequestException, SystemExit) as exc:
+        print(
+            f"Pipeline monitoring interrupted: {exc}. Fabric outcome is unverified; "
+            f"resume this same job with --resume-job-url {status_url}.",
+            file=sys.stderr,
+        )
+        return 2
     state = result.get("status", "")
+    print(f"PIPELINE_JOB_TERMINAL={state}", flush=True)
     if state == "Completed":
         print(f"\nDone. Pipeline '{pipe_name}' run COMPLETED.")
         return 0

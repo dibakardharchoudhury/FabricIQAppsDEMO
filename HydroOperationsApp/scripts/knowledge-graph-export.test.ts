@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 import test from 'node:test'
-import { knowledgeGraphExportFileName, serializeNativeKnowledgeGraph } from '../src/services/knowledgeGraphExport.ts'
+import { KNOWLEDGE_GRAPH_EXPORT_OPTIONS, knowledgeGraphExportFileName, serializeNativeKnowledgeGraph } from '../src/services/knowledgeGraphExport.ts'
 import type { OntologyContract } from '../src/services/ontologyContract.ts'
 import type { OntologyGraph } from '../src/services/ontologyGraph.ts'
 
@@ -58,6 +58,13 @@ const graph: OntologyGraph = {
     properties: { confidence: 0.9 },
   }],
 }
+
+test('export labels identify Turtle serialization and distinguish vocabulary without misleading version numbers', () => {
+  assert.deepEqual(KNOWLEDGE_GRAPH_EXPORT_OPTIONS, [
+    { value: 'owl-turtle', label: 'Turtle (OWL)' },
+    { value: 'rdf-turtle', label: 'Turtle (RDF/RDFS)' },
+  ])
+})
 
 test('OWL Turtle export contains verified schema, typed instances, edges and provenance', () => {
   const output = serializeNativeKnowledgeGraph(ontology, graph, 'owl-turtle')

@@ -4,9 +4,9 @@ import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, errorEnvelope, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, readWork, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
 import { requestsWorkOrderNeedAssessment, refersToPriorData } from '../src/services/copilot/orchestration.ts'
-import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
+import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS, validateKql } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 
@@ -24,6 +24,46 @@ test('agent contracts include every function specialist, including weather', asy
   const weather = contracts.tools.weather.find(tool => tool.name === 'hydro_query')
   assert.deepEqual(weather.parameters.properties.tool_name.enum,
     ['query_weather', 'query_assets', 'visualize_dataset'])
+})
+
+test('KQL input validation rejects unsafe queries before source discovery or execution', async t => {
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', async () => {
+    requests++
+    throw new Error('No source request is permitted during argument validation.')
+  })
+  for (const query of [
+    'let start=ago(6h); OPCUAEvents | count',
+    'TelemetryEnriched() | where opcua_node_id == "signal"',
+    '.show tables',
+  ]) {
+    const result = await handle({
+      action: 'validate_hydro_query', role: 'qa',
+      report: JSON.stringify({ tool_name: 'run_kql', arguments: { query } }),
+    })
+    assert.equal(result.ok, false)
+    assert.match(result.error, /Rejected:/)
+  }
+  const valid = await handle({
+    action: 'validate_hydro_query', role: 'qa',
+    report: JSON.stringify({
+      tool_name: 'run_kql',
+      arguments: { query: 'OPCUAEvents | where event_time >= ago(6h) | count' },
+    }),
+  })
+  assert.equal(valid.ok, true)
+  assert.equal(valid.toolName, 'run_kql')
+  assert.equal(requests, 0)
+})
+
+test('owned KQL validation errors retain safe correction guidance across the worker boundary', () => {
+  assert.throws(() => validateKql('let start=ago(6h); OPCUAEvents | count'), error => {
+    const envelope = errorEnvelope(error)
+    assert.equal(envelope.ok, false)
+    assert.match(envelope.error, /let statements are not allowed/)
+    assert.doesNotMatch(envelope.error, /Local source adapter failed/)
+    return true
+  })
 })
 
 const tokens = { graphql: 'test-graphql', kusto: 'test-kusto' }
@@ -63,6 +103,80 @@ const inventoryFetch = assets => appBackendFetch(async (_url, options) => {
   return result
 })
 
+test('connector reads allow the measured 40-second transit but abort at their 60-second bound', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let signal, reads = 0
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async (_url, options) => {
+    reads++
+    signal = options.signal
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })
+  }))
+  const failure = assert.rejects(readWork(config, 'T005', tokens.graphql), error => {
+    assert.equal(error.code, 'READ_TIMEOUT')
+    assert.match(error.message, /read failed \(READ_TIMEOUT\)/)
+    return true
+  })
+  await new Promise(setImmediate)
+  assert.ok(signal)
+  t.mock.timers.tick(40_000)
+  await new Promise(setImmediate)
+  assert.equal(signal.aborted, false)
+  t.mock.timers.tick(19_999)
+  await new Promise(setImmediate)
+  assert.equal(signal.aborted, false)
+  t.mock.timers.tick(1)
+  await failure
+  assert.equal(signal.aborted, true)
+  assert.equal(reads, 1)
+})
+
+test('connector error codes preserve HTTP and GraphQL failures without leaking source details', async t => {
+  for (const [status, payload, expected] of [
+    [403, { message: 'sensitive backend detail' }, 'HTTP_403'],
+    [503, { message: 'sensitive backend detail' }, 'HTTP_503'],
+    [200, { errors: [{ message: 'sensitive backend detail' }] }, 'GRAPHQL_QUERY_FAILED'],
+  ]) {
+    t.mock.method(globalThis, 'fetch', appBackendFetch(async () => new Response(JSON.stringify(payload),
+      { status, headers: { 'Content-Type': 'application/json' } })))
+    await assert.rejects(readWork(config, 'T005', tokens.graphql), error => {
+      assert.equal(error.code, expected)
+      assert.doesNotMatch(error.message, /sensitive backend detail/)
+      return true
+    })
+  }
+})
+
+test('fleet failure retains the connector HTTP codes and rejects partial source coverage', async t => {
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async () => new Response('{}', { status: 503 })))
+  await assert.rejects(readFleetSnapshot(config, metadata, false, {}, tokens,
+    async () => response({ Tables: [telemetry()] })),
+  /equipment metadata failed \(HTTP_503\).*instrument metadata failed \(HTTP_503\).*work-order inventory failed \(HTTP_503\).*No partial fleet snapshot/)
+})
+
+test('brokered exchange failure survives the worker boundary without exposing the SDK error body', async t => {
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', async () => {
+    requests++
+    return new Response(JSON.stringify({ error: {
+      code: 'CapacityLimitExceeded', message: 'sensitive backend detail',
+    } }), { status: 429, headers: { 'Content-Type': 'application/json' } })
+  })
+  await assert.rejects(readWork(config, 'T005', tokens.graphql), error => {
+    assert.equal(error.code, 'TOKEN_EXCHANGE_FAILED')
+    const envelope = errorEnvelope(error)
+    assert.equal(envelope.ok, false)
+    assert.match(envelope.error, /work-order read failed \(TOKEN_EXCHANGE_FAILED\)/)
+    assert.doesNotMatch(JSON.stringify(envelope), /sensitive backend detail|test-graphql/)
+    return true
+  })
+  assert.equal(requests, 1)
+  class UntrustedSdkError extends Error {}
+  assert.doesNotMatch(JSON.stringify(errorEnvelope(new UntrustedSdkError('sensitive backend detail'))),
+    /sensitive backend detail/)
+})
+
 test('every direct tool result carries governed evidence descriptors at the Node boundary', () => {
   const result = governedToolResult('query_signal_quality_snapshot', {
     quality: 'BAD', lookback: 'P1D', equipment_type: 'Turbine',
@@ -71,7 +185,7 @@ test('every direct tool result carries governed evidence descriptors at the Node
       equipment_id: 'EQUIP_RTI_T005', opcua_node_id: node,
       event_time: new Date().toISOString(), quality: 'BAD',
     }],
-    read_completed_at_utc: new Date().toISOString(),
+    read_completed_at_utc: new Date().toISOString(), truncated: false,
   })
   assert.deepEqual(result._evidence_datasets, [{
     kind: 'signal_quality',
@@ -86,47 +200,47 @@ test('every direct tool result carries governed evidence descriptors at the Node
   }])
 })
 
-test('three scoped BAD-quality workflows share one Data Agent read and only requested specialists', () => {
+test('operational quality/work paraphrases share governed history semantics without forcing native execution', () => {
   const base = 'Which turbines had BAD telemetry quality today, and what work is already open for these?'
   const cases = [
-    [base, []],
-    [`${base} Based on this data, tell me which WOs need to be created and help me with the drafts.`, ['work-order']],
-    [`${base} Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.`, ['rca', 'work-order']],
+    [base, ['qa']],
+    [`${base} Based on this data, tell me which WOs need to be created and help me with the drafts.`, ['qa', 'work-order']],
+    [`${base} Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.`, ['qa', 'rca', 'work-order']],
+    ['Show turbines that had any BAD quality samples today with existing open work and prepare work orders.', ['qa', 'work-order']],
   ]
   for (const [question, specialists] of cases) {
     const intent = chatIntent(question)
-    assert.deepEqual(intent.native_sources, ['data-agent'])
+    assert.deepEqual(intent.native_sources, [])
     assert.deepEqual(intent.required_specialists, specialists)
-    assert.deepEqual(intent.required_evidence_kinds, ['native_claims'])
+    assert.ok(intent.required_evidence_kinds.includes('signal_quality'))
+    assert.ok(intent.required_evidence_kinds.includes('work_orders'))
     const plan = compileOrchestrationPlan(question, intent)
-    assert.deepEqual(plan.steps.map(step => step.specialist), ['fabric-iq', ...specialists])
-    assert.equal(plan.steps.filter(step => step.native_source === 'data-agent').length, 1)
-    assert.match(plan.steps[0].question, /any BAD/i)
-    assert.match(plan.steps[0].question, /midnight UTC/)
-    assert.match(plan.steps[0].question, /requested_at_utc/)
-    assert.match(plan.steps[0].question, /equipment_id/)
-    assert.match(plan.steps[0].question, /Completed.*Cancelled/)
-    assert.match(plan.steps[0].question, /source-native SQL.*associated Lakehouse/)
-    assert.match(plan.steps[0].question, /KQL.*associated Eventhouse/)
-    assert.match(plan.steps[0].question, /Do not invoke ontology traversal/)
-    assert.match(plan.steps[0].question, /Even when no BAD identifiers.*static-mapping count.*open-work count/)
-    assert.match(plan.steps[0].question, /Return only one JSON object, without surrounding prose/)
-    assert.match(plan.steps[0].question, /distinguish no BAD samples from absent or stale telemetry/)
-    assert.deepEqual(plan.answer_contract.requirements.map(item => item.evidence), ['native_claims_population_native'])
-    assert.deepEqual(analyticalEvidencePlan(question, intent.required_evidence_kinds), [])
+    assert.deepEqual(plan.steps.map(step => step.specialist), specialists)
+    assert.equal(plan.steps.filter(step => step.native_source).length, 0)
+    const qualityRead = analyticalEvidencePlan(question, intent.required_evidence_kinds)
+      .find(entry => entry.tool === 'query_signal_quality_snapshot')
+    assert.deepEqual(qualityRead.arguments, { quality: 'BAD', quality_match: 'any', lookback: 'today', equipment_type: 'turbine' })
     if (specialists.includes('work-order')) {
       assert.match(plan.steps.at(-1).question, /all affected/i)
       assert.match(plan.steps.at(-1).question, /SQL/)
       assert.match(plan.steps.at(-1).question, /BAD.*not.*physical/i)
     }
   }
-  assert.deepEqual(chatIntent(base.toUpperCase().replaceAll(' ', '  ')).native_sources, ['data-agent'])
+  assert.deepEqual(chatIntent(base.toUpperCase().replaceAll(' ', '  ')).native_sources, [])
   for (const question of [
     base.replace('today', 'yesterday'),
     base.replace('BAD', 'UNCERTAIN'),
     `${base} Independently verify against direct sources.`,
     'Show the weather forecast.',
   ]) assert.deepEqual(chatIntent(question).native_sources, [], question)
+  const native = chatIntent(base, [], ['data-agent'])
+  assert.deepEqual(native.native_sources, ['data-agent'])
+  assert.deepEqual(native.required_specialists, [])
+  assert.deepEqual(native.required_evidence_kinds, ['native_claims'])
+  assert.deepEqual(compileOrchestrationPlan(base, native).steps.map(step => step.specialist), ['fabric-iq'])
+  assert.throws(() => chatIntent(base, [], ['ontology']), /Only the published Data Agent/)
+  const current = analyticalEvidencePlan('Which turbines are currently BAD?', ['signal_quality'])[0]
+  assert.equal(current.arguments.quality_match, undefined)
 })
 
 test('scoped Data Agent evidence validates IDs, UTC bounds, complete arrays and open work without certifying SQL provenance', async () => {
@@ -602,6 +716,27 @@ test('backend drafts freshly verify target and complete work without a SQL write
     async () => ({ rows: [], read_completed_at: 'not-a-time' })), /complete work-source read/)
 })
 
+test('production reconciliation uses the SQL connector client without issuing another write', async t => {
+  const creationId = '22222222-2222-2222-2222-222222222222'
+  const edits = { title: 'Inspect signal', description: 'Operator-reviewed inspection.', priority: 'High' }
+  const saved = { id: creationId, workOrderNumber: `WO-${creationId}`, equipmentId: 'T2',
+    instrumentId: null, opcuaNodeId: null, ...edits, status: 'Draft', createdByOid: id }
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async (url, options) => {
+    reads++
+    assert.match(url, /\/connectors\/hydrooperations\/graphql$/)
+    const query = JSON.parse(options.body).query
+    assert.doesNotMatch(query, /\bmutation\b/)
+    assert.match(query, new RegExp(creationId))
+    return assetResponse(query, { items: [saved], hasNextPage: false })
+  }))
+  const result = await submitApprovedWorkOrder(config, { equipment_id: 'T2' }, edits, id,
+    creationId, tokens, false)
+  assert.equal(result.reconciled, true)
+  assert.deepEqual(result.record, saved)
+  assert.equal(reads, 1)
+})
+
 test('approved SQL submissions pin identity, check duplicates and reconcile lost acknowledgements without another write', async t => {
   const data = fleetData()
   const metadataFetch = async (_url, options) => {
@@ -774,6 +909,88 @@ function fleetData() {
   return { equipment, instruments, telemetryRows, workOrders, inventoryComplete: true,
     workInventoryComplete: true, readStartedAt, readCompletedAt: readStartedAt }
 }
+
+test('wide bounded fleet snapshots preserve every verified signal and affected equipment beyond the model text budget', () => {
+  const data = fleetData()
+  data.equipment = Array.from({ length: 15 }, (_, i) => ({
+    equipment_id: `T${String(i + 1).padStart(3, '0')}`,
+    tag: `Turbine ${i + 1}`, equipment_type_code: 'TURBINE', is_active: true,
+  }))
+  data.instruments = data.equipment.flatMap(asset => Array.from({ length: 6 }, (_, i) => ({
+    equipment_id: asset.equipment_id, instrument_id: `${asset.equipment_id}-I${i}`,
+    opcua_node_id: `ns=2;s=${asset.equipment_id}.signal_${i}`, unit: 'degC', is_active: true,
+  })))
+  data.telemetryRows = data.instruments.map(instrument => ({
+    opcua_node_id: instrument.opcua_node_id, value: 42, quality: 'BAD',
+    event_time: data.readStartedAt, matching_sample_count: 1,
+    first_matching_event_time: data.readStartedAt, matching_event_time: data.readStartedAt,
+    matching_value: 42, matching_quality: 'BAD',
+  }))
+  data.workOrders = data.equipment.map(asset => ({
+    id: `${asset.equipment_id}-work`, workOrderNumber: `WO-${asset.equipment_id}`,
+    equipmentId: asset.equipment_id, status: 'Open', priority: 'High',
+    title: 'Inspect signal quality and instrument wiring. '.repeat(4),
+  }))
+  const shaped = shapeFleetSnapshot(false, {
+    quality: 'BAD', quality_match: 'any', lookback: '30m', equipment_type: 'turbine',
+  }, data)
+  assert.ok(JSON.stringify(shaped.result.rows).length > 40_000)
+  assert.equal(shaped.rowCount, 90)
+  assert.equal(shaped.result.row_count, 90)
+  assert.equal(shaped.result.truncated, false)
+  assert.deepEqual(shaped.result.rows.map(row => row.opcua_node_id),
+    data.instruments.map(instrument => instrument.opcua_node_id))
+  assert.deepEqual([...new Set(shaped.result.rows.map(row => row.equipment_id))],
+    data.equipment.map(asset => asset.equipment_id))
+  assert.equal(shaped.result.population.expected_signal_count, 90)
+  assert.equal(shaped.result.matching_quality_node_count, 90)
+  assert.ok(shaped.result.rows.every(row => row.open_work_orders.length === 1))
+})
+
+test('historical quality accepts Kusto empty-string join absence without confusing missing readings with zero matches', () => {
+  const data = fleetData()
+  const args = { quality: 'BAD', quality_match: 'any', lookback: '30m', equipment_type: 'turbine' }
+  data.telemetryRows = data.telemetryRows.map(row => ({
+    ...row, matching_sample_count: row.quality === 'BAD' ? 1 : 0,
+    first_matching_event_time: row.quality === 'BAD' ? row.event_time : null,
+    matching_event_time: row.quality === 'BAD' ? row.event_time : null,
+    matching_value: row.quality === 'BAD' ? row.value : null,
+    matching_quality: row.quality === 'BAD' ? 'BAD' : '',
+  }))
+  const priorBad = new Date(Date.parse(data.readStartedAt) - 5000).toISOString()
+  data.telemetryRows[0] = { ...data.telemetryRows[0], matching_sample_count: 4,
+    first_matching_event_time: priorBad, matching_event_time: priorBad, matching_value: 12.34, matching_quality: 'BAD' }
+  const result = shapeFleetSnapshot(false, args, data).result
+  assert.deepEqual(result.rows.map(row => [row.equipment_id, row.quality, row.latest_quality]), [
+    ['T1', 'BAD', 'GOOD'], ['T2', 'BAD', 'BAD'],
+  ])
+  assert.equal(result.rows[0].value, 12.34)
+  assert.equal(result.rows[0].matching_sample_count, 4)
+  assert.equal(result.rows[0].latest_value, 40)
+  assert.equal(result.latest_per_signal_then_quality_filter, false)
+  assert.equal(result.population.signals_without_matching_quality.length, 4)
+  assert.deepEqual(result.population.signals_without_readings, [data.instruments[6].opcua_node_id])
+  const query = fleetSnapshotQuery(false, args, data.readStartedAt)
+  assert.match(query, /join kind=leftouter/)
+  assert.match(query, new RegExp(`datetime\\(${data.readStartedAt.replaceAll('.', '\\.')}\\)`))
+  assert.doesNotMatch(query, /now\(\)|ago\(/)
+  for (const patch of [
+    { matching_quality: 'BAD' }, { matching_value: 1 }, { matching_event_time: priorBad },
+    { matching_sample_count: -1 }, { matching_sample_count: 1 },
+  ]) {
+    const invalid = structuredClone(data)
+    invalid.telemetryRows[3] = { ...invalid.telemetryRows[3], ...patch }
+    assert.throws(() => shapeFleetSnapshot(false, args, invalid), /Matching-quality aggregate/)
+  }
+  for (const patch of [
+    { matching_quality: '' }, { matching_quality: 'GOOD' }, { matching_value: null },
+    { first_matching_event_time: null }, { matching_event_time: data.readStartedAt },
+  ]) {
+    const invalid = structuredClone(data)
+    invalid.telemetryRows[0] = { ...invalid.telemetryRows[0], ...patch }
+    assert.throws(() => shapeFleetSnapshot(false, args, invalid), /Matching-quality aggregate/)
+  }
+})
 
 test('shared fleet hot/BAD semantics retain exact raw values, identities and all open work relations', () => {
   const data = fleetData()
@@ -1161,7 +1378,9 @@ test('operational catalog executes read-only SDK pages with canonical fields and
 })
 
 test('live discovery verifies generation, ownership and current capacity', async () => {
-  assert.equal((await discover(config, 'test', discoveryFetch())).source.generation, 2)
+  const found = await discover(config, 'test', discoveryFetch())
+  assert.equal(found.source.generation, 2)
+  assert.equal(found.workload_origin, new URL(config.api_url).origin)
   for (const generation of [1, '2', true, null]) {
     await assert.rejects(discover(config, 'test', discoveryFetch(generation)), /generation 2/)
   }
@@ -1243,6 +1462,32 @@ const nonAdvisoryPhrasings = [
   'What is the average temperature per station?',
   'Do not raise any work orders; just list the telemetry.',
 ]
+
+test('population counts use the requested governed datasets, not unrequested telemetry', () => {
+  for (const [question, expected] of [
+    ['How many facilities are in the connected Lakehouse? Return the actual facility count with its source. Read-only.', ['facilities']],
+    ['How many facilities are registered?', ['facilities']],
+    ['Count the facilities in the Lakehouse.', ['facilities']],
+    ['What is the number of facilities?', ['facilities']],
+    ['Give me the total number of facilities.', ['facilities']],
+    ['How many equipment records are registered?', ['equipment']],
+    ['Count the available spare parts.', ['spare_parts']],
+  ]) {
+    const intent = chatIntent(question)
+    assert.deepEqual(intent.required_specialists, ['qa'], question)
+    assert.deepEqual(intent.required_evidence_kinds, expected, question)
+    const plan = compileOrchestrationPlan(question, intent)
+    const kinds = [...new Set(plan.answer_contract.views.map(view => view.kind))]
+    assert.deepEqual(kinds, expected, question)
+    assert.deepEqual(plan.answer_contract.requirements.map(item => item.evidence),
+      expected.map(kind => `${kind}_population_direct`), question)
+    const defects = validatePlanRequirements(
+      intent.required_specialists, intent.required_specialist_steps, plan.steps,
+      intent.native_sources, question, kinds, intent.required_evidence_kinds, intent.permitted_evidence_kinds)
+    assert.deepEqual(Object.values(defects), [[], {}, [], [], []], question)
+    assert.deepEqual(plan.steps.map(step => step.specialist), ['qa'], question)
+  }
+})
 
 test('a chart of any equipment measure compiles one governed telemetry line view, not a table', () => {
   for (const question of [

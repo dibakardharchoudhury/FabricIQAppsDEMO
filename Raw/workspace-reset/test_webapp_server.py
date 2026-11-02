@@ -28,11 +28,624 @@ PIPELINE_PARAMS = {
     "ops_agent_teams_team_id": "team",
     "ops_agent_teams_channel_id": "channel",
 }
+PIPELINE_JOB_URL = (
+    "https://api.fabric.microsoft.com/v1/workspaces/11111111-1111-1111-1111-111111111111"
+    "/items/22222222-2222-2222-2222-222222222222/jobs/instances/"
+    "33333333-3333-3333-3333-333333333333"
+)
+
+
+class FullWorkflowResumeTests(unittest.TestCase):
+    def setUp(self):
+        self.client = SERVER.app.test_client()
+        directory = Path(__file__).parent / (".workflow-test-" + uuid.uuid4().hex)
+        directory.mkdir()
+        self.addCleanup(shutil.rmtree, directory)
+        storage = patch.object(SERVER, "PIPELINE_DEFAULTS_FILE", directory / "settings.json")
+        storage.start()
+        self.addCleanup(storage.stop)
+        self.jobs = patch.dict(SERVER.JOBS, {}, clear=True)
+        self.jobs.start()
+        self.addCleanup(self.jobs.stop)
+        version = patch.object(SERVER, "app_version", return_value=Mock(get_json=Mock(
+            return_value={"repository": "owner/repo", "branch": "main"})))
+        version.start()
+        self.addCleanup(version.stop)
+        self.target = {
+            "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo",
+            "parameters": PIPELINE_PARAMS, "pat": "private-test-pat", "energyMap": "enabled",
+        }
+
+    def start(self, payload=None):
+        with patch.object(SERVER.threading, "Thread"):
+            response = self.client.post("/api/full-workflow", json=payload or self.target)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return SERVER.JOBS[response.get_json()["jobId"]]
+
+    def steps(self):
+        with patch.object(SERVER, "_start_workflow", return_value="captured") as start:
+            response = self.client.post("/api/full-workflow", json=self.target)
+        self.assertEqual(response.status_code, 200)
+        return start.call_args.args[0]
+
+    def fail_energy(self):
+        job = self.start()
+        with patch.object(SERVER, "_run_workflow_step", side_effect=[0, 0, 23]):
+            SERVER._workflow_worker(job, self.steps())
+        return job
+
+    def test_combined_retry_retains_sync_core_then_runs_combined_engine(self):
+        failed = self.fail_energy()
+        original = self.client.get(f"/api/jobs/{failed.id}").get_json()
+        self.assertEqual(original["completedSteps"], ["GitHub sync", "Setup pipeline"])
+        self.assertTrue(original["canResume"])
+        self.assertEqual(original["resumeComponent"], SERVER.COMBINED_STEP)
+        # A completed Git sync does not require the PAT again.
+        resumed = self.start({**self.target, "pat": "", "resumeJobId": failed.id})
+        self.assertEqual(resumed.completed_steps, failed.completed_steps)
+        self.assertEqual(resumed.component_timings["Setup pipeline"], failed.component_timings["Setup pipeline"])
+        self.assertEqual(resumed.phase_timings[1], failed.phase_timings[1])
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(resumed, self.steps())
+        self.assertEqual([call.args[1] for call in run.call_args_list],
+                         [SERVER.COMBINED_STEP])
+        self.assertEqual(resumed.status, "succeeded")
+        self.assertEqual(resumed.completed_steps, resumed.workflow_steps)
+        self.assertFalse(self.client.get(f"/api/jobs/{resumed.id}").get_json()["canResume"])
+        self.assertFalse(self.client.get(f"/api/jobs/{failed.id}").get_json()["canResume"])
+        self.assertNotIn("private-test-pat", json.dumps(original))
+
+    def test_interrupted_setup_keeps_accepted_job_across_restart_and_resumes_only_its_monitor(self):
+        failed = self.start()
+        def interrupted(job, name, *args):
+            if name == "Setup pipeline":
+                job.pipeline_job_url = PIPELINE_JOB_URL
+                return 2
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=interrupted) as run:
+            SERVER._workflow_worker(failed, self.steps())
+        self.assertEqual([entry.args[1] for entry in run.call_args_list], ["GitHub sync", "Setup pipeline"])
+        self.assertEqual(failed.completed_steps, ["GitHub sync"])
+        self.assertIn("outcome is unverified", "\n".join(failed.lines))
+        SERVER.JOBS.clear()
+        restored = SERVER._restore_workflow(failed.id)
+        self.assertEqual(restored.pipeline_job_url, PIPELINE_JOB_URL)
+        resumed = self.start({**self.target, "resumeJobId": failed.id, "pat": ""})
+        def completed(job, name, argv, *args):
+            if name == "Setup pipeline":
+                self.assertEqual(argv[-2:], ["--resume-job-url", PIPELINE_JOB_URL])
+                job.pipeline_job_state = "Completed"
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=completed) as run:
+            SERVER._workflow_worker(resumed, self.steps())
+        self.assertEqual([entry.args[1] for entry in run.call_args_list], ["Setup pipeline", SERVER.COMBINED_STEP])
+        self.assertEqual(resumed.status, "succeeded")
+
+    def test_accepted_setup_without_terminal_success_never_unlocks_dependencies(self):
+        job = self.start()
+        def accepted(current, name, *args):
+            if name == "Setup pipeline":
+                current.pipeline_job_url = PIPELINE_JOB_URL
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=accepted) as run:
+            SERVER._workflow_worker(job, self.steps())
+        self.assertEqual(job.returncode, 2)
+        self.assertEqual(job.completed_steps, ["GitHub sync"])
+        self.assertEqual(run.call_count, 2)
+
+    def test_accepted_job_marker_is_persisted_before_monitor_process_finishes(self):
+        job = self.start()
+        job.completed_steps = ["GitHub sync"]
+        job.component_timings["GitHub sync"] = {
+            "name": "GitHub sync", "status": "succeeded", "started": job.started, "ended": job.started,
+        }
+        process = Mock(stdout=io.StringIO(f"PIPELINE_JOB_URL={PIPELINE_JOB_URL}\n"), returncode=2)
+        with patch.object(SERVER.subprocess, "Popen", return_value=process), patch.object(SERVER.threading, "Timer"):
+            SERVER._run_workflow_step(job, "Setup pipeline", ["run_pipeline.py"], None, 60, [], 1)
+        record = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text())["workflowCheckpoints"][job.id]
+        self.assertEqual(record["pipelineJobUrl"], PIPELINE_JOB_URL)
+        self.assertIsNone(record["pipelineJobState"])
+        SERVER.JOBS.clear()
+        restored = SERVER._restore_workflow(job.id)
+        self.assertEqual(restored.status, "interrupted")
+        self.assertTrue(self.client.get(f"/api/jobs/{job.id}").get_json()["canResume"])
+
+    def test_invalid_pipeline_marker_stops_only_the_owned_local_monitor(self):
+        job = self.start()
+        process = Mock(stdout=io.StringIO("PIPELINE_JOB_URL=https://untrusted.example/job\n"), returncode=2)
+        with (
+            patch.object(SERVER.subprocess, "Popen", return_value=process),
+            patch.object(SERVER.threading, "Timer"),
+            patch.object(SERVER, "_terminate_owned_process") as terminate,
+            self.assertRaises(ValueError),
+        ):
+            SERVER._run_workflow_step(job, "Setup pipeline", ["run_pipeline.py"], None, 60, [], 1)
+        terminate.assert_called_once_with(process)
+        self.assertIsNone(job.pipeline_job_url)
+
+    def test_retry_rejects_changed_effective_inputs_without_starting_anything(self):
+        failed = self.fail_energy()
+        for change in (
+            {"tenant": "other.example"}, {"workspace": "Other"},
+            {"repository": "owner/other"}, {"branch": "other"}, {"directory": "/Other"},
+            {"keepConnected": True}, {"connectionId": "different"},
+            {"clientId": "11111111-1111-1111-1111-111111111111"},
+            {"parameters": {**PIPELINE_PARAMS, "env_suffix": "Other"}},
+            {"createFoundry": True}, {"foundryLocation": "swedencentral"},
+        ):
+            with self.subTest(change=change), patch.object(SERVER, "_start_workflow") as start:
+                response = self.client.post("/api/full-workflow", json={
+                    **self.target, **change, "resumeJobId": failed.id,
+                })
+                self.assertEqual(response.status_code, 409, response.get_json())
+                self.assertIn("No steps were started", response.get_json()["error"])
+                start.assert_not_called()
+
+    def test_retry_chain_only_retains_verified_success_and_does_not_consume_when_busy(self):
+        failed = self.fail_energy()
+        busy = SERVER.Job(["Queued", "Done"])
+        SERVER.JOBS[busy.id] = busy
+        response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": failed.id})
+        self.assertEqual(response.status_code, 409)
+        self.assertIsNone(failed.resumed_by)
+        busy.status = "succeeded"
+        resumed = self.start({**self.target, "resumeJobId": failed.id})
+        with patch.object(SERVER, "_run_workflow_step", side_effect=RuntimeError("monitor lost")):
+            SERVER._workflow_worker(resumed, self.steps())
+        self.assertEqual(resumed.completed_steps, ["GitHub sync", "Setup pipeline"])
+        self.assertEqual(resumed.failed_component, SERVER.COMBINED_STEP)
+        repeated = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": failed.id})
+        self.assertEqual(repeated.status_code, 409)
+        retry = self.start({**self.target, "resumeJobId": resumed.id})
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(retry, self.steps())
+        self.assertEqual([call.args[1] for call in run.call_args_list],
+                         [SERVER.COMBINED_STEP])
+
+    def test_cancellation_retries_current_step_even_if_child_returns_zero(self):
+        job = self.start()
+        def cancel(current, name, *args):
+            current.cancel_requested = True
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=cancel):
+            SERVER._workflow_worker(job, self.steps())
+        self.assertEqual(job.status, "cancelled")
+        self.assertEqual(job.completed_steps, [])
+        self.assertTrue(self.client.get(f"/api/jobs/{job.id}").get_json()["canResume"])
+        retry = self.start({**self.target, "pat": "replacement-pat", "resumeJobId": job.id})
+        self.assertEqual(retry.completed_steps, [])
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(retry, self.steps())
+        self.assertEqual(run.call_count, 3)
+
+    def test_combined_cancellation_keeps_only_verified_git_and_core(self):
+        job = self.start()
+        def cancel_combined(current, name, *args):
+            if name == SERVER.COMBINED_STEP:
+                current.cancel_requested = True
+            return 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=cancel_combined) as run:
+            SERVER._workflow_worker(job, self.steps())
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(job.status, "cancelled")
+        self.assertEqual(job.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        retry = self.start({**self.target, "resumeJobId": job.id})
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(retry, self.steps())
+        self.assertEqual([call.args[1] for call in run.call_args_list], [SERVER.COMBINED_STEP])
+
+    def test_combined_failure_does_not_checkpoint_partial_branch_or_publication_success(self):
+        failed = self.fail_energy()
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.returncode, 23)
+        self.assertEqual(failed.failed_component, SERVER.COMBINED_STEP)
+        self.assertEqual(failed.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        self.assertEqual(failed.component_timings[SERVER.COMBINED_STEP]["status"], "failed")
+        self.assertTrue(all(
+            timing["status"] != "succeeded"
+            for timing in failed.phase_timings
+            if timing["name"].startswith("Combined · App publication")
+        ))
+
+    def test_legacy_checkpoint_is_rejected_without_overwriting_completed_stage_information(self):
+        job = self.fail_energy()
+        settings = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+        record = settings["workflowCheckpoints"][job.id]
+        record.update(version=1, steps=[
+            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+        ], completed=["GitHub sync", "Setup pipeline", "Energy setup"])
+        SERVER.PIPELINE_DEFAULTS_FILE.write_text(json.dumps(settings), encoding="utf-8")
+        before = SERVER.PIPELINE_DEFAULTS_FILE.read_bytes()
+        SERVER.JOBS.clear()
+        with patch.object(SERVER, "_start_workflow") as start:
+            response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": job.id})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Legacy five-step", response.get_json()["error"])
+        self.assertIn("Energy setup", response.get_json()["error"])
+        self.assertIn("No steps were started", response.get_json()["error"])
+        self.assertEqual(SERVER.PIPELINE_DEFAULTS_FILE.read_bytes(), before)
+        start.assert_not_called()
+
+    def test_in_memory_legacy_layout_is_rejected_before_credentials_or_execution(self):
+        job = self.fail_energy()
+        job.workflow_steps = ["GitHub sync", "Setup pipeline", "Energy setup",
+                              "Foundry multi-agent setup", "Fabric app deploy"]
+        with patch.object(SERVER, "_start_workflow") as start:
+            response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": job.id})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("incompatible", response.get_json()["error"])
+        self.assertIsNone(job.resumed_by)
+        start.assert_not_called()
+
+    def test_legacy_history_is_read_only_and_never_reported_as_a_new_failed_run(self):
+        job = self.fail_energy()
+        settings = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+        record = settings["workflowCheckpoints"][job.id]
+        stages = ["GitHub sync", "Setup pipeline", "Energy setup",
+                  "Foundry multi-agent setup", "Fabric app deploy"]
+        for previous_status, completed in (
+            ("succeeded", stages), ("failed", stages[:2]), ("running", stages[:1]),
+        ):
+            with self.subTest(previous_status=previous_status):
+                record.update(version=1, steps=stages, completed=completed, status=previous_status)
+                SERVER.PIPELINE_DEFAULTS_FILE.write_text(json.dumps(settings), encoding="utf-8")
+                before = SERVER.PIPELINE_DEFAULTS_FILE.read_bytes()
+                SERVER.JOBS.clear()
+                with patch.object(SERVER, "_start_workflow") as start:
+                    response = self.client.get(f"/api/jobs/{job.id}")
+                    self.assertEqual(response.status_code, 200)
+                    history = response.get_json()
+                    self.assertEqual(history["status"], "historical")
+                    self.assertEqual(history["previousStatus"], previous_status)
+                    self.assertEqual(history["completedSteps"], completed)
+                    self.assertTrue(history["done"])
+                    self.assertFalse(history["canResume"])
+                    self.assertIn("No new deployment has been started", history["resumeBlockedReason"])
+                    self.assertNotIn("error", history)
+                    self.assertNotIn(job.id, SERVER.JOBS)
+                    retry = self.client.post("/api/full-workflow", json={
+                        **self.target, "resumeJobId": job.id,
+                    })
+                    self.assertEqual(retry.status_code, 409)
+                    start.assert_not_called()
+                self.assertEqual(SERVER.PIPELINE_DEFAULTS_FILE.read_bytes(), before)
+
+    def test_malformed_legacy_history_remains_an_explicit_error(self):
+        job = self.fail_energy()
+        settings = json.loads(SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8"))
+        settings["workflowCheckpoints"][job.id].update(version=1, completed="invalid")
+        SERVER.PIPELINE_DEFAULTS_FILE.write_text(json.dumps(settings), encoding="utf-8")
+        before = SERVER.PIPELINE_DEFAULTS_FILE.read_bytes()
+        SERVER.JOBS.clear()
+        response = self.client.get(f"/api/jobs/{job.id}")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Invalid local legacy", response.get_json()["error"])
+        self.assertEqual(SERVER.PIPELINE_DEFAULTS_FILE.read_bytes(), before)
+
+    def test_combined_source_change_retains_core_and_pending_combined_step(self):
+        failed = self.fail_energy()
+        original = dict(failed.source_keys)
+        self.assertIn(SERVER.COMBINED_STEP, original)
+        self.assertIn("Energy setup", original)
+        self.assertIn("Foundry multi-agent setup", original)
+        with patch.object(SERVER, "_workflow_source_keys",
+                          return_value={**original, SERVER.COMBINED_STEP: "changed-engine"}):
+            retry = self.start({**self.target, "resumeJobId": failed.id})
+        self.assertEqual(retry.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        self.assertEqual(retry.source_keys[SERVER.COMBINED_STEP], "changed-engine")
+
+    def test_combined_timeout_terminates_owned_process_and_fails_checkpoint(self):
+        job = self.start()
+        steps = self.steps()
+        run_step = SERVER._run_workflow_step
+        process = Mock(returncode=-9)
+        process.poll.return_value = None
+        process.stdout = io.StringIO("[3/8] concurrent preparation\n")
+        timer = Mock()
+        def timer_factory(timeout, callback):
+            self.assertEqual(timeout, SERVER.COMBINED_TIMEOUT_S)
+            timer.start.side_effect = callback
+            return timer
+        def run(current, name, *args):
+            return run_step(current, name, *args) if name == SERVER.COMBINED_STEP else 0
+        with patch.object(SERVER, "_run_workflow_step", side_effect=run), \
+                patch.object(SERVER.subprocess, "Popen", return_value=process), \
+                patch.object(SERVER.threading, "Timer", side_effect=timer_factory), \
+                patch.object(SERVER, "_terminate_owned_process") as terminate:
+            SERVER._workflow_worker(job, steps)
+        terminate.assert_called_once_with(process)
+        timer.cancel.assert_called_once()
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.completed_steps, SERVER.WORKFLOW_STEPS[:2])
+        self.assertEqual(job.failed_component, SERVER.COMBINED_STEP)
+        self.assertIsNone(job.process)
+        self.assertIn(f"timed out after {SERVER.COMBINED_TIMEOUT_S}", "\n".join(job.lines))
+
+    def test_failed_checkpoint_survives_restart_without_persisting_credentials_or_output(self):
+        failed = self.fail_energy()
+        contents = SERVER.PIPELINE_DEFAULTS_FILE.read_text(encoding="utf-8")
+        self.assertNotIn("private-test-pat", contents)
+        self.assertNotIn("FABRIC_GIT_PAT", contents)
+        self.assertNotIn("lines", json.loads(contents)["workflowCheckpoints"][failed.id])
+        SERVER.JOBS.clear()
+        restored = self.client.get(f"/api/jobs/{failed.id}").get_json()
+        self.assertTrue(restored["canResume"])
+        self.assertEqual(restored["completedSteps"], ["GitHub sync", "Setup pipeline"])
+        resumed = self.start({**self.target, "pat": "", "resumeJobId": failed.id})
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(resumed, self.steps())
+        self.assertEqual([call.args[1] for call in run.call_args_list],
+                         [SERVER.COMBINED_STEP])
+        SERVER.JOBS.clear()
+        old = self.client.get(f"/api/jobs/{failed.id}").get_json()
+        self.assertFalse(old["canResume"])
+
+    def test_changed_geo_notebook_syncs_before_energy_without_repeating_core(self):
+        failed = self.fail_energy()
+        keys = SERVER._workflow_source_keys()
+        changed = {**keys, "Energy setup": "new-geo",
+                   "file:Notebooks/Geo_002_publish_map_agent.Notebook/notebook-content.py": "new-geo"}
+        with patch.object(SERVER, "_workflow_source_keys", return_value=changed):
+            response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": failed.id})
+            self.assertEqual(response.status_code, 409)
+            self.assertTrue(response.get_json()["requiresSync"])
+            self.assertFalse(response.get_json()["fullSyncRequired"])
+            resumed = self.start({**self.target, "pat": "", "resumeJobId": failed.id, "syncLatest": True})
+        self.assertEqual(resumed.completed_steps, ["GitHub sync", "Setup pipeline"])
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(resumed, self.steps())
+        self.assertEqual([call.args[1] for call in run.call_args_list], [
+            "Changed notebook sync", SERVER.COMBINED_STEP,
+        ])
+        self.assertIn("--update-notebook", run.call_args_list[0].args[2])
+        self.assertEqual(resumed.pending_notebook_sync, [])
+
+    def test_changed_core_notebook_reruns_core_but_does_not_repeat_git_import(self):
+        failed = self.fail_energy()
+        keys = SERVER._workflow_source_keys()
+        changed = {**keys, "Setup pipeline": "new-core",
+                   "file:Notebooks/RTI_009_build_data_agent.Notebook/notebook-content.py": "new-core"}
+        with patch.object(SERVER, "_workflow_source_keys", return_value=changed):
+            response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": failed.id})
+            self.assertEqual(response.status_code, 409)
+            self.assertTrue(response.get_json()["requiresSync"])
+            retry = self.start({**self.target, "resumeJobId": failed.id, "syncLatest": True})
+        self.assertEqual(retry.completed_steps, ["GitHub sync"])
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(retry, self.steps())
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_args_list[0].args[1], "Changed notebook sync")
+        self.assertEqual(run.call_args_list[1].args[1], "Setup pipeline")
+
+    def test_failed_targeted_sync_remains_pending_across_restart_and_runs_no_setup(self):
+        failed = self.fail_energy()
+        failed.pending_notebook_sync = ["Geo_002_publish_map_agent"]
+        retry = self.start({**self.target, "resumeJobId": failed.id})
+        with patch.object(SERVER, "_run_workflow_step", return_value=8) as run:
+            SERVER._workflow_worker(retry, self.steps())
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(retry.completed_steps, ["GitHub sync", "Setup pipeline"])
+        SERVER.JOBS.clear()
+        restored = SERVER._restore_workflow(retry.id)
+        self.assertEqual(restored.pending_notebook_sync, ["Geo_002_publish_map_agent"])
+
+    def test_pipeline_changes_require_explicit_full_git_sync(self):
+        failed = self.fail_energy()
+        changed = {**SERVER._workflow_source_keys(), "Setup pipeline": "new-pipeline",
+                   "file:Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json": "new"}
+        with patch.object(SERVER, "_workflow_source_keys", return_value=changed):
+            response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": failed.id})
+            self.assertTrue(response.get_json()["fullSyncRequired"])
+            retry = self.start({**self.target, "resumeJobId": failed.id, "syncLatest": True})
+        self.assertEqual(retry.completed_steps, [])
+        self.assertEqual(retry.pending_notebook_sync, [])
+
+    def test_active_checkpoint_after_restart_refuses_potential_duplicate_remote_run(self):
+        job = self.start()
+        SERVER.JOBS.clear()
+        restored = self.client.get(f"/api/jobs/{job.id}").get_json()
+        self.assertEqual(restored["status"], "interrupted")
+        self.assertFalse(restored["canResume"])
+        response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": job.id})
+        self.assertEqual(response.status_code, 409)
+
+    def test_checkpoint_write_failure_starts_no_child(self):
+        with patch.object(SERVER, "_save_workflow_checkpoints", side_effect=OSError("disk unavailable")), \
+                patch.object(SERVER.threading, "Thread") as thread:
+            response = self.client.post("/api/full-workflow", json=self.target)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(SERVER.JOBS, {})
+        thread.assert_not_called()
+
+    def test_source_digests_track_component_files_not_git_head_or_unrelated_docs(self):
+        root = SERVER.PIPELINE_DEFAULTS_FILE.parent
+        notebook = root / "Notebooks" / "RTI_test.Notebook" / "notebook-content.py"
+        geo = root / "Notebooks" / "Geo_002_publish_map_agent.Notebook" / "notebook-content.py"
+        notebook.parent.mkdir(parents=True)
+        geo.parent.mkdir(parents=True)
+        notebook.write_text("core", encoding="utf-8")
+        geo.write_text("energy", encoding="utf-8")
+        app_source = root / "HydroOperationsApp" / "src" / "app.ts"
+        app_source.parent.mkdir(parents=True)
+        app_source.write_text("original app", encoding="utf-8")
+        foundry = root / "provision_foundry_agents.py"
+        foundry.write_text("original foundry", encoding="utf-8")
+        with patch.object(SERVER, "REPO_ROOT", root), \
+                patch.object(SERVER, "SCRIPT_DIR", root), \
+                patch.object(SERVER, "PIPELINE_SCRIPT", root / "run_pipeline.py"), \
+                patch.object(SERVER, "DEPLOY_SCRIPT", root / "deploy_fabric_app.py"):
+            initial = SERVER._workflow_source_keys()
+            (root / "README.md").write_text("unrelated docs", encoding="utf-8")
+            self.assertEqual(SERVER._workflow_source_keys(), initial)
+            geo.write_text("updated energy", encoding="utf-8")
+            energy_change = SERVER._workflow_source_keys()
+            self.assertEqual(energy_change["Setup pipeline"], initial["Setup pipeline"])
+            self.assertNotEqual(energy_change["Energy setup"], initial["Energy setup"])
+            self.assertNotEqual(energy_change[SERVER.COMBINED_STEP], initial[SERVER.COMBINED_STEP])
+            app_source.write_text("updated app", encoding="utf-8")
+            app_change = SERVER._workflow_source_keys()
+            self.assertNotEqual(app_change[SERVER.COMBINED_STEP], energy_change[SERVER.COMBINED_STEP])
+            self.assertEqual(app_change["Setup pipeline"], initial["Setup pipeline"])
+            foundry.write_text("updated foundry", encoding="utf-8")
+            foundry_change = SERVER._workflow_source_keys()
+            self.assertNotEqual(foundry_change[SERVER.COMBINED_STEP], app_change[SERVER.COMBINED_STEP])
+            self.assertEqual(foundry_change["Setup pipeline"], initial["Setup pipeline"])
+            for helper in ("shared_foundry_project.py", "foundry_resource_names.py"):
+                before = SERVER._workflow_source_keys()
+                (root / helper).write_text("updated project identity", encoding="utf-8")
+                after = SERVER._workflow_source_keys()
+                self.assertNotEqual(after[SERVER.COMBINED_STEP], before[SERVER.COMBINED_STEP])
+                self.assertEqual(after["Setup pipeline"], before["Setup pipeline"])
+            notebook.write_text("updated core", encoding="utf-8")
+            self.assertNotEqual(SERVER._workflow_source_keys()["Setup pipeline"], initial["Setup pipeline"])
+
+    def test_saving_pipeline_defaults_preserves_durable_workflow_checkpoint(self):
+        failed = self.fail_energy()
+        response = self.client.post("/api/pipeline-params", json={
+            "tenant": "tenant.example", "workspace": "Demo", "parameters": PIPELINE_PARAMS,
+        })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        SERVER.JOBS.clear()
+        restored = self.client.get(f"/api/jobs/{failed.id}").get_json()
+        self.assertTrue(restored["canResume"])
+
+    def test_unavailable_or_non_retryable_checkpoint_never_falls_back_to_full_run(self):
+        for resume_id in ("unknown", "", 123):
+            with self.subTest(resume_id=resume_id), patch.object(SERVER, "_start_workflow") as start:
+                response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": resume_id})
+                self.assertIn(response.status_code, (400, 409))
+                start.assert_not_called()
+        for status in ("running", "succeeded", "failed"):
+            job = SERVER.Job(SERVER.WORKFLOW_PHASES)
+            job.status = status
+            SERVER.JOBS[job.id] = job
+            with self.subTest(status=status), patch.object(SERVER, "_start_workflow") as start:
+                response = self.client.post("/api/full-workflow", json={**self.target, "resumeJobId": job.id})
+                self.assertEqual(response.status_code, 409)
+                start.assert_not_called()
+
+    def test_frontend_retries_and_reconnects_without_automatically_restarting(self):
+        script = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const elements = new Map();
+const $ = id => {
+  if (!elements.has(id)) elements.set(id, {
+    id, value:id === "workflowPat" ? "secret-pat" : id, checked:false,
+    addEventListener(event, handler) { this[event] = handler; },
+  });
+  return elements.get(id);
+};
+const posts = [], fetches = [], stored = new Map(), renders = [];
+let nextStart = {ok:true, data:{jobId:"first"}};
+let nextPoll = {status:"failed", done:true, canResume:true, resumeComponent:"Energy setup", lines:[]};
+let missing = false;
+const context = vm.createContext({
+  $, console, confirm:() => true, refresh:() => {},
+  renderPanel:(panel, job) => renders.push({...job}), setTimeout:() => {},
+  collectPipelineParams:() => ({}), spaClientValue:() => "", foundryPayload:() => ({}),
+  workflowConnValue:() => "",
+  localStorage:{setItem:(k,v) => stored.set(k,v), getItem:k => stored.get(k)},
+  postJson:async (url, body) => {posts.push({url, body}); return nextStart;},
+  fetch:async url => {fetches.push(url); return {status:missing ? 404 : 200, ok:!missing, json:async () => nextPoll};},
+});
+vm.runInContext(
+  html.slice(html.indexOf("let workflowCheckpoint"), html.indexOf("// ---- validation + wiring ----")) +
+  html.slice(html.indexOf("function workflowPayload("), html.indexOf('$("restartBtn").addEventListener')),
+  context,
+);
+const execute = source => vm.runInContext(source, context);
+const flush = () => new Promise(resolve => setImmediate(resolve));
+(async () => {
+  await execute("startFullWorkflow()");
+  await flush();
+  assert.equal(posts.length, 1);
+  assert.equal(execute("workflowCheckpoint.resumeComponent"), "Energy setup");
+  assert.equal($("workflowPat").value, "");
+  assert.equal(execute("workflowBusy"), false);
+  assert.equal(stored.get("fabric-demo.full-workflow-job.v1"), "first");
+  // Reload reconnects to the saved job; no POST or implicit deployment occurs.
+  execute("workflowCheckpoint=null; restoreWorkflowJob()");
+  await flush();
+  assert.equal(posts.length, 1);
+  assert.ok(fetches.at(-1).startsWith("/api/jobs/first?since=0"));
+  nextStart = {ok:false, status:409, data:{error:"Full Deploy inputs changed. No steps were started."}};
+  $("workspace").value = "changed";
+  await $("workflowResumeBtn").click();
+  await flush();
+  assert.equal(posts.length, 2);
+  assert.equal(posts.at(-1).body.resumeJobId, "first");
+  assert.equal(execute("workflowCheckpoint.jobId"), "first");
+  assert.match(renders.at(-1).error, /inputs changed/);
+  // A rejected retry never falls back to a fresh Full Deploy.
+  await flush();
+  assert.equal(posts.length, 2);
+  nextStart = {ok:false, status:409, data:{error:"Core sources changed", requiresSync:true}};
+  await $("workflowResumeBtn").click();
+  await flush();
+  assert.equal(execute("workflowCheckpoint.requiresSync"), true);
+  $("workspace").value = "workspace";
+  nextStart = {ok:true, data:{jobId:"retry"}};
+  nextPoll = {status:"succeeded", done:true, canResume:false, lines:[]};
+  await $("workflowSyncResumeBtn").click();
+  await flush();
+  assert.equal(posts.at(-1).body.resumeJobId, "first");
+  assert.equal(posts.at(-1).body.syncLatest, true);
+  assert.equal(posts.at(-1).body.pat, "");
+  assert.equal(stored.get("fabric-demo.full-workflow-job.v1"), "retry");
+  assert.equal(execute("workflowCheckpoint.canResume"), false);
+  nextPoll = {
+    status:"historical", done:true, canResume:false,
+    resumeBlockedReason:"Previous deployment uses an older workflow. No new deployment has been started.",
+    lines:["Recorded previous outcome: succeeded."],
+  };
+  execute("restoreWorkflowJob()");
+  await flush();
+  assert.equal(execute("workflowCheckpoint.status"), "historical");
+  assert.equal(execute("workflowCheckpoint.canResume"), false);
+  assert.equal(execute("workflowBusy"), false);
+  assert.equal(renders.at(-1).status, "historical");
+  assert.equal(renders.at(-1).error, undefined);
+  assert.match($("workflowResumeStatus").textContent, /No new deployment has been started/);
+  assert.equal(posts.length, 4);
+  missing = true;
+  execute("restoreWorkflowJob()");
+  await flush();
+  assert.equal(execute("workflowCheckpoint.status"), "interrupted");
+  assert.match($("workflowResumeStatus").textContent, /Resume is unavailable/);
+  assert.equal(posts.length, 4);
+})().catch(error => {console.error(error); process.exitCode=1;});
+"""
+        result = subprocess.run(
+            ["node", "-e", script, str(SERVER.STATIC_DIR / "index.html")],
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class WorkspaceActionTests(unittest.TestCase):
     def setUp(self):
         self.client = SERVER.app.test_client()
+
+    def test_only_single_workspace_actions_are_exposed(self):
+        response = self.client.get("/")
+        try:
+            html = response.get_data(as_text=True)
+        finally:
+            response.close()
+        for obsolete in ("parallelDeploy", "workspace2", "workspace3", "FoundryProjectMode",
+                         "renderParallelRuns", "/api/parallel"):
+            self.assertNotIn(obsolete, html)
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/parallel", json={
+                "action": "/api/full-workflow", "workspaces": ["One", "Two"],
+                "data": {"tenant": "tenant.example"},
+            })
+        self.assertEqual(response.status_code, 405)
+        self.assertNotIn("/api/parallel", {rule.rule for rule in SERVER.app.url_map.iter_rules()})
+        start.assert_not_called()
 
     def test_setup_modules_are_separate_from_app_publication(self):
         target = {"tenant": "tenant.example", "workspace": "Demo"}
@@ -51,6 +664,64 @@ class WorkspaceActionTests(unittest.TestCase):
             self.assertIn("Foundry multi-agent setup module", response.get_json()["error"])
             start.assert_not_called()
 
+    def test_foundry_page_discloses_backend_creation_before_website_publication(self):
+        response = self.client.get("/")
+        try:
+            html = response.get_data(as_text=True)
+        finally:
+            response.close()
+        foundry_pane = html.split('<section id="paneFoundry"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("AppBackend with SQL/GraphQL dependencies", foundry_pane)
+        self.assertIn("Does not publish the website.", foundry_pane)
+        self.assertIn("A Fabric App item can already appear during backend setup.", foundry_pane)
+        self.assertIn("After Foundry setup succeeds", foundry_pane)
+        self.assertNotIn("Updates agents only", html)
+        self.assertIn("five Foundry specialist agents", html)
+        self.assertIn("Foundry account is the parent Azure resource", html)
+        self.assertIn("renderSectionDuration", html)
+        self.assertIn("Combined · Energy + Foundry concurrently", SERVER.WORKFLOW_PHASES)
+
+    def test_workflow_source_manifest_loads_in_an_isolated_launcher_interpreter(self):
+        script = """
+import importlib.util
+import sys
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location("isolated_launcher", sys.argv[1])
+server = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = server
+spec.loader.exec_module(server)
+assert "Foundry multi-agent setup" in server._workflow_source_keys()
+with patch.object(server, "_sync_invocation", return_value=(["sync"], None)), \
+     patch.object(server, "_pipeline_invocation", return_value=(["pipeline"], None)), \
+     patch.object(server, "_deploy_invocation", return_value=["python", "deploy"]), \
+     patch.object(server, "_deploy_environment", return_value={}), \
+     patch.object(server, "_start_workflow", return_value="not-started") as start:
+    response = server.app.test_client().post("/api/full-workflow", json={"tenant": "tenant.example", "workspace": "Demo"})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    start.assert_called_once()
+"""
+        with TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, "-I", "-c", script, str(Path(SERVER.__file__).resolve())],
+                cwd=directory, capture_output=True, text=True, timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_workflow_source_import_failure_returns_json_and_starts_no_job(self):
+        with patch.object(SERVER, "_sync_invocation", return_value=(["sync"], None)), \
+                patch.object(SERVER, "_pipeline_invocation", return_value=(["pipeline"], None)), \
+                patch.object(SERVER, "_deploy_invocation", return_value=["python", "deploy"]), \
+                patch.object(SERVER, "_deploy_environment", return_value={}), \
+                patch.object(SERVER, "_workflow_source_keys", side_effect=ModuleNotFoundError("missing local helper")), \
+                patch.object(SERVER, "_start_workflow") as start, \
+                self.assertLogs(SERVER.app.logger, level="ERROR") as logged:
+            response = self.client.post("/api/full-workflow", json={"tenant": "tenant.example", "workspace": "Demo"})
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("missing local helper", response.get_json()["error"])
+        self.assertIn("No steps were started", response.get_json()["error"])
+        self.assertIn("Full Deploy source initialization failed", logged.output[0])
+        start.assert_not_called()
+
     def test_full_workflow_prepares_energy_and_foundry_before_final_app(self):
         target = {
             "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo", "connectionId": "yes",
@@ -62,12 +733,10 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
         self.assertEqual([step["name"] for step in steps], [
-            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+            "GitHub sync", "Setup pipeline", SERVER.COMBINED_STEP,
         ])
-        self.assertEqual(steps[3]["env"], {"HYDRO_FOUNDRY_CREATE": "false"})
-        self.assertIsNone(steps[4]["env"])
-        for step, stage in zip(steps[2:], ("energy", "foundry", "app")):
-            self.assertEqual(step["argv"][step["argv"].index("--stage") + 1], stage)
+        self.assertEqual(steps[2]["env"], {"HYDRO_FOUNDRY_CREATE": "false"})
+        self.assertEqual(steps[2]["argv"][steps[2]["argv"].index("--stage") + 1], "all")
         self.assertEqual([step["phase_offset"] for step in steps],
                          sorted({step["phase_offset"] for step in steps}))
 
@@ -102,12 +771,88 @@ class WorkspaceActionTests(unittest.TestCase):
         with patch.object(SERVER.subprocess, "run", side_effect=subprocess.TimeoutExpired("az", 40)):
             self.assertEqual(self.client.get("/api/subscriptions").status_code, 503)
 
-    def test_progress_keeps_overall_elapsed_without_partial_module_timing_table(self):
+    def test_progress_shows_overall_section_and_substep_durations(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("renderDeploymentTimings", page)
         self.assertNotIn("Module timings", page)
         self.assertNotIn('aria-label="Deployment timings"', page)
         self.assertIn('class="elapsed" title="Elapsed time"', page)
+        self.assertIn("renderSectionDuration", page)
+        self.assertIn("job.phaseTimings?.[item.index]", page)
+        self.assertIn("job.componentTimings", page)
+        self.assertIn("Not reported", page)
+        self.assertIn("Last observed", page)
+
+    def test_server_timing_handles_skipped_markers_and_freezes_at_failure(self):
+        clock = [100.0]
+        with patch.object(SERVER.time, "monotonic", side_effect=lambda: clock[0]):
+            job = SERVER.Job(["Queued", "Connecting", "Optional marker", "Importing", "Later", "Done"])
+            clock[0] = 103
+            job.advance_phase(1)
+            clock[0] = 108
+            job.advance_phase(3)
+            clock[0] = 110
+            snapshot = job.timing_snapshot()
+            self.assertEqual(snapshot["elapsedSeconds"], 10)
+            self.assertEqual(snapshot["phaseTimings"][1]["elapsedSeconds"], 5)
+            self.assertEqual(snapshot["phaseTimings"][2]["status"], "unreported")
+            self.assertIsNone(snapshot["phaseTimings"][2]["elapsedSeconds"])
+            self.assertEqual(snapshot["phaseTimings"][3]["elapsedSeconds"], 2)
+            job.finish_timing("failed")
+            clock[0] = 1000
+            self.assertEqual(job.timing_snapshot()["elapsedSeconds"], 10)
+            self.assertEqual(job.timing_snapshot()["phaseTimings"][3]["elapsedSeconds"], 2)
+            self.assertEqual(job.timing_snapshot()["phaseTimings"][3]["status"], "failed")
+            self.assertEqual(job.timing_snapshot()["phaseTimings"][4]["status"], "pending")
+
+    def test_workflow_api_reports_exact_component_and_phase_durations(self):
+        clock = [100.0]
+        phases = ["Queued", "Sync · Start", "Sync · Import", "Pipeline · Run", "Pipeline · Finish", "Foundry · Start", "Done"]
+        steps = [{"name": name, "phase_offset": offset, "argv": [], "markers": [], "timeout": 1}
+                 for name, offset in (("GitHub sync", 1), ("Setup pipeline", 3), ("Foundry multi-agent setup", 5))]
+        for outcome in ("succeeded", "failed", "cancelled", "exception"):
+            clock[0] = 100
+            with self.subTest(outcome=outcome), patch.object(SERVER.time, "monotonic", side_effect=lambda: clock[0]):
+                job = SERVER.Job(phases)
+
+                def step(current, name, *_args):
+                    if name == "GitHub sync":
+                        clock[0] = 101
+                        current.advance_phase(1)
+                        clock[0] = 111
+                        current.advance_phase(2)
+                        clock[0] = 118
+                        return 0
+                    if name == "Setup pipeline":
+                        clock[0] = 120
+                        current.advance_phase(3)
+                        clock[0] = 130
+                        if outcome == "exception":
+                            raise OSError("monitor failed")
+                        if outcome == "cancelled":
+                            current.cancel_requested = True
+                            return -15
+                        return 23 if outcome == "failed" else 0
+                    current.advance_phase(5)
+                    clock[0] = 140
+                    return 0
+
+                with patch.object(SERVER, "_run_workflow_step", side_effect=step):
+                    SERVER._workflow_worker(job, steps)
+                self.assertEqual(job.status, "failed" if outcome == "exception" else outcome)
+                clock[0] = 1000
+                with patch.dict(SERVER.JOBS, {job.id: job}):
+                    response = self.client.get(f"/api/jobs/{job.id}?since=1").get_json()
+                self.assertTrue(response["done"])
+                self.assertEqual(response["elapsedSeconds"], 40 if outcome == "succeeded" else 30)
+                self.assertEqual(response["componentTimings"][0]["elapsedSeconds"], 18)
+                self.assertEqual(response["componentTimings"][1]["elapsedSeconds"], 12)
+                self.assertEqual(response["phaseTimings"][1]["elapsedSeconds"], 10)
+                self.assertEqual(response["phaseTimings"][2]["elapsedSeconds"], 7)
+                self.assertEqual(response["phaseTimings"][3]["elapsedSeconds"], 10)
+                self.assertEqual(response["phaseTimings"][4]["status"],
+                                 "unreported" if outcome == "succeeded" else "pending")
+                self.assertEqual(len(response["componentTimings"]), 3 if outcome == "succeeded" else 2)
 
     def test_live_output_scroll_selection_and_keyboard_during_streaming(self):
         """Exercise the real renderer and layout in an isolated headless browser, never the app/server."""
@@ -233,6 +978,39 @@ async function evaluate(expression) {
       var workflow=document.getElementById("workflowPanel");
       renderPanel(workflow,{status:"running",phases:["Sync · Start","Pipeline · Setup"],phaseIndex:0,lines:["Workflow"]});
       check(workflow.querySelector(".workflow-phase-group"), "Workflow module groups lost");
+      var timed = {
+        status:"running", phaseIndex:2, elapsedSeconds:100, component:"Setup pipeline", lines:["timed fixture"],
+        phases:["Queued","Sync · Connecting","Pipeline · Running","Energy · Checking prerequisites","Foundry · Hosted Agent","Deploy · Provisioning app","Done"],
+        phaseTimings:[
+          {status:"succeeded",elapsedSeconds:1},{status:"succeeded",elapsedSeconds:20},
+          {status:"running",elapsedSeconds:60},{status:"unreported",elapsedSeconds:null},
+          {status:"pending",elapsedSeconds:null},{status:"pending",elapsedSeconds:null},{status:"pending",elapsedSeconds:null}],
+        componentTimings:[
+          {name:"GitHub sync",status:"succeeded",elapsedSeconds:23},
+          {name:"Setup pipeline",status:"running",elapsedSeconds:65}]
+      };
+      renderPanel(workflow,timed);
+      check(workflow.querySelectorAll(".workflow-phase-summary .section-duration").length===4, "Every section needs a timer");
+      check(workflow.querySelectorAll(".phases .section-duration").length===5, "Every substep needs a timer");
+      check(workflow.querySelector('[data-group="sync"] summary').textContent.includes("Completed · 00:23"), "Completed timer lost");
+      check(workflow.querySelector('[data-group="pipeline"] summary').textContent.includes("Running · 01:05"), "Running section timer lost");
+      check(workflow.querySelector(".component-durations").textContent.includes("Setup pipeline"), "Core submodule timing lost");
+      check(workflow.textContent.includes("Not reported") && workflow.textContent.includes("Not started"), "Unmeasured steps must be explicit");
+      timed.elapsedSeconds=106; timed.phaseTimings[2].elapsedSeconds=66; timed.componentTimings[1].elapsedSeconds=71;
+      renderPanel(workflow,timed);
+      check(workflow.querySelector('[data-group="pipeline"] summary').textContent.includes("Running · 01:11"), "Running timer did not advance");
+      check(workflow.querySelector('[data-group="sync"] summary').textContent.includes("Completed · 00:23"), "Completed timer changed");
+      timed.status="interrupted"; renderPanel(workflow,timed);
+      check(workflow.textContent.includes("Last observed · 01:11"), "Interrupted monitor must not claim live timing");
+      timed.status="failed"; timed.failedComponent="Setup pipeline";
+      timed.componentTimings[1].status="failed"; timed.phaseTimings[2].status="failed";
+      renderPanel(workflow,timed);
+      check(workflow.querySelector('[data-group="pipeline"] summary').textContent.includes("Failed · 01:11"), "Failure duration lost");
+      renderPanel(workflow,{status:"historical",lines:["Recorded previous outcome: succeeded."]});
+      check(workflow.querySelector(".status").textContent==="Previous deployment history", "Legacy history label lost");
+      check(!workflow.querySelector(".error"), "Legacy history must not be a new failure");
+      check(!workflow.querySelector(".bar") && !workflow.querySelector(".elapsed"), "Legacy history must not invent live progress");
+      check(workflow.querySelector(".output").textContent.includes("previous outcome: succeeded"), "Previous outcome lost");
       out.scrollTop=200;
       out.focus();
       check(document.activeElement===out, "Output must accept keyboard focus");
@@ -348,7 +1126,7 @@ async function evaluate(expression) {
                 **target, "repository": "owner/repo", "connectionId": "yes", "energyMap": "keep",
             })
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([step["name"] for step in start.call_args.args[0]].count("Energy setup"), 1)
+        self.assertEqual([step["name"] for step in start.call_args.args[0]], SERVER.WORKFLOW_STEPS)
 
     def test_full_deploy_is_outside_collapsible_actions_and_all_actions_have_icons(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -510,7 +1288,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
         })
         self.assertEqual(json.loads(env["FABRIC_PIPELINE_PARAMS"])["ops_agent_run_as_user"], "")
 
-    def test_parameter_defaults_are_target_scoped_and_allowlisted(self):
+    def test_parameter_defaults_are_tenant_scoped_and_allowlisted(self):
         config = {
             "FABRIC_TENANT": "tenant.example",
             "FABRIC_WORKSPACE": "Demo",
@@ -523,7 +1301,8 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
             for target, expected in (
                 ("?tenant=TENANT.example&workspace=demo", "V12"),
                 ("?tenant=other.example&workspace=Demo", "V6"),
-                ("?tenant=tenant.example&workspace=Other", "V6"),
+                ("?tenant=tenant.example&workspace=Other", "V12"),
+                ("?tenant=tenant.example", "V12"),
                 ("", "V6"),
             ):
                 with self.subTest(target=target):
@@ -624,7 +1403,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 with patch.object(SERVER, "RAYFIN_TARGET_FILE", Path(directory) / "unresolved.env"):
                     response = self.client.get("/api/pipeline-params", query_string={"tenant": tenant, "workspace": workspace_id})
                     specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
-                    self.assertEqual(specs["key_vault_uri"]["default"], "")
+                    self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
                 response = self.client.get("/api/pipeline-params", query_string={"tenant": tenant, "workspace": workspace_id})
                 specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
                 self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
@@ -650,14 +1429,27 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                     self.assertEqual(specs["key_vault_uri"]["source"], "saved local settings")
                 for target in (
                     {"tenant": "unseen-tenant", "workspace": "Demo"},
-                    {"tenant": "other-tenant", "workspace": workspace_id},
-                    {"tenant": tenant, "workspace": "Unknown"},
                 ):
                     response = self.client.get("/api/pipeline-params", query_string=target)
                     specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
                     self.assertEqual(specs["key_vault_uri"]["default"], "")
                     self.assertEqual(specs["ops_agent_teams_team_id"]["default"], "")
                     self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], "")
+                for workspace in ("Unknown", "", "brand-new-workspace"):
+                    response = self.client.get("/api/pipeline-params", query_string={
+                        "tenant": tenant, "workspace": workspace,
+                    })
+                    specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                    self.assertEqual(specs["key_vault_uri"]["default"], "https://last.vault.azure.net/")
+                    self.assertEqual(specs["ops_agent_teams_team_id"]["default"], "other-team")
+                    self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_channel_id"])
+                    self.assertEqual(specs["workspace_id"]["default"], "")
+                response = self.client.get("/api/pipeline-params", query_string={
+                    "tenant": "other-tenant", "workspace": workspace_id,
+                })
+                specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                self.assertEqual(specs["ops_agent_teams_channel_id"]["default"], "other-channel")
                 start.assert_not_called()
                 process.assert_not_called()
                 self.assertEqual(list(Path(directory).glob(".pipeline-defaults-*.tmp")), [])
@@ -680,7 +1472,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
             self.assertEqual(specs["per_notebook_timeout_secs"]["default"], "")
             self.assertEqual(specs["ops_agent_teams_team_id"]["default"], PIPELINE_PARAMS["ops_agent_teams_team_id"])
 
-    def test_workspace_defaults_require_an_explicit_workspace_even_at_startup(self):
+    def test_tenant_defaults_load_before_workspace_entry_without_restoring_workspace_identity(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "defaults.json"
             path.write_text(json.dumps({
@@ -703,7 +1495,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 self.assertIsNone(data.get("restoredTarget"))
                 specs = {spec["name"]: spec for spec in data["parameters"]}
                 self.assertEqual(specs["workspace_id"]["default"], "")
-                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
                 data = self.client.get("/api/pipeline-params", query_string={
                     "tenant": "TENANT.example", "workspace": "Demo",
                 }).get_json()
@@ -714,14 +1506,20 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 for query in (
                     {"tenant": "other-tenant", "workspace": "", "restoreTarget": "1"},
                     {"tenant": "", "workspace": "", "restoreTarget": "1"},
-                    {"tenant": "tenant.example", "workspace": "Other", "restoreTarget": "1"},
-                    {"tenant": "tenant.example", "workspace": ""},
                 ):
                     with self.subTest(query=query):
                         data = self.client.get("/api/pipeline-params", query_string=query).get_json()
                         self.assertIsNone(data.get("restoredTarget"))
                         specs = {spec["name"]: spec for spec in data["parameters"]}
                         self.assertEqual(specs["key_vault_uri"]["default"], "")
+                for workspace in ("Other", ""):
+                    data = self.client.get("/api/pipeline-params", query_string={
+                        "tenant": "tenant.example", "workspace": workspace,
+                    }).get_json()
+                    specs = {spec["name"]: spec for spec in data["parameters"]}
+                    self.assertEqual(specs["env_suffix"]["default"], "V12")
+                    self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
+                    self.assertEqual(specs["workspace_id"]["default"], "")
                 stored = json.loads(path.read_text(encoding="utf-8"))
                 stored["targets"].append({
                     "tenant": "tenant.example", "workspace": "Second",
@@ -734,7 +1532,7 @@ const runJob=async(url,payload,panel,onDone)=>{requests.push({url,payload,panel}
                 self.assertIsNone(data.get("restoredTarget"))
                 specs = {spec["name"]: spec for spec in data["parameters"]}
                 self.assertEqual(specs["workspace_id"]["default"], "")
-                self.assertEqual(specs["key_vault_uri"]["default"], "")
+                self.assertEqual(specs["key_vault_uri"]["default"], PIPELINE_PARAMS["key_vault_uri"])
                 start.assert_not_called()
                 process.assert_not_called()
 
@@ -800,7 +1598,6 @@ const syncPipelineWorkspace = () => {
   for(const prefix of ["pp_","wf_pp_"]) $(prefix+"workspace_id").value=$("workspace").value;
 };
 const suggestPipelineEmail = () => {};
-const updatePipelineDefaultsSummary = () => {};
 const loadSubscriptions = () => {};
 const refresh = () => {};
 const escapeHtml = String;
@@ -814,7 +1611,7 @@ global.fetch = async url => {
   const query = new URL(url,"http://localhost").searchParams;
   assert.equal(query.get("workspace"),"");
   assert.equal(query.has("restoreTarget"),false);
-  return {ok:true,json:async()=>blank};
+  return {ok:true,json:async()=>saved};
 };
 """ + function + """
 (async()=>{
@@ -824,6 +1621,11 @@ global.fetch = async url => {
   assert.equal($("workspace").value,"");
   assert.equal($("pp_workspace_id").value,"");
   assert.equal($("wf_pp_workspace_id").value,"");
+  for(const prefix of ["pp_","wf_pp_"]) {
+    for(const name of ["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id"]) {
+      assert.equal($(prefix+name).value,specs.find(spec=>spec.name===name).default);
+    }
+  }
   assert.equal(requests.length,1);
   $("workspace").value="Demo";
   global.fetch=async url=>{
@@ -838,6 +1640,17 @@ global.fetch = async url => {
     for(const name of ["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id"]) {
       assert.equal($(prefix+name).value,specs.find(spec=>spec.name===name).default);
     }
+  }
+  $("workspace").value="Brand new workspace";
+  global.fetch=async url=>{
+    assert.equal(new URL(url,"http://localhost").searchParams.get("workspace"),"Brand new workspace");
+    return {ok:true,json:async()=>saved};
+  };
+  await loadPipelineParams();
+  for(const prefix of ["pp_","wf_pp_"]) {
+    assert.equal($(prefix+"workspace_id").value,"Brand new workspace");
+    assert.equal($(prefix+"key_vault_uri").value,specs.find(spec=>spec.name==="key_vault_uri").default);
+    assert.equal($(prefix+"ops_agent_teams_team_id").value,specs.find(spec=>spec.name==="ops_agent_teams_team_id").default);
   }
   // A user editing the target during startup must win over the delayed response.
   $("workspace").value="";
@@ -881,26 +1694,46 @@ global.fetch = async url => {
         self.assertIn("groupId=", specs["ops_agent_teams_team_id"]["help"])
         self.assertIn("URL-decode", specs["ops_agent_teams_channel_id"]["help"])
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        code = page[page.index("function renderPipelineFields("):page.index("function updatePipelineDefaultsSummary(")]
+        code = page[page.index("function renderPipelineFields("):page.index("function syncPipelineWorkspace(")]
+        code += page[page.index("function collectPipelineParams("):page.index("function pipelineValid(")]
         script = """
 const assert=require("node:assert/strict");
 const pipelineSpec = """ + json.dumps(list(specs.values())) + """;
 const requiredPipelineFields=["key_vault_uri","ops_agent_teams_team_id","ops_agent_teams_channel_id","alert_email_to"];
 const escapeHtml=value=>String(value).replaceAll("&","&amp;").replaceAll('"',"&quot;");
+let inputs=new Map();
+const $=id=>inputs.get(id);
 """ + code + """
 for(const prefix of ["pp_","wf_pp_"]){
   const html=renderPipelineFields(prefix);
   assert.equal(html.split(">Find ID</a>").length-1,2);
   assert.ok(html.includes('target="_blank" rel="noopener noreferrer"'));
-  const visible=html.split("<details")[0];
+  assert.equal(html.split('class="alert-routing-label"').length-1,4);
+  for(const name of ["ops_agent_teams_team_id","ops_agent_teams_channel_id","ops_agent_run_as_user","alert_email_to"]){
+    assert.ok(html.includes(`for="${prefix}${name}" class="plabel"`));
+    const label=html.split(`for="${prefix}${name}"`)[1].split("</label>")[0];
+    assert.ok(label.includes('class="alert-routing-label">Operations Agent</span>'));
+  }
+  const visible=html;
   assert.ok(visible.includes("Required:"));
   assert.ok(visible.includes("existing Key Vault"));
   assert.ok(visible.includes("notebook read access"));
-  assert.ok(visible.replace(/<[^>]*>/g," ").trim().split(/\\s+/).length <= 100);
+  assert.ok(visible.replace(/<[^>]*>/g," ").trim().split(/\\s+/).length <= 150);
   assert.ok(!visible.includes("defaultsSummary"));
-  assert.ok(html.includes("tenant ID, client ID and client secret"));
   assert.ok(html.includes("does not create the vault or its secrets"));
-  assert.ok(html.includes("<summary>Key Vault secret names and notebook settings</summary>"));
+  assert.ok(html.includes("<h3>Key Vault secret names</h3>"));
+  for(const name of ["key_vault_tenant_id_secret_name","key_vault_client_id_secret_name","key_vault_client_secret_name"]){
+    assert.ok(html.includes(`id="${prefix}${name}"`));
+  }
+  assert.ok(!html.includes("<details"));
+  assert.ok(!html.includes("per_notebook_timeout_secs"));
+  inputs=new Map([...html.matchAll(/<input id="([^"]+)"[^>]*value="([^"]*)"/g)]
+    .map(match=>[match[1],{value:match[2]}]));
+  const submitted=collectPipelineParams(prefix);
+  assert.equal(Object.hasOwn(submitted,"per_notebook_timeout_secs"),false);
+  for(const name of ["ops_agent_run_as_user","key_vault_tenant_id_secret_name","key_vault_client_id_secret_name","key_vault_client_secret_name"]){
+    assert.equal(Object.hasOwn(submitted,name),true);
+  }
   assert.ok(!html.includes("Change notebook defaults (optional)"));
 }
 """
@@ -912,7 +1745,7 @@ for(const prefix of ["pp_","wf_pp_"]){
         functions = (
             page[page.index("const spaClientIds ="):page.index("function renderFoundryFields(")]
             + page[page.index("let pipelineSpec ="):page.index("function renderPipelineFields(")]
-            + page[page.index("function updatePipelineDefaultsSummary("):page.index("async function loadPipelineParams(")]
+            + page[page.index("function syncPipelineWorkspace("):page.index("async function loadPipelineParams(")]
         )
         script = """
 const assert = require("node:assert/strict");
@@ -1033,16 +1866,19 @@ for (const clientId of spaClientIds) {
 const legacyProject = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p";
 stored.set(foundryTarget, JSON.stringify({
   FoundryProjectResourceId:legacyProject, FoundryProjectName:"duplicate-name",
+  FoundryNewModel:"legacy-chat-deployment",
   clientId:"12345678-1234-1234-1234-123456789abc", FoundryEndpoint:"retired-override",
   ProductionWrites:"true",
 }));
 foundryTarget="";
 restoreFoundrySettings();
 for (const prefix of ["deploy", "workflow"]) assert.equal($(prefix+"FoundryProjectName").value, legacyProject);
+for (const prefix of ["deploy", "workflow"]) assert.equal($(prefix+"FoundryModel").value, "legacy-chat-deployment");
 for (const clientId of spaClientIds) assert.equal($(clientId+"UseExisting").checked, true);
 saveFoundrySettings("deploy");
 assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryEndpoint, undefined);
 assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryProjectResourceId, undefined);
+assert.equal(JSON.parse(stored.get(foundryTarget)).FoundryNewModel, undefined);
 assert.equal(foundrySettingSuffixes.includes("ProductionWrites"), false);
 assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
 (async () => {
@@ -1125,6 +1961,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         }]}}
         for state, energy_code, expected_status, expected_code in (
             ("Completed", 0, "succeeded", 0), ("Failed", 0, "failed", 1),
+            ("Cancelled", 0, "cancelled", 1),
             ("Completed", 23, "failed", 23),
         ):
             with self.subTest(state=state, energy_code=energy_code):
@@ -1137,7 +1974,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                     Mock(status_code=200, json=Mock(return_value=definition)),
                 ]
                 fabric.find_pipeline.return_value = ("pipeline-id", "01_Pipe_Setup")
-                fabric.start_pipeline.return_value = "https://mock.invalid/job"
+                fabric.start_pipeline.return_value = PIPELINE_JOB_URL
                 reason = "Required Data Agent ontology runtime smoke failed: unsupported Ontology API"
                 fabric.poll_job.return_value = {"status": state, "failureReason": {"message": reason}}
                 started_scripts = []
@@ -1185,7 +2022,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                     self.assertNotIn("ontology_data_agent_mode", parameters)
                     self.assertNotIn("ontology_operations_agent_mode", parameters)
                     log = "\n".join(job["lines"])
-                    if state == "Failed":
+                    if state in {"Failed", "Cancelled"}:
                         self.assertIn(reason, log)
                         self.assertNotIn("run COMPLETED", log)
                         self.assertEqual(started_scripts, ["run_pipeline.py"])
@@ -1264,14 +2101,16 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
 
     def test_deploy_progress_shows_each_foundry_stage_in_the_order_the_deployer_prints_them(self):
         phases = SERVER.FOUNDRY_PHASES
-        for name in ("Foundry project", "Foundry agents", "Hosted Agent"):
+        for name in ("Foundry project", "Fabric backend gateway", "Foundry agents", "Hosted Agent"):
             self.assertIn(name, phases)
         indexes = [index for index, _markers in SERVER.FOUNDRY_MARKERS]
         self.assertEqual(indexes, sorted(set(indexes)))
         self.assertLess(max(indexes), len(phases) - 1)
         deployer_lines = [
             "[1/8] Checking Azure tenant", "[2/8] Resolving the tenant SPA", "[3/8] Resetting local Rayfin deployment state",
-            "Foundry: project - resolving the Foundry project.", "Foundry: agents - provisioning the specialist prompt agents.",
+            "Foundry: project - resolving the Foundry project.",
+            "Foundry: backend gateway - preparing the Fabric AppBackend identity required by the Hosted Agent.",
+            "Foundry: agents - provisioning the specialist prompt agents.",
             "Foundry: Hosted Agent - converging hydro-orchestrator.",
         ]
         job, seen = SERVER.Job(phases), []
@@ -1281,13 +2120,15 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
                     job.phase_index = index
             seen.append(phases[job.phase_index])
         self.assertEqual(seen, [
-            "Checking prerequisites", "Resolving SPA", "Preparing source/gateway", "Foundry project", "Foundry agents",
-            "Hosted Agent",
+            "Checking prerequisites", "Resolving SPA", "Preparing source/gateway", "Foundry project",
+            "Fabric backend gateway", "Foundry agents", "Hosted Agent",
         ])
         # The markers must be lines the deployer really prints, not an assumption.
         printed = (SERVER.SCRIPT_DIR / "provision_foundry_agents.py").read_text(encoding="utf-8")
         for marker in ("Foundry: project", "Foundry: agents", "Foundry: Hosted Agent"):
             self.assertIn(f'"{marker}', printed)
+        deployer = (SERVER.SCRIPT_DIR / "deploy_fabric_app.py").read_text(encoding="utf-8")
+        self.assertIn('"Foundry: backend gateway', deployer)
 
     def test_deploy_job_limit_covers_project_creation_build_and_publish(self):
         self.assertGreaterEqual(SERVER.FOUNDRY_TIMEOUT_S, 75 * 60)
@@ -1333,6 +2174,15 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         for invalid in ("not a name", "https://account/project", "-invalid", "a" * 129, "project;run"):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Existing Foundry project name"):
                 SERVER._deploy_environment({"foundryProjectName": invalid})
+
+    def test_account_name_is_validated_and_forwarded_without_creation_approval(self):
+        self.assertEqual(SERVER._deploy_environment({"foundryAccountName": "  hydro-account  "}), {
+            "HYDRO_FOUNDRY_ACCOUNT_NAME": "hydro-account",
+        })
+        self.assertEqual(SERVER._deploy_environment({"foundryAccountName": " "}), {})
+        for invalid in ("a", "-account", "account-", "has spaces", "has.dot", "a" * 65, True):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Foundry account name"):
+                SERVER._deploy_environment({"foundryAccountName": invalid})
 
     def test_project_resource_id_is_explicit_validated_and_forwarded_only_to_setup(self):
         project_id = (
@@ -1406,6 +2256,36 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             self.client.post("/api/setup-foundry", json={"tenant": "tenant.example", "workspace": "w"})
         self.assertIsNone(start.call_args.args[1])  # nothing set: the server's own environment still applies
 
+    def test_two_name_creation_is_forwarded_to_standalone_and_full_workflow(self):
+        settings = {"foundryAccountName": "my-foundry-account", "foundryNewProjectName": "my-new-project",
+                    "foundryModel": "approved-chat", "createFoundry": True}
+        expected = {
+            "HYDRO_FOUNDRY_ACCOUNT_NAME": "my-foundry-account",
+            "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "my-new-project",
+            "HYDRO_FOUNDRY_MODEL": "approved-chat", "HYDRO_FOUNDRY_CREATE": "true",
+        }
+        with patch.object(SERVER, "_start", return_value="job") as start:
+            response = self.client.post("/api/setup-foundry", json={
+                "tenant": "tenant.example", "workspace": "Demo", **settings,
+            })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(start.call_args.args[1], expected)
+        with patch.object(SERVER, "_start_workflow", return_value="job") as start:
+            response = self.client.post("/api/full-workflow", json={
+                "tenant": "tenant.example", "workspace": "Demo", "repository": "o/r",
+                "connectionId": "connection", "parameters": PIPELINE_PARAMS, **settings,
+            })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(start.call_args.args[0][2]["env"], expected)
+        for invalid in ("bad name", "../project", "-invalid", "x" * 65):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "New Foundry project name"):
+                SERVER._deploy_environment({**settings, "foundryNewProjectName": invalid})
+        with self.assertRaisesRegex(ValueError, "resource-creation approval"):
+            SERVER._deploy_environment({**settings, "createFoundry": False})
+        for invalid in (123, False, [], {}):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "must be text"):
+                SERVER._deploy_environment({**settings, "foundryNewProjectName": invalid})
+
     def test_invalid_foundry_settings_stop_the_request_before_any_job_starts(self):
         with patch.object(SERVER, "_start") as start, patch.object(SERVER, "_start_workflow") as workflow:
             deploy = self.client.post("/api/deploy-app", json={
@@ -1420,7 +2300,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         start.assert_not_called()
         workflow.assert_not_called()
 
-    def test_full_workflow_gives_foundry_settings_to_the_deploy_step_only(self):
+    def test_full_workflow_gives_foundry_settings_to_the_combined_step_only(self):
         payload = {
             "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes", "pat": "x",
             "parameters": PIPELINE_PARAMS,
@@ -1430,9 +2310,55 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             response = self.client.post("/api/full-workflow", json=payload)
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
-        self.assertEqual(steps[3]["env"], {"HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_LOCATION": "swedencentral"})
-        for step in steps[:3]:
+        self.assertEqual(steps[2]["env"], {"HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_LOCATION": "swedencentral"})
+        for step in steps[:2]:
             self.assertNotIn("HYDRO_FOUNDRY_CREATE", step["env"] or {})
+
+    def test_combined_invocation_forwards_entire_validated_deployment_environment(self):
+        guid = "11111111-1111-1111-1111-111111111111"
+        graph = {"workspaceId": guid, "ontologyId": guid, "graphModelId": guid}
+        payload = {
+            "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes",
+            "parameters": PIPELINE_PARAMS, "ontologyGraphBinding": json.dumps(graph),
+            "azureSubscriptionId": guid,
+            "foundryEndpoint": "https://demo.services.ai.azure.com/api/projects/project",
+            "foundryProjectResourceId": f"/subscriptions/{guid}/resourceGroups/rg/providers/"
+                                       "Microsoft.CognitiveServices/accounts/account/projects/project",
+            "foundryAccountName": "account", "foundryProjectName": "project",
+            "foundryNewProjectName": "new-project", "foundryModel": "deployment",
+            "foundryModelName": "gpt-4.1", "foundryModelVersion": "2025-04-14",
+            "foundryModelSku": "GlobalStandard", "foundryModelCapacity": 75,
+            "acrName": "demoregistry", "foundryLocation": "swedencentral",
+            "createFoundry": True, "productionWrites": "false",
+        }
+        expected = SERVER._deploy_environment(payload)
+        self.assertEqual(len(expected), 16)
+        with patch.object(SERVER, "_start_workflow", return_value="id") as start:
+            response = self.client.post("/api/full-workflow", json=payload)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        steps = start.call_args.args[0]
+        self.assertEqual(steps[2]["env"], expected)
+        self.assertTrue(all(not key.startswith("HYDRO_")
+                            for step in steps[:2] for key in step["env"]))
+        self.assertNotIn("demoregistry", " ".join(steps[2]["argv"]))
+
+    def test_combined_progress_treats_parallel_branches_as_one_interval(self):
+        job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
+        offset = len(SERVER.SYNC_PHASES) - 1 + len(SERVER.PIPELINE_PHASES) - 2
+        job.advance_phase(offset)
+        for line in ("[1/8] prerequisites", "[2/8] SPA", "[3/8] source preparation",
+                     "Energy: setup", "Foundry: agents", "Energy map read models are ready",
+                     "Foundry: Hosted Agent"):
+            for index, markers in SERVER.COMBINED_MARKERS:
+                if any(marker in line for marker in markers):
+                    job.advance_phase(offset + index - 1)
+        self.assertEqual(job.phases[job.phase_index], "Combined · Energy + Foundry concurrently")
+        for index, markers in SERVER.COMBINED_MARKERS:
+            if any(marker in "[4/8] signing in" for marker in markers):
+                job.advance_phase(offset + index - 1)
+        self.assertEqual(job.phases[job.phase_index], "Combined · App publication · Signing in")
+        self.assertFalse(any(phase.startswith(("Energy ·", "Foundry ·"))
+                             for phase in SERVER.WORKFLOW_PHASES))
 
     def test_both_deploy_forms_explain_reuse_and_confirm_resource_creation(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -1447,22 +2373,25 @@ console.log(JSON.stringify([
         self.assertEqual(result.returncode, 0, result.stderr)
         forms = json.loads(result.stdout)
         for prefix, form in zip(("deploy", "workflow"), forms):
-            for suffix in ("AzureSubscriptionId", "FoundryModel",
-                           "FoundryCreate", "FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
-                           "FoundryModelSku", "FoundryModelCapacity"):
+            for suffix in ("AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryCreate"):
                 self.assertIn(f'id="{prefix}{suffix}"', form)
             self.assertIn(f'foundryPayload("{prefix}")', page)
-            self.assertIn(f'id="{prefix}FoundryCreation" class="foundry-block" hidden', form)
             normal_fields = form[:form.index('<details')]
-            self.assertEqual(normal_fields.count('type="text"'), 1)
-            self.assertNotIn("FoundryCreate", normal_fields)
-            self.assertIn("Use existing resources (recommended)", normal_fields)
-            self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", normal_fields).split()), 40)
-            self.assertIn(f'<details id="{prefix}FoundryOverrides" class="foundry-block">', form)
-            self.assertIn(f'<details id="{prefix}FoundryNewProjectOptions" class="foundry-block">', form)
-            self.assertNotIn("<summary>Advanced settings</summary>", form)
-            for suffix in ("OntologyGraphBinding", "FoundryEndpoint", "AcrName", "FoundryProjectResourceId"):
+            self.assertEqual(normal_fields.count('type="text"'), 4)
+            self.assertLess(form.index(f'id="{prefix}AzureSubscriptionId"'), form.index(f'id="{prefix}FoundryProjectName"'))
+            self.assertIn("FoundryCreate", normal_fields)
+            self.assertIn("Automatic multi-agent setup", form)
+            self.assertIn("billable", normal_fields)
+            self.assertNotIn("FoundryOverrides", form)
+            self.assertNotIn("FoundryNewProjectOptions", form)
+            self.assertNotIn("FoundryNewModel", form)
+            self.assertNotIn("FoundryNewProjectName", form)
+            for suffix in ("OntologyGraphBinding", "FoundryEndpoint", "AcrName", "FoundryProjectResourceId",
+                           "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
+                           "FoundryModelSku", "FoundryModelCapacity"):
                 self.assertNotIn(f'id="{prefix}{suffix}"', form)
+            self.assertNotIn("Model deployment settings", form)
+            self.assertIn("Global inference may apply", normal_fields)
             self.assertNotIn("Work-order permissions", form)
             self.assertNotIn("ProductionWrites", form)
             self.assertIn("<summary>Fabric App authentication</summary>", form)
@@ -1471,19 +2400,42 @@ console.log(JSON.stringify([
             self.assertIn(f'<div id="{client_id}Fields" hidden>', form)
             self.assertIn("Use a pre-created app registration", form)
             self.assertNotIn("Keep this target's current setting", form)
-            self.assertIn("Enter the existing project name to reuse it.", form)
-            self.assertIn("Without a name, setup uses a saved, target-named or sole available project.", form)
+            self.assertIn("Foundry account is the parent Azure resource", form)
+            self.assertIn("FoundryAccountName", form)
+            self.assertIn("Saved project or stable workspace-GUID project", form)
             self.assertNotIn("usage charges", form)
-            self.assertIn(">Create a new project</summary>", form)
+            self.assertIn("Allow project creation (billable)", form)
+            self.assertIn(f'aria-describedby="{prefix}FoundryCreateHelp"', form)
+            self.assertIn(f'id="{prefix}FoundryCreateHelp"', form)
+            self.assertIn("Existing project (even for a new Fabric workspace): unchecked.", form)
+            self.assertIn("Missing project: check. Agent updates still run.", form)
+            help_text = re.search(rf'<p id="{prefix}FoundryCreateHelp" class="hint">(.*?)</p>', form).group(1)
+            self.assertLessEqual(len(help_text.split()), 20)
+            self.assertIn("Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked.", normal_fields)
+            self.assertIn("Model TPM/RPM remains shared.", normal_fields)
+            self.assertIn("Separate projects are not end-to-end verified.", normal_fields)
+            self.assertIn("Creating another project did not resolve the earlier hosted-routing 404", normal_fields)
+            self.assertNotIn("or use separate projects in one account", form)
+            self.assertNotIn("Separate projects: keep the account/model", form)
+            self.assertIn("stable workspace-GUID project", form)
+            self.assertIn("all projects share", form.lower())
+            self.assertIn("Stable workspace suffixes separate agents, connections and hosted state", form)
+            self.assertIn("no extra model deployment is allocated", form.lower())
+            self.assertIn("names are not a security boundary", form)
+            self.assertIn("Creation approval permits missing resources; it does not force recreation.", form)
+            self.assertIn("Full Deploy uses these same settings and includes Foundry setup", form)
+            self.assertIn("Approval is not saved.", form)
             self.assertNotIn("Leave blank unless", form)
-            self.assertNotIn("billable", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
             self.assertEqual(len(identifiers), len(set(identifiers)))
-        self.assertIn("I approve creating Azure resources", page)
+        self.assertIn("No separate Foundry run is needed first.", page)
+        self.assertIn("Full Deploy repeats Git sync and Core setup.", page)
+        self.assertIn("Allow project creation (billable)", page)
+        self.assertNotIn("Allow creating a missing Foundry project", page)
         self.assertNotIn('placeholder="gpt-5.6-sol"', page)
         self.assertNotIn("Advanced / first-time", page)
         self.assertNotIn("Advanced: secret names", page)
-        handler = page[page.index('$("deployBtn").addEventListener'):page.index('$("workflowBtn").addEventListener')]
+        handler = page[page.index('$("deployBtn").addEventListener'):page.index('function workflowPayload(')]
         self.assertNotIn("workflow", handler)
 
     def test_ui_help_stays_brief_without_removing_warnings(self):
@@ -1492,7 +2444,7 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(re.sub(r"<[^>]*>", " ", paragraph).split()), 45, paragraph)
         for spec in SERVER.PIPELINE_PARAM_SPEC:
             self.assertLessEqual(len(spec["help"].split()), 12, spec["name"])
-        self.assertIn("I approve creating Azure resources", page)
+        self.assertIn("Allow project creation (billable)", page)
         self.assertIn("Deletes every workspace item.", page)
         self.assertIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
@@ -1541,7 +2493,7 @@ for (const clientId of spaClientIds) {
             self.assertIn(f'spaClientValid("{client_id}")', page)
         self.assertNotIn("appOntologyGraphBinding", page)
 
-    def test_foundry_creation_requires_only_model_and_valid_optional_capacity(self):
+    def test_foundry_creation_requires_only_valid_project_and_model_names(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         start = page.index("function foundryValid(")
         function = page[start:page.index('for (const prefix of ["deploy", "workflow"])', start)]
@@ -1549,22 +2501,31 @@ for (const clientId of spaClientIds) {
 const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
-for (const suffix of ["FoundryCreate", "FoundryNewModel", "FoundryModelVersion", "FoundryModelSku",
-                     "FoundryModelCapacity", "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
+for (const suffix of ["FoundryCreate", "FoundryAccountName", "FoundryProjectName", "FoundryModel",
+                     "FoundryCreationStatus"]) fields["deploy"+suffix] = {value:"",checked:false};
 """ + function + """
+assert.equal(foundryValid("deploy"), true);
+for (const invalid of ["a", "-account", "account-", "has.dot", "x".repeat(65)]) {
+  fields.deployFoundryAccountName.value = invalid;
+  assert.equal(foundryValid("deploy"), false);
+}
+fields.deployFoundryAccountName.value = "my-account";
 assert.equal(foundryValid("deploy"), true);
 fields.deployFoundryCreate.checked = true;
 assert.equal(foundryValid("deploy"), false);
-assert.match(fields.deployFoundryCreationStatus.textContent, /enter the model/);
-fields.deployFoundryNewModel.value="approved";
+assert.match(fields.deployFoundryCreationStatus.textContent, /Enter a valid model deployment name/);
+fields.deployFoundryModel.value="approved";
 assert.equal(foundryValid("deploy"), true);
-assert.equal(fields.deployFoundryModelVersion.value, "");
-assert.equal(fields.deployFoundryModelSku.value, "");
-for (const invalid of ["0", "-1", "1.5"]) {
-  fields.deployFoundryModelCapacity.value=invalid;
-  assert.equal(foundryValid("deploy"), false);
+fields.deployFoundryProjectName.value="my-project";
+assert.equal(foundryValid("deploy"), true);
+for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
+  for (const invalid of ["-invalid", "has spaces", "x".repeat(65)]) {
+    const previous = fields["deploy"+suffix].value;
+    fields["deploy"+suffix].value=invalid;
+    assert.equal(foundryValid("deploy"), false);
+    fields["deploy"+suffix].value=previous;
+  }
 }
-fields.deployFoundryModelCapacity.value="12";
 assert.equal(foundryValid("deploy"), true);
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
@@ -1579,10 +2540,8 @@ const assert = require("node:assert/strict");
 const fields = {};
 const $ = id => fields[id];
 const suffixes = [
-  "AzureSubscriptionId", "FoundryProjectName",
-  "FoundryModel", "FoundryNewModel", "FoundryLocation", "FoundryModelName",
-  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
-  "FoundryCreate", "FoundryCreation", "FoundryNewProjectOptions", "FoundryNewProjectSummary",
+  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName",
+  "FoundryModel", "FoundryCreate",
   "FoundryModeSummary", "FoundryCreationStatus",
 ];
 """ + functions + """
@@ -1591,12 +2550,11 @@ for (const prefix of ["deploy", "workflow"]) {
     fields[prefix + suffix] = {value:"", checked:false, disabled:false, hidden:false, open:false, textContent:""};
   }
   updateFoundryMode(prefix);
-  assert.equal($(prefix+"FoundryCreation").hidden, true);
-  assert.equal($(prefix+"FoundryNewProjectOptions").open, false);
-  assert.equal($(prefix+"FoundryNewModel").disabled, true);
   assert.equal(foundryPayload(prefix).createFoundry, false);
   assert.equal(foundryPayload(prefix).foundryModel, "");
   assert.equal(foundryValid(prefix), true);
+  $(prefix+"FoundryAccountName").value = "my-account";
+  assert.equal(foundryPayload(prefix).foundryAccountName, "my-account");
   $(prefix+"FoundryProjectName").value = "existing-project-name";
   $(prefix+"FoundryModel").value = "existing-model";
   assert.equal(foundryPayload(prefix).foundryProjectResourceId, "");
@@ -1611,35 +2569,32 @@ for (const prefix of ["deploy", "workflow"]) {
   }
   $(prefix+"FoundryCreate").checked = true;
   updateFoundryMode(prefix);
-  assert.equal(foundryValid(prefix), false);
-  assert.equal($(prefix+"FoundryCreation").hidden, false);
-  assert.equal($(prefix+"FoundryNewProjectOptions").open, true);
-  assert.equal($(prefix+"FoundryNewModel").disabled, false);
-  assert.equal($(prefix+"FoundryProjectName").disabled, true);
-  assert.match($(prefix+"FoundryModeSummary").textContent, /Create new resources/);
-  assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "New project selected");
-  assert.ok(!$(prefix+"FoundryModeSummary").textContent.includes("billable"));
-  $(prefix+"FoundryNewModel").value = "approved-new-model";
-  $(prefix+"FoundryModelVersion").value = "approved-version";
-  $(prefix+"FoundryModelSku").value = "approved-sku";
-  $(prefix+"FoundryModelCapacity").value = "4";
+  assert.equal(foundryValid(prefix), true);
+  assert.equal($(prefix+"FoundryProjectName").disabled, false);
+  assert.equal($(prefix+"FoundryModel").disabled, false);
+  assert.equal($(prefix+"FoundryProjectName").value, "existing-project-name");
+  assert.equal($(prefix+"FoundryModel").value, "existing-model");
+  assert.match($(prefix+"FoundryModeSummary").textContent, /Create only if missing/);
+  assert.match($(prefix+"FoundryCreationStatus").textContent, /verified multi-workspace shared-project path, leave unchecked/);
+  assert.match($(prefix+"FoundryCreationStatus").textContent, /Creation does not fix hosted-routing 404s/);
   assert.equal(foundryValid(prefix), true);
   const creating = foundryPayload(prefix);
   assert.equal(creating.createFoundry, true);
-  assert.equal(creating.foundryModel, "approved-new-model");
+  assert.equal(creating.foundryModel, "existing-model");
   assert.equal(creating.foundryProjectResourceId, "");
-  assert.equal(creating.foundryProjectName, "");
+  assert.equal(creating.foundryProjectName, "existing-project-name");
+  assert.equal(Object.hasOwn(creating, "foundryNewProjectName"), false);
+  for (const key of ["foundryModelVersion", "foundryModelSku", "foundryModelCapacity",
+                     "foundryLocation", "foundryModelName"]) assert.equal(Object.hasOwn(creating, key), false);
   assert.equal(Object.hasOwn(creating, "productionWrites"), false);
   $(prefix+"FoundryCreate").checked = false;
   updateFoundryMode(prefix);
-  assert.equal($(prefix+"FoundryNewProjectSummary").textContent, "Create a new project");
   const reused = foundryPayload(prefix);
   assert.equal(reused.createFoundry, false);
   assert.equal(reused.foundryModel, "existing-model");
   assert.equal(reused.foundryProjectResourceId, "");
   assert.equal(reused.foundryProjectName, "existing-project-name");
-  assert.equal(reused.foundryModelVersion, "");
-  assert.equal(reused.foundryModelCapacity, "");
+  assert.equal(Object.hasOwn(reused, "foundryNewProjectName"), false);
 }
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
@@ -1652,6 +2607,8 @@ for (const prefix of ["deploy", "workflow"]) {
         self.assertIn('title: "Core Setup: Fabric, Weather and Energy"', html)
         self.assertNotIn('title: "Core Setup: Energy Sources"', html)
         self.assertIn('title: "Fabric App Deployment"', html)
+        self.assertIn("complete ontology before either Fabric agent", html)
+        self.assertIn("Requires both UKMet API keys", html)
         self.assertIn('["workflowPanel", "pipelinePanel"].includes(el.id)', html)
         self.assertIn('state === "active" || state === "failed"', html)
 
@@ -1672,7 +2629,7 @@ for (const index of [1, 2, 3, 4, 5]) {
   assert.ok(!rendered.includes('data-group="energy"'));
   assert.ok(!rendered.includes("Preparing energy sources"));
 }
-assert.ok(render(2).includes("Running Core/Weather + energy notebooks in parallel"));
+assert.ok(render(2).includes("Building the complete ontology before Fabric agents; energy runs in parallel"));
 assert.ok(render(4).includes("Publishing map read models"));
 assert.ok(render(6).includes('data-group="pipeline" data-state="done"'));
 for (const [index, component] of [[2, "Setup pipeline"], [4, "Energy setup"]]) {
@@ -1687,7 +2644,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_full_workflow_builds_existing_commands_in_serial_order(self):
+    def test_full_workflow_builds_three_commands_without_duplicate_core_or_providers(self):
         payload = {
             "tenant": "tenant.example",
             "workspace": "Demo Workspace",
@@ -1710,7 +2667,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         self.assertEqual(response.status_code, 200, response.get_json())
         steps = start.call_args.args[0]
         self.assertEqual([step["name"] for step in steps], [
-            "GitHub sync", "Setup pipeline", "Energy setup", "Foundry multi-agent setup", "Fabric app deploy",
+            "GitHub sync", "Setup pipeline", SERVER.COMBINED_STEP,
         ])
         self.assertEqual(Path(steps[0]["argv"][0]).name, "sync_workspace_from_git.py")
         self.assertEqual(Path(steps[1]["argv"][0]).name, "run_pipeline.py")
@@ -1724,6 +2681,15 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         self.assertEqual(steps[2]["argv"][-2:], [
             "--client-id", "11111111-1111-1111-1111-111111111111",
         ])
+        self.assertEqual(steps[2]["argv"].count("--energy-read-models-only"), 1)
+        self.assertEqual(steps[2]["argv"][steps[2]["argv"].index("--stage") + 1], "all")
+        self.assertEqual(steps[2]["argv"][steps[2]["argv"].index("--energy-map") + 1], "enabled")
+        self.assertIn("--require-parallel-energy", steps[1]["argv"])
+        self.assertEqual(steps[2]["timeout"], max(SERVER.ENERGY_TIMEOUT_S, SERVER.FOUNDRY_TIMEOUT_S)
+                         + SERVER.DEPLOY_TIMEOUT_S)
+        self.assertEqual([step["phase_offset"] for step in steps], [1, 6, 10])
+        self.assertEqual(len(SERVER.WORKFLOW_PHASES), 19)
+        self.assertEqual(steps[2]["markers"], SERVER.DEPLOY_MARKERS)
 
     def test_full_workflow_stops_at_failed_component_and_reports_it(self):
         job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
@@ -1857,7 +2823,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="workflowBtn"', page)
         self.assertIn('"/api/full-workflow"', page)
-        self.assertIn("Runs each step in order; stops on failure.", page)
+        self.assertIn("finishes Energy and Foundry concurrently before app publication; stops on failure.", page)
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="deploymentActions"'))
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="tabDelete"'))
 
@@ -1888,7 +2854,7 @@ assert.ok(coreOnly.includes("Publishing map read models"));
     def test_full_workflow_submission_uses_only_its_own_fields(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         handler = page[
-            page.index('$("workflowBtn").addEventListener'):
+            page.index('function workflowPayload('):
             page.index('$("restartBtn").addEventListener')
         ]
         for field_id in (
@@ -1944,6 +2910,39 @@ assert.ok(coreOnly.includes("Publishing map read models"));
             terminate.assert_not_called()
         finally:
             SERVER.JOBS.clear()
+
+
+class PreparedEnergyPublicationTests(unittest.TestCase):
+    def test_app_publication_uses_prepared_energy_setting_without_another_selector(self):
+        target = {"tenant": "tenant.example", "workspace": "Demo"}
+        client = SERVER.app.test_client()
+        with patch.object(SERVER, "_start", return_value="job") as start:
+            response = client.post("/api/deploy-app", json=target)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        argv = start.call_args.args[0]
+        self.assertEqual(argv[argv.index("--energy-map") + 1], "keep")
+        for value in ("enabled", "disabled"):
+            with self.subTest(value=value), patch.object(SERVER, "_start") as start:
+                response = client.post("/api/deploy-app", json={**target, "energyMap": value})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("preserves the prepared energy-map setting", response.get_json()["error"])
+                start.assert_not_called()
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("appEnergyMap", page)
+        self.assertNotIn("Energy-map navigation", page)
+
+    def test_full_workflow_combined_engine_enables_energy(self):
+        target = {
+            "tenant": "tenant.example", "workspace": "Demo", "repository": "owner/repo",
+            "connectionId": "yes", "parameters": PIPELINE_PARAMS, "energyMap": "enabled",
+        }
+        with patch.object(SERVER, "_start_workflow", return_value="job") as start:
+            response = SERVER.app.test_client().post("/api/full-workflow", json=target)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        steps = start.call_args.args[0]
+        energy = next(step for step in steps if step["name"] == SERVER.COMBINED_STEP)["argv"]
+        self.assertEqual(energy[energy.index("--energy-map") + 1], "enabled")
+        self.assertIn("--energy-read-models-only", energy)
 
 
 if __name__ == "__main__":

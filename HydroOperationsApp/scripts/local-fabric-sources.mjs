@@ -4,37 +4,51 @@ import { parseEnv } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { ConnectorsRayfinClient, RayfinClient } from '@microsoft/rayfin-client'
 import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
-import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql } from '../src/services/copilot/query.ts'
+import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql, KqlValidationError } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { lakehouseConnectorConfig } from '../src/services/lakehouseConnector.ts'
 import { operationalConnectorConfig } from '../src/services/operationalConnector.ts'
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
-import { AGENT_NAMES, DIRECT_TOOLS, WEATHER_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, qualityWorkWorkflow, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { AGENT_NAMES, SPECIALIST_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, qualityMatchForRequest, qualityWorkWorkflow, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsDirectSourceRead, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
 const fabric = 'https://api.fabric.microsoft.com/v1'
 const guid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
+const POPULATION_COUNT = /\b(?:how\s+many|count|number\s+of|total)\b/i
+
+class SourceReadError extends Error {
+  constructor(message, code) {
+    super(message)
+    this.code = code
+  }
+}
 
 export function governedToolResult(tool, args, result) {
   return { ...result, _evidence_datasets: describeToolEvidence(tool, args, result) }
 }
 
-export function chatIntent(question, carriedKinds = []) {
+export function chatIntent(question, carriedKinds = [], selectedNativeSources = []) {
   if (typeof question !== 'string' || !question.trim() || question.length > 8000) {
     throw new Error('Chat intent requires a bounded nonempty operator question.')
   }
-  const nativeSources = requestedNativeSources(question)
+  if (!Array.isArray(selectedNativeSources) || selectedNativeSources.length > 1
+      || selectedNativeSources.some(source => source !== 'data-agent')) {
+    throw new Error('Only the published Data Agent can be explicitly selected for native execution.')
+  }
+  const nativeSources = [...new Set([...requestedNativeSources(question), ...selectedNativeSources])]
   const specialists = requiredSpecialists(question, nativeSources.length > 0)
+  const answerKinds = nativeSources.length && !requestsDirectSourceRead(question)
+    ? ['native_claims'] : requiredEvidenceKinds(question, carriedKinds)
   // Required evidence always needs a reader: never compile an empty plan for a question that asks for data.
-  if (!specialists.length && requiredEvidenceKinds(question, carriedKinds).some(kind => kind !== 'native_claims')) specialists.push('qa')
+  if (!specialists.length && answerKinds.some(kind => kind !== 'native_claims')) specialists.push('qa')
   return { charts_requested: requiresChartOutput(question), native_sources: nativeSources,
     proposal_priority: workOrderPriorityForRequest(question),
     equipment_selection: equipmentSelectionForRequest(question) ?? null,
-    required_evidence_kinds: requiredEvidenceKinds(question, carriedKinds),
-    permitted_evidence_kinds: permittedEvidenceKinds(question, carriedKinds),
+    required_evidence_kinds: answerKinds,
+    permitted_evidence_kinds: [...new Set([...permittedEvidenceKinds(question, carriedKinds), ...answerKinds])],
     required_specialists: specialists,
     required_specialist_steps: Object.fromEntries(specialists.map(role => [
       role, role === 'qa' ? requiredIndependentQaSteps(question) : 1,
@@ -44,11 +58,11 @@ export function chatIntent(question, carriedKinds = []) {
 /** Intent for a follow-up in a conversation whose previous run already produced verified evidence of the given
  *  kinds. `reuse` is true only when the question points back at that data, every kind it needs is already held,
  *  and no specialist would still have to re-read it. Otherwise the intent is exactly the standalone one. */
-export function chatFollowUp(question, carriedKinds) {
+export function chatFollowUp(question, carriedKinds, selectedNativeSources = []) {
   const carried = [...new Set(carriedKinds)]
-  const standalone = chatIntent(question)
+  const standalone = chatIntent(question, [], selectedNativeSources)
   if (!carried.length || !refersToPriorData(question)) return { intent: standalone, reuse: false }
-  const intent = chatIntent(question, carried)
+  const intent = chatIntent(question, carried, selectedNativeSources)
   const needed = intent.required_evidence_kinds.filter(kind => kind !== 'native_claims')
   if (!needed.length || !needed.every(kind => carried.includes(kind)) || intent.native_sources.length) {
     return { intent: standalone, reuse: false }
@@ -70,7 +84,6 @@ function addNeedAssessmentKinds(question, kinds, carriedKinds) {
 }
 
 export function requiredEvidenceKinds(question, carriedKinds = []) {
-  if (qualityWorkWorkflow(question)) return ['native_claims']
   const text = positiveActionClauses(question)
   const kinds = new Set()
   const weather = requestsWeather(question)
@@ -108,6 +121,9 @@ export function requiredEvidenceKinds(question, carriedKinds = []) {
   if (/\blist\b[^.!?;\n]{0,80}\bspare parts?\b/i.test(text)) kinds.add('spare_parts')
   if (/\b(?:show|read|list)\b[^.!?;\n]{0,80}\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
   if (requestsWorkOrderNeedAssessment(question)) addNeedAssessmentKinds(question, kinds, carriedKinds)
+  if (!kinds.size && POPULATION_COUNT.test(text)) {
+    for (const kind of permittedEvidenceKinds(question, carriedKinds)) kinds.add(kind)
+  }
   return [...kinds]
 }
 
@@ -151,17 +167,19 @@ export function analyticalEvidencePlan(question, answerKinds) {
   const lookback = requestedLookback(question)
   const plan = []
   if (kinds.has('signal_quality')) {
+    const qualityMatch = qualityMatchForRequest(question)
     const qualities = [...new Set([
       ...requestedQualityStates(question),
       ...[...text.matchAll(/\b(BAD|GOOD|UNCERTAIN)\b/gi)].map(match => match[1].toUpperCase()),
     ])]
     for (const quality of qualities.length ? qualities : ['BAD']) {
-      const arguments_ = { quality, ...(lookback ? { lookback } : {}),
+      const arguments_ = { quality, ...(qualityMatch === 'any' ? { quality_match: 'any' } : {}), ...(lookback ? { lookback } : {}),
         ...(/\bturbines?\b/i.test(text) ? { equipment_type: 'turbine' } : {}) }
       plan.push({ kind: 'signal_quality', tool: 'query_signal_quality_snapshot',
         arguments: arguments_,
         match_arguments: {
           ...(qualities.length ? { quality } : {}),
+          ...(qualityMatch === 'any' ? { quality_match: 'any' } : {}),
           ...(lookback ? { lookback } : {}),
           ...(/\bturbines?\b/i.test(text) ? { equipment_type: 'turbine' } : {}),
         } })
@@ -196,6 +214,7 @@ function defaultEvidenceScope(kind, question) {
   if (!dataset) throw new Error(`Cannot compile an ungoverned evidence kind: ${kind}.`)
   if (dataset.evidenceScopes.length === 1) return dataset.evidenceScopes[0]
   const text = positiveActionClauses(question)
+  if (POPULATION_COUNT.test(text)) return 'population'
   if (kind === 'native_claims') {
     return /\b(?:all|every|inventory|list facility instances|which turbines)\b/i.test(text)
       ? 'population' : 'focus'
@@ -335,7 +354,7 @@ export function compileAnswerContract(question, chartsRequested, requiredKinds, 
 
 function sourceClause(question, source) {
   if (source !== 'data-agent') throw new Error('Sparky supports only the published Fabric Data Agent.')
-  if (qualityWorkWorkflow(question)) {
+  if (qualityWorkWorkflow(question) && !requestsDirectSourceRead(question)) {
     return 'Ask the published Fabric Data Agent bound to the selected generation-2 ontology which turbines had any BAD telemetry quality from midnight UTC today through requested_at_utc supplied in the context, and what work is already open for those same turbines. Use the selected ontology as semantic context. Execute supported source-native SQL on its associated Lakehouse for static signal-to-equipment mappings, KQL on its associated Eventhouse for BAD telemetry aggregates, and SQL on the attached operational database for work. Join actual returned identifiers by exact opcua_node_id and canonical equipment_id; pass required result tuples between source tools. This is ontology-backed execution, not a direct-source fallback. Do not invoke ontology traversal for this request. First query the associated Eventhouse with KQL for the requested UTC window, total telemetry rows and BAD aggregates, and separately the latest event time across the source without the day filter. Then resolve actual returned signal identifiers through the associated Lakehouse SQL and query operational SQL for the affected equipment. Even when no BAD identifiers are returned, verify the Lakehouse with a bounded static-mapping count query and operational SQL with a bounded open-work count query; leave affected arrays empty and report work_complete true only after those reads succeed. Do not infer an execution failure from definition metadata; report actual tool errors and incomplete joins. Had BAD means any BAD sample in that window, not only signals whose latest sample is BAD. Return only one JSON object, without surrounding prose, with window_start_utc, window_end_utc, affected_signals, open_work_orders, and coverage. Each affected_signals row must include canonical equipment_id, opcua_node_id, bad_sample_count, first_bad_utc and last_bad_utc; include turbine tag and instrument_id when available. Each open_work_orders row must include equipment_id, work_order_number and status, plus title, priority and signal ID when available; exclude Completed and Cancelled work. coverage must include telemetry_complete and work_complete booleans plus affected_signal_count and open_work_order_count matching the complete returned arrays. Include the queried total telemetry rows in the requested window and latest available telemetry timestamp in coverage; distinguish no BAD samples from absent or stale telemetry, never healthy operation inferred from zero BAD rows. Preserve affected turbines with no open work. Empty arrays are valid only after successful complete reads; never turn an unavailable source into zero rows or invent completeness. Use the exact requested_at_utc as window_end_utc. Report actual read times and source references when available; do not invent provenance or identifiers. Keep this delegation read-only: do not do RCA, recommend unrelated maintenance, or create/draft work orders. If source access, binding, identity stitching or coverage fails, report that failure instead of substituting another source.'
   }
   return positiveActionClauses(question)
@@ -346,7 +365,7 @@ function sourceClause(question, source) {
 }
 
 export function validateQualityWorkEvidence(question, result, requestedAt) {
-  if (!qualityWorkWorkflow(question)) return result
+  if (!qualityWorkWorkflow(question) || requestsDirectSourceRead(question)) return result
   const candidates = new Map()
   const visit = value => {
     if (value && typeof value === 'object') {
@@ -545,7 +564,7 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
     steps.push({
       specialist: 'work-order',
       question: qualityWorkflow
-        ? 'Reuse the supplied Data Agent evidence for all affected canonical equipment IDs, and the RCA report when requested. Do not rerun fleet-wide telemetry retrieval or choose unrelated equipment. Check current complete open-work coverage in operational SQL for each candidate, matching equipment and signal/scope where available; Data Agent output alone does not certify SQL coverage. BAD telemetry quality is not proof of a physical equipment fault. Review whether a signal-quality investigation is justified and already covered; stage editable diagnostic/inspection drafts only for evidenced uncovered needs, with no invented physical repair or confirmed root cause. Return no_draft with covering work and reasons when appropriate. Do not execute production writes; every staged draft requires human approval.'
+        ? 'Reuse the supplied verified evidence for all affected canonical equipment IDs, and the RCA report when requested. Do not rerun fleet-wide telemetry retrieval or choose unrelated equipment. Check current complete open-work coverage in operational SQL for each candidate, matching equipment and signal/scope where available; Data Agent output alone does not certify SQL coverage. BAD telemetry quality is not proof of a physical equipment fault. Review whether a signal-quality investigation is justified and already covered; stage editable diagnostic/inspection drafts only for evidenced uncovered needs, with no invented physical repair or confirmed root cause. Return no_draft with covering work and reasons when appropriate. Do not execute production writes; every staged draft requires human approval.'
         : conditionalWork
         ? 'Review verified work coverage and stage an editable draft only for a verified uncovered equipment issue.'
         : (initialQaCount > 0 || intent.evidence_carried === true) && !NAMED_EQUIPMENT.test(positiveActionClauses(question))
@@ -888,19 +907,19 @@ export async function configuration() {
     return runtimeConfiguration(input)
   }
   const env = parseEnv(await readFile(new URL('../rayfin/.env', import.meta.url), 'utf8'))
-  const binding = JSON.parse(env.RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING)
   const identity = {
     tenant_id: env.RAYFIN_PUBLIC_TENANT_ID,
     workspace_id: env.RAYFIN_PUBLIC_WORKSPACE_ID,
-    ontology_id: binding.ontologyId,
+    ontology_id: env.RAYFIN_PUBLIC_ONTOLOGY_ID,
     eventhouse_id: env.RAYFIN_PUBLIC_EVENTHOUSE_ID,
     database_id: env.RAYFIN_PUBLIC_KQL_DATABASE_ID,
     lakehouse_id: env.RAYFIN_PUBLIC_LAKEHOUSE_ID,
     appbackend_id: env.RAYFIN_PUBLIC_ITEM_ID,
     operational_sql_database_id: env.RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID,
   }
-  if (Object.values(identity).some(value => typeof value !== 'string' || !guid.test(value))
-    || binding.workspaceId !== identity.workspace_id) throw new Error('Explicit source identities are missing or inconsistent.')
+  if (Object.values(identity).some(value => typeof value !== 'string' || !guid.test(value))) {
+    throw new Error('Explicit source identities are missing or inconsistent.')
+  }
   const state = JSON.parse(await readFile(new URL('../rayfin/.deployments.json', import.meta.url), 'utf8'))
   const deployment = state.deployments?.[state.active]
   if (!env.RAYFIN_PUBLIC_API_URL || env.RAYFIN_PUBLIC_API_URL !== deployment?.fabricApiUrl
@@ -962,7 +981,7 @@ export async function discover(config, token, fetcher = fetch) {
   return {
     source: { tenant_id: config.tenant_id, workspace_id: config.workspace_id,
       ontology_id: config.ontology_id, generation: 2, configuration_digest: config.configuration_digest },
-    cluster: cluster.origin, database: database.displayName,
+    cluster: cluster.origin, database: database.displayName, workload_origin: api.origin,
   }
 }
 
@@ -1045,14 +1064,18 @@ export async function collectWorkOrders(client, equipmentId) {
 
 async function operationalRead(config, token, label, read) {
   const client = new ConnectorsRayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
-    publishableKey: config.publishable_key, authStorage: false,
+    publishableKey: config.publishable_key, authStorage: false, timeout: 60_000,
     connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig } })
   try {
     await signInWithEntraToken(client.auth, { entraToken: token })
     return await read(client)
   } catch (error) {
-    const code = typeof error?.code === 'string' && /^[A-Z_0-9]+$/.test(error.code) ? error.code : 'READ_FAILED'
-    throw new Error(`Rayfin ${label} read failed (${code}). No empty-work fallback or proposal is permitted.`)
+    const code = typeof error?.code === 'string' && /^[A-Z_0-9]{1,64}$/.test(error.code) ? error.code
+      : Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? `HTTP_${error.status}`
+        : /^Request timed out after \d+ms$/.test(error?.message ?? '') ? 'READ_TIMEOUT'
+          : error?.message?.startsWith('GraphQL errors:') ? 'GRAPHQL_QUERY_FAILED' : 'READ_FAILED'
+    throw new SourceReadError(
+      `Rayfin ${label} read failed (${code}). No empty-work fallback or proposal is permitted.`, code)
   } finally {
     client.auth.destroy()
   }
@@ -1129,8 +1152,8 @@ export async function readWorkBacklog(config, args, token,
 export async function readFleetSnapshot(config, metadata, temperature, args, tokens, fetcher = fetch,
   readWorkInventory = () => operationalRead(config, tokens.graphql, 'work-order snapshot',
     client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders')))) {
-  const query = fleetSnapshotQuery(temperature, args)
   const readStartedAt = new Date().toISOString()
+  const query = fleetSnapshotQuery(temperature, args, readStartedAt)
   const labels = ['equipment metadata', 'instrument metadata', 'work-order inventory', 'telemetry']
   const reads = await Promise.allSettled([
     readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql),
@@ -1240,8 +1263,9 @@ export async function submitApprovedWorkOrder(config, draft, edits, principalId,
     return { record, reconciled: false, read_completed_at_utc: new Date().toISOString() }
   }
   if (useClient) return execute(await useClient())
-  const client = new RayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
-    publishableKey: config.publishable_key, authStorage: false })
+  const client = new ConnectorsRayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
+    publishableKey: config.publishable_key, authStorage: false,
+    connectors: { hydrooperations: operationalConnectorConfig } })
   try {
     await signInWithEntraToken(client.auth, { entraToken: tokens.graphql })
     return await execute(client)
@@ -1288,12 +1312,12 @@ function discoverCached(config, token) {
 export async function handle(request, deps = {}) {
   const submitApproved = deps.submitApprovedWorkOrder ?? submitApprovedWorkOrder
   if (request.action === 'chat_intent') {
-    if (request.carried_kinds === undefined) return chatIntent(request.question)
+    if (request.carried_kinds === undefined) return chatIntent(request.question, [], request.native_sources)
     if (!Array.isArray(request.carried_kinds) || request.carried_kinds.length > 40
         || request.carried_kinds.some(kind => typeof kind !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(kind))) {
       throw new Error('Carried evidence kinds must be a bounded list of governed identifiers.')
     }
-    const { intent, reuse } = chatFollowUp(request.question, request.carried_kinds)
+    const { intent, reuse } = chatFollowUp(request.question, request.carried_kinds, request.native_sources)
     return { ...intent, reuse_prior_evidence: reuse }
   }
   if (request.action === 'analytical_evidence_plan') {
@@ -1331,16 +1355,23 @@ export async function handle(request, deps = {}) {
   }
   if (request.action === 'validate_quality_work_evidence') {
     return {
-      required: Boolean(qualityWorkWorkflow(request.question)),
+      required: Boolean(qualityWorkWorkflow(request.question)) && !requestsDirectSourceRead(request.question),
       result: validateQualityWorkEvidence(request.question, request.result, request.requested_at_utc),
     }
   }
   if (request.action === 'validate_hydro_query') {
     const parsed = parseHydroQuery(request.report)
-    if (!parsed.ok) throw new Error(parsed.error)
-    const allowed = request.role === 'weather' ? WEATHER_TOOLS
-      : request.role === 'work-order' ? [...DIRECT_TOOLS, 'propose_work_order'] : DIRECT_TOOLS
-    if (!allowed.includes(parsed.toolName)) throw new Error('Tool is not permitted for this specialist.')
+    if (!parsed.ok) return parsed
+    const allowed = Object.hasOwn(SPECIALIST_TOOLS, request.role) ? SPECIALIST_TOOLS[request.role] : undefined
+    if (!allowed?.includes(parsed.toolName)) throw new Error('Tool is not permitted for this specialist.')
+    if (parsed.toolName === 'run_kql') {
+      try {
+        validateKql(parsed.args.query, KUSTO_SOURCE_NAMES)
+      } catch (error) {
+        if (!(error instanceof KqlValidationError)) throw error
+        return { ok: false, error: error.message }
+      }
+    }
     return parsed
   }
   const config = await configuration()
@@ -1463,9 +1494,10 @@ export async function handle(request, deps = {}) {
     open_work_numbers: work.rows.map(item => item.workOrderNumber) }
 }
 
-function errorEnvelope(error) {
+export function errorEnvelope(error) {
   // Do not serialize SDK exceptions, request headers, tokens or response bodies.
   const message = error instanceof RcaEvidenceError || error instanceof WorkOrderSubmissionError
+    || error instanceof SourceReadError || error instanceof KqlValidationError
     || (error instanceof Error && error.constructor === Error)
     ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
   return { ok: false, error: message,

@@ -1,5 +1,16 @@
 # Hydro Operations Fabric App
 
+Hydro Intelligence is one **Supervisor-led multi-agent experience**, with no
+Direct Data Agent tab, engine selector or comparison entry. The Supervisor routes
+Fabric business questions through **Sparky / Fabric IQ** to the published Fabric
+Data Agent. Sparky forwards the original question once and returns the original
+answer unchanged, without another LLM wrapper or answer writer. Other specialists
+participate only when needed; work-order drafts still require explicit review
+and approval. The hosted Responses transport consumes completion events
+incrementally rather than waiting for the streaming connection to close.
+The legacy MCP/browser-coordination implementation described below is not this
+hosted execution path.
+
 A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
 **independent Fabric data stores** — plus an in‑browser 3D digital‑twin viewer.
@@ -30,6 +41,17 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > Application Administrator / Cloud Application Administrator configures the SPA and grants
 > tenant-wide consent. That consent is optional where the tenant allows user consent, since every
 > requested scope is user-consentable.
+
+Administration step 6 is the single entry point for Norwegian Energy Map preparation
+and maintenance in both layouts. Once prepared, its action becomes **Refresh snapshots**.
+Running progress appears above Guided Setup in the same full-width banner stack as
+telemetry and weather, with the live Fabric status and elapsed time. The map bar is
+indeterminate because Fabric does not report a completion percentage. Completion
+and failures stay visible in the step; source details and the exceptional
+full national-source rebuild are collapsed under **Maintenance and source details**.
+There is no separate map-maintenance card.
+Successful weather ingestion completes quietly without a global alert banner;
+weather failures and sign-in requirements remain visible.
 
 | Store | Owns | Accessed via |
 |---|---|---|
@@ -98,23 +120,41 @@ interactive Digital Twin model remains lazy-loaded when a selected asset support
 automatically without an additional operator action. The bootstrap uses local system fonts and does
 not wait on a third-party font stylesheet.
 
-The **Knowledge Graph** visualizes this composition as a scoped property graph. Its performant
-Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a
-WebGL dependency. It defaults to the selected turbine and synchronizes that selection with Overview,
-Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
-**generation-2 Ontology**. Default live-source mode reads its verified primary scalar
-bindings through the Lakehouse and independent SQL connectors and joins only declared
-relationships. All 18 current entity types and 17 relationship types have connector
-projections, including signals, classification and weather identities. A readable empty
-table contributes zero instances; it is not an unsupported binding. Rules and bound
-time-series properties are not evaluated; Eventhouse readings remain external context.
-The separate native mode requires an explicitly bound, materialized ontology-owned
-GraphModel and never silently falls back. Native exports use OWL/RDF Turtle; live
-exports use JSON with topology, coverage and source evidence. Missing access, invalid
-identities, incomplete reads and overflow fail closed.
+The **Knowledge Graph** is one live ontology-bound instance view, without separate schema or
+operational tabs. It verifies the generation-2 definition, reads actual rows through authenticated
+source connectors, and evaluates only declared relationships against their physical keys.
+It preserves the entity icons, weather nodes, directional links, network/hierarchy/concentric
+layouts, zoom, fit, selected-asset scope and expanded view. Eventhouse enrichment supplies actual
+readings, units, quality, timestamps and freshness. Critical red and warning amber halos pulse
+around affected nodes and respect reduced motion. Neither graph materialization nor a GraphModel
+binding is required. Source coverage and non-atomic read timing are disclosed; invalid or failed
+reads clear the graph instead of displaying invented or previous data.
+
+For a separate schema-only development preview without Fabric access, run
+`node scripts\knowledge-graph-preview.mjs` from `HydroOperationsApp` and open
+`http://127.0.0.1:5189/ontology-preview`. This development-only server mounts the real model page
+with explicitly declared synthetic schema inputs and a conspicuous fixture banner; it is not
+part of the application bundle or a live-read certification. The page links exercise light/dark
+themes, unrelated types and a failed read. Stop it with Ctrl+C after checking.
+To inspect an exact saved readback instead, run
+`node scripts\knowledge-graph-preview.mjs --definition "C:\path\readback.json"`.
+Add `--port 5193` to select another localhost port (default `5189`; occupied ports fail rather
+than silently switching).
+The envelope must contain `metadata` (item GUID, display name, numeric
+`properties.generation: 2`) and `definition.parts`. The preview uses the application’s actual
+TMDL parser and topology validation, rejects conflicting identities, and does not copy the file
+into the repository. Saved mode disables the synthetic isolates override. This remains an
+offline preview, not independent verification of live generation, materialization or agent runtime.
+
+The instance view defaults to the selected turbine and synchronizes selection with Overview,
+Real-Time Telemetry, Digital Twin and Maintenance. Header counts describe returned instances and
+links; advanced details disclose supported and excluded projections, read timing and the exact
+contract signature. OWL/RDF Turtle exports identify source-backed instances without claiming a
+native GraphModel identity. Native GQL utilities remain available internally but are not the
+Knowledge Graph page's topology source or a prerequisite for its canvas.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
-scenarios, historical screenshots, freshness behavior, and native graph prerequisites.
+scenarios, freshness behavior and superseded native-graph implementation history.
 
 Individual signal colours in the graph, 3D twin, and map reflect the reading's quality.
 Open work orders remain visible and contribute to asset-level health, but do not turn a GOOD
@@ -139,8 +179,8 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Namespaces stay distinct; display names and namespace are derived from the qualified name.
 - **Only `entityRelationships.tmdl` defines semantic relationship types.** `relationships.tmdl`
   resolves referenced single-column physical joins, never additional semantic edge types.
-  Only actual native graph instances supply topology; declared binding keys and STID rows
-  do not synthesize missing entities or relationships.
+  Actual rows from verified source bindings and their declared joins supply instance topology.
+  Names, STID rows and undeclared foreign keys do not synthesize missing entities or relationships.
 - Primitive, `Any`, `TimeSeries<T>`, and single-line `complexDataType` JSON metadata are
   retained, including `additionalBackingTable` references for Eventhouse time-series bindings.
   Complex values and recursive `valueBackingConfiguration` metadata are **not evaluated**.
@@ -148,11 +188,10 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   reports these limitations. Composite keys, multiline expressions, unknown entity/property
   constructs, invalid payloads, unresolved endpoints, and mixed v1/v2 definitions produce errors
   rather than a silently empty contract. The parser is bounded, not a general TOM engine.
-- A v2 materialized GraphModel is required for the graph's **canvas, tree and scopes**.
-  Complete **Manage graph → select eligible entities/relationships → Continue → Materialize**
-  in the selected Ontology. Item creation, child-definition readback and a queryable schema
-  do not prove entity eligibility or populated native topology.
-  Configure the `.env` binding with single-quoted JSON:
+- The graph's **canvas, tree and scopes** use verified source-backed instances; materialization
+  is not required. Optional native GQL utilities separately require an explicitly bound,
+  ontology-owned GraphModel materialized through the selected ontology's Manage graph flow.
+  For those utilities only, configure the `.env` binding with single-quoted JSON:
   `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'`.
   Retain the outer single quotes when adding alias maps: dotenv truncates an unquoted value at
   `#`, including inside JSON double quotes, so exact ontology names containing `#` require quoting.
@@ -169,13 +208,12 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   on the configured `graphModels/{id}`. Opaque string `result.nextPage` continuations are followed.
   Query errors, warnings, truncation, malformed/dangling results, or exceeding 2,000 nodes/4,000 edges
   fail explicitly. Malformed native results are never reinterpreted as valid native topology.
-- Ontology definitions and native results are cached and concurrent requests are coalesced.
-  The page shows a loading state while native queries run and an explicit unavailable state
-  after native failures; no STID compatibility graph is rendered. Definition errors also prevent
-  unverified topology. Workspace refreshes
-  restart obsolete reads against current discovery rather than surfacing cache-invalidation errors.
-  Manual refresh queries the native source independently of STID connectivity.
-  The five-minute native poll does not repeatedly download the TMDL definition.
+- Ontology definitions and source-backed results use bounded, identity-keyed in-memory caches
+  and concurrent reads are coalesced. The page shows loading and explicit unavailable states;
+  failed reads clear the instance graph. Definition errors also prevent unverified topology.
+  Workspace refreshes restart obsolete reads against current discovery. Manual refresh and
+  five-minute source polling work independently of STID connectivity. Work-order mutations
+  invalidate the source snapshot immediately.
 
 These read capabilities do **not** imply Data Agent semantic runtime or Operations Agent playbook
 execution succeeds. The latest live attempt accepted source publication and stopped-agent
@@ -226,7 +264,7 @@ therefore keeps visual semantics in the agent instructions and requires no more 
 200 plot rows so external clients can reconstruct the chart without adding source-routing or join
 instructions to the user question.
 The regular chat hides Data Agent internal progress and uses the Signal Sprint thinking animation.
-Battle exposes the trace for comparison. Fabric can batch lifecycle notifications near completion
+Fabric can batch lifecycle notifications near completion
 and exposes internal tool names/statuses, not generated SQL, arguments, intermediate rows, or
 execution duration. Those steps say **status received**, including in copied transcripts; notification
 counts are not query counts. Repeated/out-of-order notifications cannot turn a duration into an
@@ -244,18 +282,9 @@ heuristic or generation-only check bypasses source verification. Reading the pub
 requires appropriate Data Agent read permissions; read failures remain errors. The app does not
 invoke or certify an Operations Agent playbook.
 
-Administration can optionally enable **Battle of the Agents** for the current browser. It is disabled
-and absent from Hydro Intelligence by default, does not initialize either runtime during app startup,
-and is lazy-loaded only after selection. Battle sends the same trimmed standalone prompt to the
-existing published Data Agent MCP and Foundry paths; it does not add routing, join, or semantic
-instructions. Results retain each engine's existing charts, artifacts, progress/tool trace, and error
-handling. Capacity-safe sequential execution is the default so comparison traffic does not contend
-for shared Fabric capacity; an explicit parallel mode is available when simultaneous wall-clock
-behavior is the measurement goal. The UI labels only the objectively faster successful response and
-does not infer which answer is more correct or higher quality.
-Each pane has a live elapsed timer that starts when that engine actually begins (not while queued)
-and freezes on completion or failure. The 250 ms timer is isolated from response/chart rendering
-and is removed on unmount. Categorical chart axes display actual asset labels, not row indices.
+Battle of the Agents has been removed, including its Administration option, comparison page,
+runner and styles. Old browser settings cannot enable it. Hydro Intelligence is the single
+Supervisor-led chat experience. Categorical chart axes display actual asset labels, not row indices.
 
 NB09 owns the Data Agent's published count/join instructions, including explicit transfer of actual
 SQL count tuples into an isolated Lakehouse analyzer request. Open orders exclude `Completed` and
@@ -286,8 +315,8 @@ The trace records real Foundry response IDs and agent identities; it does not ex
 
 Hydro Intelligence in both layouts now starts with the Supervisor, regardless of an old saved
 engine preference. There is no separate Data Agent selector in ordinary chat; explicit Data Agent
-requests route through the Fabric IQ specialist. Direct Data Agent access remains in the optional
-Battle comparison. Missing Foundry configuration fails explicitly instead of silently changing engines.
+requests route through the Fabric IQ specialist. Missing Foundry configuration
+fails explicitly instead of silently changing engines.
 
 The animated crew reuses the existing yellow Signal Sprint helpers. Real parent/call IDs drive
 Supervisor-to-specialist request packets and matching return/failure packets, with distinct working
@@ -298,18 +327,17 @@ events. Pause and reduced-motion controls preserve all textual status and diagno
 Authentication reuses the signed-in user's delegated identity and silent token cache. The current
 Foundry Agent Service audience replaces the obsolete Cognitive Services inference audience in
 deployment requirements. Fabric IQ source-definition verification requests ordinary Fabric read
-scopes, not Data Agent execution consent. Direct Data Agent execution in Battle still requests
+scopes, not Data Agent execution consent. Native Data Agent execution requests
 `DataAgent.Execute.All`. Setup bundles the required scopes in one idempotent provisioning step;
 tenant policy may require an administrator to consent. Existing grants are not automatically revoked,
 and consent does not replace resource access/RBAC or MFA.
 
-Work-order requests from either engine use the Foundry approval flow. A structured draft appears
+Work-order requests use the Foundry approval flow. A structured draft appears
 in an editable card with Yes/No buttons. Equipment and signal identity cannot be changed through
 the card; request a new draft for a different target. Approval revalidates target identity and
 checks duplicate open titles before the SQL write. Drafts expire after 30 minutes and reset clears
 them. A failed write response is marked uncertain and is not retried automatically. A successful
-write displays the returned work-order number and refreshes the operational views. Battle runs
-mutation requests sequentially and labels this as the shared approval flow, not independent Q&A.
+write displays the returned work-order number and refreshes the operational views.
 
 Draft cards appear first; duplicate prose is collapsed under **Supporting findings and
 sources**. Short answers, material limitations and requested results take precedence over
@@ -319,7 +347,7 @@ desktop side panel (bounded-height on mobile), rather than taking over the answe
 These latest source changes require the hosted acceptance gate documented in
 [AGENT-ACCEPTANCE.md](AGENT-ACCEPTANCE.md).
 
-All chat and Battle surfaces share the same presentation contract and evidence dashboard. Charts
+Chat uses the shared presentation contract and evidence dashboard. Charts
 are derived from the same returned table/CSV rows, without a top-16 UI cap or treating empty values
 as zero. Different measures get separate charts. This is presentation consistency, not a guarantee
 that two independent query planners return identical facts; live quality acceptance must compare
@@ -335,7 +363,7 @@ source-truth checks, benchmark boundaries, and remaining browser/quality accepta
 Reference: [Microsoft Ontology (new) definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition).
 Regression coverage: `npm run test:knowledge-graph` (real-shaped TMDL, legacy rejection, caches,
 and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.test.mjs`,
-`scripts/agent-battle.test.ts`, and `scripts/copilot-settings.test.ts`
+`scripts/supervisor-entrypoint.test.mjs`, and `scripts/copilot-settings.test.ts`
 (published source verification and honest setup readiness), plus
 `scripts/copilot-orchestration.test.ts` and `scripts/answer-presentation.test.ts`
 (query semantics, persisted agent definitions, full datasets and approval safety).
@@ -482,7 +510,7 @@ HydroOperationsApp/
 
   Pages shared by the original and redesigned app layouts, including Knowledge Graph, Telemetry,
   Digital Twin, and Maintenance, live under
-  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` enriches native graph topology and
+  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` enriches verified ontology-source topology and
   `src/ui-shared/pages/KnowledgeGraphPage.tsx` owns scope, filtering, shared asset selection, and the
   entity inspector.
   Layout names such as V1/V2 do not enable Ontology v1; both layouts use the same v2-only services.

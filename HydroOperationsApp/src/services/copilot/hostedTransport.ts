@@ -1,5 +1,5 @@
 import type { AgentVisualization } from '../assistantStream.ts'
-import type { AgentTraceEntry, OrchestrationEvent, WorkOrderProposal } from './orchestration.ts'
+import type { AgentTraceEntry, OrchestrationEvent, WorkOrderProposal, WorkOrderReview } from './orchestration.ts'
 
 export type HostedSource = {
   tenant_id: string
@@ -30,6 +30,7 @@ export type HostedAnswer = {
   visualizations: AgentVisualization[]
   receipt: Record<string, unknown>
   proposals: WorkOrderProposal[]
+  workOrderReview?: WorkOrderReview
   executionEvents: OrchestrationEvent[]
 }
 
@@ -37,7 +38,29 @@ export class HostedInvocationError extends Error {
   readonly detail: Record<string, unknown> | undefined
   readonly status: number
   constructor(status: number, detail?: Record<string, unknown>) {
-    super(`Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
+    super(detail?.category === 'model_rate_limit'
+      ? 'The Foundry model throughput quota was exceeded (HTTP 429). ' +
+        'The service owner must review the model deployment token/request limits and the prior run audit before retrying. ' +
+        'No answer or write outcome is certified.' +
+        (detail.audit_available === false ? ' The execution audit could not be saved; contact the service owner.' : '')
+      : detail?.category === 'native_timeout'
+      ? 'The Fabric Data Agent request timed out (HTTP 504). No replacement answer or direct-source fallback was used. ' +
+        'Review the prior request before retrying.'
+      : detail?.category === 'native_transport'
+      ? 'The native Fabric Data Agent request failed (HTTP 502). No replacement answer or direct-source fallback was used. ' +
+        'Review the source request diagnostics before retrying.'
+      : detail?.category === 'native_refusal'
+      ? 'The selected Fabric Data Agent refused the request. Its owner must review the provider response before retrying. ' +
+        'No direct-source fallback was used. No answer or write outcome is certified.' +
+        (detail.audit_available === false ? ' The execution audit could not be saved; contact the service owner.' : '')
+      : detail?.category === 'native_provider_error'
+        ? 'The Foundry/Fabric native provider failed during output moderation. This is not a confirmed Data Agent refusal. ' +
+          'No direct-source fallback was used. No answer or write outcome is certified.'
+        : detail?.category === 'platform_routing'
+        ? 'Foundry could not route the hosted endpoint (HTTP 404: ResourceNotFound - Subdomain does not map to a resource). ' +
+          'The service owner must verify the deployed project endpoint and restore Azure runtime routing. ' +
+          'No answer or write outcome is certified.'
+        : `Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
     this.status = status
     this.detail = detail
   }
@@ -122,7 +145,7 @@ export class HostedTransport {
   private inFlight = 0
   private readonly endpoint: URL
   private readonly source: HostedSource
-  private readonly credentials: () => Promise<SourceTokens>
+  private readonly credentials: (interactive: boolean) => Promise<SourceTokens>
   private readonly fetcher: typeof fetch
   private readonly streamLivenessMs: number
   private previousRunId: string | undefined
@@ -132,7 +155,7 @@ export class HostedTransport {
 
   constructor(
     projectEndpoint: string, invocationUrl: string, source: HostedSource,
-    credentials: () => Promise<SourceTokens>,
+    credentials: (interactive: boolean) => Promise<SourceTokens>,
     fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init),
     streamLivenessMs = 45_000,
     sessionScope?: string,
@@ -198,7 +221,7 @@ export class HostedTransport {
     if (this.warmed || this.running || this.inFlight) return
     this.warmed = true
     try {
-      const token = (await this.credentials()).foundry
+      const token = (await this.credentials(false)).foundry
       if (typeof token !== 'string' || !token) { this.warmed = false; return }
       const endpoint = new URL(this.endpoint)
       endpoint.searchParams.set('agent_session_id', this.sessionId)
@@ -215,7 +238,7 @@ export class HostedTransport {
     this.inFlight++
     let tokens: SourceTokens | undefined
     try {
-      tokens = await this.credentials()
+      tokens = await this.credentials(body.operation === 'run' || body.operation === 'decide' || body.operation === 'reconcile')
       if ((['fabric', 'foundry', 'graphql', 'kusto'] as const).some(kind => {
         const token = tokens?.[kind]
         return typeof token !== 'string' || !token
@@ -290,6 +313,12 @@ export class HostedTransport {
           throw new HostedInvocationError(response.status)
         }
         const error = record(await response.json())
+        const provider = error.error
+        if (response.status === 404 && provider && typeof provider === 'object' && !Array.isArray(provider)
+          && record(provider).code === 'ResourceNotFound'
+          && record(provider).message === 'Subdomain does not map to a resource.') {
+          throw new HostedInvocationError(response.status, { category: 'platform_routing' })
+        }
         const detail = error.detail
         throw new HostedInvocationError(response.status,
           detail && typeof detail === 'object' && !Array.isArray(detail) ? record(detail) : undefined)
@@ -315,8 +344,12 @@ export class HostedTransport {
         if (result.status === 'completed') return record(result.answer)
         if (result.status === 'failed') {
           const failure = result.failure
-          throw new HostedInvocationError(500,
-            failure && typeof failure === 'object' && !Array.isArray(failure) ? record(failure) : undefined)
+          const detail = failure && typeof failure === 'object' && !Array.isArray(failure) ? record(failure) : undefined
+          const status = detail?.http_status
+          throw new HostedInvocationError(
+            typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500,
+            detail,
+          )
         }
         if (result.status !== 'running' || result.run_id !== runId) {
           throw new Error('Hosted run recovery returned an invalid status contract.')
@@ -365,6 +398,16 @@ export class HostedTransport {
         throw new Error('Hosted answer has no supported backend-owned presentation.')
       }
       const runId = reply.run_id
+      let workOrderReview: WorkOrderReview | undefined
+      if (presentation.work_order_review != null) {
+        const review = record(presentation.work_order_review)
+        if ((review.decision !== 'no_draft' && review.decision !== 'needs_clarification')
+          || typeof review.reason !== 'string' || !review.reason.trim() || review.reason.length > 1000
+          || Object.keys(review).some(key => key !== 'decision' && key !== 'reason')) {
+          throw new Error('Hosted maintenance review has no valid decision and reason.')
+        }
+        workOrderReview = { decision: review.decision, reason: review.reason }
+      }
       if (!Array.isArray(reply.proposals)) throw new Error('Hosted answer has no typed approval-card collection.')
       const digests = record(reply.proposal_digests)
       const cardIds = new Set<string>()
@@ -416,7 +459,7 @@ export class HostedTransport {
       const executionEvents = [...mergedEvents.values()]
       this.previousRunId = runId
       this.interruptedRunId = undefined
-      return { runId, text: presentation.text, proposals, visualizations, executionEvents, receipt: reply }
+      return { runId, text: presentation.text, proposals, workOrderReview, visualizations, executionEvents, receipt: reply }
     } catch (error) {
       // A failed turn must not erase the conversation. Only an unusable earlier run (the backend answers 404/409
       // for it) is dropped, so the next question does not keep failing on it.

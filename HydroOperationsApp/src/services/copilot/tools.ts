@@ -248,8 +248,8 @@ export function createToolRuntime(
         entityOrThrow(OPERATIONS_ENTITIES, 'work_orders', settings)
         if (!isRayfinConfigured()) throw new Error('The operational database is not configured in this build.')
         if (!isRayfinSignedIn()) throw new Error(SIGN_IN_HINT)
-        const csl = fleetSnapshotQuery(temperature, args)
         const readStartedAt = new Date().toISOString()
+        const csl = fleetSnapshotQuery(temperature, args, readStartedAt)
         stid ??= queryStid()
         const [telemetryResult, data, workOrders] = await Promise.all([
           runKustoQuery(csl, MAX_ROWS),

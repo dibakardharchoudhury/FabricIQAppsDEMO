@@ -128,6 +128,22 @@ class AnalysisHarness(unittest.IsolatedAsyncioTestCase):
 
 
 class AnalysisTests(AnalysisHarness):
+    async def test_native_data_agent_answer_never_invokes_or_reuses_a_second_briefing_model(self):
+        text = "## BAD telemetry\n\n| Turbine | Open work |\n|---|---|\n| T014 | None |\n"
+        self.owner.evidence["native-read"] = ToolEvidence(
+            id="native-read", source=SOURCE, tool="fabriciq-data-agent", arguments={},
+            completed_at=utc_now(),
+            result={"response": text, "source_answer_sha256": hashlib.sha256(text.encode()).hexdigest()},
+        )
+        self.replies = [briefing()]
+        self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
+        self.assertEqual(self.inputs, [], "Native answers must not enter the briefing LLM.")
+        self.assertFalse(self.owner.needs_analysis())
+        self.journal.save("answer_analysis", {"analysis": briefing()})
+        self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
+        self.assertEqual(self.inputs, [])
+        self.assertEqual(self.owner.native_answers()[0].text, text)
+
     async def test_verified_briefing_is_returned_saved_and_reused_without_a_second_model_call(self):
         self.replies = [briefing()]
         report = await self.owner.analysis_for(self.request, self.answer, self.journal)
@@ -216,7 +232,7 @@ class AnalysisTests(AnalysisHarness):
         report = AnalysisReport.model_validate(briefing(findings=["Use | pipes and *stars* safely."]))
         answer = SimpleNamespace(
             analysis=report, summary="Signal quality: 2 verified records returned.", tables=(QUALITY,),
-            limitations=("Source limit.",), charts=(), specialists=(), run_id=uuid4(),
+            limitations=("Source limit.",), charts=(), specialists=(), run_id=uuid4(), native_response=None,
         )
         text = client_presentation(answer).text
         order = [text.index(marker) for marker in (
@@ -232,7 +248,7 @@ class AnalysisTests(AnalysisHarness):
     def test_presentation_without_a_briefing_is_unchanged(self):
         answer = SimpleNamespace(
             analysis=None, summary="Signal quality: 2 verified records returned.", tables=(QUALITY,),
-            limitations=(), charts=(), specialists=(), run_id=uuid4(),
+            limitations=(), charts=(), specialists=(), run_id=uuid4(), native_response=None,
         )
         text = client_presentation(answer).text
         self.assertTrue(text.startswith("Signal quality: 2 verified records returned."))
@@ -398,6 +414,7 @@ class RootCauseEvidenceTests(AnalysisHarness):
         report = AnalysisReport.model_validate(cause_briefing())
         answer = SimpleNamespace(
             analysis=report, summary="s", tables=(QUALITY,), limitations=(), charts=(), specialists=(), run_id=uuid4(),
+            native_response=None,
         )
         text = client_presentation(answer).text
         order = [text.index(marker) for marker in ("## Why", "## Probable causes", "## Recommended actions")]

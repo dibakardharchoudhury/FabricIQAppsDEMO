@@ -16,24 +16,28 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
 - Always provision the Data Agent and the ontology-backed Operations Agent; there are no agent mode flags or skip
   branches. Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
   binding. NB10 is configured/stopped, not runtime certified. `OperationsAgentV1` is the retained
-  business configuration schema, not ontology generation. NB09 reports only the exact temporary
-  Fabric response `This API version is not supported for the specified Ontology item` as a known
-  product limitation after verified v2 publication; all other failures propagate. NB11 preserves
-  compatible added SQL/custom content. The bounded smoke test does not attest execution provenance
-  or certify SQL/combined-source runtime.
+  business configuration schema, not ontology generation. NB09 verifies publication and source
+  readback without an automatic MCP query or answer-format gate; successful setup records
+  deployment/publication `published` and runtime `not_checked`. Do not add duplicate source
+  attachments to satisfy a smoke response. Actual deployment/publication/readback failures
+  propagate. NB11 preserves compatible SQL/custom content; publication does not certify runtime.
 - Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10 verifies the retained
   ontology agent, then removes only the exact retired agent after checking folder/source identity
   and clears its obsolete settings. Preserve the shared Eventhouse, SQL/KQL grounding, email
   pipeline, Outlook connection, and Teams destination.
-- RTI_011 always attempts the Data Agent SQL-source extension and propagates real extension failures.
-  The app requires an explicitly bound ontology-managed
-  native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK
-  graph fabrication or GraphQL dependency for canvas/tree/scopes. Materialize through the selected
-  ontology's Manage graph flow. Generate `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from authoritative
-  Ontology-to-GraphIndex item lineage, or use an operator-verified explicit fallback; never infer
-  ownership from names, a sole graph, or matching structure. Portal materialization is a manual
-  prerequisite, not an established public REST automation contract. Do not claim agent or graph runtime readiness
-  from item creation, notebook completion, or successful app hosting.
+- RTI_011 directly mounts the operational SQL Database as a temporary execution workaround for
+  omitted ontology-inherited SQL. Reuse a matching profile; preserve ontology bindings, operator
+  instructions, selections and custom sources. The artifact ID is the SQL Database item, not its
+  analytics endpoint. App-only deployment/Foundry checks must not require this profile or mutate
+  sources. Propagate real publication/readback failures; publication is not runtime verification.
+  The app's single Knowledge Graph reads actual instances from the verified v2 ontology's
+  authenticated physical source bindings and evaluates only declared relationships and keys.
+  Preserve entity icons, Eventhouse readings, freshness and red/amber health pulses. No materialization,
+  GraphModel or graph binding is required for its canvas/tree/scopes; never fabricate topology from
+  STID rows, names or undeclared foreign keys. Disclose unsupported projections and fail closed on
+  invalid, incomplete or failed source reads. Optional native GQL utilities still require explicit,
+  verified ontology ownership; never infer it from names, a sole graph or matching structure.
+  Do not claim agent or graph runtime readiness from item creation, notebook completion or hosting.
 - Keep canonical notebook prose, Raw mirrors, and packaged workflow documents aligned with
   the [current policy](README.md#ontology-generations-and-optional-agents).
 

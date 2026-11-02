@@ -42,6 +42,9 @@
   .badge { display:inline-flex; align-items:center; gap:.45rem; font-size:.72rem; font-weight:650; color:#a7f3d0;
     background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.28); padding:.34rem .66rem; border-radius:999px; letter-spacing:.02em; }
   .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); animation:pulse 2s infinite; }
+  .alert-routing-label { display:inline-block; white-space:nowrap; padding:.1rem .35rem; border-radius:4px;
+    border:1px solid rgba(251,191,36,.35); color:var(--warn); background:rgba(251,191,36,.08);
+    font-size:.6rem; letter-spacing:0; text-transform:none; }
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)} 70%{box-shadow:0 0 0 7px rgba(52,211,153,0)} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0)} }
 
   /* cards */
@@ -60,7 +63,12 @@
   .card.danger .card-head .ico { background:rgba(239,68,68,.16); color:#fda4a4; }
   .card-head .ico svg { width:19px; height:19px; }
   .card h2 { margin:0; font-size:1.12rem; font-weight:680; letter-spacing:-.01em; }
-  .card .hint { color:var(--muted); font-size:.82rem; margin:.35rem 0 1.2rem calc(34px + .7rem); }
+  .hint { color:var(--muted); font-size:.82rem; margin:.35rem 0 .85rem; line-height:1.45; }
+  .card > .card-head + .hint { margin-left:calc(34px + .7rem); }
+  .phelp { color:var(--muted); font-size:.78rem; line-height:1.45; margin:.5rem 0; }
+  .hint:empty, .phelp:empty, .cardcap:empty { display:none; }
+  .form-details { margin:.75rem 0; color:var(--muted); font-size:.78rem; }
+  .form-details > summary { cursor:pointer; font-weight:600; }
 
   .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:1.05rem 1.15rem; }
   label { display:flex; flex-direction:column; font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); gap:.42rem; }
@@ -133,6 +141,9 @@
   .meta { display:inline-flex; align-items:baseline; gap:.7rem; }
   .elapsed { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:600; font-size:.82rem; letter-spacing:.02em; }
   .elapsed::before { content:"\23F1"; margin-right:.28rem; opacity:.75; font-size:.86em; }
+  .section-duration { display:inline-block; font-variant-numeric:tabular-nums; font-size:.8rem; font-weight:normal; margin-left:.6rem; white-space:nowrap; }
+  .component-durations { list-style:none; margin:.4rem 1rem; padding:0; font-size:.82rem; }
+  .component-durations li { display:flex; justify-content:space-between; flex-wrap:wrap; gap:.3rem; padding:.2rem 0; }
   .bar { height:10px; background:rgba(3,8,20,.85); border:1px solid var(--border); border-radius:999px; overflow:hidden; }
   .bar .fill { height:100%; width:0; border-radius:999px; transition:width .5s cubic-bezier(.4,0,.2,1); background:var(--primary); }
   .bar .fill.running { background:linear-gradient(90deg,var(--primary),var(--primary2),var(--violet),var(--primary)); background-size:300% 100%; animation:flow 2.2s linear infinite; }
@@ -252,7 +263,8 @@
   .workflow-config-head span { color:var(--muted); font-size:.75rem; line-height:1.45; }
   .workflow-config-section .params { margin-top:.4rem; }
   .param { display:flex; flex-direction:column; gap:.4rem; }
-  .param .plabel { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  .param .plabel { flex-direction:row; align-items:center; flex-wrap:wrap; gap:.4rem;
+    font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
   .param .phelp { font-size:.74rem; line-height:1.45; color:#7c8ab0; font-weight:400; margin:-.06rem 0 .1rem; }
   .param input { width:100%; }
   .param.wide { grid-column:1 / -1; }
@@ -356,9 +368,9 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>Full Deploy</h2>
       </div>
-      <p class="hint">For a new workspace. Runs each step in order; stops on failure.</p>
+      <p class="hint">For a new workspace. Includes Foundry setup: syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure. No separate Foundry run is needed first.</p>
       <aside class="notice">
-        <strong>Updating an existing app?</strong> Use <strong>Deploy app</strong>, not Full Deploy.
+        <strong>Updating?</strong> Use <strong>Deploy app</strong> for website changes or <strong>Set up Foundry agents</strong> for agent changes. Full Deploy repeats Git sync and Core setup.
         <a href="/deploy-guide" target="_blank" rel="noopener">Prerequisites &amp; guide</a>
       </aside>
       <div class="workflow-config">
@@ -383,21 +395,24 @@
           <div id="workflowTestPanel"></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
-          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Core and Weather setup run alongside energy ingestion, then map serving is verified.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Core setup</strong><span>Core bindings and initial UKMet ingestion build the complete ontology before either Fabric agent; energy ingestion runs alongside.</span></div></div>
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Foundry agents</strong></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Energy + Foundry concurrently</strong><span>Finalizes map read models and provisions Foundry together; does not repeat Core or provider ingestion.</span></div></div>
           <div id="workflowFoundryFields"></div>
         </section>
         <section class="workflow-config-section">
-          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>Publishes the app and checks authentication and connectors.</span></div></div>
+          <div class="workflow-config-head"><div><strong>4. Deploy app</strong><span>After both branches succeed, publishes the app and checks authentication and connectors.</span></div></div>
         </section>
       </div>
       <aside class="notice">
         Settings stay on this machine. GitHub PATs are never saved.
       </aside>
       <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Run Full Deploy</button>
+      <button id="workflowResumeBtn" class="ghost" hidden disabled>Retry failed step and continue</button>
+      <button id="workflowSyncResumeBtn" class="ghost" hidden disabled>Sync updated definitions and resume</button>
+      <p id="workflowResumeStatus" class="hint" role="status"></p>
       <div id="workflowPanel"><pre class="output muted">Progress will appear here.</pre></div>
     </div>
   </section>
@@ -437,7 +452,7 @@
         <span class="ico" style="background:rgba(139,92,246,.16);color:#c4b5fd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg></span>
         <h2>Core setup</h2>
       </div>
-      <p class="hint">Checks Key Vault access, then runs Core/Weather and energy ingestion in parallel branches of one pipeline. Verifies map serving without a second import. Foundry is a separate step.</p>
+      <p class="hint">Requires both UKMet API keys in Key Vault. Core bindings, initial weather ingestion and SQL/weather relationship validation complete the ontology before either Fabric agent is published. Energy ingestion runs in parallel. Foundry follows successful Core setup.</p>
       <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
       <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run core setup</button>
       <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
@@ -459,10 +474,10 @@
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
         <h2>Set up Foundry agents</h2>
       </div>
-      <p class="hint">Run Core setup and materialize the ontology graph first. Updates agents only, not the website.</p>
+      <p class="hint">Run Core setup first. Creates or reuses AppBackend with SQL/GraphQL dependencies for the Hosted Agent, then configures Foundry agents. Native graph materialization is not required. Does not publish the website.</p>
       <div id="deployFoundryFields"></div>
       <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
-      <p class="hint">Next: <strong>Deploy app</strong>. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
+      <p class="hint">After Foundry setup succeeds, <strong>Deploy app</strong> publishes the website using the prepared backend. A Fabric App item can already appear during backend setup. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
       <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
     </div>
   </section>
@@ -471,15 +486,9 @@
     <div class="card">
       <div class="card-head"><h2>Deploy Fabric app last</h2></div>
       <p class="hint">Publishes the prepared app and verifies authentication, CORS and connectors. Does not rerun data or agent setup.</p>
+      <p class="phelp">For graph views, materialize the ontology graph first: Manage graph &rarr; select eligible entities/relationships &rarr; Continue &rarr; Materialize. Then bind the selected graph explicitly.</p>
       <div id="deployAuthenticationFields"></div>
-      <div class="grid">
-        <label>Energy-map navigation
-          <select id="appEnergyMap">
-            <option value="keep">Keep this target's setting</option>
-            <option value="enabled">Enable (requires verified energy setup)</option>
-            <option value="disabled">Disable</option>
-          </select></label>
-      </div>
+      <p class="hint">Uses the energy-map setting already prepared for this target. Run Energy setup to prepare map data before publication.</p>
       <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
@@ -566,44 +575,34 @@ function updateSpaChoice(clientId) {
 }
 
 function renderFoundryFields(prefix, clientId) {
-  return `<p id="${prefix}FoundryModeSummary" class="phelp"><strong>Use existing resources (recommended).</strong></p>
-    <div class="grid">
-      <label>Azure subscription
-        <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
-    </div>
+  return `<label>Azure subscription
+      <input id="${prefix}AzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Auto-select from your signed-in target tenant" /></label>
     <button type="button" class="ghost" data-load-subscriptions>Refresh subscriptions</button>
-    <p id="${prefix}FoundryStatus" class="phelp" role="status">Project and model are verified during setup.</p>
-    <details id="${prefix}FoundryOverrides" class="foundry-block">
-      <summary>Project and model choices</summary>
-      <p class="hint">Enter the existing project name to reuse it. Without a name, setup uses a saved, target-named or sole available project. Select a model only when you want a specific deployment.</p>
-      <div class="grid">
-        <label>Existing project name
-          <input id="${prefix}FoundryProjectName" type="text" placeholder="Name of the project to reuse" /></label>
-        <label>Existing model deployment
-          <input id="${prefix}FoundryModel" type="text" placeholder="Automatic: saved model or the only ready chat deployment" /></label>
-      </div>
-    </details>
-    <details id="${prefix}FoundryNewProjectOptions" class="foundry-block">
-      <summary id="${prefix}FoundryNewProjectSummary">Create a new project</summary>
-      <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" />
-        <span>I approve creating Azure resources using regional model defaults.</span></label>
-      <section id="${prefix}FoundryCreation" class="foundry-block" hidden aria-label="New Foundry project settings">
-        <p class="hint">Enter a chat model. Names, region and model settings are automatic; Azure checks quota.</p>
-        <div class="grid">
-          <label>Chat model name <input id="${prefix}FoundryNewModel" type="text" placeholder="Model approved for your subscription" disabled /></label>
-        </div>
-        <details class="foundry-block"><summary>Model deployment settings</summary>
-          <p class="hint">Defaults: catalog version, regional Standard and minimum/default capacity. Global or provisioned types require an explicit choice.</p>
-          <div class="grid">
-            <label>Model version <input id="${prefix}FoundryModelVersion" type="text" placeholder="Automatic: catalog default version" disabled /></label>
-            <label>Deployment type (SKU) <input id="${prefix}FoundryModelSku" type="text" placeholder="Automatic: regional Standard" disabled /></label>
-            <label>Model capacity <input id="${prefix}FoundryModelCapacity" type="number" min="1" step="1" placeholder="Automatic: catalog minimum or default" disabled /></label>
-            <label>Region <input id="${prefix}FoundryLocation" type="text" placeholder="Automatic: Fabric capacity region" disabled /></label>
-            <label>Model catalog name <input id="${prefix}FoundryModelName" type="text" placeholder="Automatic: new deployment name" disabled /></label>
-          </div>
-        </details>
-        <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
-      </section>
+    <p id="${prefix}FoundryStatus" class="phelp" role="status"></p>
+    <div class="grid">
+      <label>Foundry account name (optional)
+        <input id="${prefix}FoundryAccountName" type="text" maxlength="64" placeholder="Existing parent account or exact name to create" /></label>
+      <label>Foundry project name
+        <input id="${prefix}FoundryProjectName" type="text" placeholder="Saved project or stable workspace-GUID project" /></label>
+      <label>Model deployment name
+        <input id="${prefix}FoundryModel" type="text" placeholder="Saved deployment or the only ready chat model" /></label>
+    </div>
+    <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
+      <span>Allow project creation (billable)</span></label>
+    <p id="${prefix}FoundryCreateHelp" class="hint">Existing project (even for a new Fabric workspace): unchecked. Missing project: check. Agent updates still run.</p>
+    <p class="hint">Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked. Each workspace gets its own agent set. Model TPM/RPM remains shared. Global inference may apply.</p>
+    <p class="hint">Separate projects are not end-to-end verified. Creating another project did not resolve the earlier hosted-routing 404; do not use project creation as a 404 fix.</p>
+    <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
+    <details class="form-details">
+      <summary>Setup details</summary>
+      <p id="${prefix}FoundryModeSummary" class="phelp">Automatic multi-agent setup.</p>
+      <p class="phelp">A Foundry account is the parent Azure resource; it contains the model deployment and projects. A Fabric workspace is a separate resource. Each workspace gets its own agents and source bindings, even in one shared project; names are not a security boundary.</p>
+      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents and a hosted orchestrator. Stable workspace suffixes separate agents, connections and hosted state; reruns reuse that set. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
+      <p class="phelp">Enter the same exact verified working account, project and model for each workspace; leave creation unchecked. FEATURE and DEV were live-tested with this shared-project layout, not separate projects. Blank project uses a saved identity or a stable workspace-GUID project, not a request to share.</p>
+      <p class="phelp">Separate-project provisioning exists in the code but is not a verified deployment recommendation. No extra model deployment is allocated on the existing-account path; all projects share its TPM/RPM limits. A saved selection or successful resource creation does not prove hosted invocation works.</p>
+      <p class="phelp">Creation approval permits missing resources; it does not force recreation. Existing projects are reused even when checked. Approval is not saved. Full Deploy uses these same settings and includes Foundry setup; permissions, source checks and runtime readiness must still pass.</p>
+      <p class="phelp">Project-only setup reuses the account's connected registry and monitoring, grants scoped runtime access, and verifies the model allocation is unchanged. Account networking and model capacity remain shared. Existing explicitly selected projects remain supported; no project or model is deleted.</p>
+      <p class="phelp">New models prefer 75,000 TPM where quota permits; lower allocations remain supported.</p>
     </details>
     ${renderSpaFields(clientId)}`;
 }
@@ -621,14 +620,17 @@ function renderPanel(el, job) {
   // Stamp start/end once so the elapsed clock ticks while running and freezes when done.
   if (!job.startedAt) job.startedAt = Date.now();
   if (job.status !== "running" && !job.endedAt) job.endedAt = Date.now();
-  const elapsed = formatElapsed((job.endedAt || Date.now()) - job.startedAt);
+  const elapsed = formatElapsed(job.elapsedSeconds != null ? job.elapsedSeconds * 1000
+    : (job.endedAt || Date.now()) - job.startedAt);
   const statusCls = job.status === "succeeded" ? "ok"
     : job.status === "failed" ? "error"
+    : job.status === "historical" ? "history"
     : (job.status === "interrupted" || job.status === "cancelled") ? "warn"
     : "running";
   const total = Math.max(1, (job.phases ? job.phases.length : 1) - 1);
   const pct = job.status === "succeeded" ? 100 : Math.round(((job.phaseIndex || 0) / total) * 100);
   const label = job.status === "running" ? ((job.phase || "Working") + "\u2026")
+    : job.status === "historical" ? "Previous deployment history"
     : job.status === "succeeded" ? "Succeeded"
     : job.status === "cancelled" ? "Cancelled"
     : job.status === "interrupted" ? "Monitoring interrupted"
@@ -675,7 +677,9 @@ function renderPanel(el, job) {
   const out = el.querySelector(".output");
   const stick = out._following();
   const summary = el.querySelector(".progress-summary");
-  const summaryHtml =
+  const summaryHtml = job.status === "historical"
+    ? `<div class="progress-head"><span class="status history">${label}</span></div>`
+    :
     `<div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
        ${phaseProgress}`;
@@ -754,13 +758,24 @@ const WORKFLOW_PHASE_GROUPS = [
   { key: "sync", title: "GitHub Sync", prefixes: ["Sync \u00b7"], components: ["GitHub sync"] },
   { key: "pipeline", title: "Core Setup: Fabric, Weather and Energy", prefixes: ["Pipeline \u00b7", "Energy \u00b7"], components: ["Setup pipeline", "Energy setup"],
     phaseLabels: {
-      "Pipeline \u00b7 Running": "Running Core/Weather + energy notebooks in parallel",
+      "Pipeline \u00b7 Running": "Building the complete ontology before Fabric agents; energy runs in parallel",
       "Energy \u00b7 Checking prerequisites": "Checking map serving prerequisites",
       "Energy \u00b7 Preparing energy sources": "Publishing map read models",
     } },
   { key: "foundry", title: "Foundry Multi-agent Setup", prefixes: ["Foundry \u00b7"], components: ["Foundry multi-agent setup"] },
+  { key: "combined", title: "Energy + Foundry + App Deployment", prefixes: ["Combined \u00b7"], components: ["Energy + Foundry + app deployment"] },
   { key: "deploy", title: "Fabric App Deployment", prefixes: ["Deploy \u00b7"], components: ["Fabric app deploy"] },
 ];
+
+function renderSectionDuration(timing, interrupted = false) {
+  const label = !timing ? "Not measured"
+    : timing.status === "unreported" ? "Not reported"
+    : timing.elapsedSeconds == null ? "Not started"
+    : `${timing.status === "running" ? (interrupted ? "Last observed" : "Running")
+      : timing.status === "failed" ? "Failed"
+      : timing.status === "cancelled" ? "Cancelled" : "Completed"} \u00b7 ${formatElapsed(timing.elapsedSeconds * 1000)}`;
+  return `<span class="section-duration" title="Server-measured elapsed time. Substeps are bounded by observed progress log markers; omitted markers are not timed.">${label}</span>`;
+}
 
 function renderWorkflowPhaseGroups(el, job) {
   const phases = job.phases || [];
@@ -781,10 +796,22 @@ function renderWorkflowPhaseGroups(el, job) {
       group.components.includes(job.failedComponent) ||
       items.some((item) => item.index === (job.phaseIndex || 0))
     );
+    const componentTimings = group.components.map(name =>
+      (job.componentTimings || []).find(timing => timing.name === name)
+        || { name, status: "pending", elapsedSeconds: null });
+    const measured = componentTimings.filter(timing => timing.elapsedSeconds != null);
+    const cancelled = componentTimings.some(timing => timing.status === "cancelled");
+    const groupTiming = job.componentTimings ? {
+      status: componentTimings.some(timing => timing.status === "running") ? "running"
+        : failed ? "failed" : cancelled ? "cancelled" : measured.length ? "succeeded" : "pending",
+      elapsedSeconds: measured.length ? measured.reduce((sum, timing) => sum + timing.elapsedSeconds, 0) : null,
+    } : null;
     const state = failed ? "failed"
+      : cancelled ? "cancelled"
       : completed === items.length ? "done"
       : activeItem ? "active" : "pending";
     const stateLabel = failed ? "Failed"
+      : cancelled ? "Cancelled"
       : state === "done" ? `Complete \u00b7 ${items.length}/${items.length}`
       : activeItem ? `${escapeHtml(activeItem.displayLabel)} \u00b7 ${completed}/${items.length}`
       : `Waiting \u00b7 ${completed}/${items.length}`;
@@ -793,10 +820,14 @@ function renderWorkflowPhaseGroups(el, job) {
     const itemHtml = items.map((item) => {
       const cls = (job.status === "succeeded" || item.index < (job.phaseIndex || 0)) ? "done"
         : (job.status === "running" && item.index === (job.phaseIndex || 0)) ? "active" : "";
-      return `<li class="${cls}">${escapeHtml(item.displayLabel)}</li>`;
+      return `<li class="${cls}">${escapeHtml(item.displayLabel)}${renderSectionDuration(job.phaseTimings?.[item.index], job.status === "interrupted")}</li>`;
     }).join("");
+    const components = group.components.length > 1
+      ? `<ul class="component-durations">${componentTimings.map(timing =>
+        `<li><span>${escapeHtml(timing.name)}</span>${renderSectionDuration(job.componentTimings ? timing : null, job.status === "interrupted")}</li>`).join("")}</ul>` : "";
     return `<details class="workflow-phase-group ${state}" data-group="${group.key}" data-state="${state}"${open ? " open" : ""}>
-      <summary class="workflow-phase-summary"><span class="workflow-phase-name">${group.title}</span><span class="workflow-phase-state">${stateLabel}</span></summary>
+      <summary class="workflow-phase-summary"><span class="workflow-phase-name">${group.title}${renderSectionDuration(groupTiming, job.status === "interrupted")}</span><span class="workflow-phase-state">${stateLabel}</span></summary>
+      ${components}
       <ol class="phases">${itemHtml}</ol>
     </details>`;
   }).join("");
@@ -815,22 +846,42 @@ function formatElapsed(ms) {
   return hh ? `${hh}:${p(mm)}:${p(ss)}` : `${p(mm)}:${p(ss)}`;
 }
 
-// Starts a job then polls until done, rendering progress into panelEl.
-async function runJob(startUrl, body, panelEl, onDone) {
+let workflowCheckpoint = null;
+let workflowBusy = false;
+const workflowJobStorageKey = "fabric-demo.full-workflow-job.v1";
+
+// Starts a job (or reconnects to an existing one) then polls until done.
+async function runJob(startUrl, body, panelEl, onDone, existingJobId = null) {
   const job = { status: "running", phases: [], phaseIndex: 0, phase: "", lines: [], returncode: null };
   renderPanel(panelEl, job);
-  const started = await postJson(startUrl, body);
-  if (!started.ok || !started.data.jobId) {
-    job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
-    renderPanel(panelEl, job); if (onDone) onDone(job); return;
+  let jobId = existingJobId;
+  if (!jobId) {
+    const started = await postJson(startUrl, body);
+    if (!started.ok || !started.data.jobId) {
+      job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
+      if (panelEl.id === "workflowPanel" && workflowCheckpoint && started.data.requiresSync) {
+        workflowCheckpoint.requiresSync = true;
+        workflowCheckpoint.fullSyncRequired = !!started.data.fullSyncRequired;
+        workflowCheckpoint.changedNotebooks = started.data.changedNotebooks || [];
+      }
+      renderPanel(panelEl, job); if (onDone) onDone(job); return;
+    }
+    jobId = started.data.jobId;
   }
-  const jobId = started.data.jobId;
+  if (panelEl.id === "workflowPanel") {
+    workflowCheckpoint = { jobId, status: "running" };
+    try { localStorage.setItem(workflowJobStorageKey, jobId); } catch (_) {}
+  }
   let since = 0;
   let misses = 0;
   // A lost job / unreachable server means we stopped watching -- NOT that the task
   // failed. Fabric runs are server-side and keep going; say so instead of "Failed".
   const interrupted = (msg) => {
     job.status = "interrupted"; job.error = msg;
+    if (panelEl.id === "workflowPanel") {
+      workflowCheckpoint = { jobId, status: "interrupted" };
+      $("workflowResumeStatus").textContent = msg + " Resume is unavailable; no steps will be restarted automatically.";
+    }
     renderPanel(panelEl, job); if (onDone) onDone(job);
   };
   const poll = async () => {
@@ -855,6 +906,14 @@ async function runJob(startUrl, body, panelEl, onDone) {
     job.phase = j.phase || job.phase; job.returncode = j.returncode;
     job.component = j.component || job.component;
     job.failedComponent = j.failedComponent || job.failedComponent;
+    job.elapsedSeconds = j.elapsedSeconds;
+    job.phaseTimings = j.phaseTimings;
+    job.componentTimings = j.componentTimings;
+    if (panelEl.id === "workflowPanel") {
+      workflowCheckpoint = { jobId, status: j.status, canResume: j.canResume, resumeComponent: j.resumeComponent };
+      if (j.resumeBlockedReason) $("workflowResumeStatus").textContent = j.resumeBlockedReason;
+      refresh();
+    }
     if (j.lines && j.lines.length) job.lines = job.lines.concat(j.lines);
     renderPanel(panelEl, job);
     if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone(job);
@@ -943,7 +1002,23 @@ function refresh() {
   $("deployBtn").disabled = !(deployValid() && spaClientValid("deployClientId"));
   $("foundryBtn").disabled = !(deployValid() && foundryValid("deploy") && spaClientValid("foundryClientId"));
   $("energyBtn").disabled = !deployValid();
-  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
+  $("workflowBtn").disabled = workflowBusy || !(workflowSyncValid() && workflowPipelineValid() && deployValid() && foundryValid("workflow") && spaClientValid("workflowDeployClientId"));
+  const resumable = !!workflowCheckpoint?.canResume;
+  $("workflowResumeBtn").hidden = !resumable;
+  $("workflowResumeBtn").disabled = workflowBusy || !deployValid() || !!workflowCheckpoint?.requiresSync;
+  $("workflowSyncResumeBtn").hidden = !resumable || !workflowCheckpoint.requiresSync;
+  $("workflowSyncResumeBtn").disabled = workflowBusy || !deployValid()
+    || (!!workflowCheckpoint?.fullSyncRequired && !workflowSyncValid());
+  if (resumable && workflowCheckpoint.requiresSync) {
+    $("workflowResumeStatus").textContent = workflowCheckpoint.fullSyncRequired
+      ? "Changed pipelines/environments/item metadata, or a different checkout, require full Git sync and affected setup again."
+      : `Sync only changed notebooks (${workflowCheckpoint.changedNotebooks.join(", ")}) from this checkout, preserving bindings; retry from the earliest affected step. Unaffected completed steps are retained.`;
+  } else if (resumable) {
+    $("workflowResumeBtn").textContent = `Retry from ${workflowCheckpoint.resumeComponent} and continue`;
+    $("workflowResumeStatus").textContent = "Keeps completed steps and runs all remaining stages. Original target and non-secret settings must match. A partially completed failed step runs again.";
+  } else if (!["interrupted", "historical"].includes(workflowCheckpoint?.status)) {
+    $("workflowResumeStatus").textContent = workflowBusy ? "Full Deploy is running. Reloading this page reconnects to this job." : "";
+  }
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -1019,47 +1094,43 @@ $("deleteBtn").addEventListener("click", async () => {
 function foundryPayload(prefix) {
   const value = (suffix) => $(prefix + suffix).value.trim();
   const creating = $(prefix + "FoundryCreate").checked;
-  const project = creating ? "" : value("FoundryProjectName");
+  const project = value("FoundryProjectName");
   const resourceId = /^\/subscriptions\//i.test(project);
   return {
     azureSubscriptionId: value("AzureSubscriptionId"),
+    foundryAccountName: value("FoundryAccountName"),
     foundryProjectResourceId: resourceId ? project : "",
     foundryProjectName: resourceId ? "" : project,
-    foundryModel: creating ? value("FoundryNewModel") : value("FoundryModel"),
-    foundryLocation: creating ? value("FoundryLocation") : "",
-    foundryModelName: creating ? value("FoundryModelName") : "",
-    foundryModelVersion: creating ? value("FoundryModelVersion") : "",
-    foundryModelSku: creating ? value("FoundryModelSku") : "",
-    foundryModelCapacity: creating ? value("FoundryModelCapacity") : "",
+    foundryModel: value("FoundryModel"),
     createFoundry: creating,
   };
 }
 function foundryValid(prefix) {
-  if (!$(prefix + "FoundryCreate").checked) return true;
-  const required = ["FoundryNewModel"];
-  const missing = required.filter(suffix => !$(prefix + suffix).value.trim());
-  const capacity = $(prefix + "FoundryModelCapacity").value.trim();
-  const valid = !missing.length && (!capacity || /^[1-9][0-9]*$/.test(capacity));
+  const account = $(prefix + "FoundryAccountName").value.trim();
+  if (account && !/^[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]$/.test(account)) {
+    $(prefix + "FoundryCreationStatus").textContent =
+      "Foundry account name must be 2-64 letters, digits or hyphens, starting and ending with a letter or digit.";
+    return false;
+  }
+  if (!$(prefix + "FoundryCreate").checked) {
+    $(prefix + "FoundryCreationStatus").textContent = "";
+    return true;
+  }
+  const project = $(prefix + "FoundryProjectName").value.trim();
+  const model = $(prefix + "FoundryModel").value.trim();
+  const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Model selected. Catalog defaults apply; quota checked during provisioning."
-    : "To create a project, enter the model name. Capacity must be a positive whole number.";
+    ? "Creation is enabled. For the verified multi-workspace shared-project path, leave unchecked. Creation does not fix hosted-routing 404s."
+    : "Enter a valid model deployment name above. Names use up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit.";
   return valid;
 }
 function updateFoundryMode(prefix) {
   const creating = $(prefix + "FoundryCreate").checked;
-  $(prefix + "FoundryCreation").hidden = !creating;
-  $(prefix + "FoundryNewProjectOptions").open = creating;
-  $(prefix + "FoundryNewProjectSummary").textContent = creating
-    ? "New project selected" : "Create a new project";
+  if (!creating) $(prefix + "FoundryCreationStatus").textContent = "";
   $(prefix + "FoundryModeSummary").textContent = creating
-    ? "Create new resources. Names and model defaults are automatic."
-    : "Use existing resources (recommended).";
-  for (const suffix of ["FoundryNewModel", "FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
-    $(prefix + suffix).disabled = !creating;
-  }
-  for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
-    $(prefix + suffix).disabled = creating;
-  }
+    ? "Automatic multi-agent setup. Create only if missing, using the names above."
+    : "Automatic multi-agent setup. Reuse existing resources.";
 }
 for (const prefix of ["deploy", "workflow"]) {
   const create = $(prefix + "FoundryCreate");
@@ -1067,7 +1138,7 @@ for (const prefix of ["deploy", "workflow"]) {
     updateFoundryMode(prefix);
     refresh();
   });
-  for (const suffix of ["FoundryNewModel", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+  for (const suffix of ["FoundryAccountName", "FoundryProjectName", "FoundryModel"]) {
     $(prefix + suffix).addEventListener("input", refresh);
   }
 }
@@ -1078,7 +1149,6 @@ $("deployBtn").addEventListener("click", async () => {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     clientId: spaClientValue("deployClientId"),
-    energyMap: $("appEnergyMap").value,
   }, $("deployPanel"), () => refresh());
 });
 
@@ -1097,9 +1167,8 @@ $("energyBtn").addEventListener("click", async () => {
   }, $("energyPanel"), () => refresh());
 });
 
-$("workflowBtn").addEventListener("click", async () => {
-  $("workflowBtn").disabled = true;
-  await runJob("/api/full-workflow", {
+function workflowPayload() {
+  return {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     repository: $("workflowRepository").value,
@@ -1113,8 +1182,45 @@ $("workflowBtn").addEventListener("click", async () => {
     clientId: spaClientValue("workflowDeployClientId"),
     energyMap: "enabled",
     ...foundryPayload("workflow"),
-  }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
-});
+  };
+}
+function workflowDone() {
+  workflowBusy = false;
+  $("workflowPat").value = "";
+  refresh();
+}
+async function startFullWorkflow(resume = false, syncLatest = false) {
+  const body = workflowPayload();
+  if (resume) {
+    if (!workflowCheckpoint?.canResume || workflowBusy) return;
+    body.resumeJobId = workflowCheckpoint.jobId;
+    if (syncLatest) {
+      const message = workflowCheckpoint.fullSyncRequired
+        ? "Changed pipelines/environments/item metadata require full Git sync and setup again. Commit and push to the selected branch first. Continue?"
+        : "Update only the changed notebooks from this local checkout, preserving live bindings, then retry the affected step and continue? No full Git import or unaffected core setup will run.";
+      if (!confirm(message)) return;
+      body.syncLatest = true;
+    }
+  } else if (workflowCheckpoint?.canResume &&
+             !confirm("Start a new Full Deploy and repeat GitHub sync and core setup? Use Retry to retain completed steps.")) {
+    return;
+  }
+  workflowBusy = true;
+  refresh();
+  await runJob("/api/full-workflow", body, $("workflowPanel"), workflowDone);
+}
+$("workflowBtn").addEventListener("click", () => startFullWorkflow());
+$("workflowResumeBtn").addEventListener("click", () => startFullWorkflow(true));
+$("workflowSyncResumeBtn").addEventListener("click", () => startFullWorkflow(true, true));
+
+function restoreWorkflowJob() {
+  let jobId;
+  try { jobId = localStorage.getItem(workflowJobStorageKey); } catch (_) {}
+  if (!jobId) return;
+  workflowBusy = true;
+  refresh();
+  runJob(null, null, $("workflowPanel"), workflowDone, jobId);
+}
 
 $("restartBtn").addEventListener("click", async () => {
   if (!confirm("Restart the local server to pick up code changes?")) return;
@@ -1190,9 +1296,7 @@ let pipelineSaveQueue = Promise.resolve();
 let pipelineSaveSequence = 0;
 let foundryTarget = "";
 const foundrySettingSuffixes = [
-  "AzureSubscriptionId", "FoundryProjectName", "FoundryModel", "FoundryNewModel",
-  "FoundryLocation", "FoundryModelName",
-  "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity",
+  "AzureSubscriptionId", "FoundryAccountName", "FoundryProjectName", "FoundryModel",
 ];
 const requiredPipelineFields = ["key_vault_uri", "ops_agent_teams_team_id", "ops_agent_teams_channel_id", "alert_email_to"];
 function restoreTargetSettings() {
@@ -1243,6 +1347,12 @@ function restoreFoundrySettings() {
   }
   if (typeof values.FoundryProjectResourceId === "string" && values.FoundryProjectResourceId.trim()) {
     values.FoundryProjectName = values.FoundryProjectResourceId;
+  }
+  if ((typeof values.FoundryProjectName !== "string" || !values.FoundryProjectName.trim()) && typeof values.FoundryNewProjectName === "string") {
+    values.FoundryProjectName = values.FoundryNewProjectName;
+  }
+  if ((typeof values.FoundryModel !== "string" || !values.FoundryModel.trim()) && typeof values.FoundryNewModel === "string") {
+    values.FoundryModel = values.FoundryNewModel;
   }
   for (const clientId of spaClientIds) {
     $(clientId).value = typeof values.clientId === "string" ? values.clientId : "";
@@ -1318,7 +1428,6 @@ function savePipelineField(name, value) {
     const field = $(prefix + name);
     if (field) field.value = value;
   }
-  updatePipelineDefaultsSummary();
   const values = {};
   for (const spec of pipelineSpec) {
     if (spec.name !== "workspace_id" && typeof pipelineSavedValues[spec.name] === "string") {
@@ -1358,32 +1467,22 @@ function persistPipelineSettings(values) {
   });
 }
 function renderPipelineFields(prefix) {
-  const fields = pipelineSpec.map((p) => {
-    const advanced = !["env_suffix", "workspace_id", ...requiredPipelineFields].includes(p.name);
+  const fields = pipelineSpec.filter(p => p.name !== "per_notebook_timeout_secs").map((p) => {
+    const secretName = ["key_vault_tenant_id_secret_name", "key_vault_client_id_secret_name", "key_vault_client_secret_name"].includes(p.name);
     const wide = requiredPipelineFields.includes(p.name) || p.name === "ops_agent_run_as_user";
+    const alertDestination = ["ops_agent_teams_team_id", "ops_agent_teams_channel_id", "ops_agent_run_as_user", "alert_email_to"].includes(p.name);
     const html = `<div class="param${wide ? " wide" : ""}">
-      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}</label>
+      <label for="${prefix}${p.name}" class="plabel">${escapeHtml(p.label)}${alertDestination ? ' <span class="alert-routing-label">Operations Agent</span>' : ""}</label>
       <span class="phelp">${escapeHtml(p.help)}${p.helpUrl ? ` <a href="${escapeHtml(p.helpUrl)}" target="_blank" rel="noopener noreferrer">Find ID</a>` : ""}</span>
       <input id="${prefix}${p.name}" type="text" ${p.type === "int" ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${requiredPipelineFields.includes(p.name) ? "required" : ""} value="${escapeHtml(p.default || "")}" />
     </div>`;
-    return { advanced, html };
+    return { secretName, html };
   });
   return `<p class="phelp"><strong>Required:</strong> existing Key Vault with SPN credentials and notebook read access.</p>
-    <div class="params">${fields.filter(p => !p.advanced).map(p => p.html).join("")}</div>
-    <details class="foundry-block"><summary>Key Vault secret names and notebook settings</summary>
-    <p class="phelp">Required secrets: tenant ID, client ID and client secret. Setup does not create the vault or its secrets. Enter names, never secret values.</p>
-    <p id="${prefix}defaultsSummary" class="phelp"></p>
-    <div class="params">${fields.filter(p => p.advanced).map(p => p.html).join("")}</div></details>`;
-}
-function updatePipelineDefaultsSummary() {
-  for (const prefix of ["pp_", "wf_pp_"]) {
-    const summary = $(prefix + "defaultsSummary");
-    if (!summary) continue;
-    const value = name => $(prefix + name)?.value || "";
-    summary.textContent = `Secrets: ${
-      ["key_vault_tenant_id_secret_name", "key_vault_client_id_secret_name", "key_vault_client_secret_name"].map(value).join(", ")
-    }. Run as: ${value("ops_agent_run_as_user") || "signed-in user"}. Timeout: ${value("per_notebook_timeout_secs")}s.`;
-  }
+    <div class="params">${fields.filter(p => !p.secretName).map(p => p.html).join("")}</div>
+    <section class="foundry-block"><h3>Key Vault secret names</h3>
+    <p class="phelp">Setup does not create the vault or its secrets. Enter names, never secret values.</p>
+    <div class="params">${fields.filter(p => p.secretName).map(p => p.html).join("")}</div></section>`;
 }
 function syncPipelineWorkspace() {
   ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
@@ -1429,8 +1528,8 @@ async function loadPipelineParams() {
     status.className = "phelp";
     status.setAttribute("role", "status");
     status.textContent = target
-      ? "Settings autosave for this target. Check alert destinations."
-      : "Enter a workspace to load saved settings.";
+      ? "Tenant defaults loaded; workspace overrides autosave. Check alert destinations."
+      : "Tenant defaults loaded. Enter a workspace to deploy.";
     $(container).prepend(status);
   }
   pipelineSavedValues = readPipelineSettings();
@@ -1460,7 +1559,6 @@ async function loadPipelineParams() {
     });
   });
   suggestPipelineEmail();
-  updatePipelineDefaultsSummary();
   if (migrateBrowserValues) {
     const values = {};
     for (const p of pipelineSpec) {
@@ -1494,7 +1592,7 @@ for (const id of ["tenant", "workspace"]) {
   $(id).addEventListener("input", () => {
     saveTargetSettings();
     restoreFoundrySettings();
-    if (pipelineTarget !== pipelineTargetKey()) {
+    if (id === "tenant" && pipelineTarget !== pipelineTargetKey()) {
       pipelineSpec = [];
       for (const container of ["pipelineFields", "workflowPipelineFields"]) {
         $(container).innerHTML = '<p class="phelp">Finish entering the target to load its setup parameters.</p>';
@@ -1630,6 +1728,7 @@ restoreTargetSettings();
 loadWhoAmI();
 loadVersion();
 loadPipelineParams();
+restoreWorkflowJob();
 refresh();</script>
 </body>
 </html>

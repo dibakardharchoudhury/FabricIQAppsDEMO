@@ -9,6 +9,8 @@ the local "Initialize Your Fabric Demo" web app and can also be run directly.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import ast
 import base64
 import hashlib
@@ -24,10 +26,11 @@ import time
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Generator, TypeVar
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
+from http_retries import get_with_read_retry
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -80,6 +83,7 @@ RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
 AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
 _FABRIC_TOKEN_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+_GRAPH_INTERACTIVE_ATTEMPTS: set[str] = set()
 
 
 class DeploymentTimings:
@@ -116,6 +120,19 @@ class DeploymentTimings:
 
 class DeployError(RuntimeError):
     """Expected deployment failure with an operator-readable message."""
+
+
+@contextmanager
+def timed_operation(label: str) -> Generator[None, None, None]:
+    started = time.monotonic()
+    status = "failed"
+    try:
+        yield
+        status = "completed"
+    finally:
+        print("DEPLOY_SUBSTEP_TIMING=" + json.dumps({
+            "label": label, "seconds": round(time.monotonic() - started, 3), "status": status,
+        }, separators=(",", ":")), flush=True)
 
 
 class AzureCliReauthenticationError(DeployError):
@@ -180,7 +197,7 @@ def validate_hosted_page(
         raise DeployError("Hosting verification requires the generated HTTPS Fabric hosting origin.")
     try:
         # Protected hosting negotiates a browser gate for HTML; */* instead returns JSON 401.
-        response = requests.get(
+        response = get_with_read_retry(
             hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False
         )
     except requests.RequestException as exc:
@@ -270,11 +287,25 @@ def command_argv(executable: str, *args: str) -> list[str]:
     return [resolved, *args]
 
 
+def command_environment(argv: list[str], env: dict[str, str] | None = None) -> dict[str, str]:
+    environment = {**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    executable = Path(argv[0])
+    if executable.is_absolute() and executable.name.casefold() in {"node", "node.exe"}:
+        path_keys = [key for key in environment if key.casefold() == "path"]
+        previous = environment[path_keys[0]] if path_keys else ""
+        for key in path_keys:
+            del environment[key]
+        environment["PATH"] = os.pathsep.join(
+            [str(executable.parent)] + ([previous] if previous else [])
+        )
+    return environment
+
+
 def run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
     proc = subprocess.run(
         argv,
         cwd=str(cwd) if cwd else None,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        env=command_environment(argv),
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -297,7 +328,7 @@ def run_stream(
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd) if cwd else None,
-        env={**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        env=command_environment(argv, env),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -315,7 +346,15 @@ def run_stream(
     returncode = proc.wait()
     output = "\n".join(lines)
     if returncode != 0:
-        raise DeployError(f"Command failed with exit code {returncode}.")
+        diagnostics = [
+            line for line in lines
+            if not line.lstrip().startswith("npm warn") and re.search(
+                r"\b\w*Error:|\bnpm error (?:code|path|command)\b|"
+                r"\b(?:ENOENT|EPERM|ENOTEMPTY|EBUSY|EACCES|ENAMETOOLONG)\b", line
+            )
+        ]
+        detail = "\n".join(diagnostics[:8] or lines[-8:])[:4000]
+        raise DeployError(f"Command failed with exit code {returncode}." + (f"\n{detail}" if detail else ""))
     return output
 
 
@@ -492,6 +531,13 @@ def deploy_dependencies_ready() -> bool:
 
 def ensure_deploy_dependencies() -> None:
     """Restore the locked Node toolchain and verify the local Rayfin CLI."""
+    native_tool = (APP_DIR / "node_modules" / "@microsoft" / "rayfin-cli" / "node_modules"
+                   / "@esbuild" / "win32-x64" / "esbuild.exe")
+    if os.name == "nt" and len(str(native_tool)) >= 260:
+        raise DeployError(
+            f"Windows native-tool path is too long ({len(str(native_tool))} characters): {native_tool}. "
+            "Use a shorter repository path, then retry; existing deployment state is retained."
+        )
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
     missing = [path.name for path in manifests if not path.is_file()]
     if missing:
@@ -517,12 +563,15 @@ def ensure_deploy_dependencies() -> None:
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
-        command = npm24("ci", "--no-audit", "--no-fund")
+        command = npm24("ci", "--no-audit", "--no-fund", "--prefer-offline")
         try:
             run_stream(command, cwd=APP_DIR)
-        except DeployError:
+        except DeployError as exc:
+            if (re.search(r"\b(?:ENOENT|ENAMETOOLONG|EACCES)\b", str(exc))
+                    or not re.search(r"\b(?:ENOTEMPTY|EPERM|EBUSY)\b", str(exc))):
+                raise
             print(
-                "The first npm restore failed; stopping app tooling again and retrying once...",
+                "npm reported a file-lock/cleanup error; stopping app tooling and retrying once...",
                 flush=True,
             )
             stop_hydro_node_tooling()
@@ -546,7 +595,7 @@ def resolve_tenant_id(tenant: str) -> str:
         return tenant.lower()
     if not TENANT_RE.fullmatch(tenant):
         raise DeployError("Tenant must be a GUID or domain name.")
-    response = requests.get(
+    response = get_with_read_retry(
         f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration",
         timeout=30, allow_redirects=False,
     )
@@ -577,6 +626,18 @@ def ensure_azure_tenant(tenant: str) -> str:
 def isolated_azure_cli_config(tenant: str) -> Path:
     """Return the tenant-scoped cache used only for CAE reauthentication."""
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    pointer = AZURE_CLI_SESSION_ROOT / f"{safe_tenant}.active"
+    if pointer.exists():
+        try:
+            name = pointer.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise DeployError("Could not read the active tenant-scoped CLI session.") from exc
+        if not re.fullmatch(re.escape(safe_tenant) + r"\.session-[a-z0-9_]+", name):
+            raise DeployError("Active tenant-scoped CLI session has an invalid directory name.")
+        directory = AZURE_CLI_SESSION_ROOT / name
+        if not directory.is_dir():
+            raise DeployError("The active tenant-scoped CLI session directory is missing.")
+        return directory
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
 
@@ -648,48 +709,159 @@ def secure_private_directory(directory: Path, *, recursive: bool = False) -> Non
         ) from exc
 
 
-def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
+@contextmanager
+def azure_cli_authentication_environment() -> Generator[None, None, None]:
+    """Keep Windows login and child commands on the same non-broker cache."""
+    settings = {
+        "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "false",
+        "AZURE_CORE_LOGIN_EXPERIENCE_V2": "off",
+    } if sys.platform == "win32" else {}
+    previous = {key: os.environ.get(key) for key in settings}
+    os.environ.update(settings)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def graph_claims_challenge(tenant: str) -> str | None:
+    """Read Graph's actual CAE challenge using the CLI command's resource."""
+    try:
+        payload = json.loads(run_capture(az(
+            "account", "get-access-token", "--tenant", tenant,
+            "--resource", "https://graph.microsoft.com/", "-o", "json",
+        )))
+    except DeployError as exc:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            raise
+        print("Graph token acquisition requires sign-in; requesting Graph-scoped login.", flush=True)
+        return None
+    except ValueError as exc:
+        raise DeployError("Azure CLI returned invalid Microsoft Graph token metadata.") from exc
+    token = payload.get("accessToken") if isinstance(payload, dict) else None
+    if not isinstance(token, str) or not token.strip():
+        raise DeployError("Azure CLI returned an empty Microsoft Graph token.")
+    try:
+        response = requests.get(
+            "https://graph.microsoft.com/v1.0/applications?$top=1&$select=appId",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise DeployError("Could not read the Microsoft Graph authentication challenge.") from exc
+    if response.status_code == 200:
+        print("Microsoft Graph accepts the cached token; reusing the existing CLI session without sign-in.", flush=True)
+        return ""
+    header = response.headers.get("WWW-Authenticate", "")
+    match = re.search(r'\bclaims="([A-Za-z0-9_+/=-]+)"', header)
+    if response.status_code != 401 or 'error="insufficient_claims"' not in header or not match:
+        raise DeployError(
+            f"Microsoft Graph challenge probe returned HTTP {response.status_code} "
+            "without a usable CAE claims challenge."
+        )
+    encoded = match[1]
+    try:
+        claims = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise DeployError("Microsoft Graph returned an invalid CAE claims challenge.") from exc
+    if not isinstance(claims, dict) or not isinstance(claims.get("access_token"), dict):
+        raise DeployError("Microsoft Graph CAE challenge is missing access_token claims.")
+    print("Microsoft Graph requires a claims-aware sign-in; retaining its resource challenge.", flush=True)
+    return encoded
+
+
+def reauthenticate_azure_cli(tenant: str, operation: str, *, graph: bool = False) -> None:
+    challenge = graph_claims_challenge(tenant) if graph else None
+    if graph:
+        if challenge == "":
+            return
+        identity = tenant.casefold()
+        if identity in _GRAPH_INTERACTIVE_ATTEMPTS:
+            raise DeployError(
+                "Microsoft Graph still requires interaction after the deployment's sign-in attempt. "
+                "No further sign-in popup will be opened; verify the resource sign-in policy before retrying."
+            )
+        ensure_azure_tenant(tenant)
+        _GRAPH_INTERACTIVE_ATTEMPTS.add(identity)
+        print(
+            f"Microsoft Graph requires sign-in before {operation}; reusing the existing CLI cache. "
+            "One interactive Graph sign-in is allowed per deployment process.",
+            flush=True,
+        )
+        # Match CLI resource_to_scopes("https://graph.microsoft.com/"), including its slash.
+        run_stream(az(
+            "login", "--tenant", tenant, "--allow-no-subscriptions",
+            "--scope", "https://graph.microsoft.com//.default",
+            *(("--claims-challenge", challenge) if challenge else ()),
+            "--only-show-errors", "--output", "none",
+        ))
+        ensure_azure_tenant(tenant)
+        return
     print(
         f"Azure CLI authentication needs to be refreshed before {operation}. "
         f"Opening Microsoft sign-in for tenant {tenant}...",
         flush=True,
     )
-    config_dir = isolated_azure_cli_config(tenant)
-    secure_private_directory(config_dir.parent)
-    if config_dir.exists():
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        backup_dir = config_dir.with_name(f"{config_dir.name}.stale-{timestamp}")
-        try:
-            config_dir.rename(backup_dir)
-        except OSError as exc:
-            raise DeployError(
-                f"Could not preserve the stale tenant-scoped Azure CLI cache at {config_dir}. "
-                "No Azure CLI login state was changed. Close processes using that directory and retry."
-            ) from exc
-        secure_private_directory(backup_dir, recursive=True)
-        print(f"Preserved stale Azure CLI session at {backup_dir}.", flush=True)
+    safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    secure_private_directory(AZURE_CLI_SESSION_ROOT)
+    try:
+        config_dir = Path(tempfile.mkdtemp(prefix=f"{safe_tenant}.session-", dir=AZURE_CLI_SESSION_ROOT))
+    except OSError as exc:
+        raise DeployError("Could not create a fresh tenant-scoped CLI session; existing sessions are unchanged.") from exc
     secure_private_directory(config_dir)
+    previous_config = os.environ.get("AZURE_CONFIG_DIR")
     os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
-    run_stream(
-        az(
-            "login",
-            "--tenant",
-            tenant,
-            "--allow-no-subscriptions",
-            "--only-show-errors",
-            "--output",
-            "none",
+    print(f"Using fresh Azure CLI session at {config_dir}; existing sessions remain untouched.", flush=True)
+    try:
+        run_stream(
+            az(
+                "login",
+                "--tenant",
+                tenant,
+                "--allow-no-subscriptions",
+                "--only-show-errors",
+                "--output",
+                "none",
+            )
         )
-    )
-    ensure_azure_tenant(tenant)
+        ensure_azure_tenant(tenant)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=f"{safe_tenant}.active-",
+            dir=AZURE_CLI_SESSION_ROOT, delete=False,
+        ) as stream:
+            stream.write(config_dir.name)
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = Path(stream.name)
+        try:
+            temporary.replace(AZURE_CLI_SESSION_ROOT / f"{safe_tenant}.active")
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    except (OSError, DeployError) as exc:
+        if previous_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = previous_config
+        raise DeployError(
+            "Fresh Azure CLI sign-in or session activation failed; previous sessions were preserved. "
+            f"Underlying error: {exc}"
+        ) from exc
 
 
 def run_with_azure_cli_reauthentication(
     tenant: str,
     operation: str,
     action: Callable[[], T],
+    *,
+    graph: bool = False,
 ) -> T:
-    """Retry one stale-token failure with a new tenant-isolated Azure CLI cache."""
+    """Recover a stale token once, preserving Graph's resource claims."""
     try:
         return action()
     except DeployError as exc:
@@ -698,20 +870,30 @@ def run_with_azure_cli_reauthentication(
 
     try:
         _FABRIC_TOKEN_CACHE.clear()
-        reauthenticate_azure_cli(tenant, operation)
+        if graph:
+            reauthenticate_azure_cli(tenant, operation, graph=True)
+        else:
+            reauthenticate_azure_cli(tenant, operation)
     except DeployError as exc:
         raise AzureCliReauthenticationError(str(exc)) from exc
-    try:
-        return action()
-    except DeployError as exc:
-        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
-            raise AzureCliReauthenticationError(str(exc)) from exc
-        raise AzureCliReauthenticationError(
-            f"Azure CLI authentication was still rejected by Continuous Access Evaluation while "
-            f"{operation}, even after a clean tenant-scoped login. Upgrade Azure CLI to the current "
-            "version and retry; if the challenge continues, ask the tenant administrator to verify "
-            "the applicable Conditional Access policy."
-        ) from exc
+    delays = (0, 2, 5, 10, 20) if graph else (0,)
+    for attempt, delay in enumerate(delays):
+        if delay:
+            print(f"Waiting {delay}s for Microsoft Graph claims propagation before {operation}.", flush=True)
+            time.sleep(delay)
+        try:
+            return action()
+        except DeployError as exc:
+            if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+                raise AzureCliReauthenticationError(str(exc)) from exc
+            if attempt + 1 == len(delays):
+                raise AzureCliReauthenticationError(
+                    f"Azure CLI authentication was still rejected by Continuous Access Evaluation while "
+                    f"{operation}, even after a resource-aware tenant-scoped login. "
+                    "Deployment stopped without bypassing Conditional Access. "
+                    "The resource still rejects the CLI credential; deployment is not verified."
+                ) from exc
+    raise AssertionError("Authentication retry schedule must not be empty.")
 
 
 def fabric_headers(tenant: str) -> dict[str, str]:
@@ -753,7 +935,7 @@ def fabric_headers(tenant: str) -> dict[str, str]:
 
 
 def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
-    response = requests.get(f"{FABRIC_BASE}/{path.lstrip('/')}", headers=headers, timeout=60)
+    response = get_with_read_retry(f"{FABRIC_BASE}/{path.lstrip('/')}", headers=headers, timeout=60)
     if not response.ok:
         raise DeployError(f"Fabric API GET {path} failed: HTTP {response.status_code} {response.text}")
     return response.json()
@@ -763,7 +945,7 @@ def check_capacity_availability(capacity_id: str, headers: dict[str, str]) -> No
     url = f"{FABRIC_BASE}/capacities"
     seen_tokens: set[str] = set()
     while True:
-        response = requests.get(url, headers=headers, timeout=60)
+        response = get_with_read_retry(url, headers=headers, timeout=60)
         if response.status_code == 403:
             print(
                 "WARNING: Capacity-list access is unavailable. Capacity state is unverified; "
@@ -824,7 +1006,7 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
     matches: list[dict[str, Any]] = []
     url: str | None = f"{FABRIC_BASE}/workspaces"
     while url:
-        response = requests.get(url, headers=headers, timeout=60)
+        response = get_with_read_retry(url, headers=headers, timeout=60)
         if not response.ok:
             raise DeployError(f"Could not list Fabric workspaces: HTTP {response.status_code} {response.text}")
         page = response.json()
@@ -891,7 +1073,11 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
         if not GUID_RE.fullmatch(client_id):
             raise DeployError("SPA client id must be a GUID.")
         try:
-            run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none"))
+            run_with_azure_cli_reauthentication(
+                tenant, "verifying the requested tenant SPA app registration",
+                lambda: run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none")),
+                graph=True,
+            )
             print(f"Using requested SPA app registration: {client_id}", flush=True)
         except DeployError as exc:
             raise DeployError(
@@ -918,6 +1104,7 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
             tenant,
             "discovering the tenant SPA app registration",
             lambda: run_capture(discovery_command),
+            graph=True,
         )
     except AzureCliReauthenticationError:
         raise
@@ -996,15 +1183,19 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
     return app_id
 
 
-def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
+def read_rayfin_env(env_path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    env_path = RAYFIN_DIR / ".env"
     if env_path.exists():
         for raw in env_path.read_text(encoding="utf-8").splitlines():
             if "=" not in raw or raw.lstrip().startswith("#"):
                 continue
             key, value = raw.split("=", 1)
             values[key.strip()] = value.strip()
+    return values
+
+
+def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
+    values = read_rayfin_env(RAYFIN_DIR / ".env")
 
     state_path = RAYFIN_DIR / ".deployments.json"
     if not state_path.exists():
@@ -1022,7 +1213,7 @@ def fabric_item_exists(workspace_id: str, item_id: str, tenant: str) -> bool:
     """Return false for deleted saved items; fail for other Fabric API errors."""
     if not GUID_RE.fullmatch(item_id):
         return False
-    response = requests.get(
+    response = get_with_read_retry(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item_id}",
         headers=fabric_headers(tenant),
         timeout=60,
@@ -1302,9 +1493,13 @@ def _lineage_graph_binding(
         metadata.get("id") != ontology_id
         or (metadata.get("workspaceId") and str(metadata["workspaceId"]).casefold() != workspace_id.casefold())
         or not isinstance(metadata.get("properties"), dict)
-        or metadata["properties"].get("generation") != 2
+        or type(metadata["properties"].get("generation")) is not int
+        or metadata["properties"]["generation"] != 2
     ):
         raise DeployError("The selected Ontology is not a verified generation-2 item in the target workspace.")
+
+    if not any(item["type"] == "GraphModel" for item in items):
+        return None
 
     lineage = fabric_get(
         f"workspaces/{workspace_id}/items/{quote(ontology_id, safe='')}/relations/downstream?beta=true",
@@ -1440,6 +1635,7 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT": "",
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID": sql_endpoint_id,
         "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
+        "RAYFIN_PUBLIC_ONTOLOGY_ID": "",
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
         "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "",
         "RAYFIN_PUBLIC_GEO_LAKEHOUSE_NAME": "",
@@ -1447,9 +1643,12 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID": "",
     }
     geo_name = str(lakehouse["displayName"]).replace("Energy_IQ_LakehouseRTI", "Hydro_GeoContext", 1)
-    geo_matches = [item for item in items if item["type"] == "Lakehouse" and item["displayName"] == geo_name]
+    geo_matches = [item for item in items if item["type"] == "Lakehouse"
+                   and item.get("description") == f"Feature bootstrap {workspace_id}: energy context"]
+    if not geo_matches:
+        geo_matches = [item for item in items if item["type"] == "Lakehouse" and item["displayName"] == geo_name]
     if len(geo_matches) > 1:
-        raise DeployError("Multiple GeoContext Lakehouses match the selected Core Lakehouse suffix.")
+        raise DeployError("Multiple GeoContext Lakehouses match the selected workspace; refusing an arbitrary target.")
     geo = geo_matches[0] if geo_matches else None
     if geo is not None:
         geo_detail = fabric_get(f"workspaces/{workspace_id}/lakehouses/{geo['id']}", headers)
@@ -1509,6 +1708,7 @@ def resolve_public_artifact_config(
     )
     if selected_ontology:
         values["RAYFIN_PUBLIC_ONTOLOGY_NAME"] = str(selected_ontology["displayName"])
+        values["RAYFIN_PUBLIC_ONTOLOGY_ID"] = str(selected_ontology["id"])
     if lineage_binding:
         values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = json.dumps(
             lineage_binding, separators=(",", ":")
@@ -1531,6 +1731,7 @@ def resolve_public_artifact_config(
         by_id = {str(item["id"]): item for item in items}
         if (
             not isinstance(binding, dict) or binding.get("workspaceId") != workspace_id
+            or binding.get("ontologyId") != values["RAYFIN_PUBLIC_ONTOLOGY_ID"]
             or by_id.get(str(binding.get("ontologyId")), {}).get("type") != "Ontology"
             or by_id.get(str(binding.get("graphModelId")), {}).get("type") != "GraphModel"
         ):
@@ -1596,6 +1797,8 @@ def prepare_rayfin_env(
         for key in (
             "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
             "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+            "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX",
+            "RAYFIN_PUBLIC_FOUNDRY_IQ_CONNECTION_NAME", "RAYFIN_PUBLIC_FOUNDRY_ONTOLOGY_CONNECTION_NAME",
         )
         if same_workspace and _public_config_value(values, key)
     }
@@ -1828,6 +2031,7 @@ def validate_entra_live_auth_with_reauth(
         tenant,
         "validating browser sign-in readiness",
         lambda: validate_entra_live_auth(client_id, hosting_url),
+        graph=True,
     )
 
 
@@ -1861,14 +2065,30 @@ def export_frontend_env() -> None:
 
 def run_rayfin_deployment(command: list[str], tenant: str) -> str:
     try:
-        return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+        try:
+            return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+        except DeployError as exc:
+            if (command[-3:] != ["up", "staticapp", "deploy"]
+                    or not re.search(r"Static deploy failed:[^\r\n]*\b401\b", str(exc))):
+                raise
+            print(
+                "WARNING: Fabric rejected the static-app upload with HTTP 401. "
+                "Refreshing the tenant-scoped token and retrying the upload once without rebuilding.",
+                flush=True,
+            )
+            _FABRIC_TOKEN_CACHE.pop((tenant.casefold(), os.environ.get("AZURE_CONFIG_DIR", "")), None)
+            return run_stream(
+                [*command, "--skip-build"], cwd=APP_DIR, env=rayfin_environment(tenant),
+            )
     finally:
         # Rayfin also rewrites .env after the prebuild hook and on failed up runs.
         # Regenerate through the repository producer; never patch generated files.
         export_frontend_env()
 
 
-def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydrolakehouse") -> None:
+def validate_lakehouse_connector_apply(
+    output: str, connector_name: str | tuple[str, ...] = "hydrolakehouse",
+) -> None:
     """Rayfin can exit zero on partial connector failure; require both steps."""
     records = []
     for line in output.splitlines():
@@ -1882,11 +2102,22 @@ def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydro
     receipt = records[-1]
     if not isinstance(receipt, dict) or receipt.get("status") != "success":
         raise DeployError("Lakehouse connector application did not succeed.")
+    required = {connector_name} if isinstance(connector_name, str) else set(connector_name)
+    if not required:
+        raise DeployError("Connector verification requires at least one connector.")
+    generated_names: set[str] | None = None
     for key, status in (("generate", "generated"), ("results", "success")):
         rows = receipt.get(key)
-        if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
-                or rows[0].get("name") != connector_name or rows[0].get("status") != status):
+        if (not isinstance(rows, list) or not rows
+                or any(not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                       or row.get("status") != status for row in rows)):
             raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
+        names = [row["name"] for row in rows]
+        if (len(set(names)) != len(names) or not required.issubset(names)
+                or isinstance(connector_name, str) and len(rows) != 1
+                or generated_names is not None and generated_names != set(names)):
+            raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
+        generated_names = set(names)
 
 
 def configure_geo_connector(*, enabled: bool) -> None:
@@ -2000,6 +2231,11 @@ def _unique_redirect_uris(*groups: list[str]) -> list[str]:
     return result
 
 
+def _redirects_with_current_hosting(redirects: list[str], hosting_url: str) -> list[str]:
+    # setup-live-auth selects the last Fabric origin; only the returned deployment URL is authoritative.
+    return _unique_redirect_uris([uri for uri in redirects if uri != hosting_url], [hosting_url])
+
+
 def read_entra_spa_redirects(client_id: str) -> list[str]:
     """Read the SPA redirect URIs currently registered in Entra."""
     app = json.loads(run_capture(az("ad", "app", "show", "--id", client_id, "-o", "json")))
@@ -2016,6 +2252,7 @@ def read_entra_spa_redirects_with_reauth(client_id: str, tenant: str) -> list[st
         tenant,
         "reading the existing SPA redirects",
         lambda: read_entra_spa_redirects(client_id),
+        graph=True,
     )
 
 
@@ -2095,14 +2332,21 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
 
     A target that has no AppBackend yet would otherwise stop at Foundry provisioning, so create the backend (without
     static hosting) first. Existing targets already carry the identity and skip this entirely."""
+    print(
+        "Foundry: backend gateway - preparing the Fabric AppBackend identity required by the Hosted Agent; "
+        "this does not publish the website.",
+        flush=True,
+    )
     if appbackend_identity_present():
+        print("Reusing the configured AppBackend identity; no backend creation is needed.", flush=True)
         return
     values, _ = current_rayfin_target()
     if not GUID_RE.fullmatch(_public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")):
         raise DeployError("Complete the current shared Lakehouse/SQL setup before creating an AppBackend.")
     print(
-        "No AppBackend exists for this target yet; creating it (without static hosting) so the Hosted Agent "
-        "can be configured against its identity.",
+        "No AppBackend exists for this target yet; creating the Fabric App item and its SQL/GraphQL dependencies "
+        "without static hosting so the Hosted Agent can be configured against its identity. "
+        "Deploy app remains the separate website publication step.",
         flush=True,
     )
     ensure_rayfin_login(tenant, workspace_id)
@@ -2130,7 +2374,7 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
     if _published_operational_source_ready(workspace_id, values, "", headers, required=False):
         bind_operational_store_env(workspace_id, headers)
-        print("Verified published Data Agent SQL source; no NB11 execution or demo DML needed.", flush=True)
+        print("Verified ontology-associated operational SQL; no NB11 execution or demo DML needed.", flush=True)
         return
     legacy = [item for item in _workspace_artifacts(workspace_id, headers)
               if item["type"] == "SQLDatabase" and item["displayName"] == backend["displayName"]]
@@ -2179,15 +2423,15 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         raise DeployError("Cannot verify an idle NB11 from its complete job inventory.")
     if any(job.get("status") in ("NotStarted", "InProgress") for job in jobs["value"]):
         raise DeployError("NB11 is already active. Let it finish before retrying deployment.")
-    print("Bootstrapping the Data Agent SQL source through NB11; no operational demo DML.", flush=True)
+    print("Preparing shared operational SQL and ontology guidance through NB11; no demo DML.", flush=True)
     response = requests.post(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}/jobs/execute/instances?beta=false",
         headers=headers, json={"parameters": [
             {"name": "seed_demo_data", "value": False, "type": "Boolean"},
             {"name": "provision_shared_store", "value": True, "type": "Boolean"},
             {"name": "legacy_sql_db_item_id", "value": legacy[0]["id"], "type": "Text"},
-            {"name": "project_ontology_item_id", "value": json.loads(_public_config_value(
-                values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))["ontologyId"], "type": "Text"},
+            {"name": "project_ontology_item_id", "value": _public_config_value(
+                values, "RAYFIN_PUBLIC_ONTOLOGY_ID"), "type": "Text"},
         ]}, timeout=60,
     )
     if response.status_code != 202:
@@ -2213,9 +2457,9 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     else:
         raise DeployError(f"NB11 bootstrap exceeded 15 minutes. Inspect the existing job before retrying: {location}")
     if not _published_operational_source_ready(workspace_id, values, "", headers):
-        raise DeployError("NB11 completed but its operational SQL source publication could not be verified.")
+        raise DeployError("NB11 completed but its ontology-associated operational SQL could not be verified.")
     bind_operational_store_env(workspace_id, headers)
-    print("Verified operational SQL source publication before Foundry provisioning.", flush=True)
+    print("Verified ontology-associated operational SQL before Foundry provisioning.", flush=True)
 
 
 def bind_operational_store_env(workspace_id, headers) -> None:
@@ -2232,14 +2476,18 @@ def bind_operational_store_env(workspace_id, headers) -> None:
     }), encoding="utf-8")
 
 
-def _published_operational_source_ready(workspace_id, values, sql_name, headers, *, required=True) -> bool:
+def _published_operational_source_ready(
+    workspace_id, values, sql_name, headers, *, required=True,
+    definition_cache: dict[tuple[str, str, str], dict] | None = None,
+) -> bool:
     from operational_store_support import is_operational_store_name
     from provision_foundry_agents import (
-        published_sql_source_ready, read_data_agent_definition, verify_published_identity,
+        read_data_agent_definition, verify_published_identity,
     )
 
-    binding = json.loads(_public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
-    ontology_id = binding["ontologyId"]
+    ontology_id = _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_ID")
+    if not GUID_RE.fullmatch(ontology_id):
+        raise DeployError("Data Agent SQL publication requires the verified selected Ontology item ID.")
     ontology = fabric_get(f"workspaces/{workspace_id}/ontologies/{ontology_id}", headers)
     if ontology.get("id") != ontology_id or type(ontology.get("properties", {}).get("generation")) is not int \
             or ontology["properties"]["generation"] != 2:
@@ -2259,7 +2507,9 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
     for agent in items:
         if agent["type"] != "DataAgent" or not agent["displayName"].startswith("RTI_Demo_Agent_"):
             continue
-        definition = read_data_agent_definition(sys.modules[__name__], workspace_id, agent["id"], headers)
+        definition = read_data_agent_definition(
+            sys.modules[__name__], workspace_id, agent["id"], headers, definition_cache=definition_cache,
+        )
         try:
             verify_published_identity(definition, workspace_id, ontology_id)
         except RuntimeError:
@@ -2267,12 +2517,12 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
         matches.append(definition)
     if len(matches) != 1:
         raise DeployError("Exactly one published Data Agent must match the verified v2 Ontology.")
-    if not published_sql_source_ready(matches[0], workspace_id, databases[0]["id"]):
-        return False
     from operational_store_support import WEATHER_PROJECT_ENTITIES, SQL_PROJECT_ENTITIES, project_source_expressions
     from ontology_notebook_support import _verify_definition
     extension = read_data_agent_definition(
-        sys.modules[__name__], workspace_id, ontology_id, headers, collection="ontologies")
+        sys.modules[__name__], workspace_id, ontology_id, headers, collection="ontologies",
+        definition_cache=definition_cache,
+    )
     expected = []
     def require(path, text):
         expected.append({"path": path, "payload": base64.b64encode(text.encode()).decode()})
@@ -2335,12 +2585,10 @@ def verify_lakehouse_connector(tenant: str) -> dict[str, int]:
 
 def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
     values, _ = current_rayfin_target()
-    if not _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"):
+    if not GUID_RE.fullmatch(_public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_ID")):
         raise DeployError(
-            "Native Ontology graph binding is missing. In the selected generation-2 Ontology, use "
-            "Manage graph -> select eligible entities/relationships -> Continue -> Materialize, then "
-            "supply authoritative lineage or operator-verified HYDRO_ONTOLOGY_GRAPH_BINDING JSON. "
-            "Ineligible entities or a zero-node materialization do not satisfy this prerequisite. "
+            "The verified selected Ontology item ID is missing. Resolve the target workspace's "
+            "generation-2 Ontology before Foundry setup; native graph materialization is not required. "
             "Stopped before AppBackend or Foundry provisioning."
         )
     foundry_spec = importlib.util.spec_from_file_location(
@@ -2350,10 +2598,59 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
         raise DeployError("Foundry provisioning module is unavailable.")
     foundry = importlib.util.module_from_spec(foundry_spec)
     foundry_spec.loader.exec_module(foundry)
-    selection = foundry.resolve_project(sys.modules[__name__], tenant, workspace_id)
-    ensure_appbackend_identity(tenant, workspace_id)
-    ensure_hosted_source_prerequisites(tenant, workspace_id)
+    with timed_operation("Foundry project/model preflight"):
+        selection = foundry.resolve_project(sys.modules[__name__], tenant, workspace_id)
+
+    def prepare_image() -> None:
+        with timed_operation("Foundry immutable image preparation (overlaps backend)"):
+            foundry.prepare_hosted_image(sys.modules[__name__], tenant, selection)
+
+    def prepare_backend() -> None:
+        with timed_operation("Foundry Fabric backend gateway"):
+            ensure_appbackend_identity(tenant, workspace_id)
+        with timed_operation("Foundry operational source verification"):
+            ensure_hosted_source_prerequisites(tenant, workspace_id)
+
+    if not appbackend_identity_present():
+        if not selection.project_id:
+            selection = foundry.resolve_project(
+                sys.modules[__name__], tenant, workspace_id, allow_create=True,
+                creation_settings=selection.creation_settings,
+            )
+        print("Foundry: preparing the source image alongside the independent Fabric backend gateway.", flush=True)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            image = pool.submit(prepare_image)
+            prepare_backend()
+            image.result()
+    else:
+        prepare_backend()
     foundry.provision(sys.modules[__name__], tenant, workspace_id, selection=selection)
+
+
+def prepare_energy_and_foundry(
+    tenant: str, workspace_id: str, *, publish_energy: Callable[[], None] | None = None,
+) -> None:
+    from feature_workspace import FeatureWorkspaceError
+
+    publish_energy = publish_energy or energy_workspace(tenant, workspace_id).publish_energy
+
+    def finish_energy() -> None:
+        with timed_operation("Full Deploy energy finalization (parallel with Foundry)"):
+            try:
+                publish_energy()
+            except FeatureWorkspaceError as error:
+                raise DeployError(f"Energy finalization failed: {error}") from error
+
+    print(
+        "Full Deploy: Energy finalization and Foundry setup run concurrently. "
+        "App publication waits for both; only this process updates app configuration.",
+        flush=True,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        energy_job = pool.submit(finish_energy)
+        with timed_operation("Full Deploy Foundry setup (parallel with Energy)"):
+            provision_foundry_agents(tenant, workspace_id)
+        energy_job.result()
 
 
 def verify_foundry_agents(tenant: str, workspace_id: str) -> None:
@@ -2383,7 +2680,8 @@ def deploy(args: argparse.Namespace) -> None:
     timings = DeploymentTimings()
     succeeded = False
     try:
-        _deploy(args, timings)
+        with azure_cli_authentication_environment():
+            _deploy(args, timings)
         succeeded = True
     finally:
         _FABRIC_TOKEN_CACHE.clear()
@@ -2401,6 +2699,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
 
     stage = getattr(args, "stage", "all")
     energy_setting = getattr(args, "energy_map", "keep")
+    core_prepared = getattr(args, "energy_read_models_only", False)
+    if core_prepared and (stage not in ("energy", "all")
+                          or stage == "all" and energy_setting != "enabled"):
+        raise DeployError(
+            "--energy-read-models-only requires --stage energy, or --stage all --energy-map enabled "
+            "after successful Core setup."
+        )
     if stage == "energy":
         from feature_workspace import FeatureWorkspaceError
 
@@ -2468,14 +2773,14 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         _unique_redirect_uris(original_entra_redirects, ["http://localhost:5173"])
     )
 
-    if feature_workspace and stage == "all":
+    if feature_workspace and stage == "all" and not core_prepared:
         try:
             feature_workspace.prepare()
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
 
     timings.stage(3, "Preparing target configuration and checking deployment prerequisites")
-    if stage == "all" and energy_setting == "enabled" and not feature_workspace:
+    if stage == "all" and energy_setting == "enabled" and not feature_workspace and not core_prepared:
         from feature_workspace import FeatureWorkspaceError
 
         try:
@@ -2490,7 +2795,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         client_id,
         enable_energy_map=enable_energy_map,
     )
-    if feature_workspace:
+    if feature_workspace and not core_prepared:
         feature_workspace.configure_app(RAYFIN_DIR / ".env")
     values, _ = current_rayfin_target()
     configure_geo_connector(
@@ -2503,16 +2808,32 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
             raise DeployError("Run the local Foundry setup module first to prepare this target's AppBackend and agents.")
         verify_foundry_agents(tenant_id, workspace_id)
     else:
-        provision_foundry_agents(tenant_id, workspace_id)
+        if stage == "all" and core_prepared:
+            prepare_energy_and_foundry(
+                tenant_id, workspace_id,
+                publish_energy=feature_workspace.publish_energy if feature_workspace else None,
+            )
+            reuse_deployment = appbackend_identity_present()
+            if not reuse_deployment:
+                raise DeployError("Combined setup did not retain the verified AppBackend identity; no app was published.")
+        else:
+            provision_foundry_agents(tenant_id, workspace_id)
         if stage == "foundry":
-            print("FOUNDRY_SETUP_SUCCESS (configuration readback verified; agent execution is separate).", flush=True)
+            print(
+                "FOUNDRY_SETUP_SUCCESS (backend identity and multi-agent configuration readback verified; "
+                "no website published; agent execution is separate).",
+                flush=True,
+            )
             return
     values, _ = current_rayfin_target()
     if _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true":
         from feature_workspace import FeatureWorkspaceError
 
         try:
-            energy_workspace(tenant_id, workspace_id).verify_energy()
+            energy = energy_workspace(tenant_id, workspace_id)
+            energy.verify_energy()
+            print("Energy: reusing prepared setup; app publication does not run Geo notebooks or republish the map agent.",
+                  flush=True)
         except FeatureWorkspaceError as exc:
             raise DeployError(f"Energy prerequisites failed; run the local energy setup module first: {exc}") from exc
 
@@ -2533,11 +2854,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
 
     timings.stage(6, "Adding the current app URL to the preserved redirect configuration")
     rayfin_redirects = write_rayfin_redirects(
-        _unique_redirect_uris(
-            original_entra_redirects,
-            [hosting_url],
-            ["http://localhost:5173"],
-        )
+        _redirects_with_current_hosting(original_entra_redirects, hosting_url)
     )
     # Only this tenant's own URIs can be asserted against Entra; teammate origins are not registered here.
     required_entra_redirects = _unique_redirect_uris(original_entra_redirects, [hosting_url])
@@ -2550,32 +2867,28 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         "restarts cannot retain stale CORS state.",
         flush=True,
     )
-    run_rayfin_deployment(
-        rayfin24(
-            "up", "--workspace-id", workspace_id,
-            "--exclude-services", "staticHosting", "--yes",
-        ),
-        args.tenant,
-    )
-    connector_output = run_rayfin_deployment(
-        rayfin24("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
-        args.tenant,
-    )
-    validate_lakehouse_connector_apply(connector_output)
-    operational_output = run_rayfin_deployment(
-        rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
-    )
-    validate_lakehouse_connector_apply(operational_output, "hydrooperations")
-    energy_enabled = _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
-    if energy_enabled:
-        geo_output = run_rayfin_deployment(
-            rayfin24("up", "connector", "apply", "--name", "hydrogeo", "--json"), args.tenant,
+    with timed_operation("Reapply backend runtime/CORS and database settings"):
+        run_rayfin_deployment(
+            rayfin24(
+                "up", "--workspace-id", workspace_id,
+                "--exclude-services", "staticHosting", "--yes",
+            ),
+            args.tenant,
         )
-        validate_lakehouse_connector_apply(geo_output, "hydrogeo")
+    energy_enabled = _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
+    connector_names = ("hydrolakehouse", "hydrooperations") + (("hydrogeo",) if energy_enabled else ())
+    with timed_operation("Generate/apply all connectors and verify individual receipts"):
+        connector_output = run_rayfin_deployment(
+            rayfin24("up", "connector", "apply", "--json"), args.tenant,
+        )
+        validate_lakehouse_connector_apply(connector_output, connector_names)
 
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
         try:
+            write_rayfin_redirects(_redirects_with_current_hosting(
+                read_entra_spa_redirects_with_reauth(client_id, tenant_id), hosting_url,
+            ))
             run_with_azure_cli_reauthentication(
                 tenant_id,
                 "configuring browser sign-in",
@@ -2584,6 +2897,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
                     cwd=APP_DIR,
                     env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
                 ),
+               graph=True,
             )
         except DeployError as exc:
             if feature_workspace:
@@ -2595,11 +2909,13 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         )
 
     timings.stage(8, "Checking the hosted page, Fabric backend, and sign-in readiness")
-    item_id = validate_fabric_app(workspace_id, args.tenant)
-    hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
-    api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
-    publishable_key = validate_rayfin_publishable_key()
-    validate_appbackend_cors(api_url, hosting_url, publishable_key, energy_enabled=energy_enabled)
+    with timed_operation("Hosted-page and Fabric backend identity readback"):
+        item_id = validate_fabric_app(workspace_id, args.tenant)
+        hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
+    with timed_operation("Endpoint identity and browser-equivalent CORS/POST readiness"):
+        api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
+        publishable_key = validate_rayfin_publishable_key()
+        validate_appbackend_cors(api_url, hosting_url, publishable_key, energy_enabled=energy_enabled)
     print(
         "LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed "
         "(use normal Fabric browser sign-in to verify all nine entities; "
@@ -2609,8 +2925,9 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
-        validate_spa_redirect_preservation(client_id, required_entra_redirects, tenant_id)
-        validate_entra_live_auth_with_reauth(client_id, hosting_url, tenant_id)
+        with timed_operation("Entra redirect preservation, permissions and consent readback"):
+            validate_spa_redirect_preservation(client_id, required_entra_redirects, tenant_id)
+            validate_entra_live_auth_with_reauth(client_id, hosting_url, tenant_id)
     else:
         warn_live_auth(
             f"Entra validation was skipped. After an administrator creates the SPA, register "
@@ -2644,7 +2961,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--energy-map", choices=("keep", "enabled", "disabled"), default="keep",
                         help="Keep this target's visibility setting, or explicitly enable/disable energy navigation.")
     parser.add_argument("--energy-read-models-only", action="store_true",
-                        help="With --stage energy, publish/verify Core's completed parallel import without rerunning it.")
+                        help="After Core setup, finalize energy without reingestion; with --stage all, "
+                             "overlap Energy/Foundry and publish the app only after both succeed.")
     parser.add_argument(
         "--push-config",
         action="store_true",

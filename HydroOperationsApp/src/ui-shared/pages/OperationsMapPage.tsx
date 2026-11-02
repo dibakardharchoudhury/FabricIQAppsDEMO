@@ -291,7 +291,7 @@ export function OperationsMapPage() {
 
   return <div className="energy-map-page">
     <header className="energy-map-heading">
-      <div><span className="v2-eyebrow">Operations Map</span><h1>Norwegian energy context</h1>
+      <div><span className="v2-eyebrow">Operations Map</span><h1>Norwegian Energy Map</h1>
         <p>Infrastructure, hydropower, reservoir areas, power exchange and market messages imported into Fabric.</p></div>
       <div className="energy-map-actions">
         <button ref={chatButton} type="button" className="v2-primary-action" aria-expanded={chatOpen} onClick={() => setChatOpen(value => !value)}><MessageSquare size={15} />Map chat</button>

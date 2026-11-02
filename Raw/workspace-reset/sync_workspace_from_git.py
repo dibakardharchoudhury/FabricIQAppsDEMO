@@ -74,11 +74,13 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
 try:
     import requests
+    from http_retries import request_with_read_retry
     from azure.core.exceptions import ClientAuthenticationError
     from azure.identity import AzureCliCredential
 except ImportError as exc:  # pragma: no cover - dependency guard
@@ -122,6 +124,7 @@ WEATHER_NOTEBOOK_NAMES = {
     "Weather_002_fetch_area_weather",
     "Weather_003_fetch_ukmet",
     "Weather_020_area_calculations",
+    "Weather_Orchestrator",
 }
 # The demo lakehouse is named <prefix><env suffix> by RTI_001; the Ontology item makes its own.
 WEATHER_LAKEHOUSE_PREFIX = "Energy_IQ_LakehouseRTI"
@@ -151,29 +154,10 @@ class Fabric:
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self._token()}"
-        method = method.upper()
-        for attempt in range(6):
-            try:
-                resp = self._session.request(
-                    method, url, headers=headers, timeout=120, **kwargs
-                )
-            except requests.RequestException as exc:
-                if method != "GET" or attempt == 5:
-                    raise
-                wait = min(2 ** attempt, 15)
-                print(
-                    f"  transient Fabric connection failure "
-                    f"({type(exc).__name__}); retrying GET in {wait}s..."
-                )
-                time.sleep(wait)
-                continue
-            if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", "10"))
-                print(f"  throttled (429); waiting {wait}s...")
-                time.sleep(wait)
-                continue
-            return resp
-        return resp
+        return request_with_read_retry(
+            method, url, send=self._session.request, headers=headers, timeout=120,
+            retry_throttled_writes=True, **kwargs,
+        )
 
     def create_github_connection(self, display_name: str, repo_url: str, pat: str) -> str:
         """Create a ShareableCloud GitHubSourceControl connection from a PAT; return its id."""
@@ -468,6 +452,75 @@ def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dic
     return response.json()["definition"]
 
 
+def _normalized_notebook_source(source: str) -> str:
+    source = source.removeprefix("\ufeff").replace("\r\n", "\n")
+    sections = re.split(r"(?m)(^# [A-Z][A-Z ]* \*+\n)", source)
+    for index in range(1, len(sections), 2):
+        if sections[index].startswith("# MARKDOWN "):
+            # Fabric folds a bare Markdown comment into the following comment line.
+            sections[index + 1] = re.sub(r"(?m)^#\n(?=# )", "# ", sections[index + 1])
+    return "".join(sections)
+
+
+def update_notebooks_from_checkout(fab: Fabric, workspace_id: str, names: list[str]) -> None:
+    """Refresh existing notebook code only, preserving live bindings and unknown parts."""
+    root = Path(__file__).resolve().parents[2] / "Notebooks"
+    items = fab.list_workspace_items(workspace_id)
+    header = re.compile(r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)")
+    for name in dict.fromkeys(names):
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            raise ValueError(f"Invalid notebook source name: {name!r}.")
+        directory = root / f"{name}.Notebook"
+        platform = json.loads((directory / ".platform").read_text(encoding="utf-8"))
+        if platform["metadata"]["displayName"] != name or platform["metadata"]["type"] != "Notebook":
+            raise ValueError(f"Notebook source identity differs from {name!r}.")
+        matches = [item for item in items if item.get("type") == "Notebook" and item.get("displayName") == name]
+        if len(matches) != 1:
+            raise ValueError(f"Expected one existing notebook {name!r}; targeted sync creates/deletes no items.")
+        item_id = matches[0]["id"]
+        definition = notebook_definition(fab, workspace_id, item_id)
+        parts = [part for part in definition["parts"] if part["path"] == "notebook-content.py"]
+        if len(parts) != 1:
+            raise ValueError(f"{name}: expected one native notebook source part.")
+        part = parts[0]
+        before = base64.b64decode(part["payload"]).decode("utf-8-sig").replace("\r\n", "\n")
+        candidate = (directory / "notebook-content.py").read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+        live_header, local_header = header.search(before), header.search(candidate)
+        if not live_header or not local_header:
+            raise ValueError(f"{name}: notebook dependency metadata is missing.")
+        candidate = candidate[:local_header.start(1)] + live_header[1] + candidate[local_header.end(1):]
+        if _normalized_notebook_source(before) == _normalized_notebook_source(candidate):
+            print(f"  {name}: source already current; bindings retained.", flush=True)
+            continue
+        part["payload"] = base64.b64encode(candidate.encode("utf-8")).decode("ascii")
+        part["payloadType"] = "InlineBase64"
+        definition["format"] = "fabricGitSource"
+        response = fab.request(
+            "POST", f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item_id}/updateDefinition",
+            json={"definition": definition},
+        )
+        if response.status_code not in (200, 202):
+            raise RuntimeError(f"{name}: targeted definition update failed: HTTP {response.status_code}.")
+        if response.status_code == 202:
+            fab.poll_lro(response)
+        actual = notebook_definition(fab, workspace_id, item_id)
+        actual_parts = {part["path"]: part for part in actual["parts"]}
+        for expected in definition["parts"]:
+            saved = actual_parts.get(expected["path"])
+            if saved is None:
+                raise RuntimeError(f"{name}: targeted source/binding retention readback failed at {expected['path']}.")
+            saved_payload = base64.b64decode(saved["payload"])
+            expected_payload = base64.b64decode(expected["payload"])
+            if expected["path"] == "notebook-content.py":
+                payload_matches = _normalized_notebook_source(saved_payload.decode("utf-8-sig")) == (
+                    _normalized_notebook_source(expected_payload.decode("utf-8-sig")))
+            else:
+                payload_matches = saved_payload == expected_payload
+            if not payload_matches:
+                raise RuntimeError(f"{name}: targeted source/binding retention readback failed at {expected['path']}.")
+        print(f"  {name}: updated code; live bindings and other definition parts retained.", flush=True)
+
+
 def bind_notebook_definition(definition: dict[str, Any], lakehouse: dict[str, Any],
                             environment: dict[str, Any]) -> bool:
     parts = definition.get("parts", [])
@@ -727,6 +780,62 @@ def verify_environment_runtimes(
             raise SystemExit("Environment runtime inventory failed: invalid continuation URI.")
 
 
+def weather_environment_unchanged(fab: Fabric, workspace_id: str, environment_id: str) -> bool:
+    """Prove equivalence from published/staged APIs, not the repository's commit."""
+    base = f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/{environment_id}"
+    published_inventory = fab.request("GET", f"{base}/libraries?beta=false")
+    if published_inventory.status_code == 404:
+        try:
+            error = published_inventory.json()
+        except ValueError:
+            error = None
+        if isinstance(error, dict) and error.get("errorCode") == "EnvironmentLibrariesNotFound":
+            print("Weather Environment has no published libraries; a full publication is required.")
+            return False
+
+    def read(path: str):
+        response = published_inventory if path == "libraries?beta=false" else fab.request("GET", f"{base}/{path}")
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Weather Environment equivalence check failed for {path}: "
+                f"HTTP {response.status_code} {response.text}"
+            )
+        return response
+
+    inventories = []
+    for prefix in ("", "staging/"):
+        page = read(f"{prefix}libraries?beta=false").json()
+        if not isinstance(page, dict) or not isinstance(page.get("libraries"), list):
+            raise SystemExit("Weather Environment library inventory is invalid.")
+        if page.get("continuationToken") or page.get("continuationUri"):
+            print("Weather library inventory is paginated; a full publication is required.")
+            return False
+        libraries = page["libraries"]
+        if not libraries or any(
+            not isinstance(row, dict) or row.get("libraryType") != "External"
+            or not isinstance(row.get("name"), str) or not row["name"]
+            or not isinstance(row.get("version"), str) or not row["version"]
+            for row in libraries
+        ):
+            print("Weather library contents cannot be proven unchanged; a full publication is required.")
+            return False
+        inventories.append(sorted(json.dumps(row, sort_keys=True) for row in libraries))
+    if inventories[0] != inventories[1]:
+        return False
+    published_compute = read("sparkcompute?beta=false").json()
+    staged_compute = read("staging/sparkcompute?beta=false").json()
+    if (not isinstance(published_compute, dict) or not published_compute.get("runtimeVersion")
+            or not isinstance(staged_compute, dict) or not staged_compute.get("runtimeVersion")):
+        raise SystemExit("Weather Environment Spark compute readback is invalid.")
+    if published_compute != staged_compute:
+        return False
+    published_libraries = read("libraries/exportExternalLibraries").content
+    staged_libraries = read("staging/libraries/exportExternalLibraries").content
+    if not published_libraries or not staged_libraries:
+        raise SystemExit("Weather Environment external-library export is empty.")
+    return published_libraries == staged_libraries
+
+
 def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:
     """Validate weather Git items, publish their Environment, and print secret guidance."""
     ensure_spark_runtime(fab.request, workspace_id)
@@ -808,7 +917,13 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
     publish_state = (
         metadata.json().get("properties", {}).get("publishDetails", {}).get("state")
     )
-    if git_updated or publish_state != "Success":
+    publish_required = publish_state != "Success"
+    if not publish_required:
+        print("Checking published/staged Weather libraries and Spark compute before rebuilding...")
+        publish_required = not weather_environment_unchanged(fab, workspace_id, environment_id)
+        if not publish_required:
+            print("Weather Environment publication is unchanged; verified libraries and compute, skipping rebuild.")
+    if publish_required:
         print("Publishing Weather Environment libraries...")
         response = fab.request(
             "POST",
@@ -860,7 +975,7 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
 
     print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
     print("  In the Key Vault passed to Pipe_Setup, create secrets:")
-    print("    'mai-weather-api-key' for Aurora")
+    print("    'mai-weather-api-key' only for optional Aurora (disabled by default)")
     print("    'ukmet-global-spot-api-key' for UKMet Global Spot")
     print("    'ukmet-land-observations-api-key' for UKMet Land Observations")
     print("  Portal: Key Vault > Objects > Secrets > Generate/Import")
@@ -878,6 +993,8 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
     parser.add_argument("--keep-connected", action="store_true", help="Do not disconnect after syncing.")
     parser.add_argument("--test-connection", action="store_true", help="Only verify GitHub connectivity (connect+initialize+disconnect), import nothing, then report SUCCESS/FAILED.")
+    parser.add_argument("--update-notebook", action="append", default=[],
+                        help="Update only this existing notebook from the local checkout, preserving live bindings; repeat for multiple notebooks. No Git reconnect/import.")
     args = parser.parse_args()
 
     # Resolution order for every value: CLI flag > environment variable > prompt.
@@ -900,6 +1017,11 @@ def main() -> int:
         print("Fabric workspace <- GitHub sync. Provide the following (press Enter to accept a [default]):")
     args.tenant = prompt_required("Tenant id or domain", args.tenant)
     args.workspace = prompt_required("Workspace GUID or name", args.workspace)
+    if args.update_notebook:
+        fab = Fabric(args.tenant)
+        workspace_id, _ = fab.resolve_workspace_id(args.workspace)
+        update_notebooks_from_checkout(fab, workspace_id, args.update_notebook)
+        return 0
     # Accept either "owner/repo" in one field or a bare repo name; only ask for
     # the owner separately when it can't be derived from the repository value.
     args.repository = prompt_required("GitHub repository (owner/repo, repo, or URL)", args.repository)

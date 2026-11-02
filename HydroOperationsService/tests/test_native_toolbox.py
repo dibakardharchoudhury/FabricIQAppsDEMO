@@ -1,0 +1,178 @@
+import copy
+import json
+import unittest
+from unittest.mock import AsyncMock, patch
+
+import httpx
+from azure.core.credentials import AccessToken
+from mcp import types
+
+from hydro_orchestrator.live_sources import SourceFailure
+from hydro_orchestrator.native_toolbox import NativeToolboxCall, call_native_toolbox
+from hydro_orchestrator.source_auth import SourceAuthorizationError
+
+
+TOOL = {
+    "name": "fabriciq-data-agent___DataAgent_Dynamic",
+    "inputSchema": {"type": "object", "properties": {"userQuestion": {"type": "string"}},
+                    "required": ["userQuestion"]},
+    "annotations": {"readOnlyHint": True},
+    "_meta": {"tool_configuration": {
+        "original_type": "fabric_iq_preview", "project_connection_id": "hydro-fabric-iq",
+        "server_label": "fabriciq-data-agent",
+    }},
+}
+
+
+class NativeToolboxTests(unittest.IsolatedAsyncioTestCase):
+    async def execute(self, *, tools=None, result=None, next_cursor=None, rpc_error=None, auth_error=None,
+                      discovery_error=None, call_id=None):
+        requests = []
+        credential = AsyncMock()
+        credential.get_token.return_value = AccessToken("delegated-test-token", 9999999999)
+        if auth_error is not None:
+            credential.get_token.side_effect = auth_error
+        question = "Which turbines?\nKeep punctuation & Norwegian names: \u00c5."
+
+        def respond(request):
+            self.assertEqual(request.headers.get("x-agent-foundry-call-id"), call_id)
+            self.assertIn("x-ms-client-request-id", request.headers)
+            self.assertNotIn("x-ms-tool-call-id", request.headers)
+            self.assertEqual(request.headers["Authorization"], "Bearer delegated-test-token")
+            self.assertEqual(str(request.url), "https://foundry.example/api/projects/hydro/toolboxes/"
+                             "hydro-fabric-iq-tools/versions/2/mcp?api-version=v1")
+            message = json.loads(request.content)
+            requests.append(message)
+            method = message["method"]
+            if method == "notifications/initialized":
+                return httpx.Response(202)
+            if method == "initialize":
+                value = {"protocolVersion": message["params"]["protocolVersion"],
+                         "capabilities": {"tools": {}}, "serverInfo": {"name": "Foundry", "version": "1"}}
+            elif method == "tools/list":
+                if discovery_error:
+                    return httpx.Response(200, headers={"Content-Type": "application/json",
+                                                       "apim-request-id": "failed-discovery-request"},
+                                          json={"jsonrpc": "2.0", "id": message["id"], "error": discovery_error})
+                value = {"tools": tools if tools is not None else [copy.deepcopy(TOOL)]}
+                if next_cursor:
+                    value["nextCursor"] = next_cursor
+            elif method == "tools/call":
+                self.assertEqual(message["params"]["arguments"], {"userQuestion": question})
+                if rpc_error:
+                    return httpx.Response(200, headers={"Content-Type": "application/json",
+                                                       "apim-request-id": "failed-tool-request"},
+                                          json={"jsonrpc": "2.0", "id": message["id"], "error": rpc_error})
+                value = result if result is not None else {
+                    "content": [{"type": "text", "text": "**Original**\n\n| Status | Count |\n| Open | 10 |"}],
+                    "isError": False,
+                }
+            else:
+                self.fail(f"Unexpected protocol method {method}")
+            return httpx.Response(200, headers={"Content-Type": "application/json",
+                                               "apim-request-id": "actual-tool-execution"},
+                                  json={"jsonrpc": "2.0", "id": message["id"], "result": value})
+
+        real_client = httpx.AsyncClient
+
+        def client(**kwargs):
+            return real_client(transport=httpx.MockTransport(respond), **kwargs)
+
+        with patch("hydro_orchestrator.native_toolbox.httpx.AsyncClient", side_effect=client):
+            call = await call_native_toolbox(
+                "https://foundry.example/api/projects/hydro", "hydro-fabric-iq-tools", "2",
+                "hydro-fabric-iq", question, credential, call_id=call_id,
+            )
+        return call, requests, credential
+
+    async def test_native_mcp_transport_preserves_question_and_answer_without_a_model(self):
+        call, requests, credential = await self.execute()
+        self.assertEqual(call.request_id, "actual-tool-execution")
+        self.assertEqual(call.tool_name, TOOL["name"])
+        self.assertEqual(call.source_payload()["response"], "**Original**\n\n| Status | Count |\n| Open | 10 |")
+        self.assertEqual([item["method"] for item in requests],
+                         ["initialize", "notifications/initialized", "tools/list", "tools/call"])
+        self.assertTrue(all(item.args == ("https://ai.azure.com/.default",)
+                            for item in credential.get_token.call_args_list))
+
+    async def test_native_source_errors_are_not_successful_answers(self):
+        with self.assertRaisesRegex(SourceFailure, "source execution error"):
+            await self.execute(result={"content": [{"type": "text", "text": "SQL execution failed"}],
+                                       "isError": True})
+
+    async def test_hosted_caller_context_is_forwarded_verbatim_on_every_mcp_request(self):
+        for call_id in ("first-request-context", "second-request-context"):
+            await self.execute(call_id=call_id)
+
+    async def test_gateway_rpc_failure_surfaces_phase_code_and_real_request_without_private_text(self):
+        with self.assertLogs("hydro_orchestrator.native_toolbox", level="ERROR") as logs:
+            with self.assertRaisesRegex(SourceFailure, "tool execution.*MCP code -32603.*HTTP 500.*failed-tool-request"):
+                await self.execute(rpc_error={
+                    "code": -32603, "message": "Dependency failed with status code 500; private provider details.",
+                })
+        self.assertNotIn("private provider details", "\n".join(logs.output))
+
+    async def test_discovery_diagnostic_redacts_credentials_and_preserves_service_reason(self):
+        with self.assertLogs("hydro_orchestrator.native_toolbox", level="ERROR") as logs:
+            with self.assertRaisesRegex(SourceFailure, "tool discovery.*-32007.*failed-discovery-request"):
+                await self.execute(discovery_error={
+                    "code": -32007,
+                    "message": "Discovery rejected. Bearer private-token "
+                               "https://example.test?access_token=private-query client_secret=private-secret "
+                               "eyJheader.payload.signature",
+                })
+        diagnostic = "\n".join(logs.output)
+        self.assertIn("Discovery rejected", diagnostic)
+        for secret in ("private-token", "private-query", "private-secret", "eyJheader.payload.signature"):
+            self.assertNotIn(secret, diagnostic)
+
+    async def test_source_authorization_failure_does_not_become_a_generic_sdk_group(self):
+        with self.assertRaisesRegex(SourceAuthorizationError, "initialization"):
+            await self.execute(auth_error=SourceAuthorizationError("The delegated source token expired."))
+
+    async def test_unverified_or_ambiguous_tools_cannot_be_called(self):
+        variants = [[], [copy.deepcopy(TOOL), copy.deepcopy(TOOL)]]
+        for path, value in (
+            (("annotations", "readOnlyHint"), False),
+            (("_meta", "tool_configuration", "project_connection_id"), "another-connection"),
+            (("_meta", "tool_configuration", "original_type"), "mcp"),
+            (("inputSchema", "required"), []),
+            (("inputSchema", "properties"), {"userQuestion": {"type": "integer"}}),
+        ):
+            tool = copy.deepcopy(TOOL)
+            target = tool
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            variants.append([tool])
+        for tools in variants:
+            with self.subTest(tools=tools):
+                with self.assertRaises(SourceFailure):
+                    await self.execute(tools=tools)
+
+    async def test_incomplete_inventory_is_rejected(self):
+        with self.assertRaisesRegex(SourceFailure, "complete Data Agent query tool"):
+            await self.execute(next_cursor="more-tools")
+
+    def test_native_resources_and_provider_annotations_survive(self):
+        result = types.CallToolResult.model_validate({
+            "content": [
+                {"type": "text", "text": "  **Unmodified**\n| A | B |  "},
+                {"type": "resource", "resource": {
+                    "uri": "file:///result_0.csv", "mimeType": "text/csv", "text": "A,B\n1,2\n",
+                }},
+            ],
+            "_meta": {"provider_annotation": "preserve"},
+            "isError": False,
+        })
+        payload = NativeToolboxCall("request", "tool", {"userQuestion": "exact"}, result).source_payload()
+        self.assertEqual(payload["response"], "  **Unmodified**\n| A | B |  ")
+        self.assertEqual(payload["documents"][0]["content"], "A,B\n1,2\n")
+        self.assertEqual(payload["native_mcp_result"]["_meta"]["provider_annotation"], "preserve")
+
+    def test_no_original_answer_cannot_be_replaced_with_a_success_message(self):
+        for content in ([], [{"type": "text", "text": "   "}]):
+            with self.subTest(content=content), self.assertRaisesRegex(SourceFailure, "no original answer"):
+                NativeToolboxCall("request", "tool", {}, types.CallToolResult.model_validate({
+                    "content": content,
+                })).source_payload()

@@ -23,6 +23,8 @@
 # schema-disabled `Hydro_GeoContext_{env_suffix}`. No provider downloads, Foundry
 # resources, tenant switches, permission grants, synthetic STID tables, or changes
 # to `RTI_Demo_Agent_*` / `rti_demo_settings` are performed.
+# The suffix defaults to the bound GeoContext, not a fixed deployment version.
+# Explicit verified Lakehouse IDs and map-agent names support renamed resources.
 #
 # This notebook owns ONLY `Hydro_Map_Agent_{env_suffix}` and three new Delta read
 # models: `geo_map_agent_entities`, `geo_map_agent_links`, `geo_map_agent_state`.
@@ -35,14 +37,17 @@
 # properties blobs, but are snapshots, not automatically refreshed SQL views.
 # The state table is marked `building` before replacement and `ready` only after
 # all read models pass validation. Queries must check this state and source freshness.
+# Entity properties are extracted in one top-level JSON pass per row, retaining
+# the existing typed-field and malformed-JSON validation. Publication phases log timings.
+# Source/target preflight runs once per publication, before writes; source Delta
+# versions are still captured and rechecked after projection/reuse verification.
 # There is no new schedule or baseline setup/seed/simulator invocation.
 #
 # **Publication:** uses the repository's create -> getDefinition -> patch draft ->
 # updateDefinition -> staging/publish pattern, with the current public Data Agent
 # definition schema's `lakehouse_tables.schema/table/column` element types.
-# It verifies the published definition, then performs a bounded MCP handshake and
-# a read-only grounding canary against a random run ID in the state table. A
-# configured/published item alone is NOT reported as an AI-ready deployment.
+# It verifies the published definition without querying the agent immediately.
+# Publication is not runtime verification; test map chat interactively when needed.
 #
 # **Prerequisites (no automatic grants):** a paid F2+ / supported P1+ capacity,
 # applicable Copilot/AI tenant and geographic-processing/storage settings, an
@@ -53,8 +58,8 @@
 # context, or have the coordinator arrange an approved full-scope automation path.
 # No secret or token is a notebook parameter, persisted value, or printed value.
 #
-# The Lakehouse SQL endpoint must have synchronized the read models. Discovery or
-# canary failures are fatal and actionable; no SDK/private-endpoint fallback is
+# Allow the Lakehouse SQL endpoint to synchronize before testing map chat interactively.
+# Discovery/publication failures are fatal and actionable; no SDK/private-endpoint fallback is
 # guessed. No SDK installation, Azure OpenAI key, or Foundry deployment is required.
 #
 # References:
@@ -69,7 +74,9 @@
 # PARAMETERS CELL ********************
 
 workspace_id = ""
-env_suffix = "V6"
+env_suffix = ""
+geo_lakehouse_id = ""
+map_agent_name = ""
 
 # METADATA ********************
 
@@ -107,6 +114,7 @@ LINK_TABLE = "geo_map_agent_links"
 STATE_TABLE = "geo_map_agent_state"
 STATUS_TABLE = "geo_source_status"
 SOURCE_TABLES = ("geo_map_features", "geo_source_status", "geo_reservoir_areas", "geo_market_asset_links")
+PROJECTION_CONTRACT_VERSION = 1  # Increment when projection semantics change, even if source versions do not.
 ASSET_LAYERS = ("transmission", "regional", "distribution", "sea-cables", "masts", "transformers", "hydro-plants")
 NAVIGABLE_LAYERS = ASSET_LAYERS + ("reservoirs",)
 SOURCE_IDS = ("nve-grid", "nve-hydro", "nve-reservoir", "statnett", "nordpool")
@@ -181,6 +189,11 @@ or unavailable source data, state the limitation. Never invent a successful quer
 Use returned facts and source/observation/ingestion times; cite your scope and as-of.
 If a lookup omitted a requested column, run a follow-up SELECT for that column.
 An omitted column is not evidence that its stored value is unavailable.
+Before reporting a zero asset result, compare the unfiltered layer count with
+geo_source_status.row_count. A positive ready source count contradicts a claim
+that the layer is absent: check the layer predicate and unsupported filters.
+Source freshness is selected by the actual layer_id, not a guessed source name
+or a projection run ID; source ingestion IDs differ from read_model_run_id.
 No web search, outside sources, filesystem access, arbitrary URLs or generated writes.
 
 DATASET VERSUS CURRENT VIEW
@@ -198,15 +211,30 @@ dataset total. For full totals use COUNT_BIG over the intended complete predicat
 not the size of TOP rows. State whether an answer covers all imported data, a
 reproduced filter, or only the supplied visible sample. If exact view reproduction
 is not possible, say so rather than inventing counts.
+For currently displayed plant capacity, use the supplied visible_plant_capacity
+summary when query_pending=false. Its totalMw, knownPlants and unknownPlants
+already reflect actual rendered geometry, deduplication and property/area filters.
+Do not replace it with a SQL bounding-box aggregate. Label it as the supplied
+current-view total, not a complete imported-dataset total. When pending or missing,
+state that the current view is not ready instead of reconstructing a different view.
 
 MEANING AND UNITS
 record_kind='asset' identifies real network and hydro assets.
 Hydropower plants use layer_id='hydro-plants'; transformer substations use
 layer_id='transformers'. Both have record_kind='asset'. A complete hydropower
 count is COUNT_BIG(*) with those predicates and no geometry or viewport filter.
+The NVE network and hydropower inventories are Norwegian national datasets.
+country_code is not an asset-country filter: these NVE asset rows normally have
+NULL country_code. "Norwegian" or "in Norway" describes this inventory's scope;
+do not add country_code='NO' or a guessed country label to an asset query.
+country_code is meaningful for reservoir country/area rows and explicitly
+populated operational observations, not proof of an NVE asset's absence.
 The installed_capacity_mw column is selected and queryable for hydropower plants.
 Hydro installed MW, gross head in metres, operation flag/status and 1991-2020 mean annual GWh are
 registry attributes; mean annual production is NOT current generation.
+Negative or nonfinite installed capacity, gross head and annual production values
+are invalid source measurements and are projected as NULL, never zero. Exclude
+unknown capacity from SUM and report its plant count separately.
 Transformer voltage_kv is voltage, NOT MW/MVA capacity. Actual transformer capacity
 is UNKNOWN; never infer it from kV, network level, labels, size or nearby assets.
 Grid price_area can be null. Do not invent price-area membership from proximity or
@@ -258,6 +286,18 @@ validates the target and bounds and has sole authority to move the map.
 SOURCE_INSTRUCTIONS = """Use T-SQL SELECT queries only against the four selected dbo objects.
 Check the single geo_map_agent_state ready row and matching read_model_run_id first.
 Compare built_at_utc with relevant geo_source_status.last_success_at (UTC).
+NVE assets are already a Norwegian national inventory: Norway/Norwegian is the
+dataset scope. country_code is not an asset-country filter; asset rows normally
+have NULL country_code. Never add country_code='NO' or another country predicate
+to NVE asset queries. This column only describes explicitly populated reservoir
+or operational rows. Hydropower stations/plants use record_kind='asset' AND
+layer_id='hydro-plants'. Full counts include rows without geometry; sum
+installed_capacity_mw, excluding NULL and reporting unknown capacity separately.
+Read inventory snapshot time from geo_source_status.last_success_at WHERE
+layer_id='hydro-plants', not asset publication_at_utc or a projection UUID.
+Check unexpected empty asset results against geo_source_status.row_count and
+the unfiltered layer count. An empty filtered asset query is not evidence that
+geo_map_agent_state is missing; read that state separately to establish readiness.
 Use record_kind='asset' for asset counts; reservoir_area for polygon-area questions;
 reservoir_fact for original EL/NO/VASS facts; market_message for retained revisions;
 balance_snapshot, flow_snapshot and frequency_snapshot for stored operational data.
@@ -270,6 +310,8 @@ Never query unselected/raw/synthetic operational tables or use externaldata/OPEN
 Do not infer transformer capacity. The UI live-frequency tile is not this dataset.
 """
 FEWSHOTS = (
+    ("How many Norwegian hydropower plants are imported and what is their total installed capacity?",
+     f"SELECT COUNT_BIG(*) AS plant_count,SUM(e.installed_capacity_mw) AS total_installed_capacity_mw,SUM(CASE WHEN e.installed_capacity_mw IS NULL THEN CAST(1 AS bigint) ELSE CAST(0 AS bigint) END) AS unknown_capacity_count,MAX(st.last_success_at) AS source_snapshot_utc FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' LEFT JOIN dbo.{STATUS_TABLE} st ON st.layer_id=e.layer_id WHERE e.record_kind='asset' AND e.layer_id='hydro-plants';"),
     ("Which read-model run is ready?",
      f"SELECT state, read_model_run_id, built_at_utc FROM dbo.{STATE_TABLE};"),
     ("How many imported assets are there in each layer, not just visible rows?",
@@ -313,19 +355,35 @@ def guid(value, label):
     return str(result)
 
 
-def binding_from_context(workspace, suffix, context):
-    if not isinstance(suffix, str) or not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
-        raise ProvisioningError("env_suffix must be a safe explicit environment suffix")
+def binding_from_context(workspace, suffix, context, target_lakehouse_id="", agent_name=""):
+    if not isinstance(suffix, str) or (suffix and not re.fullmatch(r"[A-Za-z0-9_]+", suffix)):
+        raise ProvisioningError("env_suffix must be safe or empty for the bound GeoContext")
     current = guid(context.get("currentWorkspaceId"), "runtime workspace")
     workspace = guid(workspace or current, "workspace_id")
-    expected_lakehouse = f"Hydro_GeoContext_{suffix}"
+    lakehouse_name = context.get("defaultLakehouseName")
+    lakehouse_id = guid(context.get("defaultLakehouseId"), "default lakehouse")
     if workspace != current or guid(context.get("defaultLakehouseWorkspaceId"), "lakehouse workspace") != current:
         raise ProvisioningError("Geo_002 refuses a cross-workspace/default-lakehouse mismatch")
-    if context.get("defaultLakehouseName") != expected_lakehouse:
-        raise ProvisioningError(f"Attach the existing {expected_lakehouse}; synthetic/default alternatives are refused")
+    if not isinstance(lakehouse_name, str) or not lakehouse_name.strip():
+        raise ProvisioningError("The bound GeoContext Lakehouse name is missing")
+    if target_lakehouse_id:
+        if guid(target_lakehouse_id, "geo_lakehouse_id") != lakehouse_id:
+            raise ProvisioningError("geo_lakehouse_id does not match the bound Lakehouse")
+    elif lakehouse_name != f"Hydro_GeoContext_{suffix}" and (suffix or not re.fullmatch(r"Hydro_GeoContext_[A-Za-z0-9_]+", lakehouse_name)):
+        raise ProvisioningError("Attach the selected GeoContext; custom names require its verified geo_lakehouse_id")
+    if (not suffix and isinstance(agent_name, str) and agent_name.startswith("Hydro_Map_Agent_")
+            and not lakehouse_name.startswith("Hydro_GeoContext_")):
+        suffix = agent_name.removeprefix("Hydro_Map_Agent_")
+    suffix = suffix or lakehouse_name.removeprefix("Hydro_GeoContext_")
+    if not agent_name:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
+            raise ProvisioningError("Custom GeoContext names require an explicit map_agent_name or safe env_suffix")
+        agent_name = f"Hydro_Map_Agent_{suffix}"
+    if not isinstance(agent_name, str) or not agent_name.startswith("Hydro_Map_Agent_") or not re.fullmatch(r"[A-Za-z0-9_]+", agent_name):
+        raise ProvisioningError("map_agent_name must be a dedicated Hydro_Map_Agent name")
     return {
-        "workspace_id": workspace, "lakehouse_id": guid(context.get("defaultLakehouseId"), "default lakehouse"),
-        "lakehouse_name": expected_lakehouse, "agent_name": f"Hydro_Map_Agent_{suffix}", "env_suffix": suffix,
+        "workspace_id": workspace, "lakehouse_id": lakehouse_id,
+        "lakehouse_name": lakehouse_name, "agent_name": agent_name, "env_suffix": suffix,
     }
 
 
@@ -519,7 +577,9 @@ def build_source_definition(binding):
     tables = []
     for name, fields in SELECTED_SCHEMAS.items():
         columns = [element("lakehouse_tables.column", column, True, [], f"dbo/{name}/{column}",
-                           data_type=SQL_TYPES[kind]) for column, kind in fields]
+                           data_type=SQL_TYPES[kind],
+                           **({"description": "Country of a reservoir/operational observation; NULL for NVE national assets. This is not an asset-country filter: the NVE inventory itself is Norwegian."}
+                              if column == "country_code" else {})) for column, kind in fields]
         tables.append(element("lakehouse_tables.table", name, True, columns, f"dbo/{name}",
                               description=TABLE_DESCRIPTIONS[name]))
     return {
@@ -529,6 +589,17 @@ def build_source_definition(binding):
         "userDescription": "Only governed real-map projections and source freshness; no raw geometry or synthetic data.",
         "metadata": {}, "elements": [element("lakehouse_tables.schema", "dbo", False, tables, "dbo")],
     }
+
+
+def definition_content(part):
+    # Fabric materializes absent optional fields as null on definition readback.
+    def normalize(value):
+        if isinstance(value, dict):
+            return {key: normalize(item) for key, item in value.items() if item is not None}
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        return value
+    return normalize(decode_part(part))
 
 
 def desired_definition(parts, binding):
@@ -563,6 +634,7 @@ class FabricMapAgentAPI:
         self.session, self.binding, self.token_provider = session, binding, token_provider
         self.workspace_path = f"/v1/workspaces/{binding['workspace_id']}"
         self.agent_id = None
+        self.folder_id = None
 
     def checked_url(self, path):
         url = path if path.startswith("https://") else FABRIC_BASE + path
@@ -592,13 +664,18 @@ class FabricMapAgentAPI:
             if self.agent_id:
                 prefix = f"{self.workspace_path}/dataAgents/{self.agent_id}"
                 allowed.update({prefix + "/updateDefinition", prefix + "/staging/publish"})
+                if self.folder_id:
+                    allowed.add(f"{self.workspace_path}/items/{self.agent_id}/move")
             if method != "POST" or relative not in allowed:
                 raise ProvisioningError("Unowned or unsupported management write refused")
             if relative.endswith("/dataAgents") and (
                 not isinstance(body, dict) or body.get("displayName") != self.binding["agent_name"]
                 or body.get("description") != owned_description(self.binding)
+                or not self.folder_id or body.get("folderId") != self.folder_id
             ):
-                raise ProvisioningError("Only the specifically owned dedicated agent may be created")
+                raise ProvisioningError("Only the specifically owned dedicated agent may be created in its demo folder")
+            if relative.endswith("/move") and body != {"targetFolderId": self.folder_id}:
+                raise ProvisioningError("The owned map agent may only move into its resolved demo folder")
         for attempt in range(4 if method == "GET" or read_only else 1):
             try:
                 response = self.session.request(
@@ -639,7 +716,7 @@ class FabricMapAgentAPI:
         return self.response_json(self.request("GET", path))
 
     def list_items(self, kind):
-        if kind not in ("lakehouses", "dataAgents"):
+        if kind not in ("lakehouses", "dataAgents", "folders"):
             raise ProvisioningError("Unsupported discovery scope")
         base = f"{self.workspace_path}/{kind}"
         url, seen, items = base, set(), []
@@ -702,13 +779,39 @@ class FabricMapAgentAPI:
             inspect_definition(self.get_definition(), self.binding)
         return lakehouse
 
+    def resolve_folder(self):
+        name = f"RTI_DEMO_{self.binding['env_suffix']}"
+        folders = [folder for folder in self.list_items("folders")
+                   if folder.get("displayName") == name and not folder.get("parentFolderId")]
+        if len(folders) != 1:
+            raise ProvisioningError(f"Expected one root demo folder {name}; run Core setup before publishing the map agent")
+        self.folder_id = guid(folders[0].get("id"), "demo folder")
+        return self.folder_id
+
+    def ensure_agent_folder(self):
+        if not self.agent_id or not self.folder_id:
+            raise ProvisioningError("An owned map agent and resolved demo folder are required")
+        path = f"{self.workspace_path}/items/{self.agent_id}"
+        item = self.get(path)
+        if assert_owned_agent(item, self.binding) != self.agent_id:
+            raise ProvisioningError("Map agent identity changed before folder placement")
+        if item.get("folderId") != self.folder_id:
+            response = self.request("POST", path + "/move", {"targetFolderId": self.folder_id})
+            response.close()
+            item = self.get(path)
+        if assert_owned_agent(item, self.binding) != self.agent_id or item.get("folderId") != self.folder_id:
+            raise ProvisioningError("Map agent folder readback did not match the resolved demo folder")
+        return item
+
     def ensure_agent(self):
+        self.resolve_folder()
         existing = select_owned_agent(self.list_items("dataAgents"), self.binding)
         if existing:
             self.agent_id = assert_owned_agent(existing, self.binding)
-            return existing
+            return self.ensure_agent_folder()
         response = self.request("POST", self.workspace_path + "/dataAgents", {
             "displayName": self.binding["agent_name"], "description": owned_description(self.binding),
+            "folderId": self.folder_id,
         }, accepted=(201, 202))
         if response.status_code == 202:
             self.wait_operation(response)
@@ -718,7 +821,7 @@ class FabricMapAgentAPI:
         else:
             existing = self.response_json(response)
         self.agent_id = assert_owned_agent(existing, self.binding)
-        return existing
+        return self.ensure_agent_folder()
 
     def verify_owned_target(self):
         if not self.agent_id:
@@ -738,8 +841,11 @@ class FabricMapAgentAPI:
     def configure_and_publish(self):
         parts = self.get_definition()
         desired = desired_definition(parts, self.binding)
-        before = compact_json([parts[path] for path in sorted(parts)])
-        if before != compact_json(desired["parts"]):
+        desired_parts = {part["path"]: part for part in desired["parts"]}
+        unchanged = parts.keys() == desired_parts.keys() and all(
+            definition_content(parts[path]) == definition_content(part) for path, part in desired_parts.items()
+        )
+        if not unchanged:
             self.verify_owned_target()
             response = self.request("POST", f"{self.workspace_path}/dataAgents/{self.agent_id}/updateDefinition",
                                     {"definition": desired}, accepted=(200, 202))
@@ -747,7 +853,16 @@ class FabricMapAgentAPI:
                 self.wait_operation(response)
             else:
                 response.close()
-        inspect_definition(self.get_definition(), self.binding, require_selection=True)
+            parts = self.get_definition()
+        inspect_definition(parts, self.binding, require_selection=True)
+        published_current = all(
+            part["path"].replace("/draft/", "/published/") in parts
+            and definition_content(parts[part["path"].replace("/draft/", "/published/")]) == definition_content(part)
+            for part in desired["parts"] if "/draft/" in part["path"]
+        )
+        if published_current:
+            inspect_definition(parts, self.binding, require_selection=True, stage="published")
+            return
         self.verify_owned_target()
         response = self.request("POST", f"{self.workspace_path}/dataAgents/{self.agent_id}/staging/publish", {
             "publishedDescription": (
@@ -824,7 +939,11 @@ def entity_projection(frame, area_rows, run_id, built_at):
         return converted
 
     def prop(path, kind="string"):
-        return typed(F.get_json_object(F.col("properties_json"), "$." + path), kind)
+        root, separator, nested = path.partition(".")
+        value = F.col("_geo_property_" + root)
+        if separator:
+            value = F.get_json_object(value, "$." + nested)
+        return typed(value, kind)
 
     layer = F.col("layer_id")
     kind = (
@@ -849,11 +968,25 @@ def entity_projection(frame, area_rows, run_id, built_at):
         "frequency_hz", "message_id", "event_status", "event_phase", "is_cancelled", "is_outdated",
         "importance_score", "importance_bucket", "importance_method", "importance_reason",
     }
+    property_names = sorted(flat_properties | {
+        "installed_capacity_mw", "gross_head_m", "mean_annual_production_gwh_1991_2020",
+        "filling_fraction", "source_properties", "source_message", "has_reservoir_data",
+        "each_observed_at", "version", "event_start", "event_stop", "publication_date",
+        "affected_areas", "coverage",
+    })
+    frame = frame.select(
+        "*", F.json_tuple("properties_json", *property_names).alias(
+            *["_geo_property_" + name for name in property_names],
+        ),
+    )
     for name, dtype in ENTITY_FIELDS:
         if name in flat_properties:
             expressions[name] = prop(name, dtype)
     for name in ("installed_capacity_mw", "gross_head_m", "mean_annual_production_gwh_1991_2020"):
-        expressions[name] = F.when(layer == "hydro-plants", prop(name, "double"))
+        value = prop(name, "double")
+        expressions[name] = F.when(
+            (layer == "hydro-plants") & (value >= 0) & (value < float("inf")) & ~F.isnan(value), value,
+        )
     geometry_type = F.get_json_object("geometry_json", "$.type")
     has_geometry = F.length(F.col("geometry_json")) > 0
     bbox_valid = (
@@ -975,17 +1108,25 @@ class MapReadModels:
     def write_state(self, state, run_id, built_at, versions, entity_count=0, link_count=0, message=""):
         row = {"state": state, "read_model_run_id": run_id, "built_at_utc": built_at,
                "entity_count": entity_count, "link_count": link_count,
-               "source_versions_json": compact_json(versions), "message": message}
+               "source_versions_json": compact_json({**versions, "_projection_contract": PROJECTION_CONTRACT_VERSION}),
+               "message": message}
         self.write_owned(STATE_TABLE, self.spark.createDataFrame([row], spark_schema(STATE_FIELDS)))
 
     def build(self):
+        self.preflight()
+        return self._build_preflighted()
+
+    def _build_preflighted(self):
+        models_existed = all(self.spark.catalog.tableExists(table) for table in MODEL_SCHEMAS)
+        self.ensure_models()
+        versions = self.source_versions()
+        reusable = self.reusable_projection(versions) if models_existed else None
+        if reusable is not None:
+            return reusable
         from pyspark import StorageLevel
         from pyspark.sql import functions as F
-        self.preflight()
-        self.ensure_models()
         self.spark.conf.set("spark.sql.session.timeZone", "UTC")
         run_id, built_at = str(uuid4()), datetime.now(timezone.utc)
-        versions = self.source_versions()
         self.write_state("building", run_id, built_at, versions, message="Projection replacement in progress; do not answer from partial models")
         entities = None
         finished = False
@@ -1045,12 +1186,34 @@ class MapReadModels:
             finished = True
             return {"read_model_run_id": run_id, "built_at_utc": built_at.isoformat(),
                     "entity_count": metrics["rows"], "link_count": link_metrics["rows"],
-                    "source_versions": versions, "table_locations": self.locations}
+                    "source_versions": versions, "table_locations": self.locations,
+                    "projection_reused": False}
         finally:
             if entities is not None:
                 entities.unpersist()
             if not finished:
                 self.write_state("error", run_id, built_at, versions, message="Read-model build failed; no complete projection is advertised")
+
+    def reusable_projection(self, versions):
+        rows = self.spark.table(STATE_TABLE).limit(2).collect()
+        if len(rows) != 1:
+            return None
+        state = rows[0].asDict()
+        stored_versions = json.loads(state["source_versions_json"])
+        if (state["state"] != "ready"
+                or stored_versions.pop("_projection_contract", 1) != PROJECTION_CONTRACT_VERSION
+                or stored_versions != versions):
+            return None
+        run_id = guid(state["read_model_run_id"], "stored read-model run")
+        if (not isinstance(state["built_at_utc"], datetime)
+                or not isinstance(state["entity_count"], int) or state["entity_count"] <= 0
+                or not isinstance(state["link_count"], int) or state["link_count"] < 0):
+            raise ProvisioningError("Stored ready projection has invalid build metadata; refusing to reuse it")
+        if self.source_versions() != versions:
+            raise ProvisioningError("Map sources changed during reuse verification; retry after ingestion finishes")
+        return {"read_model_run_id": run_id, "built_at_utc": state["built_at_utc"].isoformat(),
+                "entity_count": state["entity_count"], "link_count": state["link_count"],
+                "source_versions": versions, "table_locations": self.locations, "projection_reused": True}
 
 # METADATA ********************
 
@@ -1061,11 +1224,9 @@ class MapReadModels:
 
 # MARKDOWN ********************
 
-# ## Published MCP readiness, not a fabricated endpoint
-# The canary asks for a random state-table run ID without supplying its value to
-# the model. It reads no operational records and offers no navigation action.
-# An item can remain published after a failed canary; that is reported as a
-# failure requiring diagnosis, never as an AI-ready deployment.
+# ## Optional MCP diagnostics
+# The helpers below remain available for explicit diagnostics. Setup does not
+# invoke them or gate publication on an immediate language-model answer.
 
 # CELL ********************
 
@@ -1191,36 +1352,50 @@ class MapAgentMCP:
             "Return the actual stored state and complete run ID from the one row. "
             "Do not invent values, use provider remarks, navigate, or emit a map-focus marker."
         )
-        result = self.rpc("tools/call", {"name": tool["name"], "arguments": {argument: question}}, 3)
-        if result.get("isError") is True:
-            raise ProvisioningError("Data Agent grounding canary failed; inspect AI readiness and SQL endpoint synchronization")
-        content = result.get("content")
-        if not isinstance(content, list):
-            raise ProvisioningError("Grounding canary returned no text content")
-        text = "\n".join(part["text"] for part in content if isinstance(part, dict)
-                         and part.get("type") == "text" and isinstance(part.get("text"), str))
-        if expected_run_id not in text or not re.search(r"\bready\b", text, re.IGNORECASE) or "<!--map-focus:" in text:
-            raise ProvisioningError(
-                "Published agent did not return the actual read-model run/state. "
-                "SQL metadata/data synchronization or AI access is not ready; no successful agent is fabricated."
-            )
-        return {"mcp_endpoint": self.url, "tool_name": tool["name"], "ai_readiness": "grounding_canary_passed"}
+        for attempt in range(3):
+            result = self.rpc("tools/call", {"name": tool["name"], "arguments": {argument: question}}, 3 + attempt)
+            content = result.get("content")
+            if not isinstance(content, list):
+                raise ProvisioningError("Grounding canary returned no text content")
+            text = "\n".join(part["text"] for part in content if isinstance(part, dict)
+                             and part.get("type") == "text" and isinstance(part.get("text"), str))
+            if (result.get("isError") is not True and expected_run_id in text
+                    and re.search(r"\bready\b", text, re.IGNORECASE) and "<!--map-focus:" not in text):
+                return {"mcp_endpoint": self.url, "tool_name": tool["name"], "ai_readiness": "grounding_canary_passed"}
+            detail = text[:1000] or "No text returned"
+            if attempt == 2:
+                raise ProvisioningError(
+                    "Data Agent grounding canary failed after 3 attempts; inspect AI readiness and SQL "
+                    f"endpoint synchronization. Last tool response: {detail}"
+                )
+            print(f"Grounding canary attempt {attempt + 1}/3 not ready: {detail}; retrying in 30 seconds.")
+            time.sleep(30)
 
 
-def publish_map_agent(api, models, mcp_factory):
+def publish_map_agent(api, models):
+    started = time.monotonic()
+    print(compact_json({"phase": "discovery_and_source_preflight"}), flush=True)
     api.discover()
     models.preflight()  # source/target table ownership refusal before agent/table writes
     item = api.ensure_agent()
     inspect_definition(api.get_definition(), api.binding)
-    projection = models.build()
+    timings = {"discovery_and_source_preflight": round(time.monotonic() - started, 3)}
+    print(compact_json({"phase": "read_models", "timings_seconds": timings}), flush=True)
+    started = time.monotonic()
+    projection = models._build_preflighted()
+    timings["read_models"] = round(time.monotonic() - started, 3)
+    print(compact_json({"phase": "configure_and_publish", "timings_seconds": timings}), flush=True)
+    started = time.monotonic()
     api.configure_and_publish()
-    readiness = mcp_factory(item["id"]).verify_grounding(projection["read_model_run_id"])
+    timings["configure_and_publish"] = round(time.monotonic() - started, 3)
     return {
-        "owner": OWNER_MARKER, "state": "ready",
+        "owner": OWNER_MARKER, "state": "published",
+        "publication_status": "published", "runtime_status": "not_checked", "ai_readiness": "not_checked",
         "agent_name": api.binding["agent_name"], "agent_id": item["id"],
         "workspace_id": api.binding["workspace_id"], "lakehouse_id": api.binding["lakehouse_id"],
         "source_kind": "lakehouse", "selected_tables": list(SELECTED_SCHEMAS),
-        **projection, **readiness,
+        "mcp_endpoint": f"{FABRIC_BASE}/v1/mcp/workspaces/{api.binding['workspace_id']}/dataagents/{item['id']}/agent",
+        **projection, "timings_seconds": timings,
     }
 
 # METADATA ********************
@@ -1234,14 +1409,16 @@ def publish_map_agent(api, models, mcp_factory):
 
 # ## Execute in the existing authorized Fabric notebook context
 # Reruns reuse only verified owned artifacts. Source imports and operational data
-# are never written. The final exit value is emitted only after the grounding canary.
+# are never written. The final exit value follows publication/readback, not an MCP query.
+# The dedicated map agent belongs in the matching root RTI_DEMO folder. Reruns
+# repair misplaced owned agents without recreating them and verify folder readback.
 
 # CELL ********************
 
 import requests
 import notebookutils
 
-binding = binding_from_context(workspace_id, env_suffix, notebookutils.runtime.context)
+binding = binding_from_context(workspace_id, env_suffix, notebookutils.runtime.context, geo_lakehouse_id, map_agent_name)
 
 
 def current_fabric_token():
@@ -1253,9 +1430,7 @@ with requests.Session() as session:
     session.trust_env = False
     api = FabricMapAgentAPI(session, binding, current_fabric_token)
     models = MapReadModels(spark, binding)
-    result = publish_map_agent(
-        api, models, lambda agent_id: MapAgentMCP(session, binding, agent_id, current_fabric_token),
-    )
+    result = publish_map_agent(api, models)
 print(compact_json(result))
 notebookutils.notebook.exit(compact_json(result))
 

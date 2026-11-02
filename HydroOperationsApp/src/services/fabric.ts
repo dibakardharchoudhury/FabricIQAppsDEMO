@@ -13,11 +13,12 @@ import { parseGraphBinding, queryBoundOntologyGraph, readOntologyGraphReadiness,
 import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
 import { createEntraTokens } from './entraTokens'
+import { createHostedSourceAccess } from './hostedSourceAccess'
 import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
-import { connectedLakehouse, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin } from './rayfin'
+import { connectedLakehouse, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin, subscribeWorkOrdersChanged } from './rayfin'
 import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
   requireLakehouseNumber, requireLakehouseText } from './lakehouseConnector'
 
@@ -38,6 +39,7 @@ const eventhouseId = import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID as string | undef
 const kqlDatabaseId = import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID as string | undefined
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
+const configuredOntologyId = import.meta.env.VITE_RAYFIN_ONTOLOGY_ID as string | undefined
 const configuredEventhouseQueryUri = import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined
 const configuredKqlDatabase = import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined
 const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME as string | undefined
@@ -206,7 +208,13 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
     }
     // Published Data Agents use Fabric's official MCP-over-Streamable-HTTP endpoint.
     const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
-    const semantic = await discoverOntology(items, configuredOntologyName, {
+    if (configuredOntologyId && !items.some(i => i.type === 'Ontology' && i.id === configuredOntologyId)) {
+      throw new Error('The configured Ontology was not found in this workspace. Refresh deployment configuration.')
+    }
+    const ontologyItems = configuredOntologyId
+      ? items.filter(i => i.type !== 'Ontology' || i.id === configuredOntologyId)
+      : items
+    const semantic = await discoverOntology(ontologyItems, configuredOntologyName, {
       metadata: async id => {
         const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${id}`, { headers: { Authorization: `Bearer ${token}` } })
         if (!response.ok) throw new Error(`Ontology metadata request failed (${response.status}). Check Fabric item read access and refresh.`)
@@ -279,22 +287,22 @@ export async function foundryAgentToken(interactive: boolean): Promise<string | 
   return popupToken(FOUNDRY_AGENT_SCOPES)
 }
 
-export async function hostedSourceTokens() {
-  const config = await ensureConfig(false)
-  const cluster = configuredEventhouseQueryUri ?? config?.eventhouseQueryUri
+async function hostedSourceAccess() {
+  const cluster = configuredEventhouseQueryUri ?? (await ensureConfig(false))?.eventhouseQueryUri
   if (!cluster) throw new Error('The hosted source requires the authoritative Eventhouse endpoint.')
-  // A hosted run can remain active for ten minutes, so never submit a lease that could expire during it. Cached
-  // leases with enough remaining life are reused; only near-expiry ones pay an Entra round trip.
-  const [fabric, foundry, graphql, kusto] = await Promise.all([
-    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken([CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-    silentToken([kustoScope(cluster)], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
-  ])
-  if (!fabric || !foundry || !graphql || !kusto) {
-    throw new Error('Renew Fabric, Foundry, STID and telemetry access through the existing sign-in/connection controls.')
-  }
-  return { fabric, foundry, graphql, kusto }
+  return createHostedSourceAccess([
+    { kind: 'fabric', label: 'Fabric', scopes: [...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])] },
+    { kind: 'foundry', label: 'Foundry', scopes: FOUNDRY_AGENT_SCOPES },
+    { kind: 'graphql', label: 'Lakehouse/SQL', scopes: [CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE] },
+    { kind: 'kusto', label: 'Eventhouse telemetry', scopes: [kustoScope(cluster)] },
+  ], {
+    silent: scopes => silentToken(scopes, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    popup: popupToken,
+  })
+}
+
+export async function hostedSourceTokens(interactive = false) {
+  return (await hostedSourceAccess()).acquire(interactive)
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
@@ -579,6 +587,11 @@ const ontologySourceGraphCache = createOntologyCache<OntologySourceGraph>(30_000
 let lastOntologySourceConnection: string | undefined
 const configuredGraphBindingValue = import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined
 
+subscribeWorkOrdersChanged(() => {
+  ontologySourceGraphCache.clear()
+  ontologyGraphCache.clear()
+})
+
 async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Promise<T>): Promise<T> {
   for (;;) {
     const config = await ensureConfig(false)
@@ -613,6 +626,9 @@ async function readBoundOntologyContract(ontologyId: string, displayName: string
 }
 
 export async function queryOntologyContract(force = false): Promise<OntologyContract | null> {
+  if (configuredOntologyId) {
+    return readBoundOntologyContract(configuredOntologyId, configuredOntologyName ?? 'Fabric Ontology', force)
+  }
   if (configuredGraphBindingValue?.trim()) {
     const binding = parseGraphBinding(configuredGraphBindingValue, requireWorkspaceId())
     return readBoundOntologyContract(binding.ontologyId, configuredOntologyName ?? 'Fabric Ontology', force)
@@ -918,7 +934,7 @@ async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: strin
   return runJob(pipelineId, 'Pipeline', onStatus, { timeoutMs: 80 * 60_000, reuseActive: true })
 }
 
-/** Run the coordinated Weather_002 -> Weather_003 -> Weather_020 pipeline. */
+/** Prepare shared areas, ingest/serve UKMet, then run Aurora only when explicitly enabled. */
 export const runWeatherNotebooks = createSingleFlight(
   async (onStatus?: JobProgress): Promise<JobStatus> => runWeatherSequence(onStatus),
 )
@@ -1361,7 +1377,7 @@ let mapRefreshInFlight: Promise<JobStatus> | undefined
 let mapRefreshStatus: JobStatus = 'NotStarted'
 let mapRefreshStartedAt: string | undefined
 
-export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, onExistingRun?: (startedAt?: string) => void): Promise<JobStatus> {
+export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, onExistingRun?: (startedAt?: string) => void, refreshMode: 'all' | 'operational' = 'all'): Promise<JobStatus> {
   if (onStatus) mapRefreshListeners.add(onStatus)
   if (mapRefreshInFlight) {
     onExistingRun?.(mapRefreshStartedAt)
@@ -1375,9 +1391,15 @@ export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, o
     }
     const current = (async () => {
       const pipelineId = await resolveEnergyMapPipeline()
+      const geoLakehouseId = import.meta.env.VITE_RAYFIN_GEO_LAKEHOUSE_ID as string | undefined
+      if (!geoLakehouseId) throw new Error('The selected workspace has no verified GeoContext Lakehouse. Run map provisioning before refreshing.')
       return runJob(pipelineId, 'Pipeline', publish, {
         reuseActive: true, timeoutMs: 3 * 60 * 60_000,
-        pipelineParameters: { refresh_mode: 'all', force_refresh: forceRefresh },
+        pipelineParameters: {
+          workspace_id: requireWorkspaceId(), geo_lakehouse_id: geoLakehouseId,
+          env_suffix: '', map_agent_name: mapDataAgentName(eventhouseName, configuredMapAgentName),
+          refresh_mode: refreshMode, force_refresh: forceRefresh,
+        },
         onReuseActive: startedAt => {
           mapRefreshStartedAt = startedAt ?? mapRefreshStartedAt
           onExistingRun?.(mapRefreshStartedAt)

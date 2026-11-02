@@ -102,7 +102,8 @@ def event_namespace():
               KEY_COLUMN_NAME="opcua_node_id", TIMESTAMP_COLUMN_NAME="event_time",
               VALUE_COLUMN_NAME="value", QUALITY_COLUMN_NAME="quality",
               CLUSTER_QUERY_URI="https://example.kusto.fabric.microsoft.com",
-              KQL_DB_NAME="Telemetry", KQL_DB_ID="kql-id", WORKSPACE_ID="workspace-a")
+              KQL_DB_NAME="Telemetry", KQL_DB_ID="kql-id", WORKSPACE_ID="workspace-a",
+              WORKSPACE_NAME="Workspace A")
     return ns
 
 
@@ -593,19 +594,32 @@ class LakehouseTests(unittest.TestCase):
 
 
 class EventhouseTests(unittest.TestCase):
-    def test_native_eventhouse_without_private_annotations_is_idempotent(self):
+    def test_eventhouse_without_source_metadata_is_upgraded_without_rebinding(self):
         ns = event_namespace()
         initial, _ = ns["_bind_eventhouse_parts"](bound())
         initial = edit(initial, "tables/OPCUAEvents.tmdl",
                        lambda s: re.sub(r"(?m)^[ \t]+annotation ONT_.*\n", "", s))
         before = copy.deepcopy(initial)
         result, _ = ns["_bind_eventhouse_parts"](initial)
-        self.assertEqual(result, before)
-        support._verify_definition(initial, result)
+        self.assertNotEqual(result, before)
+        self.assertIn("annotation ONT_ItemKind = KQLDatabase", text(result, "tables/OPCUAEvents.tmdl"))
+        self.assertEqual(text(result, "entities/signal_master.tmdl"), text(before, "entities/signal_master.tmdl"))
+        self.assertEqual(ns["_bind_eventhouse_parts"](result)[0], result)
 
-    def test_new_eventhouse_parts_do_not_author_unsupported_private_annotations(self):
+    def test_eventhouse_source_metadata_matches_fabric_editor_shape(self):
         result, _ = event_namespace()["_bind_eventhouse_parts"](bound())
-        self.assertNotIn("annotation ONT_", text(result, "tables/OPCUAEvents.tmdl"))
+        table = text(result, "tables/OPCUAEvents.tmdl")
+        for key, value in (("WorkspaceId", "workspace-a"), ("ItemId", "kql-id"),
+                           ("ItemKind", "KQLDatabase"), ("ItemName", "Telemetry"),
+                           ("WorkspaceName", "Workspace A")):
+            self.assertIn(f"\t\tannotation ONT_{key} = {value}", table)
+        schema = re.search(r"(?m)^\tannotation ONT_SourceSchema = (.+)$", table)
+        self.assertIsNotNone(schema)
+        self.assertEqual(json.loads(schema[1]), {"version": 1, "columns": [
+            {"name": name, "dataType": dtype} for name, dtype in
+            (("event_time", "dateTime"), ("opcua_node_id", "string"),
+             ("value", "double"), ("quality", "string"))
+        ]})
 
     def test_source_annotations_and_query_must_match_not_just_contain_expected_values(self):
         ns = event_namespace()
@@ -738,9 +752,7 @@ class EventhouseTests(unittest.TestCase):
             other[key] = "different"
             with self.assertRaises(RuntimeError):
                 other["_bind_eventhouse_parts"](first)
-        annotated = edit(first, "tables/OPCUAEvents.tmdl", lambda s:
-                         s + "\n\t\tannotation ONT_WorkspaceId = workspace-a\n"
-                             "\t\tannotation ONT_ItemId = kql-id\n")
+        annotated = first
         self.assertEqual(ns["_bind_eventhouse_parts"](annotated)[0], annotated)
         for key in ("WORKSPACE_ID", "KQL_DB_ID"):
             other = event_namespace()

@@ -26,10 +26,32 @@ class SourceFailure(RuntimeError):
         self.write_attempted = write_attempted
 
 
+class NativeSourceRefusal(SourceFailure):
+    category = "native_refusal"
+
+    def __init__(self):
+        super().__init__(
+            "Native source refusal: the selected Fabric Data Agent refused the request. "
+            "Its owner must review the provider response before retrying. No direct-source fallback was used."
+        )
+
+
+class NativeSourceServiceError(SourceFailure):
+    category = "native_provider_error"
+
+    def __init__(self):
+        super().__init__(
+            "The Foundry/Fabric native provider failed during output moderation. "
+            "This is a provider processing error, not a confirmed Data Agent refusal. "
+            "No direct-source fallback was used; no answer or write outcome is certified."
+        )
+
+
 class Discovery(Contract):
     source: SourceIdentity
     cluster: str
     database: str
+    workload_origin: str | None = None
 
 
 class CatalogRead(Contract):
@@ -630,7 +652,7 @@ class FabricBackendTools:
         population, rows = result.get("population"), result.get("rows")
         if (not isinstance(population, dict) or population.get("inventory_complete") is not True
                 or population.get("work_inventory_complete") is not True or not isinstance(rows, list)
-                or result.get("row_count") != len(rows)):
+                or result.get("row_count") != len(rows) or result.get("truncated") is not False):
             raise SourceFailure("Snapshot omitted complete metadata/work population evidence.")
         coverage = population.get("work_coverage_equipment_ids")
         if (not isinstance(coverage, list) or any(not isinstance(value, str) or not value.strip() for value in coverage)
@@ -657,8 +679,6 @@ class FabricBackendTools:
             limitations.append("Some mapped signals have no reading in the requested window.")
         if result.get("unresolved_nodes"):
             limitations.append("Some telemetry nodes could not be resolved to active metadata.")
-        if result.get("truncated"):
-            limitations.append("Snapshot output was truncated; returned rows are not the full selected population.")
         # A mixed-unit BAD fleet cannot attest a single value-column unit for charts.
         column_units = {"value": next(iter(units))} if len(units) == 1 else {}
         identities = tuple(resolved)

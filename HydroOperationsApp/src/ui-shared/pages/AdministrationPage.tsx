@@ -47,21 +47,40 @@ export function AdministrationPage() {
     {
       n: 5,
       title: 'Connect Weather',
-      why: 'Loads Aurora area forecasts and UKMet Global Spot forecasts + Land Observations, then builds area metrics and serving projections (runs Weather_002, Weather_003 and Weather_020). Weather tables are initialized during setup. Needs the Aurora and UKMet API keys in Key Vault.',
+      why: 'Uses UKMet Global Spot forecasts + Land Observations by default, then builds area metrics and serving projections. Shared operating areas are prepared without calling Aurora. Requires the two UKMet API keys in Key Vault. Aurora is optional and disabled by default; its existing key is retained.',
       done: data.weatherState === 'complete',
       busy: data.weatherState === 'running' || Boolean(data.jobs.weather),
       action: 'Connect weather',
       run: () => void data.actions.connectWeather(),
     },
   ]
+  if (ENERGY_MAP_ENABLED) steps.push({
+    n: 6,
+    title: 'Prepare Norwegian Energy Map',
+    why: 'Included in core workspace setup. Prepare once, then refresh operational snapshots here when needed. Cached national inventories are reused; map chat is verified when enabled.',
+    done: data.mapPrepared,
+    busy: data.mapRefreshState === 'running' || Boolean(data.jobs.map),
+    action: data.mapPrepared ? 'Refresh snapshots' : 'Prepare map',
+    run: () => void data.actions.refreshMapData(data.mapPrepared ? 'operational' : 'prepare'),
+    repeatable: true,
+    details: <MapDataRefreshPanel state={data.mapRefreshState} message={data.mapRefreshMessage}
+      onRebuild={() => void data.actions.refreshMapData('rebuild')} />,
+  })
 
   return <>
     {data.notice && <div className="notice"><span>{data.notice}</span></div>}
-    {Object.entries(data.jobs).filter(([, job]) => job.kind !== 'map').map(([key, job]) => <div key={key} className="v2-progress"><div className="v2-progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="v2-progress-track"><div className="v2-progress-bar" style={{ width: `${job.pct}%` }} /></div></div>)}
+    {Object.entries(data.jobs).map(([key, job]) => <div key={key} className="v2-progress">
+      <div className="v2-progress-head">
+        <span>{job.kind === 'map' ? data.mapRefreshMessage || job.label : job.label}</span>
+        <em>{job.status} · {job.kind !== 'map' && `${job.pct}% · `}{fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em>
+      </div>
+      <div className="v2-progress-track" role="progressbar" aria-label={job.label}
+        aria-valuemin={0} aria-valuemax={100} aria-valuenow={job.kind === 'map' ? undefined : job.pct}>
+        <div className={`v2-progress-bar${job.kind === 'map' ? ' v2-progress-bar--indeterminate' : ''}`}
+          style={job.kind === 'map' ? undefined : { width: `${job.pct}%` }} />
+      </div>
+    </div>)}
     <AdministrationExperience steps={steps} />
-    {ENERGY_MAP_ENABLED && <MapDataRefreshPanel state={data.mapRefreshState} status={data.jobs.map?.status}
-      message={data.mapRefreshMessage} elapsed={data.jobs.map ? fmtElapsed(data.now - data.jobs.map.startedAt) : undefined}
-      onStart={() => void data.actions.updateAllMapData()} />}
     <CopilotSettingsPanel />
   </>
 }

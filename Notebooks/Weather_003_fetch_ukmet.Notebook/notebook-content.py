@@ -199,6 +199,24 @@ def write_raw(kind: str, location_id: str, run_id: str, payload) -> None:
     path = PurePosixPath("Files/weather/bronze/ukmet") / kind / run_id / f"{safe_location}.json"
     notebookutils.fs.put(str(path), json.dumps(payload, indent=2), True)
 
+
+def forecast_refresh_scope(rows):
+    """Replace only the exact source/issue/location scopes returned by this refresh."""
+    scopes = []
+    for source_id, issue_time, location_id in sorted({
+        (row["source_id"], row["reference_time_utc"], row["location_id"]) for row in rows
+    }):
+        source_sql = source_id.replace("'", "''")
+        location_sql = location_id.replace("'", "''")
+        issue_sql = pd.Timestamp(issue_time).isoformat().replace("+00:00", "Z")
+        scopes.append(
+            f"(target.source_id = '{source_sql}' AND target.reference_time_utc = TIMESTAMP '{issue_sql}' "
+            f"AND target.location_id = '{location_sql}')"
+        )
+    if not scopes:
+        raise ValueError("Forecast replacement requires at least one source/issue/location scope")
+    return " OR ".join(scopes)
+
 # METADATA ********************
 
 # META {
@@ -538,17 +556,7 @@ locations_df.createOrReplaceTempView("incoming_ukmet_locations")
 forecasts_df.createOrReplaceTempView("incoming_ukmet_forecasts")
 observations_df.createOrReplaceTempView("incoming_ukmet_observations")
 
-for source_id, issue_time, location_id in sorted({
-    (row["source_id"], row["reference_time_utc"], row["location_id"])
-    for row in forecast_rows
-}):
-    source_sql = source_id.replace(chr(39), chr(39) * 2)
-    location_sql = location_id.replace(chr(39), chr(39) * 2)
-    issue_sql = pd.Timestamp(issue_time).isoformat().replace("+00:00", "Z")
-    spark.sql(
-        f"DELETE FROM {TABLES['forecasts']} WHERE source_id = '{source_sql}' "
-        f"AND reference_time_utc = TIMESTAMP '{issue_sql}' AND location_id = '{location_sql}'"
-    )
+refresh_scope = forecast_refresh_scope(forecast_rows)
 
 spark.sql(f"""
 MERGE INTO {TABLES['locations']} target USING incoming_ukmet_locations source
@@ -564,6 +572,7 @@ AND target.reference_time_utc = source.reference_time_utc
 AND target.valid_time_utc = source.valid_time_utc
 AND target.ensemble_member <=> source.ensemble_member
 WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
+WHEN NOT MATCHED BY SOURCE AND ({refresh_scope}) THEN DELETE
 """)
 spark.sql(f"""
 MERGE INTO {TABLES['observations']} target USING incoming_ukmet_observations source

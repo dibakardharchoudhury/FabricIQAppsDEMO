@@ -1,9 +1,1155 @@
 # Foundry and multi-agent implementation record
 
+## October 30 scope-corruption and dependent-review correction
+
+SQL schema metadata could become equipment scope: recursively inspecting the raw
+native execution audit promoted `equipmentId: varchar` to a selected asset.
+Identity extraction now excludes raw responses, documents, query/schema metadata
+and tool arguments, while retaining actual result rows and explicit answer identity
+fields. Original source responses remain unchanged in the audit.
+
+A second handoff defect could replace a previously established fleet with the
+subset read by RCA or maintenance verification. Dependent RCA/Work Order stages
+now preserve the established scope; a partial check neither narrows that fleet nor
+adds unrelated targets. Explicit operator and metric-based selections retain their
+separate authoritative selection paths.
+
+Tool replies and full specialist contexts now retain the backend-verified canonical identities and
+complete open-work coverage attestations, as projected contexts already did.
+Dropping those attestations hid usable coverage from Fixer: the recovered failure
+contained a complete fifteen-equipment snapshot followed by redundant per-equipment
+work reads. Passing existing attestations avoids asking the model to infer coverage
+from prose; it does not relax freshness, duplicate checks or approval requirements.
+Actual reduction in repeated model-selected reads still needs runtime measurement.
+
+The original reported failure was recovered from its hosted session journal.
+Its SQL query was `SELECT ... FROM dbo.WorkOrders WHERE 1 = 0`, a schema-only
+probe generated because turbine identity could not be established in that native
+session. The provider's zero-row answer did **not** establish zero open turbine
+work orders. Fixer independently read current quality/work evidence for all fifteen
+turbines but rejected drafting because the earlier selected scope was `varchar`.
+Replaying that exact original native receipt through the repaired extractor yields
+no selected equipment, rather than a fabricated identity.
+
+The published V16 native transport was exercised with the reported question.
+One execution queried Kusto, Lakehouse and operational SQL, returning fifteen
+affected turbines, ten existing open work orders and five uncovered draft
+candidates. A subsequent identical-question execution returned a provider refusal
+before querying data, despite its execution audit confirming automatic attachment
+of both ontology-associated sources. Missing source authoring is therefore not
+established as the cause of the intermittent answer. These observations do not
+certify repeatable native execution or successful end-to-end draft staging.
+
+The selected Data Agent was subsequently republished using NB11's unchanged
+Preview Runtime and publication functions, after checking live numeric generation
+2 and the selected published ontology identity. All submitted source definitions
+and stage instructions matched published readback. [Microsoft documents](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-runtime)
+that the
+published runtime is fixed by the selection at publication time, so changing only
+the draft selector is insufficient. This convergence does not establish that a
+runtime-selection mismatch caused the original failure.
+
+The original question after republication returned cited Kusto, Lakehouse and SQL
+tables, fifteen affected turbines, ten open work orders and five uncovered draft
+candidates. These are native query results, not proof that the application's
+approval cards were staged or that any production work order was created.
+A post-publication RCA variant still returned the Fabric provider's content refusal
+with no cited result tables. Runtime republication is therefore not a demonstrated
+fix for every failing prompt. End-to-end signed-in card verification remains open.
+
+Keep the execution minimal: Supervisor selects capabilities, Sparky calls the
+original Fabric question without a wrapper-model round, and Fixer reviews requested
+drafts. Gauge is a separate governed-read/verification capability, not a mandatory
+second factual-answer writer. Sleuth is only needed for requested investigation;
+Gale is only needed for weather work. Do not remove those capabilities merely to
+conceal a handoff or source failure. An investigation does not veto an otherwise
+supported diagnostic draft, and no production work order is saved without approval.
+
+## October 29 single Hydro Intelligence entry point
+
+The separate Direct Data Agent mode was a UI design mistake and has been
+removed. Both layouts render the same single Supervisor-led experience.
+There is no engine selector or comparison entry on the page, and no engine
+preference/state can bypass the Supervisor. The normal chat request carries
+the original question, not a forced `native_sources` selection.
+
+For native business questions the execution chain is **Supervisor -> Sparky
+(Fabric IQ capability) -> published Fabric Data Agent**. The Supervisor performs
+bounded semantic selection; Sparky invokes the native transport once using the
+unchanged operator question. It does not add another prompt-agent reasoning
+round or rewrite the answer. Native text fidelity, pinned source identity,
+separate checked specialist assessments and approval-only drafts are preserved.
+QA, Weather, RCA and Work Order remain available for their assigned roles.
+
+Source admission also uses the deployment-verified Eventhouse endpoint directly
+when configured, rather than awaiting unrelated workspace/Ontology discovery
+before requesting the delegated token leases. Missing endpoint configuration
+still follows discovery and fails explicitly if unresolved.
+
+### Unified-entry publication and signed-browser acceptance
+
+Source commit `8bd7231` was published through the canonical app orchestrator as
+**1.0.1222 / `8bd7231`**. Deployment completed with `SUCCESS` and
+`DEPLOYED_APP_URL`; AppBackend preflight/POST readiness passed, and all 43
+existing Entra redirects were preserved. The existing coordinator v7 was reused.
+
+The signed-in browser loaded this build in both `ui=v1` and `ui=v2`.
+Each had one Hydro Intelligence heading, the Supervisor/Sparky label, and no
+Direct Data Agent, Foundry orchestration or comparison selector.
+
+The normal starter question, "Ask Sparky (Fabric IQ) to list every facility with
+its identifier and name in the answer.", completed through Supervisor ->
+Sparky/Fabric IQ -> Fabric Data Agent. The browser request contained only
+`chat.question`, without a forced `native_sources` bypass. The stream recorded
+Supervisor dispatch, one completed Fabric IQ specialist and Supervisor
+verification. Native execution recorded **zero wrapper model rounds**.
+
+Run `f5471814-0332-42be-a205-58fd844f8f51` took **26.677s** for the invocation
+stream, including **18.617s** in the native Fabric leg. These are one observed
+sample, not a latency SLO. The provider returned all three facility identifiers
+and names. Presentation text exactly matched the native response, whose SHA-256
+was `c3a155f2fdaee6b1422cb9779920c559e5ade0b3b949a0bf98c9ec36e6f7ed5c`;
+the answer appeared once in the rendered chat. There were zero proposals and
+`production_write_executed=false`. Temporary browser diagnostics were removed
+by navigation after verification.
+
+Validation also passed 46 focused frontend tests, eight backend native-fidelity
+tests, TypeScript checking, scoped ESLint and the production build. These checks
+do not certify enterprise availability, sustained load or production writes.
+
+The preceding two-mode acceptance record below is historical; it does not
+describe the current Hydro Intelligence navigation.
+
+## October 29 role-boundary and presentation correction
+
+Current architecture and enterprise limitations are described in the
+[service contract](../HydroOperationsService/README.md#current-minimal-agent-execution-architecture).
+Ordinary factual questions use the original Fabric Data Agent answer, without
+a Supervisor/Sparky response-rewriting chain. Foundry orchestration adds only
+requested capabilities: Gauge for governed reads/verification, Weather for
+weather-aware retrieval/interpretation, Sleuth for competing hypotheses, and
+Fixer for coverage review or explicitly requested approval-only drafts.
+
+This correction removes the semantic RCA path's unrelated legacy 48-hour
+preload and the extra briefing after a checked RCA assessment. RCA and Fixer
+have separate, shared model/runtime tool allowlists; RCA no longer receives
+maintenance-authoring skills. Repeated original-question Fabric retrieval in a
+single plan is rejected. Native execution is identified as
+`native-fabric-responses` in the audit even in mixed semantic workflows.
+
+Previously, mixed native/investigation workflows could execute specialists but
+hide their structured assessments behind the native-only presentation shortcut.
+Checked RCA and no-draft/clarification maintenance reviews now render separately,
+without rewriting or duplicating the original Fabric text. Arbitrary specialist
+prose still cannot become a certified finding.
+
+The existing model allocation was verified at 75,000 TPM. Configuration, unit
+tests and deployment alone do not certify authenticated source execution,
+collective-agent latency or enterprise availability. The dated acceptance
+records below remain historical; their limitations have not been erased.
+
+### Publication and bounded signed-browser acceptance
+
+Source commit `d03e8c0` was published through the canonical Foundry and app
+stages. Coordinator **v7**, source image `src-5d123a1b6806c3d6`, is active;
+the browser loaded app **1.0.1220 / `d03e8c0`**. Both stages completed their
+configuration readback; the app stage printed `SUCCESS` and `DEPLOYED_APP_URL`.
+AppBackend preflights/POST readiness passed and all 43 existing Entra redirects
+were preserved. Live allocation remained **75,000 TPM / 75 requests per minute**.
+Future setup now enforces the 75,000-TPM floor without mutating allocation.
+
+After reloading the published build and establishing normal delegated telemetry
+access, three read-only signed-browser checks completed:
+
+| Check | Observed execution | Invocation stream duration |
+|---|---|---|
+| Plain facility question | One native Fabric leg; zero wrapper model rounds; presentation exactly equals the original text | 30.207s |
+| Independent facility inventory plus vendor-aware forecast comparison | QA and Weather application readers, then requested interpretation; three facilities and 24 UKMet forecast rows; missing Aurora coverage disclosed | 31.435s |
+| Original Fabric facts, competing RCA hypotheses, independent maintenance coverage review | Fabric IQ -> RCA -> Work Order; both checked specialist reports visibly rendered; original Fabric text retained once with matching SHA-256 | 185.381s |
+
+These are observed stream durations, not SLOs or sustained-load measurements.
+The first chat's displayed duration, including client admission/startup, was
+36.6s. The compound native Fabric leg took **118.164s**, RCA **29.366s** and
+Work Order **21.137s**. Native legs recorded zero prompt-wrapper model rounds;
+RCA and Work Order each used two model rounds. The compound result is therefore
+not a claim that every multi-agent question is now fast.
+
+The original first answer referenced `result_0.json`; it was not rewritten into
+an application-authored facility table. RCA kept physical cause undetermined.
+Fixer returned `needs_clarification`: stale/quality-flagged telemetry and no
+open work do not establish a mechanical fault or current maintenance need.
+Every check returned zero proposals and `production_write_executed=false`.
+No approval, SQL write, notification delivery or cross-replica recovery was tested.
+
+Run IDs:
+- Native fidelity: `0f8874ba-cd21-41fd-ab89-cd0128a10a95`.
+- QA/Weather readers: `0147fea4-010c-4b62-b9d2-ec1d4643219f`.
+- Collective review: `3f2240e7-8949-4d30-bfb4-d36e87650afc`.
+
+The initial old-build browser session stalled before producing an execution
+receipt and was abandoned by reload; its cause was not established. The three
+new-build successes do not establish that all cold-start/authentication stalls
+are resolved. An empty-body warm-up returned the expected validation HTTP 422,
+not a failed business query.
+
+Focused validation: 184 backend tests completed (one optional live test skipped),
+135 frontend tests passed, TypeScript/scoped ESLint and the production build
+passed. All 47 provisioning tests passed, including rejection below 75,000 TPM
+and acceptance exactly at the floor using both 60- and 120-second windows.
+That historical 75,000-TPM rejection policy is superseded: current setup accepts
+verified positive lower allocations and treats 75,000 TPM as a best-effort preference.
+Three additional real-model planning probes used one planning call each:
+QA + Weather readers (26.202s), RCA alone (10.874s), and native + RCA + Work Order
+(14.070s). Those separate probes performed no business source reads or writes.
+
+## October 27 semantic orchestration implementation
+
+This supersedes the phrase-routing design below. The implementation is deployed,
+but **native Fabric IQ acceptance remains blocked by provider moderation
+processing errors**. Deployment and diagnostic fact parity are not successful
+native acceptance.
+
+### Live publication and acceptance
+
+Canonical deployment completed with final `SUCCESS` and `DEPLOYED_APP_URL`:
+app **1.0.1147 / `a2ccda0`**, coordinator **v28**, image
+`src-eeda8b47b7e3a339`, Fabric IQ specialist **v3**. AppBackend runtime/database
+configuration was reapplied; GraphQL/token browser preflights and POST readiness
+passed. The signed browser then exercised the new release. No operational
+proposal, approval or SQL write was performed.
+
+| Read-only comparison | Direct Data Agent | Foundry native path | Acceptance |
+|---|---|---|---|
+| Complete facility IDs/names | Three canonical facilities, 13s | Same three IDs/names in provider receipt, 55.2s | Failed: provider moderation-processing error |
+| Generating units by power station; canonical IDs and ontology relationship | All 15 turbines across three stations; equipment -> system -> facility; 41s | Same 15 equipment IDs and station memberships in provider receipt, about 67s | Failed: same provider error |
+| BAD-quality equipment over six hours and existing open work | Generic Fabric editor error; no comparable answer | Telemetry, identity and work results in diagnostic receipt, about 98s | Failed: same provider error; direct parity also unverified |
+
+Both new native receipts confirm `userQuestion` is now plain-language business
+input, not serialized application context. Both still include
+`raiPostToolAnnotations.error.errorDetails`:
+`Error during output moderation for tool: DataAgent_RTI_Demo_Agent_V12 for general harms.`
+This establishes that narrowing the input corrected an application defect but
+**did not repair the provider failure**. Correct-looking rows carrying that
+error are diagnostic evidence, not certified answers. Safety annotations were
+not removed, moderation was not disabled and no direct-source fallback ran.
+
+Signed session: `0d486615-c3fa-4ca0-95c9-61d7637ddc43`.
+Support correlation:
+- Facilities run `2c38b59a-924c-4bb6-af6a-f9608315b4f3`,
+  response `resp_0204c37e74cf2cef016ae09c4cb1f88197a48f213d9ff12e7c`.
+- Relationships run `562632fe-4102-44c3-86a2-de8f819c484b`,
+  response `resp_00dc44517ff6211b016ae09da2def48195a60aefc7d88b8e33`.
+- Quality/work run `650d3a43-1bdd-47d6-a683-1bf1ed7a3543`,
+  response `resp_0315dc46b77a5724016ae0a16f4aa881938b2434d112cefd9b`.
+
+All three native comparisons have now been attempted; none passed acceptance.
+The third direct comparison also returned a generic editor error, so the first
+two simple direct successes do not establish unrestricted cross-source success.
+Escalate the error-bearing tool outputs and response IDs to Microsoft
+Foundry/Fabric support; a different prompt or suppression of the annotation is
+not an established repair.
+
+Further read-only checks confirmed:
+- Both native connections use `UserEntraToken` with the documented Power BI
+  audience, `https://analysis.windows.net/powerbi/api`.
+- The existing model deployment is healthy and uses enabled, blocking
+  `Microsoft.DefaultV2` safety filters. Foundry account network access is public
+  with no IP/VNet restriction.
+- Existing Application Insights traces for the first two native responses show
+  safe prompt and completion categories, `blocked=false`. The native tool
+  payload separately contains the moderation-processing error. A successful
+  Foundry span is therefore not sufficient evidence of a valid tool result.
+  Correlation operations: `7809d387132c88ad653d9dcb074a50e0` and
+  `c7c76f9a502048c0e1c6e8eeb04229cd`.
+- No documented repair for the exact processing-error text was found in the
+  official documentation search. Safety policies, runtime selection and
+  authentication configuration were not weakened or changed speculatively.
+- The live support catalog includes Microsoft Foundry / Agents / Microsoft
+  Fabric. No support ticket was created: authorization/contact details were
+  unavailable. No support plan was purchased or changed.
+
+A separate, explicitly non-native inventory smoke test succeeded in **7.8s**:
+three facility records, one planned `query_assets(entity="facilities")` reader,
+no specialist model chain or narrative model. Its durable semantic decision
+records a 2.675s planning call. Run:
+`8967fd86-7f5e-4d2f-90fb-6dcaa32c0cdf`. This validates that reader path only;
+it is not a fallback or acceptance of Fabric IQ.
+
+Additional signed-browser routing smoke tests:
+- Weather paraphrase, "Will it rain at Sloy tomorrow?": selected Weather, not
+  Gauge; completed in **37.9s**. Returned four UKMet forecast intervals, preserved
+  issue/valid times, and explicitly reported missing second-vendor coverage and
+  unspecified precipitation units instead of inventing either.
+- T007 unreliable-readings investigation: selected Sleuth, not Gauge; completed
+  in **about 81s**, returned source evidence, competing hypotheses and missing
+  tests, with no confirmed physical diagnosis or work-order draft. This is a
+  routing/execution smoke test, not independent validation of a causal ranking.
+- Final full backend discovery against the deployed implementation:
+  **283 tests passed in 258.226s**, including the repaired factory/cold-start
+  fixtures. Earlier partial-run failure records below remain historical.
+
+### Actual runtime responsibilities
+
+| Capability | Responsibility | Not its responsibility |
+|---|---|---|
+| Coordinator | One typed semantic planning call; validate catalog/roles, execute bounded Agent Framework workflow, verify receipts, present evidence, gate approval | Plant facts, unchecked model-authored writes |
+| Gauge / QA | Exact operational reads, analytics and independent factual verification | Default routing for every question, physical diagnosis, maintenance authoring |
+| Sparky / Fabric IQ | Business aliases, ontology relationships and cross-source business facts through the published Fabric Data Agent | Local source fallback, RCA, work-order authoring |
+| Weather | Forecast/observation interpretation with vendor, issue time, target, valid time and units kept separate | Turbine diagnosis or maintenance |
+| Sleuth / RCA | Source-referenced observations and competing hypotheses | Claiming an unverified physical cause |
+| Fixer / Work Order | Existing-work coverage review and explicitly requested editable proposals | Automatic production writes or inventing a verified issue |
+
+These are capabilities, not a compulsory five-agent chain. Production admission
+no longer uses `chat_intent` to decide the route. The bounded planner sees the
+actual governed catalog, prior conversation, backend-resolved identities and
+explicit native selection. Typed validation owns allowed tools, exact evidence
+identifiers, source authority, supported views and conditional maintenance.
+Unknown schema entries, missing bindings or omitted operator-selected native
+sources fail closed. The planner is tool-less and cannot write.
+
+Simple exact facts use journaled source readers without a specialist or a
+second narrative model. Independent reads within a reader step run concurrently;
+dependent specialist steps remain sequential. The Agent Framework graph has
+only the selected steps, not eight phantom handoffs. Actual planner response ID,
+duration, input digest and model-round count are recorded. Resume reuses the
+committed planning decision. Existing source/deadline/read-budget/checkpoint and
+separate human-approval boundaries remain.
+
+Six real-model, catalog-validated planning probes passed: facility count -> one
+reader; named-location rain -> Weather; Sparky station/unit relationship ->
+native Fabric IQ; unreliable T007 readings -> RCA; underspecified maintenance
+request -> clarification; open work with no new draft -> read-only QA.
+These probes establish routing/contract compatibility, **not source execution**.
+Cold CLI credential acquisition affected timing; this is not a latency benchmark.
+
+### Reproduced Foundry defect and targeted repair
+
+The failed native run `7e99c596-488d-4b53-9403-aad713142393` passed the entire
+serialized application context as the Data Agent's `userQuestion`. The provider
+receipt contained the correct three facilities, but also an explicit
+`Error during output moderation` annotation. It must not be certified as success,
+nor described as proof that the Data Agent refused or lacked data.
+
+The native specialist now receives the complete plain-language assignment plus
+the as-of clock, not the application policy/evidence/presentation JSON. Its
+persistent instructions no longer append local operational contracts. Native
+receipts, citations, errors and binding checks remain mandatory. The exact
+moderation-processing error is separately classified as `native_provider_error`;
+actual refusals remain `native_refusal`. Neither permits silent direct fallback.
+
+### Ontology and source topology
+
+The live Ontology already has 18 enriched entities and six business rules.
+The stale producer selected only five entities in the Data Agent. NB009 now
+refreshes its selected entity context from live TMDL while preserving operator
+choices, custom descriptions/instructions and working source mounts. NB009 job
+`e8e697e2-d370-4b85-83c5-892b6c253686` completed; independent readback verified
+all 18 entities selected in both draft and published Data Agent context.
+
+Per Microsoft's [Ontology-context integration documentation](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-ontology-sources),
+Ontology supplies definitions, synonyms, relationships and physical bindings;
+underlying sources execute SQL/KQL/DAX. Mounted sources may supply additional
+source-specific guidance. Seeing them under **Other data sources** does not
+prove duplication or justify deleting them. Eventhouse physical bindings exist;
+its missing UI grouping is not proof of a missing KQL dependency. Do not invent
+private annotations to change that grouping. After supported Refresh and the
+18-entity publication, Eventhouse still does not appear in the Ontology data
+sources UI group. The Kusto mount remains under Other data sources; Lakehouse
+and SQL mounts were also preserved. **The Eventhouse UI grouping is unresolved**;
+this publication does not establish a successful ontology-routed KQL test.
+
+### Enterprise limitations
+
+This is stronger orchestration, not a production-readiness certificate.
+[Fabric IQ integration remains preview](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/fabric-iq):
+Microsoft does not recommend it for production workloads and it has no SLA.
+Session-local filesystem checkpoints are not a distributed HA store. Independent
+specialist fan-out/fan-in, distributed execution, workload SLOs and representative
+quality evaluation remain future work; none is implied by unit tests or a green
+deployment. The current bounded sequential workflow is appropriate for dependent
+investigation/maintenance, not a claim of unlimited autonomous collaboration.
+Agent Framework supports richer [workflow edges](https://learn.microsoft.com/en-us/agent-framework/concepts/workflows/edges);
+use them only with explicit data dependencies and isolated state.
+
+## October 27 architecture validation: redesign recommended, not implemented
+
+### Verdict and scope
+
+Audit baseline: `f5434f3`, the source behind hosted coordinator v25. The policy
+restoration below did not change its agent architecture. This audit inspected
+the input normalization, shared intent/compiler, specialist definitions and
+runtime enforcement, actual Agent Framework graph, evidence and approval
+boundaries, persistence, observability and existing acceptance records.
+
+The application genuinely uses Agent Framework and Foundry specialists. It has
+strong evidence and human-approval boundaries, but **the present architecture
+is not demonstrated enterprise-ready for unrestricted natural-language requests
+or highly available production operation**. Successful deployment and many
+passing regression tests do not establish that claim.
+
+This is an architecture review and proposed redesign, not a production change
+or representative model-quality/latency acceptance. The authenticated browser
+checks below are diagnostic observations, not a workload benchmark.
+
+### Reproduced routing gap
+
+Local Node 24 probes imported and executed the actual `chatIntent` and
+`compileOrchestrationPlan` functions without calling models or live sources:
+
+| Operator wording | Actual selected specialist(s) | Concern |
+|---|---|---|
+| Diagnose BAD telemetry quality on T007. | RCA | Recognized keyword form |
+| Explain the likely causes of unreliable readings on T007. | QA | Causal request loses RCA |
+| Why are T007 vibration readings unreliable? | QA | Another causal form loses RCA |
+| Show the rainfall forecast at Ringedalen tomorrow. | Weather | Recognized keyword form |
+| Will it rain at Ringedalen tomorrow? | None | Clear forecast question loses source retrieval |
+| Prepare a work order for T007. | Work Order | Recognized keyword form |
+| Put together a maintenance request for T007. | None | Equivalent maintenance preparation intent is missed |
+| Use the Fabric Data Agent to list open work orders. | Fabric IQ | Recognized native-source form |
+| Ask Sparky to list open work orders. | QA | Published display-name request does not select Sparky |
+
+These are diagnostic examples, not a statistically representative routing score.
+Ambiguous requests must be allowed to ask for clarification; the desired remedy
+is not to force every "why" question into RCA or every mention of work into drafting.
+Factual-list and explicit no-create controls in the probe retained QA.
+
+The cause is [keyword-derived intent](../HydroOperationsApp/src/services/copilot/orchestration.ts#L318)
+and [bridge classification](../HydroOperationsApp/scripts/local-fabric-sources.mjs#L25),
+not a model making a poor semantic routing decision. The
+[compiler](../HydroOperationsApp/scripts/local-fabric-sources.mjs#L462) produces
+an ordered list; the hosted Supervisor explicitly forbids invoking a planning
+model. Zero recognized source requirements lead to conversation-only handling.
+The [separate proposal detector](../HydroOperationsService/src/hydro_orchestrator/foundry_supervisor.py#L324),
+source/answer contracts, lookback/selection extraction and plan validation also
+depend on natural-language detectors. Adding a semantic router alone, while
+leaving those gates phrase-dependent, would be an incomplete fix.
+
+### Authenticated current-browser diagnostic
+
+On October 27, the signed-in FEATURE application (v1.0.1136, build `329948b`,
+coordinator v25) accepted two read-only questions through its normal chat UI.
+No CLI token was substituted, no draft was approved and no SQL write was requested.
+
+| Question | Observed execution | Displayed result |
+|---|---|---|
+| Will it rain at Ringedalen tomorrow? Use only governed source evidence. Do not create or change anything. | Supervisor finished; every specialist, including Weather, stayed on standby. | 9.8 seconds. The answer requested a rephrasing and explicitly said no live data was read. |
+| What is the governed precipitation forecast for Ringedalen tomorrow? Keep vendors, forecast issue times, valid times and units separate. Do not create or change anything. | Weather ran; the other specialists stayed on standby. Weather v1's recorded duration was 143,277 ms. | 2m 31s. Three governed weather locations were returned, with zero matching forecast rows. The answer explicitly said Ringedalen was not a configured location and did not invent rain or precipitation values. |
+
+The configured locations returned were Sloy, Foyers and Pitlochry. Therefore,
+this is a routing and missing-target diagnostic, **not** proof of successful
+forecast answering for a valid site, or evidence that all forecast data is empty.
+The second question followed the first in the same conversation, so it is not
+an isolated, repeated, controlled latency experiment.
+
+The live observation corroborates the local paraphrase failure: the first
+wording did not even check governed location/source evidence; the recognized
+wording did. The second answer respected the evidence boundary, but its
+151-second displayed completion is not an acceptable performance demonstration
+for this narrow diagnostic. The specialist duration includes its reasoning and
+tool execution; these browser records do not separate connector latency from
+model latency. Conversation-relative flow timestamps must not be interpreted
+as this request's startup delay.
+
+### What every participant actually does
+
+| Participant | Present responsibility and enforcement | Recommended role |
+|---|---|---|
+| Supervisor | Deterministic owner/compiler, validation, journal and dispatch; not a persistent planning prompt agent | Keep ownership and deterministic enforcement; add a bounded semantic planner that proposes a typed plan, not arbitrary tool execution |
+| Gauge / QA | Broad factual retrieval across operational sources; no proposal tool, but shared direct-tool set includes weather and raw governed KQL | Keep for complex operational retrieval/analytics; use typed direct-read fast paths for simple facts; do not make it the default domain reasoner |
+| Weather | Forecast/observation retrieval, vendor/issue/time/units semantics; restricted to weather, asset identity and visualization reads | Keep its domain capability and narrow tools; only incur a specialist model call when the task benefits from weather interpretation |
+| Sleuth / RCA | Source-referenced competing hypotheses and a checked maintenance-follow-up gate; cannot establish confirmed cause without an approved causal model/limits | Keep for equipment investigations; consume existing receipts and bounded additional evidence, not generic factual or weather questions |
+| Fixer / Work Order | Maintenance/coverage review and in-memory editable proposals; actual SQL creation is a separate signed human decision | Keep planning/drafting separate from the deterministic command handler; narrow tools to the assigned maintenance task |
+| Sparky / Fabric IQ | Published Fabric Data Agent adapter with one verified native tool; current policy requires explicit native-source selection | Keep as an optional authoritative source capability, not a compulsory extra reasoning hop or a general ontology/graph agent |
+| Grounded briefing model call | Additional synthesis/recommendation pass in `analysis_for`; not another registered specialist | Make this explicit in trace/cost accounting; skip for simple tables and avoid redoing RCA reasoning already validated |
+
+QA, RCA and Work Order currently share most read tools; Weather has a genuinely
+narrower enforced tool list. Shared equipment/identity reads are reasonable and
+not themselves a defect. However, prompt instructions alone do not provide
+clean task segregation: filter tools and context by the validated assignment.
+RCA's structured completion and Fixer's exclusive proposal capability are real
+boundaries worth retaining. No specialist may gain a production SQL-write tool.
+
+### Enterprise and performance findings
+
+1. **Planning generalization is inadequate.** The reproduced paraphrases select
+   different roles or no source reader. Specialist selection, intent slots,
+   source requirements, completion and draft authorization must consume one
+   server-owned semantic contract rather than independent regex interpretations.
+2. **Actual specialist execution is serial.** The
+   [workflow graph](../HydroOperationsService/src/hydro_orchestrator/foundry_supervisor.py#L4158)
+   chains eight delegation slots, and `handoff` holds a per-run delegation lock
+   throughout invocation. Unused slots do not make model calls. Source reads and
+   version reads already have concurrency; the Node worker is already warmed
+   and multiplexed. Do not claim those existing optimizations as new work.
+   Independent specialist branches need immutable per-step contexts and a
+   deterministic merge, not simply removal of the shared-state lock.
+3. **Unused agents affect every operational request.** `versions()` reads and
+   validates all five specialist definitions before execution. An unavailable
+   unused specialist can fail an unrelated task. Resolve the validated plan
+   first, then pin only required versions; safely cache non-user metadata with
+   an explicit deployment revision/invalidation policy.
+4. **Context and model-call overhead are not minimized.** Most non-Fixer
+   invocations receive all accumulated receipts and the full permitted catalog.
+   Fixer/final verification already have projections, but QA/RCA/Weather need
+   assignment-specific views as well. The final briefing adds another model
+   pass. Optimize against actual token/round/latency measurements.
+5. **Session persistence is not distributed recovery.**
+   [RequiredCheckpointStorage](../HydroOperationsService/src/hydro_orchestrator/workflow.py#L39)
+   wraps local files; journals, file locks and admission semaphores remain local
+   to the hosted session/worker. Foundry persists session HOME across idle
+   resume, so it is incorrect to call the deployment entirely stateless.
+   Nevertheless, the API reports `distributed_durability=false`, and worker
+   interruption is explicitly failed rather than transparently resumed.
+   Cross-worker coordination, durable run lookup and approval idempotency
+   require a supported shared-state design and failover tests.
+6. **Observability is partial, not absent.** Specialist identity/version,
+   response IDs, durations, model-round counts and immutable receipts exist.
+   No explicit application OpenTelemetry/exporter wiring or token/cost fields
+   were found in the reviewed service. Foundry/SDK platform telemetry may still
+   exist; correlated end-to-end traces and exported dashboards were not proven
+   by this source audit.
+7. **Quality and latency are not established by the current tests.** Curated
+   acceptance prompts and strong contract regressions are useful, but they are
+   not a held-out semantic-routing evaluation, current per-role quality score
+   or workload p50/p95. Historical successful and failed timings must not be
+   relabeled as v25 acceptance.
+8. **Domain limits need explicit contracts.** RCA currently uses a 48-hour
+   history and at most eight equipment, disclosing omissions. Preserve budgets,
+   but express the requested analysis window/scope and any bounded reduction in
+   the semantic plan; do not silently replace the user's requested scope.
+9. **Authorization is coupled to all sources.** Browser admission requires all
+   four resource audiences even for narrow tasks. A future planner-first design
+   can request only the sources the approved plan actually needs, with server
+   enforcement, explicit user interaction and no automatic write replay.
+
+### Recommended project-specific architecture
+
+Use **semantic planning with deterministic, dependency-aware execution**:
+
+```text
+Request + bounded conversation + governed capability metadata
+  -> Semantic planner: typed goals, scope, source needs, steps and dependencies
+  -> Deterministic validator: supported capabilities, authority, budgets, policy
+  -> Authorize required sources; resolve canonical identities
+  -> Execute independent read/Weather/native branches concurrently when valid
+  -> RCA only when the goal requires an equipment investigation
+  -> Fixer only for requested maintenance review/proposal intent
+  -> Deterministic evidence/completeness checks
+  -> Briefing only when useful; facts retain receipt references
+  -> Fresh draft + separate explicit human approval
+  -> Deterministic idempotent SQL command and verified readback
+```
+
+The planner chooses from a metadata-backed capability registry derived from the
+existing source catalog, domain contracts and enforced tool definitions; do not
+introduce a competing schema or permission registry. It cannot invent tools,
+schemas, identities, permissions or a causal model. Record concise
+selection reasons, dependencies, expected evidence and actual execution results,
+not private chain-of-thought. A missing capability or genuinely ambiguous
+request produces clarification or an explicit unsupported result, not a guessed
+telemetry read or silent fallback.
+
+Do not replace phrase lists with unrestricted peer handoffs or make all five
+agents debate every request. Sequential stages remain correct where a real
+data dependency exists; fan-out/fan-in applies only to independent branches.
+Retain the existing Foundry project, model and source bindings while evaluating
+the redesign; no new model deployment is assumed. The additional planner call
+has a cost and must earn it through fewer redundant specialist/briefing calls
+and better completion rates.
+
+Nothing should hardcode expected user sentences. Capability schemas, source
+bindings, tenant boundaries, explicit approval, evidence validation and bounded
+budgets must remain deterministic. An LLM's inferred intent is never SQL consent.
+
+### Rollout and acceptance, not an enterprise label
+
+- First build a held-out, paraphrase/multilingual/compound/negation/ambiguous/
+  unsupported-request set with expected goals, source policy and allowed plans.
+  Keep the probes above as regressions, not the entire evaluation set.
+- Shadow-evaluate semantic plans against the existing compiler without
+  executing duplicate source reads. Then gate a controlled rollout; do not
+  silently revert to keyword routing when semantic planning fails.
+- Measure routing/task completion, unnecessary delegations, read completeness,
+  citation validity, input/output tokens, model rounds, source latency and
+  end-to-end warm/cold p50/p95 by task and source. Set release thresholds from
+  the agreed workload and measured source baseline, not an invented seconds SLA.
+- Require zero unapproved writes and pass expiry, principal isolation,
+  conflicting decision, crash/restart and uncertain-write reconciliation cases.
+- Prove independent-branch overlap, cancellation and reproducible evidence
+  merge under concurrency before enabling parallel specialist execution.
+- Select an approved production durable provider, including distributed leases
+  and immutable journal semantics. Agent Framework documents Cosmos-backed
+  checkpoints; verify provider compatibility with the pinned SDK before use.
+  Foundry's newer durable state store supports optimistic concurrency but is
+  explicitly **preview/no SLA**, so it is not an automatic production solution.
+- Finally run authenticated live source/model acceptance and replay/failover
+  tests against the actual candidate version. No code-only or planner-only run
+  may be called current production acceptance.
+
+### Official documentation reviewed
+
+- [Azure Architecture Center: choose the lowest sufficient orchestration complexity](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns).
+- [Agent Framework orchestration patterns](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/),
+  [handoff versus agents-as-tools](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/handoff),
+  [concurrent orchestration](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/concurrent)
+  and [bounded Magentic coordination](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/magentic).
+- [Checkpoints and production storage providers](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints),
+  [human-in-the-loop](https://learn.microsoft.com/en-us/agent-framework/workflows/human-in-the-loop)
+  and [workflow observability](https://learn.microsoft.com/en-us/agent-framework/workflows/observability).
+- [Foundry hosted-agent session and protocol semantics](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents)
+  and [durable state store preview constraints](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agent-state-store).
+
+## FEATURE human-approved work-order creation restored
+
+The disabled-card screenshot was a runtime policy failure, not a missing Fixer
+agent or a failed SQL insert. Read-only inspection found active coordinator v24
+had `production_writes_enabled=false`. The deployer correctly preserved that
+existing setting, while a new coordinator also defaults to disabled writes.
+
+The supported process-local `HYDRO_PRODUCTION_WRITES_ENABLED=true` override was
+published through the canonical combined deployment at
+`2026-10-27T07:25:26.149585Z` (667.016 seconds). Independent Foundry readback
+confirmed **hydro-orchestrator:25**, enabled approved creation, the expected
+FEATURE workspace and unchanged source image `src-ae2d589b20c8d8bd`. All five
+specialists were reused without version changes. Endpoint/CORS/preflight/POST
+readiness and delegated-scope contracts passed; all 42 SPA redirects remain.
+
+The focused configuration/convergence/delegated-authorization suite passed
+**48 tests in 34.596 seconds**, including explicit false-to-true/true-to-false
+overrides, enabled-policy preservation, signed approval, principal isolation,
+expiry, idempotency and uncertain-write reconciliation. The Node 24 production
+build and environment validation passed. No approval safety boundary, SQL
+permission or identity was changed.
+
+This restores the capability, not an approval: no SQL record was created, no
+decision was retried and no browser write/readback acceptance is claimed.
+The screenshot's displayed draft expiry was already in the past. Reload the
+app and request fresh evidence and a new draft; do not replay the disabled card.
+Hosting verification reached the protected sign-in gate, so authenticated
+application acceptance remains a separate outstanding check.
+
+## Agent authorization and source-routing repair
+
+The immediate zero-second authorization error occurs in the browser's delegated
+source preflight, before an invocation is sent. Signing into the Fabric hosting
+session does not establish all four source audiences: Fabric, Foundry,
+Lakehouse/SQL connectors and Eventhouse. Chat and Battle no longer expose a
+separate access setup button or connected-status banner. A normal question or
+explicit approval action silently obtains/refreshes all four audience-specific
+tokens. Only if Entra requires interaction does that same action open sign-in,
+using `extraScopesToConsent` for the other missing audiences, followed by
+separate silent token/lease checks. One token is never reused across audiences.
+This follows Microsoft's
+[resource and scope guidance](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/resources-and-scopes).
+
+Background warm-up, evidence reads and interrupted-run polling remain silent-only.
+Cancellation, blocked popups, missing consent and network failures are surfaced;
+no invocation starts until the source preflight succeeds. Authentication does
+not approve work, and transport failures never automatically replay a question
+or decision. Forced renewal must still meet the bounded operation's minimum lease.
+
+### Implicit-access publication and signed-browser acceptance
+
+The separate setup control was removed from both chat and Battle in `9197530`.
+Canonical FEATURE publication completed on October 27 at **09:36:54 UTC**:
+signed app **1.0.1143**, coordinator **v26**, image `src-ea5c543336298b9a`,
+ACR build `dtp`. All five specialist definitions and 42 redirects were preserved.
+The 43 authorization/transport tests, 43 hosted packaging tests, scoped lint,
+environment validation and production TypeScript/Vite build passed.
+
+The signed browser rendered no access setup button/banner and opened no sign-in
+popup on mount. Sending the existing six-hour BAD/UNCERTAIN telemetry question
+made **one run request**, opened **zero sign-in popups**, and returned in
+**24,972 ms**, with all 15 turbines and 180 verified records. Supervisor and
+Gauge completed; no work-order action or approval was requested. Session:
+`8b650710-77d8-4be4-b44f-7c73618b1f1f`. This is an observed single request,
+not a performance SLO or first-time-consent browser test; conditional consent,
+cancellation and silent-only background behavior have focused regressions.
+
+Do not treat this authorization acceptance as complete multi-agent acceptance.
+A different facility-count question first reached the hosted runtime but
+failed its existing planner contract with `unexpected-evidence:telemetry`
+(HTTP 500; no certified answer). Read-only session logs identified failed run
+`28968fae-2e54-4792-8637-9b3d814ea29f` in session
+`1a5f69ed-7d76-4e40-8c52-949c28796ba2`. It was not resubmitted; the independent
+routing defect was not suppressed or repaired by that UX change; the following
+count-evidence follow-up resolves it.
+No operational write, approval or rejection was performed in either test.
+
+### Facility-count evidence-selection follow-up
+
+The failed count request exposed disagreement between the existing required and
+permitted evidence classifiers: facilities were permitted, but no dataset was
+required, so Q&A compilation defaulted to telemetry and correctly failed the
+strict guard. For a count with no specialized evidence requirement, the producer
+now derives required datasets from the existing permitted classification instead
+of falling through to an unrelated source. Multi-scope count evidence requires
+population coverage. No dataset permission or unexpected-evidence check is relaxed.
+
+The exact browser question and six count variants now pass complete-contract
+regressions for facilities, equipment and spare parts. The 128 Node regressions,
+119 backend supervisor tests, scoped lint, configuration validation and production
+build pass. The earlier failed run remains immutable and is not automatically
+replayed.
+
+Canonical publication subsequently completed at **10:18:31 UTC on October 27**:
+signed app **1.0.1145 / 3a64402**, coordinator **v27**, image
+`src-028b83cbb98cf220`, ACR build `dtq`. The first attempt's transient Azure CLI
+token-network disconnect was resolved by rerunning the canonical command, which
+reused the successful image build. Five specialists and 42 redirects were retained.
+
+Authenticated session `296e05fd-a9fb-4705-aff1-7449f11c950b` retested the exact
+previously failing question. It returned HTTP 200 in **13,494 ms**, reporting
+**3 facilities**, with all three source IDs shown and no truncation. A separate
+short question, “How many facilities are registered?”, returned the same count
+and IDs in **7,048 ms**. Each question submitted one run, opened zero sign-in
+popups and produced no alert; the separate access setup control remains absent.
+The source-backed table contains `FACILITY_RTI_001`, `FACILITY_RTI_002` and
+`FACILITY_RTI_003`, matching the claimed count. These are individual browser
+observations, not a latency SLO. No work-order action, approval or write occurred.
+
+Ordinary operational questions use governed direct sources. Explicit Data Agent
+requests stay native, with no silent fallback. The specialized native quality/work
+contract must not capture ordinary wording or replace a requested independent
+direct-source verification. "Had BAD" means any matching sample in the UTC
+window; it is not interchangeable with latest/current quality. Matching samples,
+latest state and missing readings remain distinct, and truncated evidence is not
+certified complete solely because its tool name is trusted.
+
+The existing deterministic `WorkflowBuilder` supervisor is an appropriate
+[Agent Framework workflow](https://learn.microsoft.com/en-us/agent-framework/workflows/agents-in-workflows).
+The documented [orchestration patterns](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/)
+do not require replacing it with a free-form manager/group chat. QA evidence must
+precede dependent RCA and draft review; independent source reads can be concurrent.
+The [human-in-the-loop boundary](https://learn.microsoft.com/en-us/agent-framework/workflows/human-in-the-loop)
+remains separate from agent reasoning: connection recovery is never write approval.
+
+Local regression results and deployment/browser acceptance are separate gates.
+Earlier live runs below are not evidence that this repair has been published or
+that a current authenticated multi-agent request has passed.
+
+### Publication receipt and remaining gate
+
+Repair `f760be8` was published through the canonical orchestrator at
+`2026-10-27T07:01:08.626526Z` (812.578 seconds), with `SUCCESS` and
+`DEPLOYED_APP_URL` for the existing FEATURE origin. ACR build `dtn` succeeded;
+`hydro-orchestrator:24` is active on source image `src-ae2d589b20c8d8bd`.
+All five specialists were reused unchanged. Existing AppBackend/three-connector
+apply, CORS/preflight/POST readiness and delegated-consent checks passed;
+all 42 redirects were preserved. No seeding or production write ran.
+
+All 149 focused application tests and 185 supervisor/live-source/source-auth
+tests pass under Node 24, as do the four focused packaging/fingerprint checks.
+TypeScript/Vite, environment validation and scoped ESLint pass. The local browser
+displayed the new control and actionable four-resource preflight failure in
+0.1 seconds without sending an invocation.
+
+**Hosted authenticated acceptance is blocked, not passed.** Fresh navigation
+reached Fabric's private-app gate; Sign in reported that its popup was blocked.
+The user was unavailable to finish browser sign-in. No CLI credentials were
+substituted and no gate was bypassed. A normal signed-in, current-build
+QA/RCA/draft run and its latency still require verification; historical passes
+below do not satisfy that gate.
+
 This record covers the original **October 7-11, 2026** implementation and later
 dated follow-ups, corrections, measured results and unfinished acceptance, grounded
 in repository commits and linked records. It is not a release certificate.
 Earlier runs remain historical evidence, not passes after a later code change.
+
+**October 27 Weather status update:** UKMet-only ingestion and serving now pass
+real pipeline and signed-browser acceptance on app **1.0.1131 / 51b05d6**.
+Aurora is disabled by default, not credential-repaired; its key is retained.
+This supersedes earlier claims that Aurora's HTTP 401 blocks all Weather.
+Native Foundry policy acceptance is unchanged. See the
+[UKMet-first receipt](weather-fabric-port-plan.md#october-27-ukmet-first-live-acceptance).
+
+## October 26 end-to-end failure audit and repair
+
+The signed FEATURE browser on build **1.0.1112 / `36b08ed`** reproduced the compound
+BAD-quality/open-work/draft failure in about **30.8 seconds**. Run
+`b2a843c8-479c-4b0d-ba1a-d2469967db8c` failed inside Gauge's source callback:
+`Matching-quality aggregate is missing, conflicting, or outside the verified observation window.`
+Read-only Eventhouse reproduction established the root cause: Kusto's unmatched
+left-join string is `""`, not `null`. The zero-match verifier rejected normal source
+output; telemetry quality and the multi-agent framework were not fabricated.
+
+The repair accepts that string absence only for a zero count with absent matching
+numeric/date fields. Positive counts still require bounded, ordered timestamps,
+finite matching values and the requested quality. The latest sample remains
+separate from historical matching samples; `"had BAD today"` does not mean
+`"latest BAD"`. Browser and hosted reads share the same query/validator and fixed
+source-read UTC window. Missing readings, zero matches, stale readings, incomplete
+metadata/work coverage and source outages remain distinct.
+
+Ordinary operational requests use governed Lakehouse/SQL connectors and Eventhouse
+tools through Gauge. Exact-sentence automatic Data Agent routing has been removed.
+Explicit Data Agent selection is preserved through admission and follow-ups;
+native-only intent cannot acquire an inferred direct-source workflow at the
+executor boundary. Mixed native/direct requests still retain their requested
+verification stages. Draft handoffs cover the affected evidence set and retain
+complete SQL coverage, canonical identity, physical-fault uncertainty and human
+approval gates. A real callback failure now ends the Framework function loop on
+its first error; the separately bounded argument-correction response remains.
+
+**Architecture conclusion: keep the existing deterministic `WorkflowBuilder`.**
+Microsoft's [workflow patterns](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/)
+allow explicit ordered/concurrent dependencies; a Magentic or group-chat manager
+is not required. [FoundryAgent](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/agent-services/foundry)
+uses the pinned remote agent's instructions/tool schemas and local callback dispatch.
+The SDK warning that supplied tool declarations are omitted is expected, not the
+failure; per-run tool overrides are not a repair. The active Fabric specialist
+already uses [`fabric_iq_preview`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/fabric-iq),
+not the deprecated classic Fabric tool. Native Data Agent preview execution has
+service/JSON-completeness limitations and is not an enterprise SLA. Its failure
+must not become a successful direct-source fallback.
+
+The audit verified existing coordinator **v16** and QA **v2**, RCA **v2**, Work Order
+**v3**, Fabric IQ **v2**, Weather **v1** in the already selected Foundry project,
+all using `gpt-5.6-sol`. No new project, model deployment or framework migration is
+needed. Local validation passed **101** Node source/routing contracts and **189**
+Python supervisor/service/auth/source tests under Python 3.12 and Node 24.21.0
+(the two isolated Docker-closure tests were rerun after correcting their missing
+operational SQL fixture/configuration). Pyright reported zero diagnostics;
+TypeScript, changed-file ESLint, environment validation and production build passed.
+Unit/type/build results and publication/live acceptance are separate gates.
+The workspace's `fabcapswc` capacity was checked **Active**. Weather remains blocked
+by the invalid Aurora subscription credential/private-vault access; changing
+authentication headers or fabricating empty weather as successful ingestion is not a fix.
+
+### First publication exposed a separate model-rate boundary
+
+Canonical publication of `0e5a2d5` completed with `SUCCESS`/`DEPLOYED_APP_URL`,
+all three connector/runtime preflight checks and all **42** existing SPA redirects
+preserved. It reused all five prompt specialists, building only the changed
+coordinator image `src-d0ca478878436eed` (ACR run `dte`) and activating **v17**.
+The signed browser verified app **1.0.1113** and both source connections.
+
+The original compound request then completed Gauge but failed in Fixer at
+**36.4 seconds**: run `fed6e899-28d0-4967-960b-cd50cfef1759` received
+`rate_limit_exceeded` HTTP 429 from Foundry. The existing DataZoneStandard model
+deployment reports **60,000 tokens/minute and 60 requests/minute**. This is not
+the repaired Kusto failure and was not certified as success or draft creation.
+
+The follow-up repair keeps direct evidence in a no-RCA work-order handoff,
+projecting only verified selected equipment when available and preserving source
+population/provenance metadata. Empty scope retains its evidence rather than
+silently projecting it away. Complete immutable receipts are not mutated.
+The first follow-up's rate-limit recovery honored a numeric provider `Retry-After`/`retry-after-ms`
+of at most **60 seconds**, once, inside the existing completion budget and run
+deadline. It emits explicit application progress and reuses captured evidence.
+There is no retry after a completed assessment or staged proposal, no production
+write replay and no quota/resource change. Missing/invalid/over-budget retry
+headers, hard insufficient quota, repeated throttling and source failures still
+fail explicitly. The full **110-test** supervisor suite and Pyright passed;
+publication and live acceptance of this follow-up were separate gates.
+
+Coordinator **v18**, image `src-39224ae5f38120fd` (ACR `dtf`) and signed app
+**1.0.1114 / `bad7b55`** were published successfully. The original request again
+completed Gauge. Run `52a2b87b-a0a0-45c1-8a08-6d51359e6ec7` failed at **53.2 seconds**:
+Fixer honored the provider's **15.660-second** wait, its next model call succeeded,
+then the following call hit another 429. No draft/write was certified.
+
+The corrected transport policy uses the official OpenAI SDK's **one retry per
+model HTTP request**, rather than restarting the whole agent. A throttled
+follow-up therefore retains that request's existing function-result messages;
+earlier source callbacks and completed assessments are not replayed. Requests
+remain bounded by the service timeout and ten-minute workflow deadline. Native
+MCP transport keeps **zero SDK retries**, preserving its separate shared
+same-source correction limit. This follows Microsoft's
+[rate-limit guidance](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/quota#rate-limit-best-practices)
+on provider retry headers and bounded backoff. Persistent errors still propagate;
+no quota, project or model deployment was changed. All **111** supervisor tests
+and Pyright passed, including exact retained request messages and one source
+dispatch after a follow-up 429. The additional **83** service/source/authorization
+tests also passed.
+
+### v19 publication and signed-browser acceptance: not passed
+
+The canonical deployment of **`89c7dd4`** returned final
+`SUCCESS`/`DEPLOYED_APP_URL` on October 26 at **22:36:59 UTC**. The signed browser
+verified app **1.0.1115 / `89c7dd4`**. Coordinator **v19** is active on
+`src-ad9a38b9fbbba1da` (ACR `dtg`). All five specialists were reused unchanged,
+all three connectors were reapplied, and all **42** existing redirects were
+preserved. Neither the project/model nor quota/capacity size was changed.
+
+Authenticated session `6e8dd994-227e-4f40-943d-34d1dd791551` produced these results:
+
+| Request | Observed outcome | Acceptance |
+| --- | --- | --- |
+| Original BAD-today/open-work/draft question | **69 seconds**; run `750f5b18-ec8e-4ddd-992a-82e54cd0b0a6` failed in Gauge with equipment metadata, instrument metadata and work-order inventory `READ_FAILED`; no partial fleet snapshot was accepted. | **Fail**; no handoff, RCA, draft or write certified. |
+| Direct equipment inventory only | **61 seconds**; run `4107e374-ed74-468b-90eb-bf58428dac95` failed with `Rayfin Lakehouse asset connector read failed (READ_FAILED)`. A later bounded diagnostic repeat also failed in **63 seconds**. | **Fail**; isolates a connector read problem independently of compound planning. |
+| Explicit published Data Agent identity/configured-source request, without direct tools | **51.2 seconds**; Supervisor selected Sparky alone. The answer reported the native endpoint unavailable with an output-moderation error, no verified identity/source details and zero scalar claims. | **Not a source-success pass**. The crew displayed Finished, but the answer itself disclaimed verification. Native-only routing was preserved; there was no direct fallback. |
+
+These are real failures, not evidence that the SDK retry policy passed live
+multi-agent acceptance. The source failures prevented the planned QA -> RCA ->
+Work Order acceptance; repeatedly submitting it would not certify anything.
+Source reads must recover before that acceptance is attempted again.
+
+The browser initially had 31-second aborted connector requests, then successful
+Lakehouse transport responses taking roughly **42-45 seconds** before STID
+connected. These timings are diagnostic observations, not proof of the hosted
+read failure's underlying cause. The current sanitized `READ_FAILED` does not
+distinguish timeout, GraphQL rejection and other transport failures; that cause
+remains unresolved. A separate Azure CLI identity's broker exchange returned
+401 and is **not comparable authenticated browser acceptance**.
+
+ARM independently confirmed `fabcapswc` **Active / Succeeded** during this
+investigation. No capacity resume was necessary. The maintenance panel's
+sign-in/empty placeholders likewise are not proof that operational SQL contains
+zero work orders. No approval/create/save action was taken. Weather still
+requires the valid Aurora credential through authorized private Key Vault
+access. **Do not describe this publication as enterprise-ready or fully fixed.**
+
+### Connector deadline and native-failure follow-up
+
+Further diagnosis used the **actual app-delegated Power BI credential**, without
+printing/storing credentials, replacing browser sign-in with CLI tokens, or
+changing authentication configuration. Its broker exchange succeeded HTTP 200.
+Normal, authorized one-row reads returned HTTP 200 and a real row from **both**
+the Lakehouse and operational SQL connectors, consistently taking **40-43
+seconds**. Introspection was denied with `HC0046`; that policy was not bypassed.
+The published entity read APIs were used instead.
+
+The Node SDK client's default was **30 seconds**, shorter than those observed
+responses. Browser background execution can delay its timers, so browser
+`AbortSignal.timeout(30000)` returning a later successful response is not proof
+that a Node 30-second deadline is sufficient. The hosted read client now
+explicitly uses **60 seconds**, inside the existing **120-second** source RPC
+budget. A mock-clock regression proves the actual SDK request remains live at
+40,000 and 59,999 ms, aborts at exactly 60,000 ms and is not replayed.
+Timeout, HTTP status and GraphQL failures now retain safe `READ_TIMEOUT`,
+`HTTP_<status>` and `GRAPHQL_QUERY_FAILED` codes through fleet aggregation rather
+than collapsing back to `READ_FAILED`; raw provider details are not exposed.
+
+Inspection also found production reconciliation constructing a non-connector
+`RayfinClient` before using `client.connectors.hydrooperations`. It now constructs
+the proper connector client. A real SDK/HTTP-fixture test verifies the connector
+route, exact creation identity and read-only reconciliation without another
+mutation. Mutation timeout/approval/reconciliation safeguards are unchanged.
+
+Native error envelopes (`error`, `isError`, `is_error`) now fail before becoming
+domain evidence; output-moderation wording is recognized as refusal rather than
+a successful native claim. These checks preserve legitimate empty-count answers
+and equipment whose business status is Unavailable. Structured provider errors
+fail immediately without direct fallback; existing bounded same-source refusal
+handling remains. No moderation controls were disabled.
+
+Validation passed **196 Python tests**, **105 Node contracts**, Pyright and
+environment validation. The canonical publication then returned final
+`SUCCESS`/`DEPLOYED_APP_URL` at **23:30:34 UTC**: coordinator **v20**, image
+`src-e72ed4907d5e592a` (ACR `dth`), signed app **1.0.1117 / `6b7ec1c`**.
+All five specialists were reused and all **42** redirects preserved.
+
+### Complete source evidence follow-up: acceptance not yet passed
+
+Authenticated session `413e72bd-56be-414c-aebb-9c3f573c424d` completed the original
+BAD-today/open-work/draft question through **Gauge -> Fixer in 91 seconds**.
+Pending draft cards were staged; no create/approval/reject control was used and
+no production write was executed. This is progress, **not an acceptance pass**:
+the answer showed only **44** verified signal rows and correctly warned that it
+could not substantiate all turbines in the staged population.
+
+The shared fleet shaper still applied `truncateForModel` to the actual source
+receipt, repeatedly halving wide rows until JSON fit 40,000 characters. That
+removed source evidence, not merely display text. A separate 80-row operator
+context bound would also omit the tail of a complete 89/90-signal population.
+The repair preserves all selected bounded fleet rows, leaves existing source
+inventory/read and 262,144-byte callback limits in place, and rejects truncated
+or unqualified snapshot attestations instead of certifying them complete.
+Evidence descriptors now honor the source's completeness flag. Grounded answer
+context shares the certified table's 500-row bound. No absent rows are inferred
+or certified and immutable receipt indices remain unchanged.
+
+Regression checks cover a >40,000-character, 90-signal/15-equipment fleet,
+complete operator-context rows with unchanged receipts, and rejection of both
+truncated and missing-completeness snapshots. All **197 Python tests** and
+**107 Node contracts** passed, with zero Pyright diagnostics, TypeScript/Vite
+production build, environment validation and changed-file ESLint.
+Canonical publication returned final success on **October 27 at 00:05:23 UTC**:
+coordinator **v21**, image `src-2959fa46a1da34ec` (ACR `dtj`), signed app
+**1.0.1118 / `f660a39`**, all five specialists reused and 42 redirects preserved.
+The authorized `fabcapswc` capacity had paused; it was resumed and verified Active.
+
+Signed session `6f760307-9b7f-464a-84b9-804bbc180af8` proved:
+
+| Request | Actual result | Gate |
+| --- | --- | --- |
+| Original question after UTC midnight | 33.6 seconds; 0 today's samples, all 90 mapped signals missing in that new window, no drafts; explicitly not a healthy-telemetry claim | Boundary behavior passed |
+| Same compound intent over last 24 hours | Gauge -> Fixer, 82 seconds; rendered source table contains 89 rows across all 15 turbine IDs, 12 work records, 15 unapproved diagnostic drafts; stale readings distinguished from historical BAD samples | Full-fleet coverage passed; no writes |
+| Named T005 investigation/RCA | 83 seconds; Gauge/Sleuth finished, but the history bundle was absent and no diagnostic draft staged | RCA not accepted |
+| Native-only facility count | 42.9 seconds; actual native error envelope rejected, Sparky/Supervisor marked Needs attention, no certified count, fallback or write; run `b6ccf45e-e5ea-49dd-86fc-054416b27a63` | Native source availability not passed |
+
+### RCA prerequisite and scope follow-up
+
+The named RCA exposed two concrete coordinator defects. Governed contract
+fulfillment ran only after specialists, so freezing the RCA scope could precede
+the required quality snapshot. When that population was absent, named equipment
+was ignored; when present, it could also override a narrower named/deterministic
+selection with unrelated fleet units. Three repro tests failed before repair
+(including empty and over-broad named scope, deterministic selection and actual
+workflow ordering).
+
+The executor now fulfills governed requirements before RCA selection/history.
+Scope prioritizes deterministic selection, then resolved named equipment, then
+the requested analytical population/prior selection. Existing per-run frozen
+scope, eight-equipment detail bound, source/permission checks and conditional
+work gates remain. **200 Python tests** and Pyright passed. Native rejection now
+logs a response ID, without raw provider output or credentials, for authorized
+receipt diagnostics.
+
+### October 27 v22 publication: operational RCA passed, native provider blocked
+
+Canonical publication of **`bb184aa`** returned final
+`SUCCESS`/`DEPLOYED_APP_URL` at **00:36:23 UTC**, after **721.750 seconds**.
+The signed browser verified app **1.0.1119 / `bb184aa`**, coordinator **v22**
+on image `src-b850ab2a1ec1e3fc` (ACR `dtk`). All five prompt specialists were
+reused, all 42 redirects preserved, and all three connector/backend readiness
+checks passed. The assigned capacity remained Active.
+
+Signed session `00ecc4ad-7c2d-47cb-9560-40bc73a3e12b` asked which T005 signals
+had BAD quality in the last 24 hours, requested RCA/open-work review and a
+diagnostic work-order draft only where uncovered. **Gauge -> Sleuth -> Fixer
+all completed in 97 seconds.** The answer used T005's actual six-signal quality
+history, inspections, notifications, compatible spares and empty open-work
+inventory. It distinguished historical BAD samples from five latest GOOD
+signals and one UNCERTAIN signal; probable causes remained unconfirmed
+assessments. One **T005-only**, Medium-priority diagnostic draft was staged.
+No approval/rejection/create control was used and no production write occurred.
+The complete 89-row signal-quality source table was retained.
+
+The answer explicitly disclosed that the diagnostic history uses a 48-hour
+context but only one hour has source data, readings are about five hours old,
+and no independent measurement, ingestion-health record or approved diagnostic
+limit confirms a physical cause. This is a source-backed RCA, not a certificate
+of current turbine condition or full-period telemetry coverage.
+
+Native-only facility count remains **blocked**, not passed. A separate signed
+session `6dbb19a5-cecf-4445-aa96-a30cae170c34` failed in **42.2 seconds** with
+an actual provider error envelope; run
+`09bce05b-42b2-47f0-bf65-bc13e1842655`, response
+`resp_048617c0ce336967016adff2d67a34819087c878a02a1b7d14`.
+Sparky and Supervisor correctly showed **Needs attention**, with no certified
+count, direct fallback or write. Supported stored-response retrieval returned
+404 and was not treated as source evidence.
+
+An independent Azure CLI diagnostic invoked the **existing** native specialist
+with the same benign facility-count request, no new agent, and zero SDK retries.
+Its actual MCP receipt contained an **output-moderation marker**, not facility
+records (response `resp_009f71fa563f62fc016adff3c911c88194b0fb3c84b25f26cc`).
+That different-client diagnostic is not signed-browser acceptance. No prompt,
+model, policy or moderation control was changed to route around the refusal.
+The Fabric Data Agent/service owner must review that provider-side refusal
+before native business acceptance can continue.
+
+Operational connector QA/drafting and the three-specialist RCA are now verified.
+**Overall acceptance is still incomplete:** native provider execution is
+blocked; Weather separately still requires the credential owner to replace the
+invalid Aurora subscription key in the private vault and rerun authorized
+Weather ingestion. Neither blocker is hidden by a deployment success or a
+model-only answer.
+
+### October 27 native-refusal failure-contract hardening
+
+The remaining provider prerequisite is not solved by another invocation.
+A regression reproduced two application defects: native provider refusal was
+flattened into generic HTTP 500/connectivity advice, and a refusal-bearing
+payload with partial business rows could pass the domain-evidence check.
+
+The source boundary now raises a typed `native_refusal` before considering
+generic service errors or partial rows. Refusals terminate immediately: no
+same-source prompt correction, SDK retry, direct fallback, certified answer,
+or work-order draft. Non-refusal source/identity contract corrections retain
+their existing bounds. The known safe category and source-owner review advice
+survive streaming, non-streaming, detached completion and exact-run recovery.
+The browser uses an allowlisted message, never arbitrary provider text, and
+does not suggest that waiting for connectivity will resolve a refusal.
+
+These are deterministic regression checks, not a successful native business
+read. Native business acceptance and Weather credential remediation remain
+blocked as recorded above; no new known-blocked native query or Weather
+credential attempt was made to validate the failure contract.
+
+Validation passed: **204 Python regressions**, **179 Node transport,
+presentation, tool and connector regressions**, Pyright with zero diagnostics,
+environment validation, TypeScript/Vite build and changed-file ESLint.
+The failure-contract tests include interrupted-stream recovery, detached
+credential cleanup, refusal-bearing partial rows and unavailable audit storage.
+
+### October 27 v23 publication and signed-browser retest
+
+The canonical deployment of **`1673261`** returned final `SUCCESS` and
+`DEPLOYED_APP_URL` at **01:17:57 UTC**, taking **891.656 seconds**.
+Coordinator **v23** is active on image **`src-5afb91f86a3d8ee5`**, ACR build
+**`dtm`**. The signed browser verified **app 1.0.1121 / `1673261`**.
+All five specialist definitions were reused, all 42 redirects were preserved,
+and runtime/CORS, three-connector and endpoint-contract checks passed.
+
+Signed session **`0f143dea-1f74-48b2-9a93-433a57f3b433`** records both failure
+and recovery, not an uninterrupted performance pass:
+
+1. The first historical T005 QA/RCA/draft request failed after **194.3 seconds**.
+   Gauge and Sleuth completed, but Fixer exhausted its model HTTP operation with
+   `ChatClientException <- APITimeoutError <- ReadTimeout`. Failed run:
+   `77b2d0e4-bf7d-4d93-9843-53a9f2e85cba`. The UI certified no answer or draft.
+   An independent capacity check returned **Active**.
+2. One controlled operator-side acceptance retry completed **Gauge -> Sleuth ->
+   Fixer in 75.1 seconds**. Actual source tables retained **89 signal rows across
+   all 15 turbine IDs**, and the selected T005 work-order table had **0 rows**.
+   The answer identified all six historical BAD signal groups, probable rather
+   than confirmed causes, missing independent measurements and approximately
+   six-hour-old telemetry. It staged no draft, explicitly requiring fresh checks.
+3. A follow-up explicitly requested a diagnostic-only draft for fresh samples and
+   OPC UA/gateway/ingestion-log checks, conditional on no duplicate open work.
+   **Gauge -> Fixer completed in 36.5 seconds** and staged one unapproved,
+   Medium-priority T005 card: **"Diagnose historical telemetry quality on T005"**.
+   Its actual editable description states that the evidence is historical and
+   the physical condition unconfirmed; no repair, replacement, dispatch or
+   production write is authorized. The current-window quality read had 0 rows
+   and 90 missing signals, reported as missing rather than healthy.
+
+No approval or rejection controls were used; no work order was created.
+The transient model timeout remains part of the reliability record; these
+individual passes are not a latency/SLA guarantee or a load test.
+
+The current [Foundry Fabric IQ guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/fabric-iq)
+was rechecked: `fabric_iq_preview` supports the existing published-data-agent
+endpoint and incoming Entra user context. The separate public Fabric IQ MCP
+Power BI experience is not a reason to migrate this connection. The Foundry
+tool remains preview without a service-level agreement.
+
+**Overall acceptance remains blocked** by the prior native provider refusal and
+the invalid Weather provider credential. No blocked native query was repeated,
+no provider policy or private-vault boundary was changed, and neither successful
+operational run is a native or Weather acceptance substitute.
+
+#### Read-only prerequisite review at 01:36 UTC
+
+A further review used supported metadata/admin reads, not another native query:
+
+- The live published Data Agent selects the correct workspace's Core Lakehouse
+  tables: `silver_facilities`, `silver_systems`, `silver_equipment`,
+  `silver_instruments` and `silver_signal_master`; Eventhouse `OPCUAEvents`; and
+  operational SQL `WorkOrders`, `MaintenanceNotifications`, `Inspections`,
+  `SpareParts` and `Asset3DModels`. Missing facility/work tables do not explain
+  the recorded refusal.
+- The read-only Fabric tenant-settings API returned `EnableAOAI`,
+  `CopilotCapacitySetupPermissionSwitch`, `AllowSendAOAIDataToOtherRegions`
+  and `AllowStoreAOAIDataInOtherRegions` enabled, with no included/excluded
+  security-group scopes on those settings. These are tenant-level facts, not
+  proof of effective capacity overrides or successful provider execution.
+- OpenAI-as-subprocessor flags were disabled. This was not established as the
+  cause, and no provider selection, consent or tenant setting was changed.
+- Azure Service Health returned no active incidents for the checked subscription
+  window. Account Resource Health returned **409 / AuthError**, so account
+  availability is **unknown**, not certified healthy. No resource provider was
+  registered and no access controls were changed to obtain that diagnostic.
+- The existing Weather receipts already establish matching live/local executable
+  code, the correct provider endpoint and invalid-key rejection with both
+  supported authentication placements. Changing headers is not remediation.
+  The private-vault authorization/network boundary was not retried or bypassed.
+
+These checks do not clear either external prerequisite. No speculative code
+change, new refused query or repeat Weather ingestion was justified.
 
 ## October 26 publication and main-merge readiness
 
@@ -172,11 +1318,18 @@ GUIDs before deployment. Saved endpoint/model hints are target-scoped and verifi
 cannot select a registry outside the project's live connections.
 
 The demo model name/version/SKU/capacity defaults were removed. Existing projects select a verified deployment
-or discover one ready chat-capable deployment; creation requires explicit catalog/version/SKU/capacity values.
-Both local deployment forms expose these values, subscription selection and operator-verified graph-binding JSON.
-Unchecking creation explicitly overrides inherited opt-in; opting in without selecting an endpoint provisions a
-target-specific project rather than rebinding an unrelated existing project. Stable `hydro-*` role names remain
-application contracts; each concurrently hosted Fabric workspace needs a separate Foundry project.
+or discover one ready chat-capable deployment. The current launcher exposes subscription, optional account,
+project and model names, not catalog/version/SKU/capacity or graph-binding JSON controls.
+Unchecking creation explicitly overrides inherited opt-in. Creation approval permits missing resources,
+not forced recreation: a fresh Fabric workspace can reuse an existing project with creation unchecked.
+Workspace-GUID suffixes allow concurrent workspace agent sets in one shared project.
+This shared-project layout was live-tested for FEATURE/DEV and is recommended.
+Separate-project provisioning exists in code but is not end-to-end verified;
+creating another project did not resolve the earlier hosted-routing 404.
+Sharing the existing model allocation does not add TPM/RPM.
+Full Deploy includes Foundry setup; no standalone Foundry run is required first.
+See the [current sharing and creation guide](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation);
+the earlier separate-project requirement no longer applies.
 
 Environment validation now precedes fresh AppBackend bootstrap as well as image/app publication.
 The manual guide documents the same inputs and canonical engine, including Python dependency restore and the

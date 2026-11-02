@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CloudSun, Eye, RefreshCw } from 'lucide-react'
 import { queryWeatherData, type WeatherData, type WeatherForecast, type WeatherObservation } from '../../services/fabric'
 import { WeatherMap, type WeatherSelection } from '../components/weather/WeatherMap'
-import { summarizePrecipitation } from '../weatherSummary'
+import { resolveWeatherVendor, summarizePrecipitation, WEATHER_VALUE_UNITS } from '../weatherSummary'
 
 const RANGES = [6, 12, 24, 48, 72]
 const VARIABLE_LABELS: Record<string, string> = {
@@ -11,10 +11,6 @@ const VARIABLE_LABELS: Record<string, string> = {
 }
 const VARIABLE_ORDER = ['temperature', 'precipitation', 'pressure', 'relative_humidity', 'dew_point', 'solar_radiation', 'wind_speed', 'wind_gust', 'wind_direction']
 const PRIMARY_VARIABLES = new Set(['temperature', 'precipitation'])
-const FALLBACK_UNITS: Record<string, string> = {
-  precipitation: 'mm', temperature: '°C', pressure: 'hPa', relative_humidity: '%',
-  dew_point: '°C', solar_radiation: 'W/m2', wind_speed: 'm/s', wind_gust: 'm/s', wind_direction: '°',
-}
 const byTimestamp = (left: { timestamp: string }, right: { timestamp: string }) => Date.parse(left.timestamp) - Date.parse(right.timestamp)
 
 type TimelineValue = { variableId: string; value?: number; unit: string; volume?: number }
@@ -100,14 +96,14 @@ export function WeatherPage() {
 
   const unitOf = useMemo(() => {
     const units = new Map(weather?.variables.map(item => [item.variable_id, item.canonical_unit]))
-    return (variableId: string) => units.get(variableId) ?? FALLBACK_UNITS[variableId] ?? ''
+    return (variableId: string) => units.get(variableId) ?? WEATHER_VALUE_UNITS[variableId] ?? ''
   }, [weather])
 
   const forecastVendors = useMemo(
     () => [...new Set(weather?.forecasts.map(item => item.source_id) ?? [])].sort(),
     [weather],
   )
-  const selectedVendor = forecastVendors.includes(forecastVendor) ? forecastVendor : forecastVendors[0] || ''
+  const selectedVendor = resolveWeatherVendor(forecastVendors, forecastVendor)
 
   // An area reports observations through the station its metadata names as representative.
   const observedLocationId = useMemo(() => {

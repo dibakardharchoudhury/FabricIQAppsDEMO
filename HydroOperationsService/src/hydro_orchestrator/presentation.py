@@ -3,9 +3,9 @@ import csv
 from io import StringIO
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import StrictFloat, StrictInt, StrictStr, model_validator
+from pydantic import Field, StrictFloat, StrictInt, StrictStr, model_validator
 
-from .contracts import Contract, EvidenceReference, utc_now
+from .contracts import Contract, EvidenceReference, RcaReport, utc_now
 from .store import Conflict, StoredRun
 
 if TYPE_CHECKING:
@@ -32,11 +32,17 @@ class ClientExecutionEvent(Contract):
     responseId: str
 
 
+class ClientWorkOrderReview(Contract):
+    decision: Literal["no_draft", "needs_clarification"]
+    reason: str = Field(min_length=1, max_length=1000)
+
+
 class ClientPresentation(Contract):
     schema_version: Literal[1] = 1
     text: str
     visualizations: tuple[ClientVisualization, ...] = ()
     execution_events: tuple[ClientExecutionEvent, ...] = ()
+    work_order_review: ClientWorkOrderReview | None = None
 
 
 ANALYSIS_ACTION_LABELS = {
@@ -55,8 +61,49 @@ ANALYSIS_CATEGORY_LABELS = {
     "insufficient_evidence": "insufficient evidence",
 }
 
+RCA_GAP_LABELS = {
+    "fresh_measurements": "fresh, timestamped measurements and ingestion-health evidence",
+    "independent_measurement": "an independently obtained measurement",
+    "matched_baseline": "a baseline matched for load and operating regime",
+    "approved_limits": "versioned, engineering-approved diagnostic limits",
+    "operating_context": "dispatch, control-state and operating-condition records",
+    "inspection_evidence": "qualified inspection evidence relevant to the signal and time window",
+    "maintenance_scope": "verified scope and closure evidence for existing maintenance work",
+    "parts_compatibility": "authoritative BOM, compatibility, reservation and lead-time evidence",
+}
+
+RCA_HYPOTHESIS_LABELS = {
+    "sensor_or_ingestion": "Sensor, communication or ingestion issue",
+    "operating_conditions": "Operating conditions or load",
+    "equipment_condition": "Physical equipment condition",
+    "sampling_or_quality": "Sampling gaps or measurement quality",
+}
+
+MAINTENANCE_GATE_LABELS = {
+    "uncovered_equipment_issue": "Evidence identifies an uncovered equipment issue.",
+    "missing_issue_evidence": "An uncovered equipment issue has not been established.",
+    "missing_equipment_relation": "The affected equipment relationship is not verified.",
+    "existing_work_covers_issue": "Existing open work covers the observed issue.",
+}
+
 
 def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
+    received_at = int(utc_now().timestamp() * 1000)
+    events = tuple(ClientExecutionEvent(
+        id=f"{answer.run_id}:{index}:{item.response_id}", role=item.role,
+        label="Verified specialist execution receipt",
+        detail=f"Version {item.version}; response {item.response_id}; measured duration {item.duration_ms:.0f} ms.",
+        timestamp=received_at, agentName=item.agent_name, responseId=item.response_id,
+    ) for index, item in enumerate(answer.specialists))
+    if answer.native_response is not None:
+        return ClientPresentation(text=answer.native_response, execution_events=events)
+    native = getattr(answer, "native_answers", ())
+    has_assessments = any(
+        item.role in ("rca", "work-order") and item.report is not None for item in answer.specialists
+    )
+    if native and not answer.tables and answer.analysis is None and not answer.proposals and not has_assessments:
+        return ClientPresentation(text="\n\n".join(item.text for item in native), execution_events=events)
+
     def literal(value: object) -> str:
         text = "" if value is None else str(value)
         text = text.replace("\\", "\\\\").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
@@ -65,7 +112,11 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
         return text
 
     analysis = getattr(answer, "analysis", None)
-    sections: list[str] = []
+    sections: list[str] = [
+        "## Fabric Data Agent answer\n\n" + item.text for item in native
+    ]
+    if native:
+        sections.append("## Hydro workflow result")
     if analysis is not None:
         sections.append("## Answer\n\n" + literal(analysis.answer))
         if analysis.findings:
@@ -104,7 +155,42 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             )
     else:
         sections.append(literal(answer.summary))
+    work_review: ClientWorkOrderReview | None = None
+    for specialist in answer.specialists:
+        if specialist.report is None:
+            continue
+        if specialist.role == "rca":
+            report = RcaReport.model_validate(specialist.report)
+
+            def references(items: tuple[EvidenceReference, ...]) -> str:
+                return "; ".join(literal(f"{item.evidence_id} {item.path}") for item in items) or "None cited"
+
+            lines = [
+                "## Sleuth - Evidence-backed investigation", "",
+                "**Cause remains undetermined.** These are competing hypotheses, not confirmed diagnoses.",
+                "", "Observed evidence: " + references(report.observations),
+            ]
+            for hypothesis in report.hypotheses:
+                lines.extend([
+                    "", f"### {RCA_HYPOTHESIS_LABELS[hypothesis.category]}",
+                    "- Supporting evidence: " + references(hypothesis.supporting),
+                    "- Contradicting evidence: " + references(hypothesis.contradicting),
+                    "- Missing evidence: " + "; ".join(RCA_GAP_LABELS[key] for key in hypothesis.missing),
+                ])
+            lines.extend(["", "Conditional repair gate: " + MAINTENANCE_GATE_LABELS[report.maintenance_follow_up.reason]])
+            sections.append("\n".join(lines))
+        elif specialist.role == "work-order":
+            work_review = ClientWorkOrderReview.model_validate(specialist.report)
+            label = "No additional draft justified" if work_review.decision == "no_draft" else "Evidence or identity needs clarification"
+            sections.append(f"## Fixer - Maintenance review\n\n**{label}.** {literal(work_review.reason)}")
+    native_receipts = {item.evidence_id for item in native}
+    charted_tables = {chart.table_id for chart in answer.charts}
     for table in answer.tables:
+        # Native result-file projections remain audit/analysis inputs, not a second rendering of the source answer.
+        if table.rows and table.id not in charted_tables and all(
+            row.source.evidence_id in native_receipts for row in table.rows
+        ):
+            continue
         keys = [column.key for column in table.columns]
         lines = [f"## {literal(table.title)}", "",
                  "| " + " | ".join(literal(column.label) for column in table.columns) + " |",
@@ -127,14 +213,8 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             xAxisTitle=next(column.label for column in table.columns if column.key == chart.x_key),
             inlineCsvData=stream.getvalue(),
         ))
-    received_at = int(utc_now().timestamp() * 1000)
-    events = tuple(ClientExecutionEvent(
-        id=f"{answer.run_id}:{index}:{item.response_id}", role=item.role,
-        label="Verified specialist execution receipt",
-        detail=f"Version {item.version}; response {item.response_id}; measured duration {item.duration_ms:.0f} ms.",
-        timestamp=received_at, agentName=item.agent_name, responseId=item.response_id,
-    ) for index, item in enumerate(answer.specialists))
-    return ClientPresentation(text="\n\n".join(sections), visualizations=tuple(charts), execution_events=events)
+    return ClientPresentation(text="\n\n".join(sections), visualizations=tuple(charts),
+                              execution_events=events, work_order_review=work_review)
 
 
 class AnswerColumn(Contract):

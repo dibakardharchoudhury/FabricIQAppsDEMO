@@ -1,5 +1,442 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Multi-workspace deployment
+
+One Foundry account owns model deployments and projects. Multiple Fabric workspaces
+should reuse one verified working project/model for the live-tested FEATURE/DEV
+layout, with distinct workspace-suffixed agents, connections and hosted configuration.
+Separate-project provisioning exists in code but is **not end-to-end verified**.
+Creating another project did not resolve the earlier hosted-routing 404.
+Shared-project naming is logical separation, not separate project/RBAC boundaries.
+Separate projects would not add model TPM/RPM or isolate account networking.
+
+The local app's **Full Deploy** includes Foundry setup; no standalone Foundry run
+is needed first. Leave **Allow project creation (billable)** unchecked for an
+existing project, even in a fresh Fabric workspace. Check only for missing
+resources; subsequent updates normally leave it unchecked. Use **Set up Foundry
+agents** for routine agent updates and **Deploy app** for website updates, rather
+than repeating Full Deploy's Git sync/Core setup.
+See the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+
+## Multi-agent responsibilities and selective execution
+
+The operational pattern is a **bounded, checkpointed supervisor workflow**:
+semantic planning selects the smallest complete set of capabilities; independent
+governed reads run concurrently with bounded concurrency; evidence-dependent
+RCA and maintenance delegation runs in order; deterministic validation precedes
+presentation. Production writes remain behind separate human approval. This is
+a custom Agent Framework workflow, not an unrestricted group chat or a claim
+that the built-in Magentic manager is in use.
+
+An explicit independent-verification requirement must include a direct-source
+verification receipt. A native answer alone cannot independently verify itself.
+Raw telemetry-quality investigations use scoped governed Eventhouse evidence
+and authoritative asset identity before RCA. When native facts are also requested,
+retain the original native answer unchanged and plan independent reads up front;
+never substitute them as a fallback after native failure.
+
+The chat represents the **Supervisor-led multi-agent team**, not just Sparky.
+Its **Team** menu lists available capabilities; the execution flow lists only
+participants selected for actual work. It does not imply every specialist runs.
+
+| Capability | Distinct responsibility | Execution cost |
+| --- | --- | --- |
+| Supervisor | Plan, coordinate dependencies, validate evidence and approvals | Semantic planner plus deterministic workflow |
+| Gauge / Q&A | Exact source queries, analytics and independent verification | Known queries use governed readers without a specialist model; adaptive queries can use Gauge |
+| Sparky / Fabric IQ | Ontology-grounded business questions and cross-source relationships | Native Fabric Data Agent call; no extra prompt-wrapper or answer-rewriting model |
+| Gale / Weather | Scoped forecast/observation queries with provider, time and units | Known queries use readers; adaptive queries can use Gale |
+| Sleuth / RCA | Competing explanations, cited evidence and missing-evidence assessment | Scoped specialist when an investigation is requested |
+| Fixer / Work orders | Fresh coverage checks and requested editable drafts | Scoped specialist; saving always requires separate authenticated approval |
+
+Fabric IQ does not replace independent verification, RCA, or the application's
+approval workflow. Conversely, QA is not a mandatory second pass over every
+native answer. Simple facts do not need the whole team. Native execution still
+has its own service/model costs; avoiding a wrapper does not make it model-free.
+The chat memoizes trace inputs and the trace component so composer edits do not
+recompute an unchanged execution flow. Team descriptions add no model calls.
+The facility-list starter no longer forces Sparky: simple governed retrieval can
+use Gauge's reader path, while the explicit Fabric Data Agent starter remains.
+
+## Model throughput and runtime failures
+
+Hosted source authorization acquires Fabric, Foundry, Power BI and the selected
+Kusto cluster tokens separately. Missing consent is requested serially per
+resource, never combined into a four-resource `extraScopesToConsent` request
+that Entra can reject with `AADSTS28004`. Each token is silently revalidated
+before advancing; cancellation, rejected consent or a failed refresh stops
+before any agent request or operational decision is submitted.
+
+Model throughput is shared across every internal call and concurrent conversation,
+not allocated per user prompt. The model-facing catalog factors repeated column
+enums into equivalent JSON Schema definitions. Specialists receive only catalog
+sections reachable through their existing tool allowlist; the full backend catalog,
+column validation, source semantics and immutable evidence remain authoritative.
+Specialists do not receive the planner's presentation/dataset routing metadata.
+Structured reports are not accompanied by duplicate narrative text. Projected
+equipment rows retain their original JSON-pointer indices; omitted rows are null
+placeholders, not empty measurements or evidence of population completeness.
+After RCA, an explicit backend selection or the complete source-declared affected
+population narrows native registry, telemetry and work rows to those equipment
+and exactly mapped signals. All cited rows and affected equipment remain in the
+handoff. Citations alone cannot narrow an unspecified population; unknown identity
+shapes remain available rather than being guessed or discarded.
+
+Planning and structured briefings reserve at most 3,072 output tokens per call.
+RCA and work review reserve 3,072, factual/Weather specialists 2,048, and the legacy
+native wrapper retains 4,096. Existing structured completions, bounded correction
+and approval gates remain in place. These are output ceilings,
+not a claim about actual token usage or a guarantee against deployment-wide 429s.
+The original native answer is still forwarded once and displayed unchanged.
+
+Before each specialist invocation, the execution journal records input bytes,
+per-section byte sizes, input digest and requested output budget, even if the
+provider subsequently throttles. Successful calls retain actual provider usage.
+No quota, model, source permissions or conversation concurrency is changed.
+These runtime changes require updating the Foundry hosted backend; publishing
+only the Fabric app continues using the previously deployed backend.
+
+The model catalog's minimum/default capacity is not proof that the deployment can
+serve the orchestration prompt, catalog and structured-output schema. Verify the
+selected deployment's live token/request limits and available regional quota.
+An undersized deployment can reject even the first planning call with HTTP 429.
+Increasing pay-as-you-go quota allocation does not reserve provisioned compute;
+do not change the selected model, region or deployment type as an implicit fallback.
+
+Model throttling, including wrapped SDK failures, retains HTTP 429 and the
+`model_rate_limit` category across streaming, JSON and persisted-result recovery.
+The operator sees a quota-specific message, not a generic HTTP 500. Failure audits
+retain the original status without provider diagnostics or credentials. Requests
+and approvals are not automatically replayed; inspect the prior audit first.
+Item creation and agent/configuration readback are not end-to-end execution tests.
+
+## Native answer fidelity
+
+Hydro Intelligence has one **Supervisor-led multi-agent** entry point, not
+separate Direct Data Agent and Foundry modes. The browser does not force the
+legacy native-only bypass. The Supervisor selects Sparky / Fabric IQ for native
+business questions; that capability forwards the exact original question once
+to the published Fabric Data Agent and returns its answer unchanged.
+There is no intervening Sparky prompt-wrapper or answer-writing model. The same
+workflow retains its semantic planner, evidence checks, source artifacts and
+other scoped specialists. Explicit draft requests remain guarded and cannot
+write without a separate authenticated approval.
+
+Native transport timeouts retain HTTP 504 (`native_timeout`), rather than being
+masked as generic HTTP 500 failures. Other native HTTP transport errors retain
+the native boundary as HTTP 502 (`native_transport`). Neither path silently
+switches sources, rewrites an answer or retries a failed business request.
+The Responses transport consumes server-sent events incrementally and returns
+on the terminal Fabric response, closing its HTTP stream immediately. It never
+waits for the provider to close a keep-alive connection after completing an answer.
+
+The hosted semantic workflow sends the original user question unchanged through
+the native Fabric Data Agent Responses transport. The selected Foundry toolbox
+version and connection remain verified and pinned, but production does not invoke
+the Fabric IQ prompt wrapper. It displays the original source answer without table
+reconstruction or an additional briefing model. The audit retains the native
+provider response, usage and a SHA-256 digest of the original answer. Multiple
+source text blocks are concatenated in provider order without inserting characters.
+
+Mixed retrieval and work-order workflows also display that original Markdown
+unchanged and fully expanded after the editable approval cards. The cards alone
+are paginated, with one numbered draft visible at a time; edits, decisions and
+in-flight reconciliation state survive navigation. Native prose without structured
+canonical IDs can reach Fixer for guarded identity resolution and a fresh complete
+open-work check, but cannot itself authorize a proposal. Explicit ranking/selection
+and verified-fault repair gates remain enforced. Quality-investigation drafts do
+not require proof of a mechanical fault merely because RCA was also requested.
+Native result-file
+projections remain available to evidence checks and the audit, but are not rendered
+as a second, sparse table. No additional briefing model is invoked or replayed when
+an original native answer exists, including mixed draft workflows.
+Verified prose-only answers are native evidence too; the workflow does not require
+or invent a business-record table to accept them.
+Independent source tables and explicitly
+requested charts retain their existing presentation and exact source values.
+Facility-scoped equipment and signal inventories use verified equipment focus,
+not a workspace-wide population fallback. Focus tables retain only records whose
+returned or captured row identity belongs to that selection; missing membership
+evidence fails explicitly. Population history and immutable source receipts remain
+unchanged.
+Dataset-specific presentation validation runs inside the bounded semantic-planning
+correction step, before any source or specialist execution, and is shared with
+orchestration compilation. Unsupported grouping cannot become a committed plan
+that fails only after planning has finished.
+Work-order views bound to a coverage requirement show only open work under the
+same closed-status policy as maintenance review. Historical source receipts remain
+immutable; factual history views retain completed work. Missing status evidence
+blocks coverage presentation instead of assuming the record is open.
+Model-authored KQL is validated before any source execution. A rejected read-only
+query receives one bounded argument correction with the shared validator's guidance;
+it is not misreported as a source outage. Repeated invalid input and actual source
+failures still stop the run without an accepted answer or a replay.
+Q&A and Weather return short receipt summaries; the Supervisor renders all verified
+records. If their completion is truncated, its one recovery attempt receives the
+newly captured immutable evidence and refreshed receipt IDs in the original scope.
+Source tools are disabled during that completion-only recovery. It cannot reread
+data, broaden scope or lose initial-reader evidence through a later RCA projection.
+
+The retained compatibility prompt-agent path has additional wrapper-fidelity
+checks; it is not the production semantic transport. A tool-processing diagnostic
+is not itself a content-filter refusal. A diagnostic
+can be accepted only when Foundry completed successfully, the final reply matches
+the source answer, and explicit final content-filter decisions report no block.
+Missing safety decisions, actual filtering, source failures, changed questions,
+multiple tool calls, and rewritten answers fail explicitly. No filter is disabled
+and no failure falls back to direct tables. Legacy structured evidence workflows
+retain their existing schema contracts.
+
+The Data Agent keeps one ontology context and the operational SQL execution
+adapter. An ontology-only capability test exposes reference and telemetry queries
+but not operational SQL records, so the SQL adapter is not a redundant source.
+Multi-source requests use independent source-native queries and exact canonical
+key matching instead of requiring a federation tool. Telemetry freshness uses
+query execution UTC time, not the newest available reading in an old snapshot.
+
+## Agent access and current source policy
+
+The existing sign-in session acquires delegated source access implicitly.
+Consent or an expired sign-in can still require the identity provider's
+interaction; there is no separate per-agent connection workflow. A failed
+source preflight never invokes the agent or replays an approval.
+
+The semantic planner selects ontology-backed Fabric Data Agent execution for
+cross-source business questions and explicit native requests. Exact governed
+reads and independent checks use direct tools. Native source failure never
+silently changes authority. Historical matching ("had BAD") retains matching
+samples separately from the latest state.
+
+## Current minimal-agent execution architecture
+
+The production controller combines **a tool-less structured planner**
+with deterministic Microsoft Agent Framework `Executor` / `WorkflowBuilder`
+stages. It is not a manager agent chatting with every specialist. The semantic
+decision selects capabilities, explicit source reads, conditions and answer
+requirements; code validates the catalog, identities, permissions, evidence,
+budgets and human-approved writes. Legacy phrase-based compatibility routing
+still exists; it is not the production semantic planner.
+Normally planning is one model call. A typed/catalog validation rejection permits
+one feedback correction within the same 60-second planning budget, before any
+source execution. Both candidates are immutable audited receipts; recovery
+reuses committed attempts and the supervisor reports the actual model-call
+count. Repeated invalid plans fail closed rather than triggering source or
+write retries. Missing planning configuration fails before opening a client.
+
+| Capability | When it is needed | Execution boundary |
+|---|---|---|
+| Fabric IQ | Ontology relationships, synonyms and cross-source business facts | Verified native Data Agent Responses tool; **no intervening Fabric IQ prompt model**. Original answer and SHA remain unchanged. |
+| Q&A | Exact direct reads, adaptive source queries and explicitly requested independent verification | Deterministic reader when arguments are known; scoped query agent only for adaptive retrieval. No RCA or maintenance-authoring skills. |
+| Weather | Forecast/observation facts and vendor/issue/time-aware comparisons | Reader by default; one optional tool-less briefing for requested interpretation. Scoped Weather prompt agent only for genuinely dependent/adaptive queries. |
+| RCA | Requested fault investigation and competing evidence-backed hypotheses | Separate reasoning agent with checked, source-referenced structured assessment. Not a compulsory telemetry-quality or drafting stage. |
+| Work Order | Requested maintenance review or editable draft preparation | Separate scoped reasoning agent and deterministic coverage/draft validators. No direct production-write tool; approval remains a separate authenticated application boundary. |
+
+Registered capabilities are not mandatory invocations. Existing compatibility
+prompt agents are retained, not deleted or substituted for the native tool.
+Only selected **agent-mode** capabilities and native transport require remote
+agent/toolbox version readback. Reader-only plans need no specialist metadata or model credentials
+for retrieval; unused Weather/RCA/Work Order/native resources cannot block them.
+Selected immutable versions remain pinned across recovery, and a changed plan
+cannot silently expand a saved manifest.
+
+Consecutive fully specified, independent reader steps share one Framework
+superstep, capped at **four concurrent source reads**. RCA, native calls,
+selection-dependent work and approval gates are never parallelized against
+their dependencies. Failure cancels and drains sibling reader tasks before
+returning; partial evidence cannot become a successful answer. The whole run,
+including planning, catalog/version discovery and presentation, has an absolute
+ten-minute execution budget measured from its immutable request clock.
+Credential-admission lease time is not a per-stage execution deadline.
+Native Responses calls use their bounded call timeout inside that absolute
+execution budget, not the remaining admission lease.
+
+Identical source reads within a run share one pending/completed task and one tool
+budget charge. Source identity, arguments and read clock are checked before the
+receipt is committed; a failed shared read is not silently retried. Downstream
+specialists receive native evidence once, rather than receiving another copy of
+the full answer in completed-specialist context. The immutable audit and displayed
+native answer remain complete. Planner and specialist inputs use compact canonical
+JSON; receipts record input bytes, observed provider usage and elapsed model time.
+Input bytes are not a token count, and model allocation is not a measured
+multi-user throughput guarantee.
+
+The existing deployment was separately read back at **75,000 TPM**; this is
+capacity configuration, not a measured latency or concurrent-user guarantee.
+Future orchestration setup prefers 75,000 TPM but accepts any verified positive
+allocation with a throttling advisory below that preference. New model creation
+uses model/SKU-specific token units and available regional quota to prefer 75,000
+TPM, or a supported lower allocation. Existing allocations and explicit capacity
+overrides are preserved; unverifiable or zero token limits still stop setup.
+Foundry source identity uses the verified ontology item ID, not native graph
+materialization or an optional graph binding.
+Semantic plans may retrieve the original Fabric answer only once and share that
+receipt with dependent specialists. Duplicate native steps are rejected before
+execution rather than making identical expensive requests.
+
+Semantic native execution preserves the provider's original answer and typed
+artifacts under the selected native evidence contract. It does not impose the
+legacy BAD-since-midnight quality/work JSON schema on arbitrary freshness,
+UNCERTAIN, historical-window or diagnostic questions. Provider errors,
+immutable source identities, requested equipment coverage and separate
+maintenance/approval checks still fail closed.
+
+Models see only tool schemas permitted by their pinned role and current turn.
+Unrequested chart tools and unauthorized proposal tools are omitted; callbacks
+and the shared bridge independently enforce permission. `analysis_requested`
+is a typed semantic choice, not an automatic second model after factual
+retrieval. Simple facts, counts, charts and pure draft staging do not need a
+rewriter. Reader-only weather comparison can request interpretation without
+introducing a Weather agent loop.
+Planning and briefing HTTP clients are closed explicitly on success, failure
+and cancellation rather than leaving their connection pools to garbage collection.
+
+RCA starts from the assigned scope and available receipts, not an unconditional
+legacy 48-hour source bundle. Its tool allowlist excludes weather and draft
+authoring; Fixer's allowlist separately permits maintenance
+coverage and guarded proposals. The model declarations and source bridge use
+the same role allowlists. RCA receives investigation skills only, not maintenance
+authoring instructions.
+
+A checked RCA assessment is already the analysis: it does not trigger another
+briefing model. Deterministic presentation displays its observations, competing
+hypotheses, evidence references, missing tests and conditional maintenance gate
+separately from the unchanged Fabric answer. A structured Fixer no-draft or
+clarification review is also visible. Unchecked specialist prose is not displayed
+as a verified finding.
+
+The execution audit includes the accepted capability/provider manifest,
+version pins, limits and persistence boundary. The UI shows only participating
+capabilities, distinguishing application readers from model calls. Agent
+Framework's warning that registered-agent tool schemas are omitted from the
+request is expected: schemas are verified on the remote agent definition;
+local `FunctionTool` callbacks provide dispatch, not replacement declarations.
+
+**Enterprise boundary:** current receipts, checkpoints, locks and recovery use
+the hosting session's filesystem. This supports recovery within that session,
+not independent-replica failover, global admission control or a distributed
+exactly-once scheduler. Linked Application Insights and response IDs do not
+prove trace ingestion or establish a latency SLO. Cross-replica persistence,
+centralized admission/retention, verified OpenTelemetry export and sustained
+load/quality evaluations remain production rollout requirements. No new cloud
+resources, diagnostic export, data ingestion or operational writes are enabled
+implicitly by this hardening.
+
+This design follows Microsoft's [agent-versus-multiagent decision guidance](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns),
+[explicit workflow execution model](https://learn.microsoft.com/en-us/agent-framework/concepts/workflows/builder-and-execution),
+[checkpoint storage guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints)
+and [workflow observability guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/observability).
+Older dated deployment sections below are historical evidence, not the current
+architecture or a certification of those outstanding enterprise requirements.
+
+The opt-in live architecture evaluation uses the **existing** project/model,
+calls no business source tools and creates no agents or work orders. Set
+`HYDRO_EVALUATE_LIVE_PLANNER=1`, `HYDRO_FOUNDRY_PROJECT_ENDPOINT` and
+`HYDRO_FOUNDRY_PLANNING_MODEL`, then run
+`python -m unittest test_semantic_planning.LiveSemanticArchitectureTests -v`
+with this service's `src` and `tests` on `PYTHONPATH`. It checks ten representative
+paraphrased/negated intents, native fidelity routing, reader-only forecasts,
+diagnostic versus fault-gated drafting and clarification. The ordinary suite
+skips real-model calls.
+
+## Bounded remediation verification: October 28
+
+Implementation commit `3d9cfab` removes the production native prompt wrapper,
+duplicate downstream native prose and duplicate in-flight source reads without
+changing the original Fabric answer or approval boundary. Validation passed the
+357-test full service suite (one optional live-suite skip), two additional
+shared-reader failure/identity regression tests and 95 frontend transport,
+authorization, orchestration and presentation tests.
+
+The following operator-authenticated diagnostics exercised the patched local
+controller against `ai-account-hydroIQ` / `ai-project-hydroIQ`, with real project,
+model and source calls. They are **not authenticated hosted-browser acceptance**.
+No work orders were approved, saved or created.
+
+| Scenario | Observed elapsed time | Result |
+|---|---:|---|
+| Native business question: how facilities, equipment and work orders relate | 82.078 s, including 8.472 s planning | Native source returned 1,287 characters. Production presentation matched the source byte for byte; zero wrapper-model rounds. |
+| Gauge telemetry quality plus Gale UKMet forecast/observation comparison | 28.041 s | Failed at delegated connector authorization (`AUTH_FAILED`); no empty-data fallback. Browser source access is still unverified. |
+| Sparky quality/open-work retrieval, Sleuth investigation and Fixer review without drafts | 139.891 s | Native retrieval completed; direct RCA enrichment reported authorization failures, then RCA hit provider HTTP 429. Fixer did not complete. This is not a collective success. |
+
+An initial meta-question asking Sparky to reproduce an earlier answer returned
+a clarification. It was preserved unchanged, not counted as a substantive
+business-answer pass. The native business question above was evaluated separately.
+
+The business-question planner reported 10,039 input / 326 output tokens. The
+Fabric-managed source separately reported 22,738 input / 321 output tokens;
+these are distinct provider accounting boundaries, not one Foundry quota total.
+There is no comparable pre-change timing or sustained concurrent-load result,
+so no measured end-to-end speedup or multi-user throughput claim is established.
+The collective run's HTTP 429 shows that the current 40,000-TPM Foundry allocation
+is still not a sufficient acceptance result. More quota or explicitly authorized
+reallocation/deployment-type changes remain separate operator decisions.
+
+The canonical deployment activated coordinator version **3** and passed hosting,
+AppBackend preflight/POST and configured delegated-permission checks while
+preserving all 43 required redirects. Hosting verification reached the protected
+sign-in gate; authenticated connector data and browser agent execution were not
+certified. The test browser could not open the required sign-in popup, and the
+operator token is not a replacement for the SPA's delegated source scopes.
+The cross-replica persistence/admission and load/telemetry requirements described
+above also remain outstanding; this record is not an enterprise-readiness claim.
+
+## October 26 current audit
+
+Latest publication: coordinator **v23**, signed app **1.0.1121 / `1673261`**.
+The [v23 signed-browser record](../docs/foundry-multi-agent-implementation.md#october-27-v23-publication-and-signed-browser-retest)
+includes an initial model timeout, a 75-second RCA/work-order review and a
+36-second diagnostic-only draft follow-up. Native/Weather acceptance remains
+blocked; these runs are not a production latency guarantee.
+
+See the [current end-to-end failure audit and repair](../docs/foundry-multi-agent-implementation.md#october-26-end-to-end-failure-audit-and-repair).
+The deployed Gauge failure was an overly strict Kusto left-join aggregate validator,
+not an absent Agent Framework workflow. The source layer now accepts zero-match
+string absence without weakening positive-match, timestamp or identity checks.
+Ordinary operational questions use governed connectors/Eventhouse tools; explicit
+native selection is retained across the Python/Node admission boundary.
+Function loops stop on the first real callback error; one local input correction
+remains available. The official SDK allows one transport retry per model HTTP
+request, honoring provider wait/backoff while retaining existing tool-result
+messages rather than restarting the agent. Native MCP transport keeps zero SDK
+retries and its separate same-source correction limit for non-refusal contract
+or identity errors. Provider refusals, including moderation, stop immediately:
+they are never retried, repaired by another prompt, or routed to direct sources.
+Service timeouts and the
+ten-minute workflow deadline remain enforced; exhausted retries still fail
+explicitly. This does not replay source callbacks, proposals or production writes.
+
+Node connector reads use an explicit 60-second HTTP deadline within the
+120-second source RPC budget: measured authorized connector responses exceeded
+the SDK's previous 30-second default. Failures retain safe timeout/HTTP/GraphQL
+codes through fleet aggregation, never empty-work substitutes. Native error
+envelopes and output-moderation responses cannot become successful domain
+evidence. SQL reconciliation uses the operational connector client; approval,
+mutation timeout and no-replay guards are unchanged.
+Fleet snapshots retain every selected source row within the existing bounded
+inventory/read and 262,144-byte callback limits; a model text budget must not
+silently shrink immutable evidence. Truncated or unqualified fleet snapshots
+fail closed. Grounded answer context uses the same 500-row bound as certified
+answer tables, rather than clipping a verified fleet to its first 80 signals.
+Before RCA, the executor fulfills required governed evidence instead of leaving
+population reads until final answer verification. RCA scope honors deterministic
+selection and resolved named equipment before a fleet population, so a named
+investigation cannot freeze an empty scope or widen to unrelated turbines.
+Native validation failures log only the Foundry response ID for authorized
+provider-receipt diagnostics, not raw source output or credentials.
+Native refusals retain the safe `native_refusal` category through streamed,
+non-streamed and detached execution, persisted failure/result recovery, and
+the hosted UI. The UI requests source-owner review instead of claiming a
+connectivity problem; it never displays arbitrary provider error text.
+Refusal-bearing partial rows are also rejected, not certified.
+The provider's exact "There's content here I can't work with" failure template
+is also rejected in direct and orchestrated execution, including typographic
+apostrophes. Quoting that message inside an otherwise usable answer does not
+trigger the template check. No answer is rewritten or automatically replayed.
+Specialist-return events describe output as awaiting validation, not already
+verified before the deterministic verifier runs.
+No-RCA work-order handoffs preserve verified direct evidence and source
+population/provenance metadata. Keep the pinned deterministic workflow and existing project.
+Historical version/test counts below are not this release's runtime certificate.
+
 ## Current architecture and October 25 bounded review
 
 Supervisor is already a **deterministic Microsoft Agent Framework workflow**, not
@@ -46,15 +483,17 @@ stale telemetry and the still-unaccepted compound business workflows.
 
 ## Scoped Data Agent quality/work workflows
 
-The three BAD-quality-today prompts documented in the
+Explicitly selected native BAD-quality/work requests documented in the
 [routing contract](../HydroOperationsApp/AGENT-ACCEPTANCE.md#complete-routing-rules)
-use one Sparky step against the verified ontology-connected Data Agent, followed only by the
+use one Sparky step against the verified ontology-connected Data Agent, followed by the
 requested RCA and/or work-order specialists. Native evidence is preserved across
 handoffs, including when no RCA ran or RCA cited a native table instead of a
 direct `/rows` receipt. The validated native bundle is not authoritative SQL
 work-coverage attestation: fresh SQL coverage, identity checks and human approval
-remain mandatory for drafts. Native failure never silently switches to direct
-fleet retrieval. Weather remains a separate read-only specialist.
+remain mandatory for drafts. Native failure never silently switches to direct fleet retrieval. Ordinary
+operational questions instead start with Gauge's governed source tools, preserving
+historical quality matching and complete work coverage across paraphrases.
+Weather remains a separate read-only specialist.
 
 Validate the structured quality/work contract across the complete native step,
 not separately against each intermediate Data Agent call. Accept exactly one
@@ -272,6 +711,92 @@ required normal sign-in, so current delegated-source/UI acceptance remains pendi
 
 ## Thin-client contract
 
+The deployed native binding retains the version-pinned `hydro-fabric-iq-tools`
+Foundry toolbox as a verified connection manifest, not an additional agent or
+execution hop. The deterministic Agent Framework workflow verifies that binding,
+resolves the selected Data Agent from its connection, and sends the exact question
+to the published Fabric Data Agent's native Responses interface. It does not call
+the MCP query tool or the Fabric IQ prompt-agent wrapper on this path. This is the
+primary native Data Agent transport, not a fallback or a direct-table reader.
+The observed MCP runtime declined ordinary cross-source questions; the official
+[Fabric Responses client](https://github.com/microsoft/fabric-samples/blob/main/docs-samples/data-science/data-agent-sdk/responses-api/responses-api-notebook.ipynb)
+executed the same published ontology's sandboxed cross-source combine successfully.
+The deployed AppBackend origin is validated by live source discovery against its
+workspace, AppBackend and capacity; native execution rechecks the workspace's current
+capacity before using that origin. Capacity drift is a hard failure requiring the
+canonical deployer, never a guessed host. This avoids the private workload-routing
+token operation that rejected the SPA lease in hosted acceptance. Standalone SDK-style
+diagnostics without a verified origin retain the SDK's discovery route.
+Generated capacity hosts are never copied between targets or cached globally.
+The signed-in user's existing verified Fabric, Foundry and Power BI token leases
+authorize discovery, connection attestation and native execution respectively.
+No managed identity fallback or new consent screen is introduced. Managed toolbox
+execution policies are not claimed for this separate Responses transport: source
+authorization, native read-only execution and application approval gates remain explicit.
+Native result documents and provider execution traces stay in the immutable audit;
+dependent specialists receive the unchanged answer and typed evidence at their original
+paths, without duplicate transport envelopes. The legacy BAD-since-midnight
+quality/work workflow retains its strict completeness gate; semantic requests use
+their explicit native evidence contract instead of that phrase-dependent schema.
+For the legacy projection, typed evidence is selected by the exact executed
+queries in one successful, nondegraded combine receipt. Artifacts from failed attempts
+remain in the audit but cannot pollute the verified selection or be stitched together
+to imply complete coverage. Conflicting artifacts for the same read remain a failure.
+Telemetry-quality investigation drafts use verified quality/coverage evidence and a
+fresh duplicate-work check; they do not automatically require a mechanical RCA or
+unrelated inspection/spares reads. Fault-contingent repair still requires checked RCA.
+Connector failures retain credential-free source labels and codes across the worker
+boundary, including `TOKEN_EXCHANGE_FAILED` from the SDK's brokered sign-in exchange.
+The SDK sanitizes exchange status; that code alone does not establish a permissions
+problem. An Active capacity can still reject requests with `CapacityLimitExceeded`;
+retries, identity changes and
+partial-source answers do not establish readiness.
+Structured completion validation uses the same path-preserving evidence projection:
+RCA receives its verifiable source rows, while the Work Order review-schema validator
+does not receive unused receipts. Cached handoffs use the same validation path.
+Complete native artifacts remain in the audit and never inflate the bounded Node
+validation request.
+Native Responses datasets expose actual typed result rows, never result-document
+envelopes or schema markdown from provider tool traces. The original source answer,
+documents and provider trace remain unchanged in the audit. Dependent analysis can
+cite the row projections without turning file metadata into a business-data table.
+Date-like column names alone do not establish a timestamp or a timezone. Native
+dates without an explicit timezone are displayed as unchanged text; only
+timezone-aware source strings receive timestamp presentation.
+The Data Agent's notebook-owned cross-source guidance distinguishes all-parent
+count rollups from unmatched-population queries. Zero-inclusive counts require
+left-outer aggregation and distinct child keys, not an anti-join. Federation
+questions express that positive aggregation intent; source-specific status
+filters remain in their sub-questions. The app still sends the original user
+question and preserves the native answer unchanged.
+The standalone Fabric IQ prompt agent is retained for compatibility but
+is not an extra model hop in the app. Setup converges the toolbox onto the stable
+connection, preserves existing policies/skills/metadata, and verifies publication.
+
+For a Fabric Data Agent-only answer, the supervisor executes one native handoff
+and returns the original tool `response` without a Q&A handoff, narrative projection,
+analysis-model call, Markdown escaping, or answer truncation. A sole native step
+receives the original operator question rather than a planner rewrite. The answer
+retains the source receipt ID and a SHA-256 digest of the original UTF-8 text;
+the digest verifies text integrity, not factual accuracy. Prepared-answer recovery
+revalidates this same source text. Structured-only native results retain their
+existing table path, and explicitly requested charts still use validated source
+records. Combined workflows display the unchanged Fabric Data Agent answer
+separately from Hydro workflow analysis and approval cards. Source errors,
+content-filter failures, moderation-processing failures, and work-order approval
+gates remain enforced; wrapper prose never replaces a failed native receipt.
+Expected MCP compatibility-path discovery, transport and delegated-authorization failures are unwrapped
+from SDK task groups and reported with their execution phase and correlation ID.
+Execution diagnostics retain safe status/error codes, not native answer data or
+tokens. Discovery-only diagnostics retain the bounded service reason with
+credentials and URLs redacted, before any user question is sent to the source.
+Compatibility-path hosted toolbox requests authenticate with the agent's runtime credential and
+forward the current invocation's `x-agent-foundry-call-id` unchanged. The platform
+uses that context to resolve the signed-in user for the Data Agent connection.
+It is not a generated trace ID, is never saved in run state, and is cleared with
+the request's delegated lease. Missing hosted caller context fails before MCP
+discovery; it never falls back to another identity.
+
 Foundry, the Hosted Data Agent route and both Battle panes require the hosted
 Invocations transport configured by `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL`.
 There is no browser coordinator fallback. Missing hosted configuration is an
@@ -474,14 +999,21 @@ The same signed-user `/invocations` boundary accepts `operation: "decide"` with
 Rejection contains no edits. Another user/source, changed card, expired draft,
 or changed terminal decision cannot create work.
 
-Production writes remain disabled by default. Explicit runtime
-`production_writes_enabled: true` enables the separate human-decision provider,
-not an agent tool. It revalidates the target and duplicate open work, uses a
+Production writes are enabled by default through the separate human-decision provider,
+not an agent tool. Explicit runtime `production_writes_enabled: false` disables them.
+Chat and draft generation remain read-only: only a signed user's reviewed approval can
+create a work order. The provider revalidates the target and duplicate open work, uses a
 stable creation ID, and verifies exact SQL readback including the signed-in
 creator and approved fields. Lost acknowledgements are reconciled by ID;
 an uncertain submission never automatically repeats a SQL create. Known
 pre-write failures explicitly report no write. Decision intents/results are
 available in the same authenticated evidence audit.
+
+An explicit editable work-order draft request cannot be downgraded to native prose by
+the semantic planner: one bounded correction must retain the governed Work Order step.
+Fresh source coverage may still justify no new work; that outcome must not fabricate a
+draft. Hydro Intelligence displays either the typed editable approval cards or an explicit
+no-approval-ready-drafts outcome alongside the supporting answer.
 
 Tests use signed synthetic tokens and simulated SQL boundaries. This is not
 live SQL authorization, distributed idempotency or production-write acceptance.
@@ -708,6 +1240,28 @@ An already committed terminal business outcome can be recovered from its atomic
 SQLite receipt without replaying the workflow; this recovery is explicitly journalled.
 The checkpoint decoder allows only the explicit Hydro contract classes.
 Checkpoint files must remain in a trusted, access-controlled local directory.
+
+The supervisor rebuilds the same named graph and executor IDs, validates every
+checkpoint file in the run's isolated directory, and supplies the authoritative
+latest `checkpoint_id` to Agent Framework. It does not restart the graph and treat
+cached model/source receipts as checkpoint recovery. The checkpointed turn carries
+the grounded equipment selection alongside its plan, evidence and pinned specialist
+versions; restored turns must match the immutable run request and source identity.
+If verification committed just before checkpoint saving failed, the resumed verifier
+uses that immutable verified-turn receipt without reentering completed delegations.
+Likewise, a prepared presentation can complete without rerunning models or sources.
+The SDK does not re-emit historical outputs from an already terminal checkpoint:
+Hydro recovers its immutable prepared answer only when the terminal checkpoint's
+workflow-state answer digest matches it. Missing or corrupt checkpoints cannot be
+replaced by an older snapshot or a prepared-answer shortcut.
+
+This is restart recovery of unfinished execution within the existing local filesystem
+boundary, not an automatic retry policy for source outages, model refusals, invalid
+input, or evidence/contract validation failures. Those failures remain explicit and
+are not classified as checkpoint corruption. A journaled terminal supervisor failure
+cannot replay execution; a new request needs a new run identity. Approval remains a
+separate explicit human decision and checkpoint recovery does not submit SQL writes.
+See Microsoft's [checkpoint capture, resume and rehydration guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints).
 
 ### Deliberately local
 

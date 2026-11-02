@@ -1,3 +1,8 @@
+export const WEATHER_VALUE_UNITS: Record<string, string> = {
+  precipitation: 'mm', temperature: '°C', pressure: 'hPa', relative_humidity: '%',
+  dew_point: '°C', solar_radiation: 'W/m2', wind_speed: 'm/s', wind_gust: 'm/s', wind_direction: '°',
+}
+
 export type PrecipitationBucket = {
   valid_time_utc: string
   precipitation_interval_hours?: number | null
@@ -11,6 +16,11 @@ export type PrecipitationWindowSummary = {
   amount?: number
   volume?: number
   coveredHours: number
+}
+
+export function resolveWeatherVendor(vendors: readonly string[], selected: string): string {
+  if (vendors.includes(selected)) return selected
+  return vendors.includes('ukmet') ? 'ukmet' : vendors[0] ?? ''
 }
 
 const finiteValue = (value?: number | null) => value == null || !Number.isFinite(Number(value)) ? undefined : Number(value)

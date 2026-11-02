@@ -1,7 +1,7 @@
 import type { AgentAnswer } from '../assistantStream.ts'
 import type { Asset3DModelRecord } from '../rayfin.ts'
 import type { AgentStep } from '../agentSteps.ts'
-import type { OrchestrationEvent, WorkOrderProposal } from './orchestration.ts'
+import type { OrchestrationEvent, WorkOrderProposal, WorkOrderReview } from './orchestration.ts'
 import { loadCopilotSettings } from './settings.ts'
 import { HostedTransport, type HostedSource } from './hostedTransport.ts'
 
@@ -10,6 +10,7 @@ export type FoundryAnswer = AgentAnswer & {
   models?: Asset3DModelRecord[]
   orchestrationEvents?: OrchestrationEvent[]
   proposals?: WorkOrderProposal[]
+  workOrderReview?: WorkOrderReview
   backendOwned?: boolean
 }
 
@@ -42,23 +43,22 @@ function hostedClient(engine: 'foundry' | 'data-agent') {
   const workspace = env.VITE_FABRIC_WORKSPACE_ID ?? env.VITE_RAYFIN_WORKSPACE_ID
   const digest = env.VITE_RAYFIN_ORCHESTRATOR_SOURCE_DIGEST
   if (!tenant || !workspace || !digest) throw new Error('Verified hosted source identity/digest configuration is missing.')
-  const binding: unknown = JSON.parse(env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING ?? 'null')
-  if (!binding || typeof binding !== 'object' || !('ontologyId' in binding) || typeof binding.ontologyId !== 'string'
-    || !('workspaceId' in binding) || binding.workspaceId !== workspace) {
-    throw new Error('The hosted source requires the explicit selected ontology binding in the same workspace.')
+  const ontologyId = env.VITE_RAYFIN_ONTOLOGY_ID
+  if (!ontologyId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ontologyId)) {
+    throw new Error('The hosted source requires the verified selected ontology item ID.')
   }
   const source: HostedSource = { tenant_id: tenant, workspace_id: workspace,
-    ontology_id: binding.ontologyId, generation: 2, configuration_digest: digest }
+    ontology_id: ontologyId, generation: 2, configuration_digest: digest }
   const key = JSON.stringify([project, invocationUrl, source])
   let cached = clients.get(engine)
   if (!cached || cached.key !== key) {
     cached?.client.reset()
     cached = { key, client: new HostedTransport(project, invocationUrl, source,
-      async () => {
+      async interactive => {
         if (requireProjectEndpoint(loadCopilotSettings().projectEndpoint) !== project) {
           throw new Error('The selected Foundry project changed. Request fresh evidence before approving work.')
         }
-        return (await import('../fabric.ts')).hostedSourceTokens()
+        return (await import('../fabric.ts')).hostedSourceTokens(interactive)
       }, undefined, undefined, `${engine}.${__APP_VERSION__}`) }
     clients.set(engine, cached)
   }
@@ -79,7 +79,8 @@ export async function askHostedCopilot(
   }, onEvents)
   onProgress?.(answer.text)
   return { text: answer.text, visualizations: answer.visualizations,
-    proposals: answer.proposals, orchestrationEvents: answer.executionEvents, backendOwned: true }
+    proposals: answer.proposals, workOrderReview: answer.workOrderReview,
+    orchestrationEvents: answer.executionEvents, backendOwned: true }
 }
 
 export async function askFoundryCopilot(

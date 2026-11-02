@@ -1,6 +1,7 @@
 import tempfile
 import csv
 from io import StringIO
+from hashlib import sha256
 import unittest
 from pathlib import Path
 from uuid import uuid4
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from hydro_orchestrator.presentation import AnswerTable, client_presentation
-from hydro_orchestrator.foundry_supervisor import ChatAnswer, PlannedChart, SpecialistResult
+from hydro_orchestrator.foundry_supervisor import ChatAnswer, NativeAnswer, PlannedChart, SpecialistResult
 from hydro_orchestrator.service import create_app
 from hydro_orchestrator.store import Store
 from hydro_orchestrator.contracts import ReviewRequest, utc_now
@@ -17,6 +18,51 @@ from test_durable_service import BODY, HEADERS, SOURCE, TOKEN, TestAdapters, dec
 
 
 class PresentationTests(unittest.TestCase):
+    def test_native_answer_keeps_separate_checked_specialist_assessments_without_a_writer(self):
+        original = "## Original Fabric answer\r\n\r\nT005: BAD quality; not a physical diagnosis.\r\n"
+        report = {
+            "observations": [{"evidence_id": "read-1", "path": "/rows/0"}],
+            "hypotheses": [{
+                "category": category,
+                "supporting": [{"evidence_id": "read-1", "path": "/rows/0"}],
+                "contradicting": [], "missing": ["independent_measurement", "approved_limits"],
+            } for category in ("sensor_or_ingestion", "equipment_condition")],
+            "maintenance_follow_up": {
+                "decision": "not_supported", "reason": "missing_issue_evidence",
+                "equipment_ids": [], "evidence": [],
+            },
+        }
+        specialists = tuple(SpecialistResult(
+            role=role, agent_name=f"hydro-{role}-agent", version="1", response_id=f"resp-{role}",
+            duration_ms=1, input_digest="a" * 64, text="Do not render this unverified prose.",
+            report=body,
+        ) for role, body in (
+            ("rca", report),
+            ("work-order", {"decision": "needs_clarification", "reason": "No current complete work coverage."}),
+        ))
+        answer = ChatAnswer(
+            run_id=uuid4(), source=SOURCE, requested_at=utc_now(), source_read_times=(),
+            summary="Separate specialist assessments.", tables=(), charts=(), limitations=(),
+            cell_sources=(), specialists=specialists, audit_url="/invocations",
+            native_answers=(NativeAnswer(evidence_id="native", text=original,
+                                        content_sha256=sha256(original.encode()).hexdigest()),),
+        )
+        presentation = client_presentation(answer)
+        text = presentation.text
+        self.assertEqual(presentation.work_order_review.model_dump(), {
+            "decision": "needs_clarification", "reason": "No current complete work coverage.",
+        })
+        self.assertEqual(text.count(original), 1)
+        self.assertIn("## Sleuth - Evidence-backed investigation", text)
+        self.assertIn("Cause remains undetermined", text)
+        self.assertIn("Physical equipment condition", text)
+        self.assertIn("read-1 /rows/0", text)
+        self.assertIn("No current complete work coverage.", text)
+        self.assertNotIn("Do not render this unverified prose.", text)
+        self.assertIn("## Fixer - Maintenance review", client_presentation(
+            answer.model_copy(update={"native_answers": ()}),
+        ).text)
+
     def test_backend_presentation_uses_exact_source_columns_and_chart_values_without_inference(self):
         table = AnswerTable.model_validate({
             "id": "source", "title": "Returned readings",
@@ -34,6 +80,7 @@ class PresentationTests(unittest.TestCase):
             cell_sources=(), specialists=(), audit_url="/invocations",
         )
         plain = client_presentation(answer)
+        self.assertIsNone(plain.work_order_review)
         self.assertEqual(plain.visualizations, ())
         self.assertIn("A\\|\\[B\\]\\n\\<C\\>", plain.text)
         self.assertIn("75.123456789", plain.text)
@@ -54,6 +101,25 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(receipt.role, specialist.role)
         self.assertIn("123 ms", receipt.detail)
         self.assertGreaterEqual(receipt.timestamp, int(answer.requested_at.timestamp() * 1000))
+        original = "Source **Markdown** with A|[B] and <C>.\r\n" + "Full evidence. " * 300
+        native = NativeAnswer(
+            evidence_id="native-read", text=original,
+            content_sha256=sha256(original.encode("utf-8")).hexdigest(),
+        )
+        combined = client_presentation(answer.model_copy(update={"native_answers": (native,)}))
+        self.assertIn("## Fabric Data Agent answer\n\n" + original, combined.text)
+        self.assertIn("## Hydro workflow result", combined.text)
+        self.assertIn("A\\|\\[B\\]\\n\\<C\\>", combined.text)
+        native_projection = answer.model_copy(update={
+            "native_answers": (native.model_copy(update={"evidence_id": "read"}),),
+        })
+        self.assertNotIn("## Returned readings", client_presentation(native_projection).text)
+        native_chart = client_presentation(native_projection.model_copy(update={
+            "charts": (PlannedChart(table_id="source", kind="bar", x_key="asset", y_keys=("value",)),),
+        }))
+        self.assertIn("## Returned readings", native_chart.text)
+        self.assertEqual(native_chart.text.count(original), 1)
+        self.assertEqual(native_chart.visualizations, charted.visualizations)
 
     def test_keyed_rows_reject_wrong_columns_missing_values_and_numeric_coercion(self):
         row = {"values": {"value": 0.0, "unit": "C"}, "source": {"evidence_id": "receipt", "path": "/rows/0"}}

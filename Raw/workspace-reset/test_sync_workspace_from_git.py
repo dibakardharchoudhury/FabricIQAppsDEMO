@@ -2,6 +2,8 @@ import base64
 import contextlib
 import io
 import json
+import copy
+from pathlib import Path
 import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
@@ -11,7 +13,9 @@ import requests
 from sync_workspace_from_git import (
     Fabric, configure_weather_assets, configure_weather_schedule,
     ensure_spark_runtime, verify_environment_runtimes,
-    bind_notebook_definition, notebook_definition,
+    bind_notebook_definition, notebook_definition, update_notebooks_from_checkout,
+    _normalized_notebook_source,
+    weather_environment_unchanged,
 )
 
 LAKEHOUSE_ID = "lakehouse-id"
@@ -38,6 +42,7 @@ class FakeResponse:
         self.status_code = status_code
         self._body = body or {}
         self.text = text
+        self.content = text.encode("utf-8")
         self.headers = {}
 
     def json(self):
@@ -57,6 +62,10 @@ class FakeFabric:
         self.request_kwargs = []
         self.updates = []
         self.poll_lro = Mock(side_effect=lambda response: response)
+        self.libraries = [{"name": "xarray", "libraryType": "External", "version": "2025.10.1"}]
+        self.staged_libraries = copy.deepcopy(self.libraries)
+        self.library_export = "dependencies:\n  - xarray=2025.10.1\n"
+        self.staged_library_export = self.library_export
 
     def list_workspace_items(self, workspace_id):
         return [
@@ -94,6 +103,12 @@ class FakeFabric:
                 "type": "DataPipeline",
                 "displayName": "03_Pipe_Weather",
             },
+            {
+                "id": "weather-orchestrator",
+                "type": "Notebook",
+                "displayName": "Weather_Orchestrator",
+                "folderId": "notebooks-folder",
+            },
             *self.lakehouses,
         ]
 
@@ -107,6 +122,14 @@ class FakeFabric:
             return FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}})
         if "/items?type=Environment" in url:
             return FakeResponse(200, {"value": [{"id": "environment-id", "displayName": "Weather"}]})
+        if "/libraries?beta=false" in url:
+            return FakeResponse(200, {"libraries": (
+                self.staged_libraries if "/staging/" in url else self.libraries
+            )})
+        if "/libraries/exportExternalLibraries" in url:
+            return FakeResponse(200, text=(
+                self.staged_library_export if "/staging/" in url else self.library_export
+            ))
         if "/sparkcompute?beta=false" in url:
             return FakeResponse(200, {"runtimeVersion": "2.0"})
         if "/jobs/Pipeline/schedules" in url and method == "GET":
@@ -116,12 +139,129 @@ class FakeFabric:
         if "/updateDefinition" in url:
             self.updates.append((url, kwargs["json"]))
             return FakeResponse(200)
+        if method == "POST" and "/staging/publish" in url:
+            self.publish_state = "Success"
+            return FakeResponse(200)
         if method == "POST":
             return FakeResponse(200)
         return FakeResponse(
             200,
             {"properties": {"publishDetails": {"state": self.publish_state}}},
         )
+
+
+class TargetedNotebookSyncTests(unittest.TestCase):
+    def test_markdown_normalization_does_not_change_executable_cells(self):
+        source = '# CELL ********************\n\nvalue = """\n#\n# text\n"""\n'
+        self.assertEqual(_normalized_notebook_source(source), source)
+        self.assertNotEqual(
+            _normalized_notebook_source(source),
+            _normalized_notebook_source(source.replace("#\n# ", "# # ")),
+        )
+
+    def test_fabric_markdown_serialization_is_accepted_and_not_uploaded_again(self):
+        for name in ("Geo_001_ingest_energy_context", "Geo_002_publish_map_agent"):
+            with self.subTest(notebook=name):
+                source = (Path(__file__).resolve().parents[2] / "Notebooks" / f"{name}.Notebook" /
+                          "notebook-content.py").read_text(encoding="utf-8")
+                original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(
+                    (source + "\nold_code = True\n").encode()).decode(), "payloadType": "InlineBase64"}]}
+                bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"},
+                                         {"environmentId": "existing-environment"})
+                state = copy.deepcopy(original)
+                fab = Mock()
+                fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+
+                def update(method, url, **kwargs):
+                    state.clear()
+                    state.update(copy.deepcopy(kwargs["json"]["definition"]))
+                    submitted = base64.b64decode(state["parts"][0]["payload"]).decode()
+                    saved = submitted.replace("#\n# ", "# # ").replace("\n", "\r\n")
+                    state["parts"][0]["payload"] = base64.b64encode(saved.encode()).decode()
+                    return FakeResponse(200)
+
+                fab.request.side_effect = update
+                with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
+                    update_notebooks_from_checkout(fab, "workspace", [name])
+                    update_notebooks_from_checkout(fab, "workspace", [name])
+                self.assertEqual(fab.request.call_count, 1)
+                saved = base64.b64decode(state["parts"][0]["payload"]).decode()
+                self.assertIn("existing-lakehouse", saved)
+                self.assertIn("existing-environment", saved)
+
+    def test_readback_rejects_changed_code_and_bindings(self):
+        name = "Geo_002_publish_map_agent"
+        for before_text, after_text in (
+            ("def publish_map_agent(api, models):", "def publish_map_agent(api, wrong):"),
+            ("existing-lakehouse", "different-lakehouse"),
+        ):
+            with self.subTest(changed=before_text):
+                original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(
+                    b"# METADATA ********************\n\n# META {}\n\nold = True\n").decode()}]}
+                bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"}, {})
+                state = copy.deepcopy(original)
+                fab = Mock()
+                fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+
+                def update(method, url, **kwargs):
+                    state.clear()
+                    state.update(copy.deepcopy(kwargs["json"]["definition"]))
+                    submitted = base64.b64decode(state["parts"][0]["payload"]).decode()
+                    self.assertIn(before_text, submitted)
+                    state["parts"][0]["payload"] = base64.b64encode(
+                        submitted.replace(before_text, after_text).encode()).decode()
+                    return FakeResponse(200)
+
+                fab.request.side_effect = update
+                with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
+                    with self.assertRaisesRegex(RuntimeError, "readback failed"):
+                        update_notebooks_from_checkout(fab, "workspace", [name])
+
+    def test_only_changed_code_is_written_and_live_bindings_and_other_parts_survive(self):
+        name = "Geo_002_publish_map_agent"
+        source = (Path(__file__).resolve().parents[2] / "Notebooks" / f"{name}.Notebook" /
+                  "notebook-content.py").read_text(encoding="utf-8")
+        original = {"parts": [
+            {"path": "notebook-content.py", "payload": base64.b64encode(source.encode()).decode(),
+             "payloadType": "InlineBase64"},
+            {"path": "custom.json", "payload": base64.b64encode(b'{"keep":true}').decode(),
+             "payloadType": "InlineBase64"},
+        ]}
+        bind_notebook_definition(original, {"default_lakehouse": "existing-lakehouse"}, {"environmentId": "existing-env"})
+        old_source = base64.b64decode(original["parts"][0]["payload"]).decode().replace(
+            "def publish_map_agent(api, models):", "def publish_map_agent(api, models, old_canary):")
+        original["parts"][0]["payload"] = base64.b64encode(old_source.encode()).decode()
+        state = copy.deepcopy(original)
+        fab = Mock()
+        fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+        def update(method, url, **kwargs):
+            self.assertEqual(method, "POST")
+            self.assertIn("/notebooks/notebook/updateDefinition", url)
+            state.clear()
+            state.update(copy.deepcopy(kwargs["json"]["definition"]))
+            return FakeResponse(200)
+        fab.request.side_effect = update
+        with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(state)):
+            update_notebooks_from_checkout(fab, "workspace", [name])
+            self.assertEqual(fab.request.call_count, 1)
+            updated = base64.b64decode(state["parts"][0]["payload"]).decode()
+            self.assertIn("existing-lakehouse", updated)
+            self.assertIn("existing-env", updated)
+            self.assertIn("def publish_map_agent(api, models):", updated)
+            self.assertEqual(state["parts"][1], original["parts"][1])
+            update_notebooks_from_checkout(fab, "workspace", [name])
+        self.assertEqual(fab.request.call_count, 1)
+
+    def test_readback_failure_is_not_reported_as_success(self):
+        fab = Mock()
+        name = "Geo_002_publish_map_agent"
+        fab.list_workspace_items.return_value = [{"id": "notebook", "type": "Notebook", "displayName": name}]
+        old_source = "# METADATA ********************\n\n# META {}\n\nold = True\n"
+        original = {"parts": [{"path": "notebook-content.py", "payload": base64.b64encode(old_source.encode()).decode()}]}
+        fab.request.return_value = FakeResponse(200)
+        with patch("sync_workspace_from_git.notebook_definition", side_effect=lambda *args: copy.deepcopy(original)):
+            with self.assertRaisesRegex(RuntimeError, "readback failed"):
+                update_notebooks_from_checkout(fab, "workspace", [name])
 
 
 class SparkRuntimeTests(unittest.TestCase):
@@ -480,6 +620,7 @@ class WeatherProvisioningTests(unittest.TestCase):
 
     def test_git_update_publishes_environment(self):
         fabric = FakeFabric()
+        fabric.staged_libraries[0]["version"] = "2026.1.0"
         with contextlib.redirect_stdout(io.StringIO()):
             configure_weather_assets(fabric, "workspace-id", git_updated=True)
 
@@ -490,6 +631,105 @@ class WeatherProvisioningTests(unittest.TestCase):
         ]
         self.assertEqual(len(posts), 1)
         self.assertIn("/environments/environment-id/staging/publish?beta=false", posts[0])
+
+    def test_unrelated_git_update_does_not_rebuild_verified_unchanged_environment(self):
+        fabric = FakeFabric()
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            configure_weather_assets(fabric, "workspace-id", git_updated=True)
+        self.assertFalse(any("/staging/publish" in url for _, url in fabric.requests))
+        self.assertEqual(len([url for _, url in fabric.requests if "exportExternalLibraries" in url]), 2)
+        self.assertIn("verified libraries and compute, skipping rebuild", output.getvalue())
+
+    def test_fresh_or_failed_environment_still_publishes_without_an_equivalence_shortcut(self):
+        for state in (None, "Failed"):
+            with self.subTest(state=state):
+                fabric = FakeFabric(publish_state=state)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    configure_weather_assets(fabric, "workspace-id", git_updated=True)
+                self.assertEqual(len([url for method, url in fabric.requests
+                                      if method == "POST" and "/staging/publish" in url]), 1)
+                self.assertFalse(any("exportExternalLibraries" in url for _, url in fabric.requests))
+
+    def test_missing_published_libraries_publish_even_when_metadata_reports_success(self):
+        for git_updated in (True, False):
+            with self.subTest(git_updated=git_updated):
+                fabric = FakeFabric(publish_state="Success")
+                request = fabric.request
+                missing = FakeResponse(404, {
+                    "errorCode": "EnvironmentLibrariesNotFound",
+                    "message": "This environment does not have any published libraries. Please publish libraries.",
+                })
+                def respond(method, url, **kwargs):
+                    if url.endswith("/environment-id/libraries?beta=false"):
+                        return missing
+                    return request(method, url, **kwargs)
+                fabric.request = Mock(side_effect=respond)
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    configure_weather_assets(fabric, "workspace-id", git_updated=git_updated)
+                self.assertEqual(len([call for call in fabric.request.call_args_list
+                                      if call.args[0] == "POST" and "/staging/publish" in call.args[1]]), 1)
+                self.assertIn("no published libraries; a full publication is required", output.getvalue())
+                self.assertIn("Weather Environment publish completed", output.getvalue())
+
+    def test_other_library_read_errors_never_trigger_publication(self):
+        for status, body, staged in (
+            (403, {"errorCode": "Forbidden"}, False),
+            (404, {"errorCode": "ItemNotFound"}, False),
+            (500, {"errorCode": "EnvironmentLibrariesNotFound"}, False),
+            (404, {"errorCode": "EnvironmentLibrariesNotFound"}, True),
+        ):
+            with self.subTest(status=status, body=body, staged=staged):
+                fabric = FakeFabric()
+                request = fabric.request
+                path = "/staging/libraries?beta=false" if staged else "/environment-id/libraries?beta=false"
+                fabric.request = Mock(side_effect=lambda method, url, **kwargs: (
+                    FakeResponse(status, body, text=json.dumps(body)) if url.endswith(path)
+                    else request(method, url, **kwargs)
+                ))
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(SystemExit, "equivalence check failed"):
+                    configure_weather_assets(fabric, "workspace-id", git_updated=True)
+                self.assertFalse(any(call.args[0] == "POST" and "/staging/publish" in call.args[1]
+                                     for call in fabric.request.call_args_list))
+
+    def test_paginated_inventory_cannot_prove_equivalence_from_only_the_first_page(self):
+        fabric = FakeFabric()
+        fabric.request = Mock(return_value=FakeResponse(200, {
+            "libraries": fabric.libraries, "continuationToken": "opaque/+token",
+        }))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(weather_environment_unchanged(fabric, "workspace-id", "environment-id"))
+
+    def test_channels_or_compute_changes_still_require_publication(self):
+        for changed in ("channels", "compute"):
+            with self.subTest(changed=changed):
+                fabric = FakeFabric()
+                if changed == "channels":
+                    fabric.staged_library_export += "channels:\n  - another-channel\n"
+                else:
+                    request = fabric.request
+                    fabric.request = lambda method, url, **kwargs: (
+                        FakeResponse(200, {"runtimeVersion": "2.0", "driverCores": 16})
+                        if "/staging/sparkcompute" in url else request(method, url, **kwargs)
+                    )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    configure_weather_assets(fabric, "workspace-id", git_updated=True)
+                self.assertEqual(len([url for method, url in fabric.requests
+                                      if method == "POST" and "/staging/publish" in url]), 1)
+
+    def test_custom_or_incomplete_libraries_are_not_treated_as_unchanged(self):
+        for row in ({"name": "custom.whl", "libraryType": "Custom"},
+                    {"name": "unknown", "libraryType": "Unknown"}, {"name": "missing-version"}):
+            with self.subTest(library=row):
+                fabric = FakeFabric()
+                fabric.libraries = fabric.staged_libraries = [row]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertFalse(weather_environment_unchanged(fabric, "workspace-id", "environment-id"))
+
+    def test_equivalence_read_failure_stops_instead_of_skipping_publication(self):
+        fabric = FakeFabric()
+        fabric.request = Mock(return_value=FakeResponse(403, text="Denied"))
+        with self.assertRaisesRegex(SystemExit, "equivalence check failed"):
+            weather_environment_unchanged(fabric, "workspace-id", "environment-id")
 
     def test_weather_notebooks_must_be_in_notebooks_folder(self):
         fabric = FakeFabric()
@@ -505,7 +745,7 @@ class WeatherProvisioningTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             configure_weather_assets(fabric, "workspace-id", git_updated=False)
 
-        self.assertEqual(len(fabric.updates), 4)
+        self.assertEqual(len(fabric.updates), 5)
         for _, body in fabric.updates:
             self.assertEqual(body["definition"]["format"], "ipynb")
             part = body["definition"]["parts"][0]
@@ -540,7 +780,7 @@ class WeatherProvisioningTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             configure_weather_assets(fabric, "workspace-id", git_updated=False)
 
-        self.assertEqual(len(fabric.updates), 4)
+        self.assertEqual(len(fabric.updates), 5)
         for _, body in fabric.updates:
             self.assertEqual(body["definition"]["format"], "ipynb")
             parts = body["definition"]["parts"]

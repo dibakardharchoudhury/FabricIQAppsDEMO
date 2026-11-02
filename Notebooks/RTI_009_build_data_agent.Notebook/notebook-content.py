@@ -26,14 +26,18 @@
 # # 09 — Build a Data Agent over Ontology v2
 #
 # Uses `rti_demo_settings` to configure and publish a Fabric **Data Agent** with the
-# selected Ontology v2, then verifies it with a sample query. Ontology context guides
+# selected Ontology v2, then verifies publication and source readback. Ontology context guides
 # queries against its associated Lakehouse/Eventhouse; operational SQL guidance stays
-# owned by NB11. Existing sources and custom configuration are preserved on reruns.
+# owned by NB11. Existing execution sources, custom selections and SQL guidance are
+# retained. Setup does not invoke the agent or require a particular answer format.
 #
 # > **Known Fabric response:** After verified v2 publication, only the exact response
 # > "This API version is not supported for the specified Ontology item" is reported as
 # > a known product limitation. Other publication, source, runtime and readback failures
 # > propagate. Successful publication alone does not verify cross-source answers.
+# > A genuinely empty facility result is retried once after 10 seconds in a fresh
+# > MCP session, only when independent live reference rows are nonempty. The retry
+# > must return the exact reference records; repeated emptiness still fails setup.
 #
 # Configuration and verification details: [deployment guide](../../Raw/workspace-reset/README.md#prerequisites).
 
@@ -122,6 +126,170 @@ from typing import Optional
 
 import requests
 import notebookutils  # Fabric notebook utility
+
+# BEGIN ONTOLOGY SOURCE TOPOLOGY SUPPORT
+def ontology_context_elements(parts):
+    """Derive context only from actual entity declarations in the selected ontology."""
+    elements = []
+    seen = set()
+    for part in parts:
+        if not part["path"].startswith("entities/") or not part["path"].endswith(".tmdl"):
+            continue
+        text = base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+        matches = list(re.finditer(
+            r"(?m)^entity (?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z_0-9]*))[ \t]*$", text))
+        if len(matches) != 1:
+            raise RuntimeError(f"Expected one live entity in {part['path']!r}.")
+        match = matches[0]
+        name = (match[1] or match[2]).replace("''", "'")
+        if name in seen:
+            raise RuntimeError(f"Duplicate live ontology entity {name!r}.")
+        seen.add(name)
+        lines = text[:match.start()].splitlines()
+        description = []
+        while lines and lines[-1].startswith("///"):
+            description.append(lines.pop()[3:].strip())
+        elements.append({
+            "id": name, "is_selected": True, "display_name": name,
+            "type": "ontology.entity", "description": " ".join(reversed(description)) or None,
+            "children": [],
+        })
+    if not elements:
+        raise RuntimeError("The live ontology definition contains no entity metadata; refusing stale context.")
+    return elements
+
+def refresh_ontology_context_parts(parts, live_elements, workspace_id, ontology_id, legacy_descriptions=()):
+    """Keep live selections/custom metadata, removing references to genuinely retired types."""
+    live_names = {element["display_name"] for element in live_elements}
+    if not live_names:
+        raise RuntimeError("Cannot refresh ontology context without verified live entity metadata.")
+    legacy = dict(legacy_descriptions)
+    result = []
+    for original in parts:
+        path = original["path"]
+        if not path.startswith("Files/Config/draft/") or not (
+                path.endswith("/ontology.json") or path.endswith("/datasource.json")):
+            result.append(original)
+            continue
+        context = json.loads(base64.b64decode(original["payload"], validate=True))
+        if not path.endswith("/ontology.json") and context.get("type") != "ontology":
+            result.append(original)
+            continue
+        if context.get("artifactId") != ontology_id or context.get("workspaceId") != workspace_id:
+            raise RuntimeError("Cannot refresh context for a different ontology or workspace.")
+        existing = context.get("elements", [])
+        if not isinstance(existing, list) or any(not isinstance(node, dict) for node in existing):
+            raise RuntimeError("Existing ontology elements are malformed; refusing to replace custom selections.")
+        authored = context.get("entitiesWithUserAuthoredDescriptions")
+        if authored is not None and (
+                not isinstance(authored, list) or any(not isinstance(name, str) for name in authored)):
+            raise RuntimeError("User-authored ontology description metadata is malformed.")
+        elements = [
+            node for node in existing if node.get("type") != "ontology.entity"
+            or node.get("id") in live_names or node.get("display_name") in live_names
+        ]
+        refreshed = set()
+        for desired in live_elements:
+            name = desired["display_name"]
+            indices = [index for index, old in enumerate(elements)
+                       if old.get("type") == "ontology.entity"
+                       and (old.get("id") == name or old.get("display_name") == name)]
+            if len(indices) > 1:
+                raise RuntimeError(f"Duplicate saved ontology entity {name!r}; inspect its selections.")
+            if not indices:
+                elements.append(dict(desired))
+                continue
+            index = indices[0]
+            old = elements[index]
+            description = old.get("description")
+            if desired.get("description") and (
+                    description is None or description == "" or description == legacy.get(name)
+                    or isinstance(authored, list) and name not in authored):
+                elements[index] = {**old, "description": desired["description"]}
+                refreshed.add(name)
+        context["elements"] = elements
+        if authored is not None:
+            context["entitiesWithUserAuthoredDescriptions"] = [
+                name for name in authored if name in live_names and name not in refreshed]
+        result.append({**original, "payload": base64.b64encode(json.dumps(context).encode()).decode()})
+    return result
+
+def selected_ontology_entities(parts, workspace_id, ontology_id, stage="draft"):
+    contexts = []
+    for part in parts:
+        native = part["path"].startswith(f"Files/Config/{stage}/ontologies/") and part["path"].endswith("/ontology.json")
+        source = part["path"].startswith(f"Files/Config/{stage}/") and part["path"].endswith("/datasource.json")
+        if native or source:
+            context = json.loads(base64.b64decode(part["payload"], validate=True))
+            if source and context.get("type") != "ontology":
+                continue
+            if context.get("artifactId") == ontology_id:
+                if context.get("workspaceId") != workspace_id:
+                    raise RuntimeError("Ontology context belongs to another workspace.")
+                contexts.append(context)
+    if len(contexts) > 1:
+        raise RuntimeError("Ambiguous Ontology context.")
+    if not contexts:
+        return set()
+    return {element["display_name"] for element in contexts[0].get("elements", [])
+            if element.get("type") == "ontology.entity" and element.get("is_selected") is True}
+
+def ontology_source_bindings(parts, workspace_id):
+    """Resolve physical tables only through source identities retained by the Fabric editor."""
+    texts = {part["path"]: base64.b64decode(part["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+             for part in parts}
+    if len(texts) != len(parts):
+        raise RuntimeError("Duplicate Ontology definition paths.")
+    unquote = lambda value: value.strip().strip("'").replace("''", "'")
+    expressions = {}
+    for match in re.finditer(r"(?ms)^expression (.+?) =\n.*?(?=^expression |\Z)", texts.get("expressions.tmdl", "")):
+        name = unquote(match[1])
+        if name in expressions:
+            raise RuntimeError("Duplicate Ontology source expression.")
+        expressions[name] = match[0]
+    bindings = {}
+    for path, entity in texts.items():
+        if not path.startswith("entities/") or not path.endswith(".tmdl"):
+            continue
+        names = re.findall(r"(?m)^entity (.+?)[ \t]*$", entity)
+        if len(names) != 1:
+            raise RuntimeError(f"Ambiguous Ontology entity: {path}.")
+        entity_name = unquote(names[0])
+        tables = re.findall(r"(?m)^\tbackingTable:\s*(.+?)[ \t]*$", entity)
+        tables += re.findall(r"(?m)^\tadditionalBackingTable\n\t\ttable:\s*(.+?)[ \t]*$", entity)
+        for alias in tables:
+            table = texts.get(f"tables/{unquote(alias)}.tmdl", "")
+            sources = re.findall(r"(?m)^\s+expressionSource:\s*(.+?)[ \t]*$", table)
+            if len(sources) > 1:
+                raise RuntimeError("Ambiguous Ontology table source.")
+            metadata = expressions.get(unquote(sources[0]), "") if sources else table
+            identity = {}
+            for key in ("WorkspaceId", "ItemId", "ItemKind"):
+                values = re.findall(r"(?m)^\s+annotation ONT_" + key + r" = (.+?)[ \t]*$", metadata)
+                if len(values) > 1:
+                    raise RuntimeError("Ambiguous Ontology source identity.")
+                identity[key] = values[0] if values else None
+            if identity["WorkspaceId"] != workspace_id or not identity["ItemId"]:
+                continue
+            kind, item_id = identity["ItemKind"], identity["ItemId"]
+            if kind in ("Lakehouse", "SQLDatabase"):
+                expected = f"https://onelake.dfs.fabric.microsoft.com/{workspace_id}/{item_id}"
+                urls = re.findall(r'AzureStorage\.DataLake\(\s*"([^"]+)"', metadata)
+                physical = re.findall(r"(?m)^\s+entityName:\s*(.+?)[ \t]*$", table)
+                if urls != [expected] or len(physical) != 1:
+                    raise RuntimeError("Ontology source identity does not match its physical binding.")
+                physical_name = unquote(physical[0])
+            elif kind == "KQLDatabase":
+                queries = re.findall(r'AzureDataExplorer\.Contents\(\s*"(https://[^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)', table)
+                names = re.findall(r"(?m)^\s+annotation ONT_ItemName = (.+?)[ \t]*$", metadata)
+                if len(queries) != 1 or names != [queries[0][1]]:
+                    raise RuntimeError("Ontology Eventhouse source has no unambiguous physical table.")
+                physical_name = queries[0][2]
+            else:
+                continue
+            bindings.setdefault((kind, item_id), {}).setdefault(physical_name, set()).add(entity_name)
+    return bindings
+# END ONTOLOGY SOURCE TOPOLOGY SUPPORT
 
 FABRIC_API_BASE = "https://api.fabric.microsoft.com"
 DATA_AGENT_ITEM_TYPE = "DataAgent"
@@ -381,6 +549,237 @@ def persist_agent_status(status: str, reason: str, **details) -> None:
     agent_deployment_result = {"status": status, "reason": reason, **details}
 
 
+# BEGIN PROJECT ONTOLOGY CONTRACT
+OPERATIONAL_COLUMNS = {
+    "WorkOrders": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "workOrderNumber": "nvarchar(max) NOT NULL", "equipmentId": "nvarchar(max) NOT NULL",
+        "instrumentId": "nvarchar(max) NULL", "opcuaNodeId": "nvarchar(max) NULL",
+        "title": "nvarchar(max) NOT NULL", "description": "nvarchar(max) NULL",
+        "priority": "nvarchar(max) NOT NULL", "status": "nvarchar(max) NOT NULL",
+        "assignedToOid": "nvarchar(max) NULL", "createdByOid": "nvarchar(max) NOT NULL",
+        "createdAt": "datetime2 NOT NULL", "dueAt": "datetime2 NULL", "completedAt": "datetime2 NULL",
+    },
+    "MaintenanceNotifications": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "equipmentId": "nvarchar(max) NOT NULL", "opcuaNodeId": "nvarchar(max) NULL",
+        "summary": "nvarchar(max) NOT NULL", "severity": "nvarchar(max) NOT NULL",
+        "status": "nvarchar(max) NOT NULL", "reportedByOid": "nvarchar(max) NOT NULL",
+        "reportedAt": "datetime2 NOT NULL",
+    },
+    "Asset3DModels": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "equipmentId": "nvarchar(max) NOT NULL", "modelName": "nvarchar(max) NOT NULL",
+        "format": "nvarchar(max) NOT NULL", "modelUrl": "nvarchar(max) NOT NULL",
+        "thumbnailUrl": "nvarchar(max) NULL", "fileSizeMb": "decimal(38,10) NULL",
+        "version": "nvarchar(max) NULL", "updatedByOid": "nvarchar(max) NOT NULL",
+        "updatedAt": "datetime2 NOT NULL",
+    },
+    "Inspections": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "equipmentId": "nvarchar(max) NOT NULL", "opcuaNodeId": "nvarchar(max) NULL",
+        "inspectionType": "nvarchar(max) NOT NULL", "result": "nvarchar(max) NOT NULL",
+        "findings": "nvarchar(max) NULL", "inspectorOid": "nvarchar(max) NOT NULL",
+        "inspectedAt": "datetime2 NOT NULL", "nextDueAt": "datetime2 NULL",
+    },
+    "SpareParts": {
+        "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
+        "partNumber": "nvarchar(255) NOT NULL UNIQUE", "name": "nvarchar(max) NOT NULL",
+        "category": "nvarchar(max) NOT NULL", "equipmentType": "nvarchar(max) NOT NULL",
+        "quantityOnHand": "int NOT NULL", "reorderLevel": "int NOT NULL",
+        "storageLocation": "nvarchar(max) NOT NULL", "unitCostUsd": "decimal(38,10) NULL",
+        "lastRestockedAt": "datetime2 NULL",
+    },
+}
+
+WEATHER_PROJECT_ENTITIES = {
+    "WeatherSource": ("weather_sources", ("source_id",)),
+    "WeatherLocation": ("weather_locations", ("location_id",)),
+    "WeatherArea": ("weather_areas", ("area_id",)),
+    "WeatherLatestObservation": ("weather_latest_observations", ("source_id", "location_id", "observed_at_utc")),
+    "WeatherLatestForecast": ("weather_latest_forecasts",
+                              ("source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc")),
+    "EquipmentType": ("ontology_equipment_types", ("equipment_type_code",)),
+}
+
+SQL_PROJECT_ENTITIES = {
+    "WorkOrder": "WorkOrders", "Inspection": "Inspections", "SparePart": "SpareParts",
+    "Asset3DModel": "Asset3DModels", "MaintenanceNotification": "MaintenanceNotifications",
+}
+
+PROJECT_CORE_ENTITIES = {
+    "facilities": ("silver_facilities", "facility_id"),
+    "systems": ("silver_systems", "system_id"),
+    "equipment": ("silver_equipment", "equipment_id"),
+    "instruments": ("silver_instruments", "instrument_id"),
+    "signal_master": ("silver_signal_master", "opcua_node_id"),
+}
+
+PROJECT_REQUIRED_EDGES = (
+    ("systems", "facilities", "facility_id", "facility_id"),
+    ("equipment", "systems", "system_id", "system_id"),
+    ("instruments", "equipment", "equipment_id", "equipment_id"),
+    ("signal_master", "instruments", "instrument_id", "instrument_id"),
+    *((name, "equipment", "equipmentId", "equipment_id") for name in
+      ("WorkOrder", "Inspection", "Asset3DModel", "MaintenanceNotification")),
+    ("WorkOrder", "instruments", "instrumentId", "instrument_id"),
+    *((name, "signal_master", "opcuaNodeId", "opcua_node_id") for name in
+      ("WorkOrder", "Inspection", "MaintenanceNotification")),
+    ("WeatherLatestObservation", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestObservation", "WeatherSource", "source_id", "source_id"),
+    ("WeatherLatestForecast", "WeatherSource", "source_id", "source_id"),
+    ("WeatherLocation", "facilities", "location_id", "facility_id"),
+    ("WeatherArea", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestForecast", "WeatherLocation", "location_id", "location_id"),
+    ("WeatherLatestForecast", "WeatherArea", "area_id", "area_id"),
+    ("equipment", "EquipmentType", "equipment_type_code", "equipment_type_code"),
+    ("SparePart", "EquipmentType", "equipmentType", "equipment_type_code"),
+)
+
+def _project_contract_objects(text, kind):
+    """Read TMDL objects without consuming same-indent siblings or custom parts."""
+    result = {}
+    lines = text.replace("\r\n", "\n").splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"([ \t]*)" + re.escape(kind) + r" (.+?)\s*", line)
+        if not match:
+            continue
+        name = match[2].strip().strip("'").replace("''", "'")
+        if name in result:
+            raise RuntimeError(f"Duplicate project {kind}: {name}.")
+        depth = len(match[1].expandtabs(4))
+        end = index + 1
+        while end < len(lines):
+            candidate = lines[end]
+            if candidate.strip() and not candidate.lstrip().startswith("//"):
+                prefix = candidate[:len(candidate) - len(candidate.lstrip())]
+                if len(prefix.expandtabs(4)) <= depth:
+                    break
+            end += 1
+        result[name] = "\n".join(lines[index:end])
+    return result
+
+def _project_contract_setting(text, key):
+    text = text.replace("\r\n", "\n")
+    values = re.findall(r"(?m)^[ \t]+" + re.escape(key) + r":[ \t]*(.+?)[ \t]*$", text)
+    if len(values) != 1:
+        raise RuntimeError(f"Project contract requires one {key} binding.")
+    return values[0].strip().strip("'").replace("''", "'")
+
+def verify_project_ontology_contract(parts, workspace_id, lakehouse_id, sql_db_item_id):
+    """Pure definition readback gate; live numeric generation must be checked by the caller."""
+    if not all(isinstance(value, str) and value.strip()
+               for value in (workspace_id, lakehouse_id, sql_db_item_id)) or lakehouse_id == sql_db_item_id:
+        raise RuntimeError("Project contract requires authoritative distinct source identities.")
+    texts = {p["path"]: base64.b64decode(p["payload"], validate=True).decode("utf-8").replace("\r\n", "\n")
+             for p in parts}
+    if len(texts) != len(parts):
+        raise RuntimeError("Duplicate project definition paths.")
+    if not {"database.tmdl", "model.tmdl", "namespaces/default.tmdl"}.issubset(texts):
+        raise RuntimeError("Project contract requires complete v2 TMDL root parts.")
+    entities = {e["display_name"] for e in ontology_context_elements(parts)}
+    ontology_source_bindings(parts, workspace_id)
+    required = {name: (physical, (key,), "Lakehouse", lakehouse_id)
+                for name, (physical, key) in PROJECT_CORE_ENTITIES.items()}
+    required.update({name: (physical, keys, "Lakehouse", lakehouse_id)
+                     for name, (physical, keys) in WEATHER_PROJECT_ENTITIES.items()})
+    required.update({name: (physical, ("id",), "SQLDatabase", sql_db_item_id)
+                     for name, physical in SQL_PROJECT_ENTITIES.items()})
+    if not set(required).issubset(entities):
+        raise RuntimeError("Missing required project entities: " + ", ".join(sorted(set(required) - entities)))
+    aliases = {}
+    properties = {}
+    core_source_tables = {}
+    for name, (physical, keys, kind, item) in required.items():
+        entity = texts.get(f"entities/{name}.tmdl", "")
+        alias = _project_contract_setting(entity, "backingTable")
+        aliases[name] = alias
+        table = texts.get(f"tables/{alias}.tmdl", "")
+        actual_physical = _project_contract_setting(table, "entityName")
+        if name in PROJECT_CORE_ENTITIES:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", actual_physical):
+                raise RuntimeError(f"Invalid core source table identity for {name}.")
+            physical = actual_physical
+            core_source_tables[name] = physical
+        elif actual_physical != physical:
+            raise RuntimeError(f"Incorrect backing table for {name}.")
+        primary_parts = [
+            {"path": "expressions.tmdl", "payload": base64.b64encode(
+                texts.get("expressions.tmdl", "").encode()).decode()},
+            {"path": f"entities/{name}.tmdl", "payload": base64.b64encode(
+                f"entity {name}\n\tbackingTable: {alias}\n".encode()).decode()},
+            {"path": f"tables/{alias}.tmdl", "payload": base64.b64encode(table.encode()).decode()},
+        ]
+        primary_bindings = ontology_source_bindings(primary_parts, workspace_id)
+        if name not in primary_bindings.get((kind, item), {}).get(physical, set()):
+            raise RuntimeError(f"Unverified authoritative source binding for {name}.")
+        properties[name] = _project_contract_objects(entity, "property")
+        columns = _project_contract_objects(table, "column")
+        needed = set(keys)
+        if len(keys) > 1:
+            needed.add("ontology_key")
+        if name in SQL_PROJECT_ENTITIES:
+            needed.update(OPERATIONAL_COLUMNS[physical])
+        for source, target, source_key, target_key in PROJECT_REQUIRED_EDGES:
+            if name == source:
+                needed.add(source_key)
+            if name == target:
+                needed.add(target_key)
+        expected_key = "ontology_key" if len(keys) > 1 else keys[0]
+        if _project_contract_setting(entity, "keyProperty") != expected_key:
+            raise RuntimeError(f"Incorrect project key for {name}.")
+        for prop in needed:
+            if prop not in properties[name] or prop not in columns:
+                raise RuntimeError(f"Missing required property/column {name}.{prop}.")
+            if (_project_contract_setting(properties[name][prop], "valueColumn") != f"{alias}.{prop}"
+                    or _project_contract_setting(columns[prop], "sourceColumn") != prop):
+                raise RuntimeError(f"Incorrect backing property binding for {name}.{prop}.")
+        for ref_kind, ref_name in (("entity", name), ("table", alias)):
+            if not re.search(r"(?m)^ref " + ref_kind + r" (?:'?" + re.escape(ref_name) + r"'?)[ \t]*$",
+                             texts["model.tmdl"]):
+                raise RuntimeError(f"Missing project model reference for {ref_name}.")
+    physical_edges = _project_contract_objects(texts.get("relationships.tmdl", ""), "relationship")
+    semantic_edges = _project_contract_objects(texts.get("entityRelationships.tmdl", ""), "entityRelationship")
+    found = set()
+    for block in semantic_edges.values():
+        source = _project_contract_setting(block, "fromEntity")
+        target = _project_contract_setting(block, "toEntity")
+        if (source, target) not in {(s, t) for s, t, _, _ in PROJECT_REQUIRED_EDGES}:
+            continue
+        physical_name = _project_contract_setting(block, "relationship")
+        backing = physical_edges.get(physical_name)
+        if backing is None:
+            raise RuntimeError(f"Dangling required relationship {source} -> {target}.")
+        from_column = _project_contract_setting(backing, "fromColumn")
+        to_column = _project_contract_setting(backing, "toColumn")
+        for edge in PROJECT_REQUIRED_EDGES:
+            s, t, sk, tk = edge
+            if (source, target) == (s, t) and (
+                    from_column, to_column) == (f"{aliases[s]}.{sk}", f"{aliases[t]}.{tk}"):
+                found.add(edge)
+    missing = set(PROJECT_REQUIRED_EDGES) - found
+    if missing:
+        raise RuntimeError("Missing required project relationship bindings: " + repr(sorted(missing)))
+    return {
+        "status": "verified", "workspace_id": workspace_id, "lakehouse_id": lakehouse_id,
+        "sql_db_item_id": sql_db_item_id, "required_entity_count": len(required),
+        "entity_count": len(entities), "required_relationship_count": len(found),
+        "relationship_count": len(semantic_edges), "scope": "definition_readback_only",
+        "core_source_tables": core_source_tables,
+    }
+# END PROJECT ONTOLOGY CONTRACT
+
+
+def require_complete_project_ontology(ontology_id):
+    if (first_setting("project_ontology_status") != "verified"
+            or first_setting("project_ontology_id") != ontology_id):
+        raise RuntimeError("Run complete model preparation successfully before publishing this Data Agent.")
+    return verify_project_ontology_contract(
+        definition_parts(get_item_definition(ontology_id)), workspace_id, lakehouse_id,
+        first_setting("operational_sql_db_id", required=True),
+    )
+
+
 def check_agent_capability() -> tuple:
     persist_agent_status(
         "checking", "Checking v2-only Data Agent capability; no readiness established.",
@@ -391,6 +790,8 @@ def check_agent_capability() -> tuple:
         ontology_id = resolve_ontology_id()
         generation = get_ontology_generation(ontology_id)
         policy = agent_capability_policy(generation)
+        if policy["status"] == "allowed":
+            require_complete_project_ontology(ontology_id)
     except Exception as exc:
         persist_agent_status("failed", str(exc))
         raise
@@ -465,6 +866,30 @@ def validate_agent_ontology_sources(
         raise RuntimeError("No verified published v2 ontology source exists; publish success is unverified.")
 
 
+def ontology_context_matches_source(source: dict, context: dict) -> bool:
+    """Verify Fabric's datasource-to-ontology-context conversion without losing authored content."""
+    schema = (
+        "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
+        "definition/ontology/1.0.0/schema.json"
+    )
+    if source.get("type") != "ontology" or context.get("$schema") != schema:
+        return False
+    expected = dict(source)
+    expected.pop("$schema", None)
+    expected.pop("type")
+    for key, default in (("metadata", {}), ("dataSourceInstructions", None), ("userDescription", None)):
+        if key in expected and expected[key] == default and key not in context:
+            expected.pop(key)
+    # Fabric records the descriptions supplied with the legacy entity selections as authored.
+    if ("entitiesWithUserAuthoredDescriptions" not in expected
+            and "entitiesWithUserAuthoredDescriptions" in context):
+        expected["entitiesWithUserAuthoredDescriptions"] = [
+            element["display_name"] for element in expected.get("elements", [])
+            if element.get("description") and element.get("type") == "ontology.entity"
+        ]
+    return expected == {key: value for key, value in context.items() if key != "$schema"}
+
+
 def verify_agent_source_readback(
     agent_id: str,
     ontology_id: str,
@@ -479,9 +904,23 @@ def verify_agent_source_readback(
     for draft_path, expected in (expected_sources or {}).items():
         path = draft_path.replace("/draft/", "/published/", 1) if published else draft_path
         source_part = next((part for part in parts if part.get("path") == path), None)
-        if source_part is None or decode_payload(source_part.get("payload", "")) != expected:
+        matches = source_part is not None and decode_payload(source_part["payload"]) == expected
+        if source_part is None and expected.get("type") == "ontology":
+            prefix = "Files/Config/published/" if published else "Files/Config/draft/"
+            contexts = [
+                decode_payload(part["payload"]) for part in parts
+                if part["path"].startswith(prefix) and is_ontology_context_path(part["path"])
+            ]
+            candidates = [
+                context for context in contexts
+                if context.get("artifactId") == expected.get("artifactId")
+                and context.get("workspaceId") == expected.get("workspaceId")
+            ]
+            matches = len(candidates) == 1 and ontology_context_matches_source(expected, candidates[0])
+        if not matches:
             raise RuntimeError(
                 f"Data Agent source readback at {path!r} does not match the submitted source; "
+                "no exact source or lossless ontology-context conversion was found; "
                 "source retention and publish success are unverified."
             )
     return parts
@@ -539,12 +978,14 @@ def facility_rows_from_mcp(result: dict) -> list:
         if (not rows or rows[0] != ["facility_id", "facility_name"]
                 or any(len(row) != 2 for row in rows[1:])):
             raise ValueError("Facility CSV must contain only facility_id and facility_name columns.")
-        actual = normalized_facility_rows([
+        records = [
             {"facility_id": row[0], "facility_name": row[1]} for row in rows[1:]
-        ])
+        ]
+        actual = normalized_facility_rows(records) if records else []
         if payload is not None:
             structured = payload["facilities"] if isinstance(payload, dict) and set(payload) == {"facilities"} else payload
-            if normalized_facility_rows(structured) != actual:
+            structured_rows = [] if structured == [] else normalized_facility_rows(structured)
+            if structured_rows != actual:
                 raise ValueError("Structured facility rows disagree with the attached query result.")
         return actual
     if payload is None:
@@ -558,7 +999,7 @@ def facility_rows_from_mcp(result: dict) -> list:
         payload = json.loads(text)
     if isinstance(payload, dict) and set(payload) == {"facilities"}:
         payload = payload["facilities"]
-    return normalized_facility_rows(payload)
+    return [] if payload == [] else normalized_facility_rows(payload)
 
 
 def mcp_response_result(response, request_id):
@@ -634,6 +1075,32 @@ def mcp_semantic_error(value):
 
 
 def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=None) -> dict:
+    """Retry one transient empty answer, never substitute rows or suppress real failures."""
+    outcome = probe_data_agent_ontology_once(agent_id, ontology_id, published_parts)
+    evidence = outcome["evidence"]
+    evidence["attempt"] = 1
+    empty_answer = (
+        outcome["status"] == "inconclusive"
+        and evidence.get("returned_facilities") == []
+        and bool(evidence.get("expected_facilities"))
+    )
+    if not empty_answer:
+        return outcome
+    prior = {
+        "activity_id": evidence["activity_id"], "checked_at_utc": evidence["checked_at_utc"],
+        "status": outcome["status"], "reason": outcome["reason"],
+        "requests": evidence["requests"], "response": evidence["response"][:500],
+        "response_truncated": evidence["response_truncated"] or len(evidence["response"]) > 500,
+    }
+    print("⚠️ Data Agent returned no facilities despite a nonempty live reference; "
+          "retrying once in 10 seconds with a fresh MCP session.")
+    time.sleep(10)
+    outcome = probe_data_agent_ontology_once(agent_id, ontology_id, published_parts)
+    outcome["evidence"].update({"attempt": 2, "prior_attempts": [prior]})
+    return outcome
+
+
+def probe_data_agent_ontology_once(agent_id: str, ontology_id: str, published_parts=None) -> dict:
     """Compare ontology-context facilities with independent live Lakehouse rows."""
     endpoint = f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}/dataagents/{agent_id}/agent"
     activity_id = str(uuid.uuid4())
@@ -747,6 +1214,9 @@ def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=N
         except ValueError as exc:
             return {"status": "inconclusive", "reason": str(exc), "evidence": evidence}
         evidence["returned_facilities"] = actual
+        if not actual:
+            return {"status": "inconclusive", "reason": "Data Agent returned an empty facility result "
+                    "despite nonempty live Lakehouse reference rows.", "evidence": evidence}
         if actual != expected:
             return {"status": "failed", "reason": "Ontology facility IDs/names do not match the live Lakehouse "
                     "reference rows.", "evidence": evidence}
@@ -893,25 +1363,30 @@ ASSET_RESOLUTION_INSTRUCTIONS = """### Asset & Facility Resolution (Must Follow)
 Resolve tags, facilities, exact opcua_node_id values, equipment identifiers and units through ontology-associated reference data. Turbine 5 suggests tag T005, not an invented equipment_id. Use actual bindings and canonical keys, not display-name guesses or schema samples."""
 MULTISOURCE_INSTRUCTIONS = """### Ontology context and source execution
 
-Use ontology context and its associated Lakehouse for static entities/relationships, and its associated Eventhouse for telemetry. Source-native SQL/KQL on these associated sources is normal ontology-backed execution, not a bypass; do not require duplicate separately attached tables or an ontology traversal endpoint. "Use the ontology" permits this execution unless the user explicitly restricts it.
-Use the existing SQL database for work orders, maintenance notifications, inspections, spare parts and 3D models. Follow its source-specific instructions; do not answer operational-record questions from telemetry."""
+Use ontology context and its associated Lakehouse for static entities/relationships, and its associated Eventhouse for telemetry. Source-native SQL/KQL on these sources is normal ontology-backed execution, not a bypass. "Use the ontology" permits this execution unless the user explicitly restricts it.
+Use the existing SQL database for work orders, maintenance notifications, inspections, spare parts and 3D models. Query its connected SQL endpoint with read-only T-SQL: dbo.WorkOrders, dbo.Inspections, dbo.SpareParts, dbo.MaintenanceNotifications and dbo.Asset3DModels. The Data Agent's mounted SQL Database source uses that database's own SQL analytics endpoint, not the Lakehouse SQL analytics endpoint. Prefer this operational SQL source for a SQL-only question; its direct attachment is an execution workaround, not a replacement for ontology semantics. Discover the actual source from connected items; never invent hosts/tools or treat a missing SQL tool as zero records. Follow its source-specific instructions; do not answer operational-record questions from telemetry."""
 
 CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
 CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = """### Cross-source operational joins
 
-Join Eventhouse telemetry to Lakehouse signal/instrument metadata by exact opcua_node_id; then match equipment_id to SQL equipmentId, and opcuaNodeId where applicable. Do not assume one source can directly query another.
-If source tools cannot share results, include EVERY required returned identifier/count tuple in the next tool request. Use supported SQL joins/VALUES and aggregate in the source, not by counting prose. Conserve totals; report unmatched/duplicate keys. Include zero-order facilities for fleet rollups.
-Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open, not completedAt IS NULL. WorkOrders has no facility column; resolve it through equipment."""
+Resolve ontology reference keys, then query telemetry/SQL independently; never use federation. Each tool question must address only that tool's own source.
+Match equipment_id/equipmentId and opcua_node_id/opcuaNodeId. Pass EVERY required returned identifier/count tuple, not previews. Retain all parents, including zero-child rows; count distinct WOs; conserve totals; report unmatched/duplicate keys.
+Label source failures and successful reads; never infer data or widen windows.
+SQL zero requires successful execution on the intended SQL source, not a missing tool or failed query. If SQL fails, return verified partial reads; never claim no open work or recommend additional WOs without verified SQL coverage.
+"Had BAD today" means any BAD event in today's UTC window, not latest-only. Only explicit current/latest-state questions use arg_max before quality filtering. Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open; completedAt is not authoritative.
+Retain each registered signal's quality/event_time/unit; summary counts must reconcile exactly to returned rows.
+Use query execution UTC (KQL now()) as query_asof_utc, not the newest reading or clustered snapshot timestamps. Return age_seconds; readings older than 60 seconds are stale unless the operator specifies otherwise. Missing readings remain missing."""
 
 GLOBAL_SCOPE_MARKER = "### Conversation scope"
 GLOBAL_SCOPE_INSTRUCTIONS = """### Conversation scope
 
-Use all facilities/assets unless the current question narrows scope. Resolve referential follow-ups, but do not inherit earlier filters into standalone questions or infer scope from an application selection."""
+Use all facilities/assets unless narrowed. Resolve references; standalone questions inherit neither filters nor app selections."""
 
 RUNNING_BAD_MARKER = '### Canonical "running bad" questions'
 RUNNING_BAD_INSTRUCTIONS = """### Canonical "running bad" questions
 
-"Running bad" means literal telemetry quality BAD. Unless overridden, query all active signals in a 30-minute window; select the latest raw row using summarize arg_max(event_time, value, quality) by opcua_node_id, then filter BAD. Never filter quality before arg_max, prefilter signal type, or limit results. Resolve active turbine metadata and return every match.
+Before any telemetry tool call, distinguish historical occurrence from current state. "Had BAD today" means ALL BAD events in that window, including signals now GOOD. For today use event_time >= startofday(now()) and event_time <= now(), filter quality == 'BAD', then count() by opcua_node_id. Never discard historical BAD events using arg_max or max(event_time). This historical rule overrides current-state defaults.
+Only "running bad" or explicit current/latest quality uses latest raw rows: default 30 minutes, summarize arg_max(event_time, value, quality) by opcua_node_id, then filter BAD. For current state: Never filter quality before arg_max, prefilter signal type, or limit results. Resolve active turbine metadata and return every match.
 Include tag, equipment/node/instrument, value/unit, quality and event time. Treat null/0001 timestamps as missing, not zero readings. Compare active-node coverage; report missing counts, never widen the window or equate empty BAD results with healthy turbines. Join all open work by affected equipment; do not filter work by node/instrument. Label same-signal only for matching node/instrument; otherwise equipment-level."""
 
 RUNNING_HOT_MARKER = '### Canonical "running hot" questions'
@@ -934,7 +1409,7 @@ For requested charts include actual rows in fenced csv: event_time,value,quality
 DIRECT_RUNTIME_ROUTING_MARKER = "### Authoritative source routing"
 DIRECT_RUNTIME_ROUTING_INSTRUCTIONS = """### Authoritative source routing
 
-Prefer one authoritative source; combine sources when required. Use only available tools and pass actual query results between them. Verify source/column availability before declaring a capability absent. A generated explanation or empty result does not prove missing ontology bindings: distinguish exact tool errors from interpretation and partial results from completed joins. Make at most one targeted corrective retry for an execution/coverage/validation failure. Never invent repairs or widen the requested window."""
+Use available tools and actual query results; prefer one authoritative source. Verify bindings/columns before declaring capability absent. Distinguish tool errors, partial reads and completed joins. Retry execution/coverage/validation failure once; never invent repairs or widen the requested window."""
 
 COUNT_QUERY_GUIDANCE_MARKER = "### Operational count queries"
 COUNT_QUERY_GUIDANCE = """
@@ -972,7 +1447,8 @@ def update_operational_source_guidance(parts: list) -> list:
         result = upsert_part(result, path, ds)
     return result
 
-# Ontology entities to expose to the agent (name -> column summary used as description).
+# Legacy generated descriptions, used only to recognize and migrate old notebook metadata.
+# Live entity definitions below are authoritative; operator-authored descriptions are retained.
 ONTOLOGY_ELEMENTS = [
     ("signal_master",
      "opcua_node_id,tag,instrument_id,equipment_id,system_id,facility_id,unit,"
@@ -988,6 +1464,32 @@ ONTOLOGY_ELEMENTS = [
      "opcua_node_id,tag,instrument_id,equipment_id,system_id,facility_id,unit,"
      "instrument_type,is_active"),
 ]
+
+
+def ontology_elements_from_definition(envelope: dict) -> list:
+    """Read entity names and descriptions from the selected live ontology, never a schema sample."""
+    return ontology_context_elements(definition_parts(envelope))
+
+
+def get_live_ontology_elements(ontology_id: str) -> list:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/ontologies/{ontology_id}/getDefinition"
+    response = api_request("POST", url, timeout=120)
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("Ontology getDefinition returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        response = api_request("GET", f"{operation_url.rstrip('/')}/result", timeout=120)
+    response.raise_for_status()
+    if response.status_code != 200:
+        raise RuntimeError(f"Ontology getDefinition returned HTTP {response.status_code}.")
+    return ontology_elements_from_definition(response.json())
+
+
+def refresh_ontology_context(parts: list, ontology_id: str) -> list:
+    """Refresh generated entity metadata without replacing selections, bindings or source profiles."""
+    return refresh_ontology_context_parts(
+        parts, get_live_ontology_elements(ontology_id), workspace_id, ontology_id, ONTOLOGY_ELEMENTS)
 
 LAKEHOUSE_TABLES = [
     (first_setting("silver_facilities_table", required=True),
@@ -1048,13 +1550,13 @@ def merge_source_elements(existing: list, desired: list) -> list:
     return merged
 
 
-def lakehouse_schema_map() -> dict:
+def lakehouse_schema_map(table_names=None) -> dict:
     context = notebookutils.runtime.context
     if (context.get("defaultLakehouseId") != lakehouse_id
             or context.get("defaultLakehouseWorkspaceId") != workspace_id):
         raise RuntimeError("Data Agent Lakehouse schema discovery must use the configured Lakehouse.")
     schema_map = {}
-    for table_name, _description in LAKEHOUSE_TABLES:
+    for table_name in table_names if table_names is not None else [name for name, _ in LAKEHOUSE_TABLES]:
         if not re.fullmatch(r"(?:dbo\.)?[A-Za-z_][A-Za-z0-9_]*", table_name):
             raise RuntimeError(f"Unsupported Lakehouse table name {table_name!r}.")
         try:
@@ -1094,13 +1596,14 @@ def build_lakehouse_datasource_obj(existing: dict, schema_map: dict) -> dict:
     ds.setdefault("userDescription", "Curated RTI asset and signal master tables.")
     ds.setdefault("metadata", {})
     table_nodes = []
-    for table_name, description in LAKEHOUSE_TABLES:
+    for table_name, fields in schema_map.items():
+        description = dict(LAKEHOUSE_TABLES).get(table_name, "Ontology-associated reference data.")
         columns = [
             _ds_element(
                 "lakehouse_tables.column", column_name, True, [],
                 data_type=data_type,
             )
-            for column_name, data_type in schema_map[table_name]
+            for column_name, data_type in fields
         ]
         table_nodes.append(_ds_element(
             "lakehouse_tables.table", table_name, True, columns,
@@ -1270,33 +1773,6 @@ try:
             {},
         )
         parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
-
-        discovered_lakehouse_schema = lakehouse_schema_map()
-        existing_lakehouse_ds = next(
-            (
-                decode_payload(p.get("payload", ""))
-                for p in parts if p.get("path") == LAKEHOUSE_DATASOURCE_PATH
-            ),
-            {},
-        )
-        submitted_lakehouse_source = build_lakehouse_datasource_obj(
-            existing_lakehouse_ds, discovered_lakehouse_schema,
-        )
-        parts = upsert_part(parts, LAKEHOUSE_DATASOURCE_PATH, submitted_lakehouse_source)
-
-        existing_kusto_ds = next(
-            (
-                decode_payload(p.get("payload", ""))
-                for p in parts if p.get("path") == KUSTO_DATASOURCE_PATH
-            ),
-            {},
-        )
-        submitted_kusto_source = build_kusto_datasource_obj(existing_kusto_ds)
-        parts = upsert_part(parts, KUSTO_DATASOURCE_PATH, submitted_kusto_source)
-        submitted_direct_sources = {
-            LAKEHOUSE_DATASOURCE_PATH: submitted_lakehouse_source,
-            KUSTO_DATASOURCE_PATH: submitted_kusto_source,
-        }
         parts = update_operational_source_guidance(parts)
     for part in parts:
         if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json"):
@@ -1309,20 +1785,25 @@ try:
                 submitted_direct_sources[part["path"]] = ds
             if context_paths or ds.get("type") == "sql_database":
                 submitted_direct_sources[part["path"]] = ds
+    parts = refresh_ontology_context(parts, ontology_id)
+    submitted_direct_sources = {}
+    for part in parts:
+        if part["path"].startswith("Files/Config/draft/") and (
+            is_ontology_context_path(part["path"]) or part["path"].endswith("/datasource.json")
+        ):
+            ds = decode_payload(part["payload"])
+            submitted_direct_sources[part["path"]] = ds
     validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • aiInstructions        ->", DRAFT_STAGE_CONFIG_PATH)
     if context_paths:
         print("   • verified ontology context ->", ", ".join(context_paths))
-        print("       Preserving context-owned automatic sources, selections and SQL guidance.")
+        print("       Refreshed live metadata; retained selections, custom sources and source guidance.")
     else:
         print("   • ontology data source  ->", DATASOURCE_PATH)
-        print(f"       {len(ONTOLOGY_ELEMENTS)} entity element(s) selected.")
-        print("   • Lakehouse data source ->", LAKEHOUSE_DATASOURCE_PATH)
-        print(f"       {len(LAKEHOUSE_TABLES)} table(s) selected with discovered columns.")
-        print("   • Eventhouse data source ->", KUSTO_DATASOURCE_PATH)
-        print(f"       {kql_table_name} selected with 4 columns.")
+        print("       Entity metadata refreshed from the live ontology; custom selections preserved.")
+    print("       Retained ontology-associated sources and compatible custom sources.")
 
     update_item_definition(data_agent_item_id, {"parts": parts})
     verify_agent_source_readback(
@@ -1333,13 +1814,15 @@ try:
     # 4) PUBLISH — promote staging; verify published identity, not runtime readiness.
     enable_preview_runtime(data_agent_item_id)
     publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
-    published_parts = verify_agent_source_readback(
+    verify_agent_source_readback(
         data_agent_item_id, ontology_id, submitted_direct_sources, published=True,
     )
     persist_agent_status(
         "published",
-        "REST publish and selected live generation 2 source identity verified; runtime probe pending.",
-        publication_status="published", runtime_status="checking",
+        "REST publish and selected live generation 2 source identity verified; no runtime query performed.",
+        publication_status="published", runtime_status="not_checked",
+        runtime_reason="Automatic query smoke is not part of setup; test the agent interactively.",
+        runtime_evidence={},
         id=data_agent_item_id, name=data_agent_name,
     )
     mcp_endpoint = (
@@ -1348,28 +1831,7 @@ try:
     )
     print("🌐 Published — consumption endpoint:")
     print(f"   • MCP: {mcp_endpoint}")
-    try:
-        runtime = probe_data_agent_ontology(data_agent_item_id, ontology_id, published_parts)
-    except Exception as exc:
-        if not is_known_ontology_v2_product_limitation(str(exc)):
-            persist_agent_status("failed", str(exc), runtime_status="failed", runtime_reason=str(exc))
-            raise
-        runtime = {"status": "known_product_limitation", "reason": str(exc), "evidence": {}}
-    if is_known_ontology_v2_product_limitation(runtime["reason"]):
-        persist_agent_status(
-            "known_product_limitation", runtime["reason"],
-            publication_status="published", runtime_status="known_product_limitation",
-            runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
-        )
-        print("⚠️ Data Agent published, but Fabric currently rejects the verified Ontology v2 source.")
-    else:
-        persist_agent_status(
-            "ready" if runtime["status"] == "verified" else "failed", runtime["reason"],
-            publication_status="published", runtime_status=runtime["status"],
-            runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
-        )
-        if runtime["status"] != "verified":
-            raise RuntimeError(f"Data Agent published but ontology runtime {runtime['status']}: {runtime['reason']}")
+    print("✅ Publication verified. No automatic agent query; setup continues to NB11 operational guidance.")
 except Exception as exc:
     persist_agent_status("failed", str(exc))
     raise

@@ -17,8 +17,10 @@ from uuid import UUID, uuid4, uuid5
 
 from agent_framework import WorkflowException
 import httpx
+from azure.identity.aio import DefaultAzureCredential
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from filelock import FileLock, Timeout as LockTimeout
+from openai import RateLimitError
 
 from .contracts import (
     Approval, Contract, Outcome, Proposal, ResolvedScope, ReviewInput, ReviewRequest, SourceIdentity,
@@ -27,6 +29,8 @@ from .contracts import (
 from .foundry_supervisor import (
     ChatAnswer, ChatRequest, EquipmentSelection, FoundrySupervisor, HistoricalContext, HistoricalTurn, NativeBinding,
     NativeSource, RunJournal, ToolEvidence, previous_receipts,
+    safe_exception_signature,
+    exception_chain_contains,
 )
 from pydantic import Field, ValidationError, model_validator
 from starlette.responses import JSONResponse, StreamingResponse
@@ -34,8 +38,12 @@ from .source_auth import DelegatedCredential, DelegatedTokens, SourceAuthPolicy,
 from .store import Conflict, Store, StoredRun
 from .workflow import ReviewAdapters, build_workflow, checkpoint_store
 from .presentation import OperatorAnswer, client_presentation, operator_answer
-from .live_sources import Bridge, FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
+from .live_sources import (
+    Bridge, FabricBackendTools, LiveSources, NativeSourceRefusal, NativeSourceServiceError,
+    NodeSourceBridge, SourceFailure,
+)
 from .foundry_rca import verified_project_endpoint
+from .native_data_agent import NativeDataAgentTimeout, NativeDataAgentTransportError
 
 logger = logging.getLogger(__name__)
 STREAM_HEARTBEAT_SECONDS = 15.0
@@ -221,6 +229,7 @@ async def follow_up_intent(
         kinds = sorted({kind for receipt in receipts for kind in reusable_kinds(receipt)})
         intent = dict(await bridge.call({
             "action": "chat_intent", "question": chat.question, "carried_kinds": kinds,
+            "native_sources": list(chat.native_sources),
         }))
         reuse = intent.pop("reuse_prior_evidence", False) is True
         normalized = normalized_chat_input(chat, intent)
@@ -228,7 +237,9 @@ async def follow_up_intent(
             carried = select_carried_ids(receipts, set(normalized.required_evidence_kinds))
             if carried:
                 return normalized, carried
-    normalized = normalized_chat_input(chat, await bridge.call({"action": "chat_intent", "question": chat.question}))
+    normalized = normalized_chat_input(chat, await bridge.call({
+        "action": "chat_intent", "question": chat.question, "native_sources": list(chat.native_sources),
+    }))
     return normalized, ()
 
 
@@ -279,7 +290,7 @@ class RuntimeConfiguration(Contract):
     authorization: SourceAuthPolicy
     project_endpoint: str
     native_binding: NativeBinding | None = None
-    production_writes_enabled: bool = Field(default=False, strict=True)
+    production_writes_enabled: bool = Field(default=True, strict=True)
 
     @model_validator(mode="after")
     def consistent_runtime(self) -> "RuntimeConfiguration":
@@ -505,13 +516,14 @@ def create_delegated_app(
                 return HTTPException(status, message)
             detail: dict[str, object] = {
                 "message": message, "run_id": str(chat.run_id), "audit_url": "/invocations",
-                "audit_available": True,
+                "audit_available": True, "category": category,
             }
             try:
                 RunJournal(state / str(chat.run_id) / "receipts").save("failure", {
                     "run_id": str(chat.run_id), "status": "failed", "category": category,
                     "source": source.model_dump(mode="json"),
                     "requested_at": chat.requested_at.isoformat(), "failed_at": utc_now().isoformat(),
+                    "http_status": status,
                 })
             except (OSError, SourceFailure, ValueError) as error:
                 logger.error("Cannot persist delegated failure audit for %s (%s).",
@@ -522,8 +534,24 @@ def create_delegated_app(
             logger.error("Delegated run %s failed (%s).", chat.run_id, category)
             return HTTPException(status, detail)
 
+        def execution_failed(error: Exception) -> HTTPException:
+            if exception_chain_contains(error, NativeDataAgentTimeout):
+                return failed(504, "native_timeout",
+                              "The published Fabric Data Agent exceeded its native execution deadline. "
+                              "No replacement answer or direct-source fallback was used.")
+            if exception_chain_contains(error, NativeDataAgentTransportError):
+                return failed(502, "native_transport",
+                              "The native Fabric Data Agent request failed. "
+                              "Inspect the source request diagnostics before retrying.")
+            if exception_chain_contains(error, RateLimitError):
+                return failed(429, "model_rate_limit",
+                              "The Foundry model throughput quota was exceeded. "
+                              "Review deployment token/request limits and the prior run audit before retrying.")
+            return failed(500, "execution", "Orchestration failed; inspect the execution audit.")
+
         try:
             credential = await verifier.verify(body, deadline)
+            credential.foundry_call_id = request.headers.get("x-agent-foundry-call-id")
             principal_key = hashlib.sha256(
                 f"{source.model_dump_json()}:{credential.principal_id}".encode(),
             ).hexdigest()
@@ -669,9 +697,11 @@ def create_delegated_app(
                         except TimeoutError:
                             failed(504, "source_timeout",
                                    "An upstream source operation timed out; inspect the execution audit.")
+                        except (NativeSourceRefusal, NativeSourceServiceError) as failure:
+                            failed(502, failure.category, str(failure))
                         except Exception as failure:
-                            logger.error("Detached orchestration failed (%s).", type(failure).__name__)
-                            failed(500, "execution", "Orchestration failed; inspect the execution audit.")
+                            logger.error("Detached orchestration failed (%s).", safe_exception_signature(failure))
+                            execution_failed(failure)
                         finally:
                             await stream_credential.close()
 
@@ -723,6 +753,10 @@ def create_delegated_app(
                         error = failed(504, "source_timeout",
                                        "An upstream source operation timed out; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
+                    except (NativeSourceRefusal, NativeSourceServiceError) as failure:
+                        yield line(terminal_event(str(failure)))
+                        error = failed(502, failure.category, str(failure))
+                        yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     except Exception as failure:
                         if isinstance(failure, SourceFailure):
                             detail = str(failure).replace("\r", " ").replace("\n", " ")[:512]
@@ -742,9 +776,12 @@ def create_delegated_app(
                             ]
                             logger.error("Streamed orchestration failed (ValidationError: %s).", signature)
                         else:
-                            logger.error("Streamed orchestration failed (%s).", type(failure).__name__)
-                        yield line(terminal_event("Orchestration failed; no answer was certified."))
-                        error = failed(500, "execution", "Orchestration failed; inspect the execution audit.")
+                            logger.error("Streamed orchestration failed (%s).", safe_exception_signature(failure))
+                        error = execution_failed(failure)
+                        yield line(terminal_event(
+                            "Foundry model rate limit reached; no answer was certified."
+                            if error.status_code == 429 else "Orchestration failed; no answer was certified."
+                        ))
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     finally:
                         if not task.done():
@@ -780,11 +817,13 @@ def create_delegated_app(
             logger.warning("Delegated invocation upstream operation timed out.")
             raise failed(504, "source_timeout",
                          "An upstream source operation timed out; inspect the execution audit.") from None
+        except (NativeSourceRefusal, NativeSourceServiceError) as error:
+            raise failed(502, error.category, str(error)) from None
         except HTTPException:
             raise
         except Exception as error:
             logger.error("Delegated invocation failed (%s).", type(error).__name__)
-            raise failed(500, "execution", "Orchestration failed; inspect the execution audit.") from None
+            raise execution_failed(error) from None
         finally:
             body.tokens.clear()
             if credential is not None:
@@ -796,7 +835,7 @@ def create_delegated_app(
 def create_fabric_delegated_app(
     root: Path, verifier: SourceTokenVerifier, source: SourceIdentity, endpoint: str,
     *, bridge: Bridge | None = None, native_binding: NativeBinding | None = None,
-    production_writes_enabled: bool = False,
+    production_writes_enabled: bool = True,
 ) -> FastAPI:
     """Compose the request boundary with verified Fabric read-only primitives."""
     endpoint = verified_project_endpoint(endpoint)
@@ -810,9 +849,15 @@ def create_fabric_delegated_app(
         try:
             if sources.discovery.source != source:
                 raise SourceFailure("Live source discovery differs from the configured invocation identity.")
-            yield FoundrySupervisor(endpoint, credential, bridge, FabricBackendTools(sources), source, state,
-                                    native_binding=native_binding,
-                                    analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"))
+            if native_binding is not None and sources.discovery.workload_origin is None:
+                raise SourceFailure("Native execution requires a live-verified workload origin.")
+            async with DefaultAzureCredential() as native_credential:
+                yield FoundrySupervisor(endpoint, credential, bridge, FabricBackendTools(sources), source, state,
+                                        native_binding=native_binding, native_credential=native_credential,
+                                        foundry_call_id=credential.foundry_call_id,
+                                        native_workload_origin=sources.discovery.workload_origin,
+                                        analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+                                        semantic_planning=True)
         finally:
             await sources.close()
 
@@ -833,7 +878,14 @@ def create_fabric_delegated_app(
     async def normalize_chat(
         chat: ChatInput, credential: DelegatedCredential, state: Path,
     ) -> tuple[ChatInput, tuple[str, ...]]:
-        normalized, carried_ids = await follow_up_intent(bridge, state, source, chat)
+        normalized = chat.model_copy(update={
+            "required_specialists": (), "required_specialist_steps": {},
+            "required_evidence_kinds": (), "permitted_evidence_kinds": (),
+        })
+        if chat.native_sources == ("data-agent",):
+            return normalized, ()
+        candidates = carriable_receipts(state, source, chat.previous_run_id)
+        carried_ids = tuple(item.id for item in candidates if reusable_kinds(item))[:MAX_CARRIED_RECEIPTS]
         if not re.search(
             r"\b(?:EQUIP_RTI_T0*\d+|FACILITY_RTI_0*\d+|T0*\d+|"
             r"(?:turbine|equipment|asset|facility|station|power\s+plant)\s*"

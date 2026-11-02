@@ -1,6 +1,1040 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated - Prose-only native evidence follow-up
+
+## Scoped native Data Agent passthrough
+
+Reuse the approved FEATURE tenant, workspace, SPA, capacity and Foundry project.
+No infrastructure, permissions or operational-data writes are added. Mixed
+retrieval/draft workflows must not invoke a second briefing model, replay a cached
+briefing, render native audit rows as a replacement table, or collapse the original
+Markdown. Independent checks, requested charts and human approval stay unchanged.
+
+All validation checks pass:
+- [x] 1. Core Validation: expected Azure tenant/subscription; environment validation,
+  TypeScript, targeted ESLint, production build, 56 frontend contracts, 196 source/
+  presentation/planning/analysis/workflow contracts (one skipped), and actual component
+  rendering with source tables visible and editable approval cards intact.
+- [x] 2. Docker Build context: 47 hosted packaging/deployment contracts passed.
+  Dockerfile and locks are unchanged; local Docker daemon is unavailable. The
+  canonical orchestrator must build and activate the changed source-fingerprinted
+  image through the existing ACR path before reporting deployment success.
+- [x] 3. Azure Policy Validation: no IaC, RBAC, identity, network or region delta;
+  existing source verification, duplicate checks and explicit human approval remain.
+
+### Section 7: Validation Proof - native mixed-workflow passthrough
+
+Validation date: 2026-10-28. `npm run validate-env`, `npm run typecheck`, targeted
+`npx eslint`, and `npm run build` passed with existing bundle warnings.
+`node --import tsx --test` passed answer-presentation and copilot-settings suites.
+Python unittest passed native-fidelity, presentation, semantic-planning, analysis,
+supervisor and work-review suites, plus 47 hosted deployment/packaging contracts.
+Actual `CopilotResponse` rendering retained the complete Markdown table, both
+source/workflow headings and the editable approval card, with no collapsed details.
+The pre-fix live request returned an unchanged 4,527-character native answer
+(matching SHA-256, one display occurrence), but also invoked another briefing model.
+The new regression proves zero briefing-model calls and refuses cached replacement
+briefings. No test approved a draft or created an operational record.
+
+Follow-up, 2026-10-28: hosted acceptance exposed a valid prose-only native answer
+being rejected for missing structured records. The native invocation now records
+the exact answer as receipt evidence when no record arrays exist; the compiler
+checks completeness before skipping unnecessary native display projections.
+Fresh validation passed 196 backend contracts (one skipped), including actual
+native invocation, catalog fulfillment and mixed-workflow compilation for prose,
+and 54 hosted packaging/deployment contracts. Target tenant/subscription,
+`npm run validate-env`, `npm run build` and whitespace checks passed. Frontend, Dockerfile, locks,
+infrastructure and permissions are unchanged from the preceding validated scope.
+Local Docker remains unavailable; the canonical ACR build and live exact-question
+acceptance are deployment gates, not outcomes claimed by these local tests.
+
+## Scoped Administration consolidation
+
+Validation proof, 2026-10-28: the approved target and infrastructure are unchanged.
+Commands passed: `npm run validate-env`, `npm run typecheck`, targeted `npx eslint`,
+`npm run build`, and `node --import tsx --test` for both map-data-refresh suites
+with `TSX_TSCONFIG_PATH=tsconfig.app.json`. Azure CLI confirmed the approved tenant/subscription.
+All validation checks pass:
+- [x] Core validation: environment validation, nine targeted UI/service contracts,
+  TypeScript, targeted ESLint and production build passed (existing bundle warnings).
+- [x] Docker build: not applicable; backend source and image are unchanged.
+- [x] Azure Policy validation: not applicable; no ARM/IaC, permissions or resource delta.
+
+## Scoped Norwegian Energy Map maintenance update
+
+The approved tenant, workspace, capacity, SPA and Foundry project remain unchanged.
+No new resources, permissions, schedules or operational-data writes are required.
+Administration adds cached map preparation as step 6, operational-only maintenance,
+and an explicitly advanced forced national rebuild. Operational refresh cannot
+mark initial map setup complete. Active refreshes retain their original mode.
+The map publisher reuses a complete owned projection only when all four source
+Delta versions still match; a new MCP grounding check remains mandatory.
+Matching draft and published definitions do not trigger another publication.
+
+Validation proof for this scope:
+- `npm run validate-env` and `npm run build`: passed; existing chunk-size warnings.
+- TypeScript and targeted ESLint: passed.
+- Nine frontend contracts: panel states, actual pipeline payloads, active-run
+  sharing, controller intent routing and separate GeoContext authentication.
+- 166 Python contracts: 47 map-agent, 43 workspace and 76 ingestion tests passed,
+  including unchanged-projection reuse, concurrent source-change rejection,
+  matching-publication reuse and three-attempt grounding failure handling.
+- `git diff --check`: passed. No infrastructure/template or role-assignment delta.
+- Read-only live MCP diagnostic returned `state=ready` and stored run ID
+  `2246fddf-6fd7-4e64-951b-6b1aed710693` without running ingestion.
+  The current live notebook already has three canary attempts; the old failed
+  run's generic error is not proof of its exact underlying tool response.
+  This historical failure is not attributed to the later independently
+  reproduced country-filter issue without its original query evidence.
+- Live definition comparison reproduced unnecessary publication caused by Fabric
+  adding `description: null` to columns. The regression failed before
+  null-normalized comparison and passes after it. Read-only live comparison now
+  confirms the published contract is semantically unchanged. The updated notebook
+  has been installed and AST-verified while preserving its target GeoContext.
+- A ready state cannot be reused when any owned projection table was missing
+  before table creation; regression coverage prevents falsely serving newly
+  created empty tables as the previous complete snapshot.
+- Both local UI shells render six setup cards, operational refresh and a collapsed
+  advanced rebuild; desktop and narrow-window layouts were checked without
+  triggering ingestion.
+- Canonical deployment completed at 05:11:43 UTC on October 28: hosted app
+  1.0.1181 / `266e0f3`, coordinator v45, image `src-c4bc9dd11d069fa6`.
+  The orchestrator printed `SUCCESS` and `DEPLOYED_APP_URL` after endpoint,
+  CORS/preflight and POST readiness checks. All 42 Entra SPA redirects were
+  preserved; capacity remained Active. Authenticated hosted Administration
+  displayed the six setup cards and separate operational/advanced actions.
+- Map-only notebook job `e7f57959-af38-402c-8847-e1679ccc687c` completed
+  04:57:50-05:02:26 UTC (about 4m35s), retaining ready projection UUID
+  `2246fddf-6fd7-4e64-951b-6b1aed710693`. No national reimport, NB11 run,
+  work-order creation or demo-data reset was performed.
+- Substantive acceptance exposed a separate semantic failure after the nonce
+  canary passed. Native query tracing showed generated SQL adding
+  `country_code='NO'` to the Norwegian NVE inventory, excluding its null-country
+  asset rows. Correcting answer-level instructions alone was insufficient.
+  The governed source-level SQL instructions now explicitly prohibit this
+  filter, explain inventory scope and snapshot timestamps, and distinguish an
+  empty filtered result from missing readiness state. Column metadata and a
+  natural-language SQL example reinforce this contract.
+- After publication, fresh native MCP sessions returned 2,010 plants,
+  35,707.0066 MW and 33 unknown-capacity plants for both the original full-dataset
+  prompt and the formerly failing paraphrase. Source import time was
+  `2026-10-27T15:59:46.021Z`; projection build time was
+  `2026-10-27 17:31:58 UTC`. These are distinct freshness facts.
+- Authenticated hosted Map Chat passed the natural count/capacity question,
+  formerly failing paraphrase and Adamselv facts. Adamselv returned 50 MW,
+  STATKRAFT ENERGI AS and NO4, independently verified against the imported
+  Eventhouse Delta shortcut. Full totals also matched the independently
+  queried source data, not a browser viewport sample.
+- The final notebook source was installed with AST readback verification and
+  dynamic GeoContext binding preserved. A subsequent live
+  `configure_and_publish` completed with all mutations blocked, proving the
+  published configuration can be reused. No transport rewrite or extra model
+  shaping was introduced. These functional checks are not a load/SLO benchmark.
+
+## Current scoped architecture hardening
+
+The existing approved tenant, FEATURE workspace, Foundry project/model and F8
+capacity are unchanged. No infrastructure, permissions, source topology or
+operational-data writes are requested. Publication through the canonical Python
+orchestrator completed after the normal clean-branch and validation gates.
+
+The runtime now pins only selected agent-mode capabilities; reader-only work
+has no remote specialist dependency. Consecutive independent readers run in one
+Framework superstep with a four-read concurrency cap and sibling cancellation.
+Q&A has no RCA/maintenance-authoring skill. Models receive only their pinned
+role/current-turn tool schemas. Semantic `analysis_requested` prevents an
+automatic narrative model after factual retrieval, while permitting one
+tool-less weather interpretation without a Weather agent loop. Planning and
+briefing HTTP clients close explicitly. An absolute ten-minute execution budget
+is separate from credential admission. Audit manifests identify actual
+providers and session-local persistence; the UI hides unused capabilities.
+Authenticated acceptance also exposed a Responses-only legacy midnight/BAD
+bundle requirement on a broader freshness/diagnostic request. Semantic native
+execution now uses its explicit evidence contract, consistently with the MCP
+compatibility branch; legacy completeness validation remains unchanged.
+Native call timeout is bounded by the overall execution budget, not the
+credential admission lease.
+Typed/catalog-invalid model plans receive at most one validation-feedback
+correction inside the same 60-second planner budget, with no business execution
+before acceptance. Immutable attempt receipts survive interrupted correction;
+the supervisor reports the actual model-round count. Repeated invalid plans
+fail closed. Missing planner configuration fails before client creation.
+
+All validation checks pass for the scoped application change:
+- [x] 1. Core Validation (CLI, auth, build, validate, what-if): approved tenant
+  and subscription verified; environment validation, TypeScript, targeted
+  ESLint and `git diff --check` pass. The final backend run completed 215 cases:
+  214 passed and the opt-in live evaluator was skipped. A separate eleven-case
+  real-model evaluation passed, including negation, clarification, native
+  ontology routing, diagnostic-only drafts, fault-gated repairs and reader-only
+  forecast comparison and the exact freshness-draft acceptance prompt.
+  Final planning times were approximately 5.7-15.5 seconds;
+  this is not an end-to-end latency SLO. Five pre-existing backend type
+  diagnostics were reduced to four by explicitly requiring configured planning
+  models before client creation; no new diagnostic was introduced.
+  No Bicep or ARM infrastructure delta exists, so build/validate/what-if of an
+  infrastructure template is not applicable.
+- [x] 2. Docker Build (if containerized): unchanged deny-by-default Docker
+  context and dependency manifests. The canonical orchestrator owns the
+  source-fingerprinted ACR build and image/readiness verification; no standalone
+  Docker or alternative azd deployment is authorized.
+- [x] 3. Azure Policy Validation: unchanged region, SKU, networking, identity,
+  permissions and existing resource boundary; no resource-policy delta.
+
+Role Assignment Verification: no role assignments are generated or modified.
+Runtime source identity, native answer fidelity and separate human-approved
+write contracts remain unchanged. Current tests cover approval idempotency,
+failed/expired approval and uncertain-write reconciliation with no live writes.
+Twelve frontend agent/Weather contracts also pass. Production session receipts,
+locks and checkpoints are not independent-replica failover or distributed
+exactly-once execution. Verified centralized trace ingestion, distributed
+persistence/admission and sustained load testing remain explicit rollout gates.
+The first publication (app 1.0.1173 / `f1784e6`, coordinator v42) passed
+authenticated facility-reader, native count, Weather and RCA checks.
+The broader diagnostic draft failed at the misplaced legacy native guard before
+Work Order ran. Its audit and container logs were inspected; no write occurred.
+The exact prompt reproduces the failure in a new regression, which passes after
+the scoped fix alongside the legacy completeness/fidelity checks.
+The v43 repeat (`340c2431-8f75-4fce-90c3-a3b70c6c97ad`) stopped before source
+execution because the model put reads on an agent-mode Work Order step.
+An exact cross-field regression reproduces this rejection; bounded plan repair
+and interrupted-attempt recovery now pass regression and live-planner checks.
+Final publication and authenticated acceptance passed on app 1.0.1175 /
+`87565ee`, hosted coordinator v44, image `src-f8b6af0b5714a490`. The exact
+formerly failing request produced five editable diagnostic drafts without
+production writes. A separate native-only count preserved provider, native
+answer and presentation text exactly, with a matching recomputed SHA-256.
+A fresh facility question used only a QA reader. Detailed run identities and
+interpretation flags are recorded below; session-local persistence is not an
+independent-replica durability certification.
+
+## Semantic orchestration and Fabric IQ acceptance
+
+Current work: replace phrase-dependent hosted routing with a bounded typed
+semantic plan, validated against the existing source catalog, evidence,
+specialist and human-approval contracts. Inspect the published Data Agent and
+Ontology metadata and compare three read-only questions through the native
+Fabric IQ path and the underlying Data Agent. Preserve failures and source
+provenance; do not silently substitute direct-source answers for native failures.
+
+Target remains the approved FEATURE tenant
+`ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, subscription
+`dac16501-5c35-4c91-aff0-11af8de17f2e`, Sweden Central.
+Use existing Foundry resources/model and canonical Python orchestrator only.
+No new Azure infrastructure, identity grants, redirect changes by hand, or
+automatic production writes. Earlier acceptance below is historical and does
+not validate this new architecture change.
+
+Implementation decisions: retain the existing five specialist capabilities, not
+five mandatory calls. A tool-less typed planner inside the existing coordinator
+interprets arbitrary language; deterministic code owns source permissions,
+bounded execution, evidence verification, checkpointing and human-approved
+writes. Native Fabric IQ assignments stay business-language questions and do
+not receive irrelevant application tool schemas or presentation instructions.
+Independent read-only steps may run concurrently; investigation and maintenance
+dependencies remain explicit. No topology or availability infrastructure change.
+Recipe: existing AZCLI/Python orchestrator; do not generate alternative IaC.
+
+The user explicitly requested implementation and optimization. The focused
+approval/context form returned user-unavailable with an instruction to choose
+the pragmatic option; proceed on the unchanged target and requested design.
+
+Live metadata audit: all 18 Ontology entities have descriptions and synonyms,
+and six business rules exist. The audit found the Data Agent selected only five
+entities and used column-list descriptions. The producer is repaired; NB009
+publication and independent readback now confirm all 18 selected entities in
+draft and published context. The enriched Ontology and bindings were preserved.
+
+Preparation gates:
+- [x] Confirm the role/semantic-routing design and unchanged Azure context.
+- [x] Reproduce Fabric IQ failures and inspect live Ontology enrichment.
+- [x] Implement typed routing and source-specific corrections with regressions.
+- [x] Validate pinned Agent Framework execution, persistence and source gates.
+- [x] Complete Azure validation before canonical publication.
+- [ ] Record authenticated three-prompt parity, routing and timing acceptance.
+
+Canonical publication completed: app 1.0.1147 / `a2ccda0`, coordinator v28,
+Fabric IQ v3; final `SUCCESS` and `DEPLOYED_APP_URL` were returned after endpoint,
+CORS and POST readiness checks. Authenticated browser access was restored.
+Two native comparisons reached the Data Agent with corrected plain-language
+input and matching facility/relationship facts, but both failed with provider
+output-moderation processing errors. The third native quality/work comparison
+reproduced that error; its direct Fabric-editor counterpart failed generically.
+Native acceptance remains blocked. No error annotation was ignored and no
+fallback or write occurred. A separate inventory-reader smoke test passed in
+7.8s; Weather and RCA paraphrases selected their intended specialists and
+completed in 37.9s and about 81s respectively, without drafts.
+See the [live acceptance record](../docs/foundry-multi-agent-implementation.md#live-publication-and-acceptance)
+for exact run/response IDs. Eventhouse UI grouping remains unresolved.
+
+### Section 7: Validation Proof - semantic implementation
+
+Current update, 2026-10-28, commit `8f908c1`: the authenticated v1.0.1167 /
+coordinator v39 path passed native count, ontology relationship and quality/work
+acceptance, preserving source text and SHA. Five editable review-only
+telemetry-availability drafts were verified with no production writes. This
+update removes provider document/schema metadata from business datasets while
+retaining immutable receipts and typed source-row projections.
+All 132 supervisor tests passed; the broader run exposed an obsolete factory
+fixture missing the newly required verified workload origin. After updating that
+fixture and adding missing-origin rejection, all 35 source-auth tests passed.
+Commands: `.venv\Scripts\python.exe -m unittest test_foundry_supervisor
+test_source_auth -q`, then `-m unittest test_source_auth -q`; targeted Python
+`compileall`, Pylance syntax checks, `npm run validate-env`, and `git diff --check`
+passed. Pyright retains its five existing diagnostics, with no new errors.
+Azure CLI confirmed the approved tenant/subscription and Active F8 capacity.
+No IaC, resource type, SKU, role assignment or policy boundary changes are
+requested; infrastructure what-if and a separate Docker deployment do not apply.
+The canonical orchestrator owns the source-fingerprinted image build, hosted
+publication, connector convergence and endpoint checks; acceptance of this latest
+dataset correction remains required after that publication.
+That publication succeeded as v1.0.1169 / coordinator v40. Its authenticated
+review-only run completed Fabric IQ and Work Order execution, then exposed a
+renderer error for timezone-less native source dates. The renderer now preserves
+those dates as text, while explicitly timezone-aware strings retain timestamp
+presentation. The source values and native answer are unchanged. All 137
+supervisor/presentation tests pass, including the exact final table-rendering
+regression; required environment validation passes and Pyright remains at the
+same five baseline diagnostics. No infrastructure or authorization delta was
+introduced. Canonical publication completed as v1.0.1170 / coordinator v41
+(`bf9e164`) with endpoint/CORS checks passing. Authenticated run
+`cc45133f-d5a0-4fe7-acbc-c8022073f2ec` verified five editable, review-only
+telemetry-availability drafts for T004/T005/T007/T009/T014, no QA/RCA hop,
+unchanged native source text/SHA, no metadata columns and no production writes.
+
+An additional native parity check found a real federation-intent error: run
+`41fac50c-1c86-46df-bb50-31090dca3998` reported zero work despite ten SQL rows
+because a zero-inclusive count was compiled as AntiJoin. Notebook-owned source
+guidance now explicitly puts positive all-parent aggregation in the federation
+question and status predicates in source sub-questions; the original user
+question and source answer are not rewritten by the app. Draft/published
+readback preserved the ontology and operational SQL adapter. The policy remains
+within 5,500 characters / 700 words; all 92 ontology/Data Agent contracts pass.
+Final audited count runs `f9feb37d-9574-41f4-a789-383d760a7106` and
+`6a6d4aa0-ecae-4e39-bb45-3f220c078ec6` used successful nondegraded Aggregation
+receipts, returning Sloy 3 / Foyers 3 / Pitlochry 4. The unmatched-population
+control `a9f32036-e43b-4212-a8d7-abb7caceee6a` correctly returned no facilities.
+All preserve exact native presentation and SHA; no production writes occurred.
+Current telemetry is stale; these drafts investigate availability, not a proven
+mechanical fault or invented current-day BAD events.
+
+All validation checks pass:
+- [x] 1. Core Validation (CLI, auth, build, validate, what-if): existing-resource
+  application update, no generated Bicep or infrastructure delta; Bicep
+  validate/what-if are not applicable. Runtime/unit/build evidence is below.
+- [x] 2. Docker Build (if containerized): existing orchestrator owns the ACR
+  image build, context closure and image readback. Its 43 packaging/deployment
+  tests pass; no standalone alternate Docker/azd deployment is used.
+- [x] 3. Azure Policy Validation: no new resource type, region, networking,
+  SKU or role assignment. Existing approved policy boundary is unchanged.
+
+Role Assignment Verification: no generated or modified role assignments.
+Existing delegated source credentials and native connection remain unchanged;
+all source-auth checks apart from the repaired cold-start fixture passed the
+full run, and the repaired production-factory/readiness fixtures pass separately.
+
+- Six real-model typed plans compiled against the actual source catalog: count,
+  Weather, ontology aliases/relationships, RCA, clarification and negated drafting.
+- Full backend discovery ran 282 tests. Its only failing factory fixture still
+  expected keyword admission; that fixture now verifies semantic composition.
+  The affected factory and real cold-start test pass in a focused rerun.
+  Other source-auth/semantic tests passed; the cold-start test now allows bounded
+  SDK import time on Windows, without relaxing source/authorization assertions.
+- 92 Node prompt/presentation/weather/native-error/transport tests pass.
+- 111 Ontology tests and 43 hosted packaging/deployment tests pass.
+- Node 24 validate-env, scoped ESLint and production TypeScript/Vite build pass;
+  Python compilation and editor diagnostics pass.
+- NB009 publication preserved all live dependencies and executable source
+  readback. Job `e8e697e2-d370-4b85-83c5-892b6c253686` completed successfully.
+  Separate REST readback confirms all 18 entities selected in both draft and
+  published Data Agent context; Lakehouse, Kusto and SQL mounts remain.
+- App/source runtime acceptance was attempted after canonical deployment with
+  restored signed-browser access. Ordinary reader execution passed; three native
+  comparisons reproduced the provider error and cannot pass acceptance.
+- Final full backend rerun: all 283 tests passed in 258.226s.
+- Further native diagnostics verified documented connection audiences, enabled
+  default safety filters and unrestricted account network configuration.
+  Existing Foundry telemetry reports safe prompt/completion categories while
+  native tool outputs retain moderation-processing errors. Provider escalation
+  remains required; no ticket was created without contact/authorization details.
+
+Commands: root `.venv\Scripts\python.exe -m unittest discover -s
+HydroOperationsService\tests`; affected source-auth factory/readiness and semantic
+test selectors rerun separately after fixture/cold-start repair; `node --test`
+with answer-presentation, weather-agent, rca-evidence and hosted-transport test
+files; `python -m unittest test_ontology_agent_capabilities
+test_ontology_gen2.EventhouseTests test_ontology_semantics` (UTF-8 output);
+`python -m unittest test_deploy_hosted_agent`; `npm run validate-env`,
+scoped `npx eslint`, `npm run build`, Python `compileall`, editor diagnostics
+and `git diff --check`. Azure CLI readback confirms the approved enabled
+subscription and tenant. These are local/predeployment proofs, not native
+three-prompt runtime acceptance.
+
+## Facility-count acceptance follow-up
+
+Resolve the live planner failure discovered during implicit-access acceptance.
+The existing intent producer permits facilities but requires no evidence for a
+count request; compilation then injects unrequested telemetry and correctly
+fails its guard. Derive unresolved count evidence from the existing permitted
+dataset classification, retain population coverage for counts, and keep the
+unexpected-evidence guard intact. Test the original question and paraphrases,
+then repeat canonical deployment and signed-browser acceptance on the unchanged
+FEATURE target below. No new permissions, infrastructure or write-policy change.
+The user explicitly requested autonomous completion of the outstanding failure.
+Earlier deployment/authorization receipts remain historical.
+
+### Section 7: Validation Proof - facility-count follow-up
+
+Validation date: 2026-10-27; existing canonical Python/Azure CLI recipe,
+same approved tenant/workspace/subscription/region as the receipts below.
+
+All validation checks pass:
+- [x] Core: 128 Node source/routing/weather/authorization regressions pass,
+  including the formerly failing exact browser question and six population-count
+  variants. Requirements are exact `<dataset>_population_direct` contracts;
+  no unrelated telemetry, specialist or native execution is introduced.
+- [x] Backend: 119 supervisor tests pass with repository `PYTHONPATH` and Node 24.
+  Unexpected-evidence rejection, source coverage and human approval remain intact.
+- [x] Build: scoped ESLint, `npm run validate-env`, and production TypeScript/Vite
+  build pass. Existing chunk/mixed-import warnings remain unchanged.
+- [x] Container: 43 hosted packaging/fingerprint tests pass. Dockerfile,
+  lockfiles and COPY closure are unchanged; the
+  modified packaged source bridge requires a fresh ACR source-fingerprinted
+  image. Its canonical build/activation is a hard deployment gate.
+- [x] Static roles/policy: no identity, scope, permission, source operation,
+  infrastructure, network, region or write-policy change. The earlier live
+  same-target policy/project-role readbacks remain applicable. No ARM template,
+  what-if or quota provisioning applies.
+
+Repro: the added count test failed on the exact browser prompt because required
+evidence was empty. After the producer fix all 128 tests pass, including the
+strict complete-contract validation. Commands: Node 24 `node --import tsx --test`
+over source, operational-routing, weather, orchestration, source-access,
+transport and Entra tests; `python -m unittest discover -s
+HydroOperationsService\tests -p test_foundry_supervisor.py` with the service's
+`src` on `PYTHONPATH`; scoped ESLint; environment validation; production build.
+Actual hosted facility-count acceptance passed as recorded below, independently
+of these local tests.
+
+### Hosted acceptance - facility-count follow-up
+
+- The first canonical attempt built ACR image `src-028b83cbb98cf220` successfully
+  (`dtq`) but stopped during Azure CLI registry authentication on a transient
+  `RemoteDisconnected` token-network error. No validation was bypassed.
+- Re-running the same canonical command reused the built image and exited 0
+  with final `SUCCESS` and `DEPLOYED_APP_URL` at
+  `2026-10-27T10:18:31.327005Z`, **591.469 seconds** for the successful attempt.
+  URL: `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+- Signed browser verified **v1.0.1145 / 3a64402**, coordinator **v27**.
+  Five specialist definitions, all 42 redirects, source permissions and the
+  explicit write-approval policy were preserved. AppBackend runtime/SQL/CORS
+  and GraphQL, token and three connector preflight/POST readiness checks passed.
+- In a fresh signed browser session, the exact previously failed facility-count
+  question returned HTTP 200 in **13,494 ms**, with **one run request**, **zero
+  sign-in popups**, no access setup control and no alert. The certified answer
+  reported **3 facilities**, matching all three rendered source rows:
+  `FACILITY_RTI_001`, `FACILITY_RTI_002`, `FACILITY_RTI_003`; no truncation.
+- A second explicit question, “How many facilities are registered?”, returned
+  HTTP 200 in **7,048 ms**, again one request, zero sign-in popups, no alert and
+  the same three source rows. Session:
+  `296e05fd-a9fb-4705-aff1-7449f11c950b`.
+- These are two observed browser samples, not a latency SLO. The old failed run
+  remains an immutable failure receipt; only deliberate post-fix tests were sent.
+  No work-order action, approval, rejection or production write was performed.
+- Live Azure MCP readback confirmed unchanged project-scoped Foundry User access.
+  The facility-count guard failure is resolved without relaxing that guard.
+
+## Implicit agent access
+
+Remove the separate agent-access control from chat and comparison views.
+Normal operator actions reuse/refresh the signed-in session silently; when
+Entra actually requires interaction, request it within that action, with one
+consent step covering the remaining audiences. Verify each audience separately
+afterwards. Background warm-up and run recovery remain silent-only.
+
+Do not broaden permissions, bypass tenant/lease validation, automatically replay
+failed invocations, or weaken explicit human approval for operational writes.
+Reuse the canonical repository deployment recipe and existing FEATURE target:
+tenant `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, Sweden Central, subscription
+`ME-MngEnvMCAP218279-didharch-2` (`dac16501-5c35-4c91-aff0-11af8de17f2e`).
+No new resources or RBAC changes. Shared runtime source changes may require
+the orchestrator to rebuild the existing hosted image.
+
+Publication/context confirmation was offered; the user was unavailable.
+Continue with the existing approved FEATURE target and unchanged infrastructure.
+
+Local verification: 43 focused token/source-access/transport tests pass,
+including original-question submission exactly once after implicit consent,
+background warm-up/recovery never prompting, per-audience token validation,
+and explicit approval/no ambiguous-write replay. Scoped ESLint, Node 24
+`npm run validate-env`, and production TypeScript/Vite build pass; existing
+mixed-import/chunk warnings remain. Hosted packaging/fingerprint tests exit 0.
+Azure CLI confirms the expected tenant and Enabled subscription.
+
+Validation workflow and authenticated hosted authorization acceptance are
+complete, as recorded below. This is scope-specific acceptance, not acceptance
+of every orchestration intent. The facility-count failure recorded here was
+resolved by the follow-up above. Earlier receipts remain historical.
+No ARM provisioning or extra quota requested.
+
+### Section 7: Validation Proof - implicit agent access
+
+Validation date: 2026-10-27. Recipe: existing canonical Python/Azure CLI
+orchestrator; no ARM templates or resource provisioning.
+
+All validation checks pass:
+- [x] Core: authenticated expected tenant/Enabled subscription, Node 24,
+  configuration validation, production TypeScript/Vite build, scoped ESLint,
+  and 43 focused authorization/transport tests. No ARM template validation
+  or what-if is applicable to this application-only change.
+- [x] Container context: 43 hosted deployment tests pass, including exact
+  Docker COPY/fingerprint closure, isolated ACR context and failed-build
+  propagation. Existing Dockerfile and locks are unchanged. The shared
+  source-access module is packaged, so the canonical orchestrator must build
+  the changed source-fingerprinted image through ACR and gate publication on
+  activation. No separate hand-assembled image deployment is permitted.
+- [x] Static roles: no permission, identity, role scope or source-operation
+  changes; delegated audience/tenant/lease guards and human approval remain.
+- [x] Policy readback: Azure MCP returned applicable assignments for the
+  existing resource group. No infrastructure/SKU/region/network change.
+- [x] Functional: production-build browser renders the existing chat design
+  without the setup button/banner. Warm-up did not open sign-in. Temporary
+  preview process stopped; no operational record or approval was submitted.
+
+Commands: `node --import tsx --test` for source-access, Entra and transport
+tests; scoped `npm exec -- eslint`; `npm run validate-env`; `npm run build`;
+`.venv\Scripts\python.exe -m unittest discover -s Raw\workspace-reset -p
+test_deploy_hosted_agent.py`. All exit 0. Existing chunk/mixed-import warnings
+are unchanged. These local checks do not substitute for hosted acceptance below.
+
+### Hosted acceptance - implicit agent access
+
+- Canonical orchestrator exited 0 with final `SUCCESS` and `DEPLOYED_APP_URL`
+  at `2026-10-27T09:36:54.886760Z`, total **942.031 seconds**.
+  URL: `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+- Signed browser verified **v1.0.1143 / 9197530**, zero separate access
+  buttons/banners and no sign-in popup on mount.
+- A normal Send of the existing six-hour BAD/UNCERTAIN telemetry question
+  submitted exactly **one run request**, opened **zero sign-in popups**, and
+  returned the source-backed answer in **24,972 ms**. Supervisor and Gauge
+  completed; the rendered answer identified all 15 turbines with **180
+  verified records**. This is one browser sample, not a latency SLO.
+  Session: `8b650710-77d8-4be4-b44f-7c73618b1f1f`. No alert or work-order
+  action was present; no approval/rejection/production write was submitted.
+- An earlier, different facility-count question reached the runtime without
+  separate access setup but failed the existing orchestration guard with
+  `unexpected-evidence:telemetry`, returning HTTP 500 and no certified answer.
+  Session: `1a5f69ed-7d76-4e40-8c52-949c28796ba2`;
+  failed run: `28968fae-2e54-4792-8637-9b3d814ea29f`.
+  Read-only session logs confirmed this planner-contract failure. The failed
+  question was not resubmitted. This unrelated routing defect is not fixed or
+  hidden by the authorization change.
+- ACR build `dtp` succeeded; coordinator **v26** activated on
+  `src-ea5c543336298b9a`. All five specialist definitions were reused.
+- All 42 existing SPA redirects were preserved; runtime/SQL/CORS reapplication
+  and GraphQL, token and three connector preflight/POST readiness checks passed.
+- Azure MCP readback confirmed the existing project-scoped Foundry User role.
+  No new permission, role assignment, resource or write-policy change.
+
+## Knowledge Graph endpoint and edge interaction repair
+
+Modify the existing React/Cytoscape frontend, using the existing canonical Python
+deployment recipe and unchanged FEATURE target described below. No new Azure
+resources, infrastructure, role grants, network settings or source permissions.
+No agent runtime/image change or approved-write policy change.
+
+Scope:
+- Preserve separate signal nodes whenever any relationship other than the
+  one-to-one instrument binding references them; never redirect maintenance
+  relationships to a different Ontology entity type.
+- Stop appending inferred SQL overlay topology in native mode, matching live
+  mode's source-authoritative behavior. Keep telemetry and maintenance-health
+  observations; preserve operational entities returned by Ontology execution.
+- Suppress Cytoscape's black active/selected edge overlay, retaining semantic
+  colors/arrowheads and existing visual design.
+- Keep the selected context's governed ancestor chain readable to the facility.
+
+Source review read the published FEATURE Ontology's 18 entity types and 17
+relationship types. Equipment/instrument/signal WorkOrder keys and maintenance
+signal joins are distinct and correctly typed. No binding error was established;
+no Ontology relationship will be removed to hide a renderer discrepancy.
+
+Target: tenant `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, existing Sweden Central capacity and
+subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+
+Publication to this unchanged target was offered for confirmation; the user was
+unavailable. Continue with the existing FEATURE target and no resource or
+permission changes, consistent with the requested application repair.
+
+### Functional verification - endpoint and interaction repair
+
+- Status: Verified locally. The graph suite passes **114 tests**, scoped ESLint,
+  Node 24 `validate-env`, and production TypeScript/Vite build pass.
+- The authenticated live WO-2851 inspector confirmed equipment T008, instrument
+  `INST_T008_POWER_OUTPUT`, and signal `ns=2;s=T008.power_output`; its old signal
+  relationship displayed an instrument endpoint, reproducing the discrepancy.
+- An explicitly synthetic actual-component browser fixture verified zero
+  activated-edge overlay opacity/padding, preserved hierarchy/WO colors and
+  triangle arrows, visible ancestors through the facility, dimmed siblings,
+  and unchanged node positions during selection.
+- Backend/agents, permissions, source queries and Ontology bindings are unchanged.
+  No production write was performed. Canonical endpoint readiness and hosted
+  live-source acceptance remain deployment gates, not inferred from fixtures.
+- Azure CLI readback confirms the expected tenant and Enabled subscription.
+  Origin/main is already an ancestor; the working branch is synchronized.
+
+Previous receipts below describe earlier releases and are not deployment proof
+for this update.
+
+### Section 7: Validation Proof - endpoint and interaction repair
+
+Validation date: 2026-10-27. Recipe: existing repository Python/Azure CLI
+orchestrator, not a new ARM/Bicep/Terraform deployment.
+
+All validation checks pass:
+- [x] Core validation: authenticated expected tenant/Enabled subscription,
+  Node 24, `npm run validate-env`, **114 passing graph tests**, scoped ESLint,
+  and production TypeScript/Vite build. Existing mixed-import/chunk warnings
+  remain non-blocking. ARM template validation/what-if are not applicable:
+  no ARM resource or IaC changes are part of this frontend repair.
+- [x] Container build: not applicable; agent/container source and dependency
+  manifests are unchanged. Reuse the current source-fingerprinted image.
+- [x] Static role verification and policy delta: no identity, role assignment,
+  source permission, resource type/SKU, region, tag or network changes. Existing
+  delegated source authentication and human-approved write enforcement remain.
+- [x] Functional verification: actual physical-join regression in both modes,
+  actual Cytoscape computed styles, and synthetic browser checks recorded above.
+  The fixture file was deleted and its attached server stopped.
+
+Commands executed under Node 24: `npm run test:knowledge-graph`,
+`npm exec -- eslint` on the three changed graph modules and three changed test
+files, `npm run validate-env`, and `npm run build`; all passed.
+Azure MCP policy readback returned ten applicable assignments, including the
+resource-creation block and write/delete MFA policies. This app-only publication
+does not request new ARM resources or change protected infrastructure properties;
+this is not a subscription-wide compliance certification.
+
+### Hosted acceptance - endpoint and interaction repair
+
+- Canonical orchestrator exited 0 with `SUCCESS` and `DEPLOYED_APP_URL` at
+  `2026-10-27T09:01:08.737252Z`; total duration **684.906 seconds**.
+  URL: `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+- Authenticated hosted browser confirmed **v1.0.1141 / b7087f1**. The orchestrator's
+  protected sign-in-gate check was followed by actual signed-in source execution;
+  it was not treated as UI/data acceptance on its own.
+- All 42 Entra SPA redirects were preserved. AppBackend GraphQL/token paths and
+  all three connector paths passed browser-equivalent preflight/POST readiness.
+  The existing five specialists and coordinator image/configuration were reused.
+- The hosted graph reported **18/18 entity types and 17/17 relationship types**.
+  A forced authenticated graph refresh completed in **6,217 ms** (one observed
+  end-to-end browser sample, not a load-test/SLO certification).
+- WO-2851's actual three relationships retain equipment, instrument and signal
+  targets, respectively. `WorkOrder_for_signal` now targets
+  `signal:ns=2;s=T008.power_output`, not `instrument:INST_T008_POWER_OUTPUT`.
+  The inspector displays **Signal · power_output** with a signal type.
+- Live computed-style checks reproduced the old hierarchy-edge overlay at
+  opacity 0.25/padding 10 px, then verified the deployed hierarchy and WO edges
+  have zero overlay opacity/padding when active/selected. Semantic stroke/arrow
+  colors and triangle arrowheads are preserved.
+- Selecting WO-2851 and then T008 retained readable facility/system ancestry;
+  node positions were unchanged. The T008 scope contains 16 nodes and 19 edges.
+- A separate synthetic 2,000-node/4,000-edge visual-preparation measurement
+  (flow, routes and focus) took **37.86 ms** against the 250 ms budget.
+  This is not a native-query, full-render or live-source latency measurement.
+- Azure MCP live role readback confirmed the existing project-scoped Foundry
+  User assignment. No access or infrastructure was added; no operational record
+  was created, approved or deleted. Ontology bindings/relationships were unchanged.
+
+## Knowledge Graph in-workspace loading update
+
+Reuse the existing approved FEATURE target and canonical Python deployment
+recipe. This is a frontend-only change: remove the blocking loading/error page,
+render the existing graph workspace immediately, keep verified topology visible
+and timestamped during refresh, and retain fail-closed clearing on failed reads.
+The execution selector remains available under Advanced graph details, including
+loading and error states. No query-source, model, infrastructure, RBAC, network,
+redirect, source permission or approved-write policy changes are requested.
+
+Target: tenant `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`c7da7c28-0dee-4f45-bc9e-5628bb882732`, existing Sweden Central capacity and
+subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+The existing target was offered for confirmation; the user was unavailable.
+Continue with this unchanged target for the requested application update, with
+no new resources or broader permissions.
+
+### Functional verification
+
+- Status: Verified locally using an isolated, explicitly synthetic browser
+  fixture of the actual React/Cytoscape page; no cloud source tokens or data
+  were used by that fixture.
+- The normal workspace, toolbar and inspector render before graph completion;
+  the initial skeleton has no invented graph entities.
+- A successful verified fixture renders the real canvas. During refresh the
+  canvas remains mounted and the header identifies its last-verification time.
+- A rejected read clears graph data and shows an inline error; explicit retry
+  restores the verified canvas without replacing the workspace.
+- The temporary fixture and its attached server were removed/stopped.
+
+### Section 7: Validation Proof - Knowledge Graph loading UI
+
+Validation performed on 2026-10-27 against the current frontend-only change.
+
+All validation checks pass:
+- [x] Core validation: CLI tenant/subscription, Node 24 environment, tests,
+  scoped lint and production build. ARM validate/what-if are not applicable:
+  the canonical repository workflow updates an existing Fabric application;
+  no Bicep/Terraform or ARM resource changes are included.
+- [x] Container build: not applicable; packaged runtime source/dependencies
+  are unchanged and the canonical deployer reuses the source-fingerprinted image.
+- [x] Static role verification and Azure Policy delta: no identity, role,
+  resource, SKU, region, tag or network configuration changes. Existing source
+  authentication and approved-write enforcement are unchanged.
+
+- Existing tenant-scoped CLI profile confirms the expected tenant and Enabled
+  subscription, `ME-MngEnvMCAP218279-didharch-2`.
+- Node 24 `npm run validate-env`: passed.
+- `npm run test:knowledge-graph`: **111 passed, 0 failed**.
+- Scoped ESLint for the changed page and visual regression tests: passed.
+- TypeScript/Vite production build: passed; existing mixed-import/chunk warnings.
+- Runtime/container source is unchanged. Reuse the current image; no new
+  container, IaC deployment or role expansion is required.
+- Canonical publication completed at `2026-10-27T08:21:02.025155Z` in
+  **540.844 seconds**, with `SUCCESS` and `DEPLOYED_APP_URL`:
+  `https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+  The existing hosted-agent image/configuration was current and was not
+  republished. All 42 Entra SPA redirects were preserved.
+- AppBackend `/graphql`, `/api/auth/v1/token`, and all three connector paths
+  passed the orchestrator's browser-equivalent preflight/POST readiness checks.
+- Live RBAC readback confirms the existing project-scoped Foundry User grant
+  and inherited roles; no role or permission was added.
+- Authenticated hosted-browser inspection confirmed **v1.0.1139 / 91e8756**,
+  one graph workspace, zero blocking placeholder cards, the in-canvas loading
+  state, and Advanced graph details. The inspected tab was backgrounded:
+  no new live graph-query completion or source-latency claim is made from
+  that inspection. Refresh/error/retry behavior was tested separately in
+  the isolated synthetic component fixture described above.
+
+## FEATURE human-approved work-order policy restoration
+
+The user reported that the approved-creation action is disabled. Read-only live
+inspection confirmed active coordinator v24 has
+`production_writes_enabled=false` for the expected FEATURE workspace. The
+deployer intentionally preserves the existing policy unless the documented
+`HYDRO_PRODUCTION_WRITES_ENABLED` override is supplied; this was not a SQL error.
+
+Restore the capability to create a work order only after explicit human approval,
+using `HYDRO_PRODUCTION_WRITES_ENABLED=true` with the same canonical root
+deployment command. Do not edit runtime JSON, add permissions, change the SPA,
+submit the screenshot's decision, or automatically create any SQL record.
+The screenshot's displayed draft expiry is in the past: it must be replaced with
+fresh evidence and a new review, not replayed after the setting changes.
+
+All validation checks pass (required before deployment):
+- [x] Core CLI/auth/build: expected tenant/subscription, environment validation
+  and existing Node 24 production build.
+- [x] Write-policy behavior: supported explicit true override and subsequent
+  same-target policy preservation; existing approval/digest/expiry/source/
+  readback/no-replay tests.
+- [x] Container: reuse the already built unchanged source-fingerprinted image.
+  No new image or source-code change is required.
+- [x] Static roles and Azure Policy: no ARM/IaC, identity, network, delegated
+  permission or RBAC change; the application-level approved-write flag changes.
+- [x] Canonical publication and live readback: active coordinator flag true,
+  unchanged target and source image; preserved redirects and endpoint readiness.
+
+### Section 7: Work-order policy validation proof
+
+Validation performed 2026-10-27T07:09Z through 07:13Z:
+
+- `az account show` confirmed the expected tenant and Enabled subscription
+  `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+- Under Node 24, `npm run validate-env` and `npm run build` passed. Vite built
+  in 33.24 seconds; existing mixed-import/chunk warnings only.
+- Root `.venv` ran `python -m unittest
+  test_deploy_hosted_agent.ConfigurationTests
+  test_deploy_hosted_agent.ConvergenceTests test_source_auth`:
+  **48 tests passed in 34.596 seconds**. The targeted regression now exercises
+  both deliberate false-to-true and true-to-false policy transitions, plus
+  preservation of an enabled policy without an override. The delegated service
+  tests cover explicit signed approval, principal isolation, idempotency,
+  rejection, disabled writes, expiry and uncertain-write reconciliation.
+- Static role verification: no application permission, principal, role
+  assignment or source transport changes. The unchanged backend continues using
+  the signed-in user's delegated SQL authority, not a newly privileged identity.
+- Existing container image `src-ae2d589b20c8d8bd` was built by successful ACR
+  build `dtn` and is active in v24. No packaged runtime source or dependency changed;
+  no new image or ARM validate/what-if/Azure Policy resource delta is applicable.
+
+Canonical publication completed at `2026-10-27T07:25:26.149585Z`, in
+**667.016 seconds**, with `SUCCESS` and `DEPLOYED_APP_URL`:
+`https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+Independent Foundry API readback confirmed active **hydro-orchestrator:25**,
+`production_writes_enabled=true`, the expected FEATURE workspace and unchanged
+container digest
+`sha256:163da34bda6d6d359b9cf014872ff59387f5ccb4594dadad6f89c5538c265fa6`.
+All five specialists were reused; no source image rebuild was needed.
+
+The canonical deployment verified all AppBackend/three-connector preflights and
+POST readiness, the current generated endpoint and required delegated scopes,
+and preserved all 42 existing SPA redirects. Post-deployment read-only role
+verification in the same tenant-scoped CLI profile confirmed the existing
+project-scoped Foundry User grant and inherited grants; no access was added.
+The ambient CLI profile required renewed authentication, so role verification
+used the already-current deployment profile for the same tenant and caller.
+
+Hosting verification reached the protected sign-in gate, not an authenticated
+application session. **No production SQL creation, new browser approval, or
+authenticated source execution is claimed.** No screenshot decision was retried
+and no acceptance work order was submitted. Reload and request a fresh draft
+before approving; the expired/disabled card must not be replayed.
+
+## Agent authorization and source-routing repair validation
+
+Reuse the approved FEATURE tenant/workspace, SPA, Foundry project/model,
+connectors and canonical Python deployment recipe. No infrastructure, RBAC,
+network, delegated scope or production-write policy changes are requested.
+The repair adds explicit per-audience source authorization in shared chat/Battle,
+checks renewed leases, and prevents native-only quality/work contracts from
+capturing independent verification. Existing historical quality, complete
+evidence, provider-refusal and human-approval boundaries remain in place.
+
+Pre-existing overlapping edits are preserved in stash
+`16a45ffe12959ac4575e9e387b57d748a9b07e0f`, not included in this release.
+No weather, graph, ingestion, seed or schedule changes are part of this repair.
+
+All validation checks pass for this scoped change:
+- [x] Core CLI/auth/build validation: existing Azure CLI tenant/subscription
+  preflight, environment validation, TypeScript/Vite build and scoped lint.
+- [x] Behavioral validation: 149 focused application tests and the complete
+  185-test supervisor/live-source/source-auth suite pass under Node 24.
+- [x] Container packaging: four Docker COPY/ignore/runtime-closure/fingerprint
+  tests pass under Node 24. Local Docker is installed but its daemon is not
+  running; no local image-build pass is claimed. The canonical orchestrator owns the actual ACR image
+  build and hosted version readiness before publishing the Fabric app.
+- [x] Static roles: no new principal, delegated scope, role or role assignment.
+  Existing signed-principal source checks and human write approval are unchanged.
+- [x] Azure Policy/ARM what-if: not applicable; no ARM/IaC/resource/network/RBAC
+  changes. This is an existing application/hosted-code publication.
+
+### Section 7: Agent repair validation proof
+
+The 149-test focused Node suite covers authorization, token refresh, transport,
+canonical source planning and explicit native/direct verification. Commands:
+`node --import tsx --test scripts\operational-routing.test.ts scripts\local-fabric-sources.test.mjs scripts\copilot-tools.test.mjs scripts\hosted-source-access.test.ts scripts\entra-tokens.test.mjs scripts\hosted-transport.test.ts`,
+scoped ESLint, `npm run validate-env`, and `npm run build`.
+Production build completed in 29.36 seconds with existing chunk/mixed-import
+warnings only. Under Node 24.21.0,
+`python -m unittest test_foundry_supervisor test_live_sources test_source_auth`
+passes all 185 tests in 189.787 seconds; the four additional focused
+packaging/fingerprint checks pass. An earlier Node 26 packaging failure was
+resolved, not waived. Azure CLI verified the expected tenant and Enabled
+subscription `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+Deployment SUCCESS and authenticated runtime acceptance must be recorded
+separately after publication.
+
+### Agent repair publication and acceptance boundary
+
+The canonical root command
+`python Raw\workspace-reset\deploy_fabric_app.py --tenant ad340c84-1886-4202-a483-2da2cb9168eb --workspace c7da7c28-0dee-4f45-bc9e-5628bb882732 --push-config`
+completed at `2026-10-27T07:01:08.626526Z`, in 812.578 seconds, with `SUCCESS`
+and `DEPLOYED_APP_URL=https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net`.
+Source commit: `f760be8`. ACR build `dtn` succeeded; coordinator version 24 is
+active on `src-ae2d589b20c8d8bd`. All five specialists were unchanged/reused
+(current=5, updated=0, created=0). No NB11 execution or demo DML ran.
+
+The existing AppBackend and all three connectors applied successfully.
+Browser-equivalent preflights returned HTTP 200 on `/graphql`, token and
+connector paths; POST readiness returned GraphQL 200, token 400 and protected
+connector 401, not a source-data acceptance claim. All 42 Entra SPA redirects
+were preserved; delegated permissions and existing consent were verified.
+
+Local browser verification displayed the new control and a resource-specific
+missing-access error in 0.1 seconds with no invocation. Hosted navigation
+reached the protected Fabric sign-in gate. Its Sign in action reported
+`Please allow pop-ups and try again`; trusted browser clicking also failed
+visibility/stability automation. The user was unavailable to complete sign-in.
+No token extraction/substitution or gate bypass was attempted.
+
+Therefore current-build hosted connector/QA/RCA/draft execution and latency
+acceptance remain **blocked**, not passed. After normal browser sign-in, use
+**Connect agent access** for each missing audience, then submit a fresh read/
+review request. No work-order approval or production write was performed.
+
+## October 27 UKMet-first weather follow-up
+
+The user approved implementing the UKMet-first recommendation autonomously.
+Reuse the existing FEATURE tenant/workspace, Sweden Central capacity, SPA,
+connectors, Weather Environment and notebook/Lakehouse bindings. No new resource,
+role, permission, provider key or target is requested.
+
+- Prepare shared operating-area metadata using Weather_002 `prepare_only=true`,
+  before any vault lookup, ingestion audit or Aurora request.
+- Ingest UKMet, then publish its metrics and serving projections. Aurora is an
+  explicit `enable_aurora` pipeline opt-in, default false, after UKMet is served.
+  An explicitly enabled Aurora failure remains an error, but cannot prevent the
+  preceding UKMet serving refresh. No provider failure is silently swallowed.
+- Preserve the MAI key and historical vendor provenance. Update hosted setup and
+  progress text so Aurora is no longer presented as a prerequisite.
+- Update only the existing Weather_002 notebook and weather pipeline definitions,
+  preserving live bindings and backing up previous definitions. Do not run Core,
+  seed, reset, change schedules or reconfigure private networking.
+- Publish the frontend only through the canonical deployment orchestrator in
+  the existing recipe below; verify its SUCCESS/DEPLOYED_APP_URL and signed UI.
+
+Validation:
+- [x] 17 weather contract tests, including no-key preparation and UKMet-first
+  dependency/opt-in regressions; generated notebook AST parity.
+- [x] `validate-env`, production TypeScript/Vite build and scoped ESLint.
+- [x] Pylance Python syntax check.
+- [x] Independent actual UKMet run `785fcd48-77d5-414e-a2b7-30bed3b2969e`
+  completed at `2026-10-27T03:03:11Z`, without running Aurora.
+- [x] Two focused nested pipeline rebinding/inventory tests; mirror drift check.
+- [x] Actual UKMet-first pipeline run, serving rows and authenticated app.
+
+All validation checks pass for this scoped change:
+- [x] Core CLI/auth/build: existing tenant credentials, successful real UKMet
+  notebook execution, `validate-env`, focused tests, build and lint as above.
+- [x] Docker build: not applicable; no agent/container source change.
+- [x] Azure Policy/what-if: not applicable; no ARM/IaC/resource/network/RBAC change.
+- [x] Static roles: same existing workspace item read/update/execute operations;
+  no new principal or provider permission. Actual UKMet execution verifies the
+  existing notebook identity can read its vault secrets and contact the provider.
+
+The broader feature suite exposed an existing deployment-mock mismatch:
+`validate_appbackend_cors` now receives `energy_enabled`, but the unchanged test's
+lambda does not accept it; its expected connector call list is also outdated.
+Neither production deploy code nor that test is changed by this weather work.
+Record focused relevant results separately, without claiming the whole suite passes.
+
+### Section 7: UKMet-first validation proof
+
+- `python -m unittest discover -s Raw\workspace-reset -p test_weather_source_contracts.py`:
+  17 passed, including three newly reproduced/fixed regressions.
+- Focused `test_pipeline_rebinding_handles_nested_notebook_activities` and
+  `test_local_inventory_has_resolvable_pipeline_references`: two passed.
+- `python Raw\workspace-reset\sync_ontology_notebooks.py --check`: passed.
+- `npm run validate-env`, `npm run build`, and ESLint on the three changed
+  TypeScript/TSX files: passed under Node 24. Existing bundle-size/dynamic-import
+  warnings remain non-fatal.
+- Pylance found no syntax errors in the changed Weather_002 Python source.
+- Actual isolated UKMet job completed successfully from `02:58:28Z` to
+  `03:03:11Z`, without Aurora. Azure CLI confirms the same tenant and an Enabled
+  subscription; no Azure subscription resource mutation is part of this change.
+- Git whitespace validation passed. No identity, role, network or secret change.
+- A final coupled UI correction makes UKMet the default forecast vendor even when
+  retained historical Aurora rows are present. Explicit user selections and
+  unavailable/empty-source behavior are preserved. Five Node weather summary/
+  selection tests, `validate-env`, a fresh production build and scoped ESLint all
+  passed for this correction. The initial UKMet-first app publication succeeded.
+- Live pipeline preparation succeeded in 281.312 seconds and returned exactly
+  `{"status":"prepared","areas":3,"aurora":"disabled"}` before UKMet ingestion.
+
+### UKMet-first publication and live acceptance
+
+- The complete manual pipeline run `1b8dc1af-4d75-4885-960d-782b0dcb3a85`
+  completed successfully at `2026-10-27T03:27:57Z`. Preparation, UKMet ingestion,
+  serving calculations and the disabled optional branch all succeeded; neither
+  `Ingest_Aurora` nor its second metrics refresh executed.
+- Signed-browser reads showed actual future UKMet forecasts for all three stations
+  and all three representative 20 km areas. Each station had four forecast rows
+  in the selected next-24-hour window and 24 observation rows in the past 24 hours.
+  Areas reuse their representative station's observations; they are not areal
+  measurements. Solar radiation remains unavailable rather than fabricated.
+- Final canonical app publication completed at `2026-10-27T03:30:09Z` in
+  416.547 seconds, with `SUCCESS` and `DEPLOYED_APP_URL`.
+  Authenticated reload confirmed **1.0.1131 / 51b05d6**, UKMet selected by default,
+  actual forecast/observation rows and corrected Administration prerequisite text.
+- All five specialists and the existing coordinator image were reused. Forty-two
+  redirects were preserved; runtime/CORS and connector readiness checks passed.
+- No MAI secret deletion/replacement, identity/RBAC/network change, schedule change,
+  Core/seed execution or telemetry stream start was performed. Live notebook
+  Lakehouse/Environment bindings were preserved and read back.
+- Final scoped checks: 17 Python weather contracts, two nested rebinding/inventory
+  tests, five Node weather tests, production build and scoped lint passed.
+  The unrelated broad feature-test mock mismatch above remains documented.
+
+See [the weather acceptance receipt](../docs/weather-fabric-port-plan.md#october-27-ukmet-first-live-acceptance).
+
+## October 27 graph freshness and fault-pulse publication
+
+Source: `162a6cd`; same FEATURE tenant/workspace and existing canonical Python
+orchestrator recipe. No infrastructure, connector projection, identity, permission,
+model, agent source, source data or deployment target changes.
+
+All validation checks pass:
+- [x] Core CLI/auth/build validation: expected tenant and Enabled subscription;
+      `npm run validate-env`, 108 focused graph tests, production TypeScript/Vite
+      build and scoped ESLint passed on October 27.
+- [x] Docker build: not applicable to this frontend-only change; the canonical
+      deployer owns existing supervisor fingerprint verification and reuse.
+- [x] Azure Policy validation: no ARM/IaC, region, SKU, network, RBAC or tag change;
+      no resource what-if or policy mutation applies.
+- [x] Static role verification: no added data operation or principal; existing
+      signed-in read-only graph sources and telemetry enrichment are unchanged.
+
+### Section 7: Validation Proof
+
+At approximately `2026-10-27T01:57Z`, the required checks above had passed.
+Azure CLI read-only verification returned tenant
+`ad340c84-1886-4202-a483-2da2cb9168eb`, subscription Enabled, and the explicitly
+authorized `rg_fabric/fabcapswc` capacity **Active** in Sweden Central.
+The actual React/Cytoscape browser fixture verified freshness expiry without
+refetch, both temporal fault pulses, reduced-motion/offscreen guards, cleanup,
+separate directed parallel curves and unchanged camera on reading/selection changes.
+The actual source-backed All scope also retained 225 finite distinct positions.
+Detailed measurements are recorded in `docs/knowledge-graph.md`.
+
+Publication attempt: the canonical orchestrator verified the Active FEATURE capacity,
+then required Microsoft/Azure CLI sign-in renewal at existing-SPA discovery (step 2/8).
+The user was unavailable, so the owned waiting process was stopped before Rayfin
+publication. At that point this plan remained Validated, not newly Deployed.
+Hosted acceptance was pending; the signed-in page still reported `1.0.1121 / 1673261`.
+Autonomous retry confirmed Graph CAE `InteractionRequired /
+TokenCreatedWithOutdatedPolicies` on the actual read-only SPA lookup, despite
+a future cached-token expiry. Fresh interactive sign-in was required.
+
+That blocker was resolved by standard browser/device authentication using the
+same signed-in administrator, with no policy/permission change. Actual Graph
+access passed; canonical publication succeeded at `2026-10-27T02:20:43Z` in
+620.609 seconds, and signed-browser source-backed graph reads passed on
+`1.0.1127 / 6efd792`.
+
+The hosted All-scope check found a coupled fit/clipping defect. The follow-up
+wraps long labels, uses canvas-sized hierarchy bounds, permits full-graph overview
+zoom and scales fault halos at overview zoom. It changes no source identity,
+relationship endpoint, connector, agent, permission or infrastructure. Validation
+now includes 109 graph tests, production build and scoped lint; the 2,000-node /
+4,000-edge visual preparation fixture completed in 33.21 ms (250 ms budget).
+
+### Final publication and authenticated acceptance
+
+The canonical orchestrator printed `SUCCESS` / `DEPLOYED_APP_URL` at
+`2026-10-27T02:47:55Z`, after 719.344 seconds. The signed-in hosted app confirmed
+**1.0.1128 / 44325bc**. All five specialists and the coordinator image
+`src-5afb91f86a3d8ee5` were reused; 42 SPA redirects were preserved.
+Runtime/CORS, connector preflights and protected POST readiness checks passed.
+
+- Actual stale readings produced zero flowing edges in Selected and All scopes.
+- All scope retained 225 nodes / 238 directed edges with 225 distinct finite
+  positions and the unchanged directed identity hash recorded in
+  [the graph acceptance receipt](../docs/knowledge-graph.md#final-hosted-acceptance-101128--44325bc).
+- Full-map Fit kept the complete graph inside the canvas. Both real critical/red
+  and warning/amber halos varied across time and remained visible at overview zoom.
+  Reduced motion retained static halos; restoring motion resumed breathing.
+- Actual work-order instrument/signal links had separate curve geometry, unchanged
+  identities/endpoints and correct arrows. The stale inspector showed event age,
+  last-known quality and incoming/outgoing context.
+- Cold application-memory reload: 10.147 s (graph loader 5.33 s); explicit refresh:
+  5.067 s; warm return: 83 ms with the observation timestamp preserved.
+  These are single-session observations, not an SLA/load certification.
+- Final validation: 109 focused graph tests, production build and scoped lint passed.
+  No stream, seed, notebook or production business write was started.
+
+The graph publication is accepted. Earlier native Foundry policy and Weather
+credential blockers are separate and are not represented as resolved by this change.
 
 ## Knowledge Graph live-source publication
 
@@ -690,6 +1724,113 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Norwegian Energy Map maintenance (October 28, 2026, 04:44 UTC)
+
+The [scoped map validation](#scoped-norwegian-energy-map-maintenance-update)
+records the commands and results: nine frontend tests, 166 Python tests,
+environment validation, production build, TypeScript, targeted ESLint and Git
+whitespace validation passed. This is an application/notebook-only update on
+the approved existing target; infrastructure what-if, Docker build and new role
+assignments are not applicable. Canonical publication and hosted Map Chat
+acceptance passed as recorded in that section; notebook-only semantic changes
+were subsequently installed and verified without redeploying the app bundle.
+
+### Minimal capability execution (October 28, 2026)
+
+The [current scoped architecture proof](#current-scoped-architecture-hardening)
+records the unchanged target, decisions, applicability and remaining boundaries.
+Executed validation:
+
+- `python -m unittest test_foundry_supervisor test_semantic_planning
+  test_presentation test_source_auth test_durable_service -q`: 215 cases,
+  214 passed and one live opt-in skipped after native-contract and plan corrections.
+- With the opt-in environment and existing deployed model,
+  `python -m unittest test_semantic_planning.LiveSemanticArchitectureTests -v`:
+  all eleven semantic cases passed, with no business reads/writes or HTTP
+  resource warnings after explicit client-lifecycle correction.
+- `python -m unittest test_deploy_hosted_agent test_provision_foundry_agents -q`:
+  86 packaging/provisioning regressions passed.
+- Node 24 `--import tsx --test` for `agent-trace.test.ts` and
+  `weather-agent.test.ts`: all 12 passed.
+- `npm run validate-env`, `npm run build`, TypeScript `--noEmit`,
+  targeted `eslint` for `AgentCrewTrace.tsx`, and `git diff --check` passed.
+  Vite retains existing large-chunk warnings; Pylance retains exactly the
+  four remaining pre-existing backend errors and introduces no new ones.
+
+Initial authenticated publication: app 1.0.1173 / `f1784e6`, hosted coordinator
+v42, toolbox `hydro-fabric-iq-tools:2`, image `src-6dc7a516a6ddd2f2`. Canonical
+deployment returned `SUCCESS`; endpoint/CORS checks and all 42 preserved SPA
+redirects passed. Capacity readback remained Active F8.
+
+- Facility facts `a0ec0221-8dc5-43ee-92bf-da1175c960a8`: three records, QA reader
+  only, no specialist model or interpretation; 8.3 seconds in the app.
+- Native open-work counts `62c64792-8c61-4560-a359-3ed4ca1d2476`: Sloy 3,
+  Foyers 3, Pitlochry 4; native-only manifest, exact original source/presentation
+  text and recomputed SHA-256 match; 53.5 seconds.
+- Weather `b1da5e94-f369-4732-a111-2618ebf66685`: three station and 12 forecast
+  records, Weather readers plus interpretation, no prompt-agent loop; 20 seconds.
+  The answer explicitly disclosed absent Aurora data and the issue-time window.
+- RCA `527545ca-88a1-4e46-9d70-7f3ed2526a40`: native context then scoped RCA,
+  four checked competing hypotheses, missing fresh/independent evidence and
+  `maintenance_follow_up=not_supported`; no proposals or production writes.
+- Diagnostic attempt `fee62150-2bc3-4f99-a191-2fd9084f6dfd` failed before Work
+  Order at the legacy bundle gate. A new exact-prompt regression reproduced it.
+  Four focused native regressions and the full 211-case suite pass after
+  isolating that legacy schema from semantic native execution. Provider-error,
+  source/equipment identity and separate draft/approval validators remain.
+
+The subsequent v43 publication (app 1.0.1174 / `7c5ed6e`, image
+`src-d408ab690422534e`) also passed canonical deployment checks. Its diagnostic
+run `340c2431-8f75-4fce-90c3-a3b70c6c97ad` was rejected at typed plan validation
+before dispatch, exposing the need for one bounded model correction. New
+regressions verify cross-field correction, repeat catalog rejection, recovery
+without reissuing a committed invalid attempt and absent-model failure.
+The latest eleven-case live evaluation includes that exact diagnostic prompt;
+all cases passed in one planning call each, approximately 5.7-15.5 seconds.
+This tests model planning; the final authenticated end-to-end rerun is below.
+
+Final authenticated publication (October 28, 2026): app 1.0.1175 / `87565ee`,
+hosted coordinator v44, image `src-f8b6af0b5714a490`, at
+https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net.
+The canonical deployment finished at 04:05:30 UTC with `SUCCESS` and
+`DEPLOYED_APP_URL`, after endpoint, browser-equivalent CORS/preflight and POST
+readiness checks. All 42 required SPA redirects were preserved. Capacity
+readback remained Active F8; no infrastructure, role or source-topology changes
+were made.
+
+- Exact freshness/diagnostic request
+  `518c8a8f-d6a4-4223-9aef-db45f93ec2ae`: 130 verified records and exactly five
+  editable review-only drafts for T004, T005, T007, T009 and T014; 2m 13s in
+  the app. Each fresh existing-open-work count was zero. Five enabled title
+  inputs, description textareas and priority selectors were verified without
+  clicking save or approve. The manifest contains only native Fabric IQ
+  (`hydro-fabric-iq-tools:2`) and Work Order
+  (`hydro-work-order-agent:3`), not QA or RCA. Planning used one model round.
+  This request asked to review the telemetry: the actual plan selected
+  `analysis_requested=true` and an interpretation was present; this is not
+  evidence of an interpretation-free draft workflow. The original native
+  answer remained separate and exactly matched provider output. Its recomputed
+  SHA-256 was
+  `00b189e09a65842eca0128081c8daa07a000c2c31b99398b482e11d1d4aec359`.
+- Fresh facility question `2cbf133d-e8ee-4efc-809d-ca42aa2a164d`: three verified
+  facilities, QA reader only, one planning round, no specialist model,
+  interpretation or additional proposals; 8.5 seconds in the app.
+- Native-only open-work count `82b32adc-380e-42dd-b27d-de6f7473ae32`: Sloy 3,
+  Foyers 3 and Pitlochry 4; 51.1 seconds in the app. The manifest contains only
+  the native Fabric Responses provider, with one planning round,
+  `analysis_requested=false`, no interpretation and no proposals. Provider
+  output, retained native answer and displayed presentation matched exactly;
+  recomputed SHA-256 was
+  `c10484a5e5902fb0ba50b12e79dab9d69bd0fe0b4bdc543df81486cb2913e0f0`.
+
+All three final runs reported `production_write_executed=false`. Normal app
+authentication renewed expired credentials implicitly; no extra permission
+grant or manual token manipulation was needed. Temporary browser fetch
+instrumentation was removed and the original fetch restored. The existing
+draft cards were left intact. These are scoped functional checks, not sustained
+load, distributed failover, centralized telemetry-ingestion or production SLO
+certification. The four documented pre-existing Python type diagnostics remain.
 
 ### Current deployment-tool optimization (October 24, 2026)
 

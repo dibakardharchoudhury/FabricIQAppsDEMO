@@ -13,19 +13,24 @@ branches. Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10
 after verifying the retained ontology agent and the retired folder/source identity, then clears
 its obsolete settings. Preserve the shared Eventhouse and SQL/KQL grounding.
 Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
-binding. Data Agent sources require matching verified v2 identity. NB09 reports the exact temporary
-Fabric response `This API version is not supported for the specified Ontology item` as a known
-product limitation after verified v2 publication; every other deployment, publication, runtime, and
-readback failure propagates. NB11 preserves compatible added SQL/custom content. The bounded smoke
-does not attest execution provenance or certify SQL/combined-source answers. Configuration or
-hosted-page success does not certify agent execution or delivery. The app's native graph
-requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
-→ Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON generated from
-authoritative Ontology-to-GraphIndex item lineage or supplied as an operator-verified fallback.
-No ownership is inferred from names, sole-graph discovery, or structure. Native topology is authoritative; KQL/SQL only enrich
-actual native entities. GraphQL/STID is not a canvas/tree/scope dependency or topology fallback.
-No published ontology-owned materialization REST endpoint is established; keep this portal
-prerequisite separate from automated deployment and agent runtime readiness.
+binding. Data Agent sources require matching verified v2 identity. NB09 verifies publication and
+readback without an automatic MCP query or answer-format gate; setup records deployment/publication
+`published` and runtime `not_checked`. Do not add duplicate source attachments to satisfy a smoke
+response. Actual deployment/publication/readback failures propagate. NB11 preserves compatible
+added SQL/custom content and directly mounts the operational SQL Database as a temporary workaround
+for omitted ontology-inherited SQL execution. Reuse matching profiles; retain operator instructions
+and ontology bindings. Bind the SQL Database item, not its analytics endpoint ID. App-only
+deployment/Foundry checks must not require or mutate this source profile. Publication
+does not certify SQL/combined-source answers. Configuration or
+hosted-page success does not certify agent execution or delivery. The app's single Knowledge Graph
+reads actual instances through the verified v2 ontology's authenticated physical source bindings
+and evaluates only declared relationships and keys. Preserve entity icons, Eventhouse readings,
+freshness and red/amber health pulses. Its canvas/tree/scopes do not require materialization,
+a GraphModel or a graph binding. Never fabricate topology from STID rows, names or undeclared
+foreign keys. Disclose unsupported projections and fail closed on invalid, incomplete or failed
+source reads. Optional native GQL utilities still require verified ontology ownership; never infer
+it from names, sole-graph discovery or structure. Keep native portal prerequisites separate from
+source-backed visualization, automated deployment and agent runtime readiness.
 
 ## Deploying HydroOperationsApp (Rayfin) — don't reinvent the wheel
 This repo already automates deployment. Before doing ANY deploy / new-tenant / redeploy work:

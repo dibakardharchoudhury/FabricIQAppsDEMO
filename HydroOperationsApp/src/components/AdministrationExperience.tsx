@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 export type AdministrationStep = {
   n: number
   title: string
@@ -6,6 +8,8 @@ export type AdministrationStep = {
   busy: boolean
   action: string
   run: () => void
+  repeatable?: boolean
+  details?: ReactNode
 }
 
 type AdministrationExperienceProps = {
@@ -23,7 +27,8 @@ export function AdministrationExperience({ steps }: AdministrationExperienceProp
     <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
       <span className="step-num" aria-label={`Step ${step.n}`}>{step.n}</span>
       <div className="step-body"><strong>{step.title}</strong><small>{step.why}</small></div>
-      <button className="step-action" onClick={step.run} disabled={step.busy || step.done}>{step.done ? 'Done' : step.busy ? 'Working…' : step.action}</button>
+      <button className="step-action" onClick={step.run} disabled={step.busy || (step.done && !step.repeatable)}>{step.done && !step.repeatable ? 'Done' : step.busy ? 'Working…' : step.action}</button>
+      {step.details}
     </li>)}</ol>
   </section>
 }

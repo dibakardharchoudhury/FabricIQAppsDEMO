@@ -3,16 +3,24 @@ import { useEffect, useEffectEvent, useRef } from 'react'
 import type { KnowledgeEdge, KnowledgeNode } from '../../knowledgeGraphModel'
 import {
   KNOWLEDGE_EDGE_COLOR,
+  KNOWLEDGE_EDGE_INTERACTION_STYLE,
   KNOWLEDGE_NODE_SIZE,
   KNOWLEDGE_STATUS_COLOR,
   KNOWLEDGE_TYPE_COLOR,
+  knowledgeEdgeRoutes,
+  knowledgeFaultPulse,
+  knowledgeHaloPadding,
+  knowledgeFocusElementIds,
+  knowledgeNodeDisplayLabel,
+  layoutOntologyModel,
   telemetryFlowEdgeIds,
 } from '../../knowledgeGraphVisuals'
 import type { AppTheme } from '../../hooks/useTheme'
+import { ontologyNodePresentation } from './ontologyModelPresentation'
 
 export type GraphLayout = 'breadthfirst' | 'cose' | 'concentric'
 
-const iconPath: Record<KnowledgeNode['type'], string> = {
+const iconPath = {
   facility: '<path d="M4 20V7l8-4 8 4v13M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/>',
   system: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.3 10.8 7.4-3.6M8.3 13.2l7.4 3.6"/>',
   equipment: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="4"/>',
@@ -23,35 +31,53 @@ const iconPath: Record<KnowledgeNode['type'], string> = {
   'work-order': '<path d="M14.7 6.3a4 4 0 0 0-5 5L4 17v3h3l5.7-5.7a4 4 0 0 0 5-5l-2.4 2.4-3-3 2.4-2.4Z"/>',
   inspection: '<path d="M9 5H6a2 2 0 0 0-2 2v12h16V7a2 2 0 0 0-2-2h-3M9 3h6v4H9zM8 13l2.5 2.5L16 10"/>',
   notification: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+  weather: '<path d="M7 16a4 4 0 1 1 1-7 5 5 0 0 1 9 2 3 3 0 1 1 1 6H7M8 20h.01M12 20h.01M16 20h.01"/>',
+  document: '<path d="M14 3H5v18h14V8l-5-5v5h5M8 12h8M8 16h6"/>',
+  organization: '<circle cx="9" cy="7" r="3"/><path d="M3 21v-4a6 6 0 0 1 12 0v4M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5v2"/>',
+  'equipment-type': '<path d="M3 3h7l11 11-7 7L3 10V3Z"/><circle cx="7" cy="7" r="1"/>',
+  part: '<path d="m12 3 9 5-9 5-9-5 9-5ZM3 8v9l9 5 9-5V8M12 13v9M7 5.8l9 5"/>',
 }
 
 const nodeIcons = Object.fromEntries(Object.entries(iconPath).map(([type, path]) => [type,
   `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`)}`,
-])) as Record<KnowledgeNode['type'], string>
+])) as Record<keyof typeof iconPath, string>
+const modelNodeIcons = Object.fromEntries(Object.entries(iconPath).map(([type, path]) => [type,
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#172033" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`)}`,
+])) as Record<keyof typeof iconPath, string>
 
-function applyGraphFocus(graph: Core, selectedId?: string, animate = false) {
+function applyGraphFocus(graph: Core, nodes: KnowledgeNode[], edges: KnowledgeEdge[], selectedId?: string, modelView = false) {
   graph.elements().removeClass('focus-dimmed focus-neighbor focus-selected')
   graph.$(':selected').unselect()
   if (!selectedId) return
   const selected = graph.getElementById(selectedId)
   if (selected.empty()) return
   selected.select()
-  graph.elements().addClass('focus-dimmed')
-  selected.closedNeighborhood().removeClass('focus-dimmed').addClass('focus-neighbor')
-  selected.removeClass('focus-neighbor').addClass('focus-selected')
-  if (animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    graph.animate({ center: { eles: selected } }, { duration: 360 })
+  if (modelView) {
+    graph.elements().addClass('focus-dimmed')
+    selected.closedNeighborhood().removeClass('focus-dimmed').addClass('focus-neighbor')
+    selected.removeClass('focus-neighbor')
+    selected.addClass('focus-selected')
+    return
   }
+  graph.elements().addClass('focus-dimmed')
+  const context = knowledgeFocusElementIds(nodes, edges, selectedId)
+  graph.elements().filter(element => context.has(element.id())).removeClass('focus-dimmed').addClass('focus-neighbor')
+  selected.removeClass('focus-neighbor').addClass('focus-selected')
 }
 
-function layoutOptions(layout: GraphLayout): LayoutOptions {
+function layoutOptions(layout: GraphLayout, graph: Core): LayoutOptions {
   const animate = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  if (layout === 'breadthfirst') return { name: 'breadthfirst', directed: true, spacingFactor: 1.55, padding: 64, animate, animationDuration: 420 }
+  if (layout === 'breadthfirst') {
+    const roots = ['facility', 'system', 'equipment', 'instrument', 'signal']
+      .map(type => graph.nodes().filter(node => node.data('type') === type).map(node => node.id()))
+      .find(ids => ids.length)
+    return { name: 'breadthfirst', directed: false, roots, boundingBox: { x1: 0, y1: 0, w: graph.width(), h: graph.height() }, nodeDimensionsIncludeLabels: true, spacingFactor: 1.55, padding: 64, animate, animationDuration: 420 }
+  }
   if (layout === 'concentric') return { name: 'concentric', minNodeSpacing: 66, spacingFactor: 1.35, padding: 64, animate, animationDuration: 420 }
   return { name: 'cose', idealEdgeLength: 145, nodeRepulsion: () => 7800, padding: 64, animate, animationDuration: 620 }
 }
 
-export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, onSelect, controllerRef }: {
+export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, onSelect, controllerRef, modelView = false, showRelationshipLabels = true }: {
   nodes: KnowledgeNode[]
   edges: KnowledgeEdge[]
   selectedId?: string
@@ -59,6 +85,8 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
   theme: AppTheme
   onSelect: (nodeId: string) => void
   controllerRef: React.MutableRefObject<Core | null>
+  modelView?: boolean
+  showRelationshipLabels?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const positionCacheRef = useRef(new Map<string, { x: number; y: number }>())
@@ -74,7 +102,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
     const graph = cytoscape({
       container: containerRef.current,
       elements: [],
-      minZoom: 0.25,
+      minZoom: 0.001,
       maxZoom: 2.5,
       style: [
         {
@@ -83,13 +111,14 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             shape: 'ellipse', width: 'data(size)', height: 'data(size)', 'background-color': 'data(color)',
             'background-blacken': -0.04, 'background-image': 'data(icon)', 'background-fit': 'none',
             'background-width': '44%', 'background-height': '44%',
-            'border-color': 'data(ring)', 'border-width': 3, label: 'data(label)', color: color('--cp-text'),
-            'font-family': 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': 10.5, 'font-weight': 600, 'min-zoomed-font-size': 7,
-            'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': '118px',
+            'border-color': 'data(ring)', 'border-width': 3, label: 'data(displayLabel)', color: color('--cp-text'),
+            'font-family': 'Segoe UI, Aptos, Calibri, sans-serif', 'font-size': modelView ? 20 : 10.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 7,
+            'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': modelView ? '210px' : '118px',
+            'text-overflow-wrap': 'anywhere',
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '4px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
-            'underlay-color': 'data(ring)', 'underlay-opacity': 0.14, 'underlay-padding': 9,
-            'transition-property': 'opacity, border-width, underlay-opacity, underlay-padding',
+            'underlay-color': 'data(ring)', 'underlay-opacity': 0.14, 'underlay-padding': 9, 'underlay-shape': 'ellipse',
+            'transition-property': 'opacity, border-width',
             'transition-duration': 220,
           },
         },
@@ -97,20 +126,26 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         { selector: 'node:active', style: { 'overlay-color': 'data(ring)', 'overlay-opacity': 0.12, 'overlay-padding': 8 } },
         { selector: 'node.focus-neighbor', style: { 'underlay-opacity': 0.18, 'underlay-padding': 10 } },
         { selector: '.focus-dimmed', style: { opacity: 0.16, 'text-opacity': 0.12 } },
+        { selector: 'node[status = "crit"], node[status = "warn"]', style: { 'underlay-opacity': 0.26, 'underlay-padding': 'data(haloPadding)' } },
+        { selector: 'node[status = "crit"].focus-dimmed, node[status = "warn"].focus-dimmed', style: { opacity: 0.72, 'text-opacity': 0.45 } },
         {
           selector: 'edge',
           style: {
-            width: 1.9, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier', 'control-point-step-size': 44, label: 'data(label)', color: color('--cp-text-muted'),
-            'font-size': 7.5, 'font-weight': 600, 'min-zoomed-font-size': 6, opacity: 0.58, 'text-opacity': 0.15,
+            width: modelView ? 2.4 : 1.9, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
+            'curve-style': 'unbundled-bezier', 'control-point-distances': 'data(curveDistance)', 'control-point-weights': 0.5,
+            label: 'data(label)', color: color('--cp-text-muted'), 'text-margin-y': edge => Number(edge.data('labelOffset')),
+            'font-size': modelView ? 16 : 7.5, 'font-weight': 600, 'min-zoomed-font-size': modelView ? 0 : 6,
+            opacity: modelView ? .85 : .58, 'text-opacity': modelView ? 1 : .15,
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '3px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
-            'text-rotation': 'autorotate', 'arrow-scale': 0.9,
+            'text-rotation': modelView ? 'none' : 'autorotate', 'arrow-scale': modelView ? 1.3 : .9,
+            'text-wrap': modelView ? 'wrap' : 'none', 'text-max-width': '150px',
             'transition-property': 'opacity, width, text-opacity', 'transition-duration': 220,
           },
         },
+        ...(modelView ? [{ selector: '.focus-dimmed', style: { opacity: .72, 'text-opacity': 1 } }] : []),
         { selector: 'edge.focus-neighbor, edge:selected', style: { width: 2.8, opacity: 0.94, 'text-opacity': 1, 'z-index': 10 } },
-        { selector: 'edge[type = "has-signal"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [7, 5] } },
+        { selector: 'edge:active, edge:selected', style: KNOWLEDGE_EDGE_INTERACTION_STYLE },
         {
           selector: 'edge[flow = 1]',
           style: {
@@ -118,6 +153,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             'line-style': 'dashed', 'line-dash-pattern': [10, 12], 'arrow-scale': 1.05, 'z-index': 8,
           },
         },
+        { selector: 'edge.model-labels-hidden', style: { 'text-opacity': 0 } },
       ],
     })
     graph.on('tap', 'node', event => handleNodeSelect(event.target.id()))
@@ -128,29 +164,43 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
       initializedRef.current = false
       graph.destroy()
     }
-  }, [controllerRef, theme])
+  }, [controllerRef, modelView, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
-    const flowingEdges = telemetryFlowEdgeIds(nodes, edges)
+    const flowingEdges = modelView ? new Set<string>() : telemetryFlowEdgeIds(nodes, edges)
     const nodesById = new Map(nodes.map(node => [node.id, node]))
+    const css = getComputedStyle(document.documentElement)
+    const statusColors = {
+      ...KNOWLEDGE_STATUS_COLOR,
+      crit: css.getPropertyValue('--cp-danger').trim(),
+      warn: css.getPropertyValue('--cp-warning').trim(),
+    }
+    const routes = knowledgeEdgeRoutes(edges)
+    const presentationColor = (node: KnowledgeNode) => ontologyNodePresentation(node).category === 'weather'
+      ? css.getPropertyValue('--cp-link').trim() : ontologyNodePresentation(node).color
     const elements: ElementDefinition[] = [
       ...nodes.map(node => ({
         data: {
           ...node,
-          color: KNOWLEDGE_TYPE_COLOR[node.type],
-          size: KNOWLEDGE_NODE_SIZE[node.type],
-          ring: KNOWLEDGE_STATUS_COLOR[node.status],
-          icon: nodeIcons[node.type],
+          displayLabel: modelView ? node.label : knowledgeNodeDisplayLabel(node),
+          presentationCategory: ontologyNodePresentation(node).category,
+          color: modelView || node.type === 'ontology' || node.type === 'weather' ? presentationColor(node) : KNOWLEDGE_TYPE_COLOR[node.type],
+          size: modelView ? ontologyNodePresentation(node).size : KNOWLEDGE_NODE_SIZE[node.type],
+          ring: modelView ? presentationColor(node) : statusColors[node.status],
+          icon: modelView ? modelNodeIcons[ontologyNodePresentation(node).category] : nodeIcons[ontologyNodePresentation(node).category],
+          haloPadding: knowledgeHaloPadding(13, graph.zoom()),
         },
       })),
       ...edges.map(item => ({
         data: {
           ...item,
-          color: KNOWLEDGE_EDGE_COLOR[item.type],
+          color: modelView ? ontologyNodePresentation(nodesById.get(item.source)!).color : KNOWLEDGE_EDGE_COLOR[item.type],
           flow: flowingEdges.has(item.id) ? 1 : 0,
-          flowColor: KNOWLEDGE_STATUS_COLOR[nodesById.get(item.source)?.status ?? 'nodata'],
+          flowColor: statusColors[nodesById.get(item.source)?.status ?? 'nodata'],
+          curveDistance: routes.get(item.id)?.distance ?? 0,
+          labelOffset: routes.get(item.id)?.labelOffset ?? -4,
         },
       })),
     ]
@@ -159,56 +209,108 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
     let needsLayout = false
     graph.batch(() => {
       graph.nodes().forEach(node => { positionCacheRef.current.set(node.id(), node.position()) })
-      graph.elements().filter(element => !nextIds.has(element.id())).remove()
+      const removed = graph.elements().filter(element => !nextIds.has(element.id()))
+      needsLayout = removed.nonempty()
+      removed.remove()
       for (const element of elements) {
         const id = String(element.data.id)
         const current = graph.getElementById(id)
         if (current.nonempty()) {
+          if (current.isEdge() && (current.data('source') !== element.data.source || current.data('target') !== element.data.target)) {
+            current.move({ source: String(element.data.source), target: String(element.data.target) })
+            needsLayout = true
+          }
           current.data(element.data)
           continue
         }
         const added = graph.add(element)
+        needsLayout = true
         const position = positionCacheRef.current.get(id)
         if (position && added.isNode()) added.position(position)
-        else if (added.isNode()) needsLayout = true
       }
     })
-    applyGraphFocus(graph, selectedId)
+    applyGraphFocus(graph, nodes, edges, selectedId, modelView)
     if ((!wasInitialized || needsLayout) && graph.nodes().nonempty()) {
       initializedRef.current = true
       previousLayoutRef.current = layout
-      graph.layout(layoutOptions(layout)).run()
+      if (modelView) layoutOntologyModel(graph, layout)
+      else graph.layout(layoutOptions(layout, graph)).run()
     }
-  }, [controllerRef, edges, layout, nodes, selectedId, theme])
+  }, [controllerRef, edges, layout, modelView, nodes, selectedId, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph || !initializedRef.current || previousLayoutRef.current === layout) return
     previousLayoutRef.current = layout
-    graph.layout(layoutOptions(layout)).run()
-  }, [controllerRef, layout, theme])
+    if (modelView) layoutOntologyModel(graph, layout)
+    else graph.layout(layoutOptions(layout, graph)).run()
+  }, [controllerRef, layout, modelView, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
-    applyGraphFocus(graph, selectedId, true)
-  }, [controllerRef, selectedId, theme])
+    applyGraphFocus(graph, nodes, edges, selectedId, modelView)
+  }, [controllerRef, edges, modelView, nodes, selectedId, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
-    if (!graph || !containerRef.current || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const animated = graph.edges().length > 150
-      ? graph.$('node.focus-selected').closedNeighborhood().edges('[flow = 1]')
-      : graph.edges('[flow = 1]')
-    if (animated.empty()) return
+    if (!graph || !modelView) return
+    graph.edges().toggleClass('model-labels-hidden', !showRelationshipLabels)
+  }, [controllerRef, edges, modelView, showRelationshipLabels, theme])
+
+  useEffect(() => {
+    const graph = controllerRef.current
+    if (!graph || !modelView || !containerRef.current || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      graph.resize()
+      if (graph.nodes().nonempty()) graph.fit(undefined, 72)
+    })
+    observer.observe(containerRef.current)
+    return () => observer.disconnect()
+  }, [controllerRef, modelView, theme])
+
+  useEffect(() => {
+    const graph = controllerRef.current
+    if (!graph || !containerRef.current || modelView) return
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const critical = graph.nodes('[status = "crit"]')
+    const warning = graph.nodes('[status = "warn"]')
+    let animated = graph.edges('[flow = 1]')
     let frame: number | undefined
     let visible = true
     let previous = 0
     let offset = 0
+    const resetPulse = () => critical.union(warning).removeStyle('underlay-opacity underlay-padding')
+    const refreshFlow = () => {
+      if (!visible || document.hidden) return
+      const flowing = telemetryFlowEdgeIds(nodes, edges)
+      graph.batch(() => graph.edges().forEach(edge => {
+        const flow = flowing.has(edge.id()) ? 1 : 0
+        if (edge.data('flow') === flow) return
+        edge.data('flow', flow)
+        if (!flow) edge.removeStyle('line-dash-offset')
+      }))
+      animated = graph.edges().length > 150
+        ? graph.$('node.focus-selected').closedNeighborhood().edges('[flow = 1]')
+        : graph.edges('[flow = 1]')
+    }
+    const canAnimate = () => visible && !document.hidden && !motion.matches
+      && (animated.nonempty() || critical.nonempty() || warning.nonempty())
     const animate = (time: number) => {
+      frame = undefined
+      if (!canAnimate()) {
+        resetPulse()
+        return
+      }
       if (previous && time - previous >= 32) {
         offset = (offset + Math.min(time - previous, 100) * 0.016) % 22
-        animated.style('line-dash-offset', -offset)
+        graph.batch(() => {
+          animated.style('line-dash-offset', -offset)
+          for (const [collection, status] of [[critical, 'crit'], [warning, 'warn']] as const) {
+            const pulse = knowledgeFaultPulse(status, time, graph.zoom())
+            collection.style({ 'underlay-opacity': pulse.opacity, 'underlay-padding': pulse.padding })
+          }
+        })
         previous = time
       } else if (!previous) previous = time
       frame = window.requestAnimationFrame(animate)
@@ -217,21 +319,39 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
       if (frame !== undefined) window.cancelAnimationFrame(frame)
       frame = undefined
       previous = 0
-      if (visible && !document.hidden) frame = window.requestAnimationFrame(animate)
+      resetPulse()
+      refreshFlow()
+      if (canAnimate()) frame = window.requestAnimationFrame(animate)
     }
     const observer = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver(entries => {
       visible = entries[0]?.isIntersecting ?? true
       updateVisibility()
     })
     observer?.observe(containerRef.current)
+    const updateZoom = () => critical.union(warning).data('haloPadding', knowledgeHaloPadding(13, graph.zoom()))
+    graph.on('zoom', updateZoom)
+    updateZoom()
     document.addEventListener('visibilitychange', updateVisibility)
+    motion.addEventListener('change', updateVisibility)
+    const clock = window.setInterval(() => {
+      refreshFlow()
+      if (!canAnimate()) resetPulse()
+      if (frame === undefined && canAnimate()) frame = window.requestAnimationFrame(animate)
+    }, 1000)
     updateVisibility()
     return () => {
       observer?.disconnect()
+      graph.off('zoom', updateZoom)
       document.removeEventListener('visibilitychange', updateVisibility)
+      motion.removeEventListener('change', updateVisibility)
+      window.clearInterval(clock)
       if (frame !== undefined) window.cancelAnimationFrame(frame)
+      if (!graph.destroyed()) {
+        resetPulse()
+        graph.edges().removeStyle('line-dash-offset')
+      }
     }
-  }, [controllerRef, edges, nodes, selectedId, theme])
+  }, [controllerRef, edges, modelView, nodes, selectedId, theme])
 
-  return <div ref={containerRef} className="kg-canvas" role="application" aria-label="Interactive operational knowledge graph" />
+  return <div ref={containerRef} className="kg-canvas" role="application" aria-label={modelView ? 'Interactive Ontology entity types and declared relationships' : 'Interactive operational knowledge graph'} />
 }

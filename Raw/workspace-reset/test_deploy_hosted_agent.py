@@ -52,18 +52,19 @@ CONNECTIONS = [{"name": "reg-conn", "properties": {"category": "ContainerRegistr
                {"name": "other", "properties": {"category": "AppInsights", "target": "/x"}}]
 
 
-def configuration(writes=False):
+def configuration(writes=False, *, data_agent_connection=""):
     digest = provision.source_configuration_digest(GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], VALUES)
     return hosted.compose_runtime_configuration(
         tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"], spa_client_id=GUIDS["spa"],
         kusto_origin=KUSTO + "/", project_endpoint=ENDPOINT + "/", values=VALUES, source_digest=digest,
-        production_writes=writes,
+        production_writes=writes, data_agent_connection=data_agent_connection,
     ), digest
 
 
-def environment(writes=False, state="/home/session/hydro"):
+def environment(writes=True, state="/home/session/hydro"):
     (orchestrator, fabric), _ = configuration(writes)
     return {
+        "PYTHONNOUSERSITE": "1",
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": "model-x", "HYDRO_RUNTIME_STATE_DIR": state,
         "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator, separators=(",", ":")),
         "HYDRO_FABRIC_SOURCE_CONFIG": json.dumps(fabric, separators=(",", ":")),
@@ -74,6 +75,22 @@ def agent(digest=DIGEST_A, env=None, status="active", kind="hosted", version=7):
     return {"versions": {"latest": {"status": status, "version": version, "definition": {
         "kind": kind, "container_configuration": {"image": f"myreg.azurecr.io/hydro-orchestrator@{digest}"},
         "environment_variables": environment() if env is None else env}}}}
+
+
+class NativeBindingTests(unittest.TestCase):
+    def test_project_scoped_connection_is_used_and_verified_without_source_drift(self):
+        connection = "hydro-fabric-iq-" + "c" * 32
+        (orchestrator, _), digest = configuration(data_agent_connection=connection)
+        self.assertEqual(orchestrator["native_binding"]["connections"], {"data-agent": connection})
+        live = agent(env={"HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator)})
+        provision.verify_hosted_source(
+            live, GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], digest,
+            data_agent_connection=connection,
+        )
+        with self.assertRaisesRegex(RuntimeError, "native binding"):
+            provision.verify_hosted_source(
+                live, GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], digest,
+            )
 
 
 class FakeDeploy:
@@ -168,6 +185,18 @@ def run(fake, live, **overrides):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_prepared_image_is_built_once_and_publication_still_reads_its_digest(self):
+        fake = FakeDeploy()
+        tag, digest = hosted.ensure_hosted_image(fake, registry="myreg", subscription="sub-1")
+        self.assertEqual(digest, DIGEST_B)
+        self.assertEqual(fake.tags[tag], digest)
+        self.assertFalse(fake.commands("azd", "deploy"))
+        with patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": "true"}):
+            run(fake, [agent(DIGEST_B)])
+        self.assertEqual(len(fake.commands("az", "acr", "build")), 1)
+        self.assertGreaterEqual(len(fake.commands("az", "acr", "repository")), 3)
+        self.assertFalse(fake.commands("azd", "deploy"))
+
     def test_every_file_the_dockerfile_copies_is_fingerprinted(self):
         names = {path.relative_to(REPO_ROOT).as_posix() for path in hosted.packaged_sources(REPO_ROOT)}
         for expected in (
@@ -176,6 +205,7 @@ class PackagingTests(unittest.TestCase):
             "HydroOperationsService/skills/work-order-review/SKILL.md",
             "HydroOperationsApp/scripts/local-fabric-sources.mjs",
             "HydroOperationsApp/src/services/operationalConnector.ts",
+            "HydroOperationsApp/src/services/hostedSourceAccess.ts",
             "HydroOperationsApp/src/services/copilot/orchestration.ts",
             "HydroOperationsApp/src/services/copilot/agentDefinitions.ts", "HydroOperationsApp/package-lock.json",
         ):
@@ -203,6 +233,35 @@ class PackagingTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_shared_project_uses_separate_runtime_configuration_names_and_azd_state(self):
+        directories = set()
+        for workspace in (GUIDS["workspace"], GUIDS["ontology"]):
+            suffix = provision.foundry_resource_suffix(workspace)
+            configuration_value, _sources = hosted.compose_runtime_configuration(
+                tenant=GUIDS["tenant"], workspace=workspace, ontology=GUIDS["ontology"],
+                spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
+                values=VALUES, source_digest=configuration()[1],
+                production_writes=False, resource_suffix=suffix,
+            )
+            binding = configuration_value["native_binding"]
+            self.assertEqual(binding["agent_name_suffix"], suffix)
+            self.assertEqual(binding["connections"]["data-agent"], "hydro-fabric-iq" + suffix)
+            name = hosted.AGENT_NAME + suffix
+            directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name)
+            yaml = (directory / "azure.yaml").read_text(encoding="utf-8")
+            self.assertIn("    " + name + ":", yaml)
+            self.assertIn("        name: " + name, yaml)
+            self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT, agent_name=name), directory)
+            directories.add(directory)
+        self.assertEqual(len(directories), 2)
+        with self.assertRaises(ValueError):
+            hosted.compose_runtime_configuration(
+                tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"],
+                spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
+                values=VALUES, source_digest=configuration()[1],
+                production_writes=False, resource_suffix="-" + "0" * 32,
+            )
+
     def test_runtime_configuration_matches_the_documented_contract(self):
         (orchestrator, fabric), digest = configuration()
         self.assertEqual(orchestrator["source"], {
@@ -210,7 +269,8 @@ class ConfigurationTests(unittest.TestCase):
             "generation": 2, "configuration_digest": digest,
         })
         self.assertEqual(orchestrator["native_binding"], {"source": orchestrator["source"],
-                                                          "connections": {"data-agent": "hydro-fabric-iq"}})
+                                                          "connections": {"data-agent": "hydro-fabric-iq"},
+                                                          "toolbox": "hydro-fabric-iq-tools"})
         authorization = orchestrator["authorization"]
         self.assertEqual(authorization["audiences"]["kusto"], [KUSTO])
         self.assertEqual(authorization["scopes"]["kusto"], KUSTO + "/.default")
@@ -257,6 +317,19 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
+    def test_python_startup_isolation_is_checked_even_for_the_current_image(self):
+        live_environment = environment()
+        del live_environment["PYTHONNOUSERSITE"]
+        self.assertRegex(hosted.needs_publish(agent(env=live_environment), image_digest=DIGEST_A,
+                                              environment=environment()), "PYTHONNOUSERSITE differs")
+
+    def test_acr_template_uses_project_identity_and_explicit_python_isolation(self):
+        import yaml
+
+        service = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"))["services"]["hydro-orchestrator"]
+        self.assertNotIn("registryConnectionId", service)
+        self.assertEqual(service["env"]["PYTHONNOUSERSITE"], "1")
+
     def test_a_current_agent_needs_nothing(self):
         self.assertIsNone(hosted.needs_publish(agent(), image_digest=DIGEST_A, environment=environment()))
 
@@ -302,6 +375,29 @@ class DecisionTests(unittest.TestCase):
 
 
 class ConvergenceTests(unittest.TestCase):
+    def test_scoped_hosted_agent_reuses_model_and_image_and_publishes_only_its_service(self):
+        suffix = provision.foundry_resource_suffix(GUIDS["workspace"])
+        configuration_value, fabric_source = hosted.compose_runtime_configuration(
+            tenant=GUIDS["tenant"], workspace=GUIDS["workspace"], ontology=GUIDS["ontology"],
+            spa_client_id=GUIDS["spa"], kusto_origin=KUSTO, project_endpoint=ENDPOINT,
+            values=VALUES, source_digest=configuration()[1], production_writes=True,
+            resource_suffix=suffix,
+        )
+        expected = {
+            **environment(),
+            "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(configuration_value, separators=(",", ":")),
+            "HYDRO_FABRIC_SOURCE_CONFIG": json.dumps(fabric_source, separators=(",", ":")),
+        }
+        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
+        run(fake, [None, agent(DIGEST_A, env=expected)], resource_suffix=suffix)
+        commands = fake.commands("azd", "deploy")
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][2], "hydro-orchestrator" + suffix)
+        self.assertFalse(fake.commands("az", "acr", "build"))
+        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
+        run(fake, [agent(DIGEST_A, env=expected)], resource_suffix=suffix)
+        self.assertFalse(fake.commands("azd", "deploy"))
+
     def tag(self):
         return hosted.image_tag(REPO_ROOT)
 
@@ -328,7 +424,7 @@ class ConvergenceTests(unittest.TestCase):
         sets = fake.environment_settings()
         self.assertEqual(len(fake.commands("azd", "env", "set")), 1)
         self.assertEqual(sets["HYDRO_ORCHESTRATOR_IMAGE"], f"myreg.azurecr.io/hydro-orchestrator@{DIGEST_B}")
-        self.assertEqual(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
+        self.assertEqual(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], True)
         self.assertEqual(sets["AZURE_AI_MODEL_DEPLOYMENT_NAME"], "model-x")
         deploy_calls = fake.commands("azd", "deploy")
         self.assertEqual(deploy_calls, [["azd", "deploy", "hydro-orchestrator", "--environment", "hydro-orchestrator", "--no-prompt"]])
@@ -389,35 +485,37 @@ class ConvergenceTests(unittest.TestCase):
             fake.log.index(fake.commands("azd", "deploy")[0]),
         )
 
-    def test_unreadable_or_non_boolean_live_write_policy_requires_an_explicit_override(self):
+    def test_old_live_write_policy_does_not_override_the_enabled_default(self):
         for raw in ("not-json", "[]", '{"production_writes_enabled":"false"}'):
-            with self.subTest(raw=raw), patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}), \
-                 patch.object(hosted, "ACTIVATION_TIMEOUT_S", -1):
+            with self.subTest(raw=raw), patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}):
                 fake = FakeDeploy()
                 live = agent(env={**environment(), "HYDRO_ORCHESTRATOR_CONFIG": raw})
-                with self.assertRaisesRegex(FakeDeploy.DeployError, "production-write policy"):
-                    run(fake, [live])
-                self.assertEqual(fake.commands("az", "acr", "build"), [])
-                self.assertEqual(fake.commands("azd", "deploy"), [])
+                run(fake, [live, agent(DIGEST_B)])
+                sets = fake.environment_settings()
+                self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], True)
         with patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": "false"}):
             live = agent(env={**environment(), "HYDRO_ORCHESTRATOR_CONFIG": "not-json"})
             fake = FakeDeploy()
-            run(fake, [live, agent(DIGEST_B)])
+            run(fake, [live, agent(DIGEST_B, env=environment(writes=False))])
             sets = fake.environment_settings()
             self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
 
-    def test_production_writes_are_preserved_from_the_live_agent_unless_overridden(self):
+    def test_production_writes_default_to_enabled_and_respect_an_explicit_override(self):
         fake = FakeDeploy()
-        live = agent(DIGEST_A, env=environment(writes=True))
+        live = agent(DIGEST_A, env=environment(writes=False))
         with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}):
             run(fake, [live, live, agent(DIGEST_B, env=environment(writes=True))])
         sets = fake.environment_settings()
         self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], True)
-        fake = FakeDeploy()
-        with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": "false"}):
-            run(fake, [live, live, agent(DIGEST_B)])
-        sets = fake.environment_settings()
-        self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
+        for value, expected in (("false", False), ("true", True)):
+            with self.subTest(override=value):
+                fake = FakeDeploy()
+                before = agent(DIGEST_A, env=environment(writes=not expected))
+                after = agent(DIGEST_B, env=environment(writes=expected))
+                with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": value}):
+                    run(fake, [before, before, after])
+                sets = fake.environment_settings()
+                self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], expected)
         with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": "maybe"}):
             with self.assertRaisesRegex(FakeDeploy.DeployError, "true or false"):
                 run(FakeDeploy(), [live])
@@ -504,6 +602,8 @@ class ProjectCreationTests(unittest.TestCase):
         settings = patch.dict(os.environ, {
             "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "test-version",
             "HYDRO_FOUNDRY_MODEL_SKU": "TestSku", "HYDRO_FOUNDRY_MODEL_CAPACITY": "7",
+            "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "",
+            "HYDRO_FOUNDRY_ACCOUNT_NAME": "",
         })
         settings.start()
         self.addCleanup(settings.stop)
@@ -525,7 +625,7 @@ class ProjectCreationTests(unittest.TestCase):
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "true"}):
             self.assertTrue(project.enabled())
 
-    def test_new_model_defaults_are_catalog_driven_and_do_not_select_global_or_provisioned_skus(self):
+    def test_new_model_defaults_prefer_regional_then_pay_as_you_go_never_provisioned(self):
         fake = self.fake()
         model = {
             "name": "approved-chat", "format": "OpenAI", "version": "catalog-version",
@@ -547,19 +647,94 @@ class ProjectCreationTests(unittest.TestCase):
                 "HYDRO_FOUNDRY_MODEL_SKU": "Standard", "HYDRO_FOUNDRY_MODEL_CAPACITY": "6",
             })
             argv = capture.call_args.args[0]
-            self.assertEqual(argv[:3], ["az", "cognitiveservices", "model"])
+            self.assertEqual(argv[:3], ["az", "rest", "--method"])
             self.assertEqual(argv[argv.index("--subscription") + 1], "sub")
-            self.assertEqual(argv[argv.index("--location") + 1], "targetregion")
+            self.assertIn("/locations/targetregion/models?", argv[argv.index("--url") + 1])
+            model["skus"] = [
+                {"name": "GlobalStandard", "capacity": {"default": 12}},
+                {"name": "DataZoneStandard", "capacity": {"default": 8}},
+            ]
+            capture.return_value = json.dumps([{"model": model}])
+            self.assertEqual(project.model_defaults(
+                fake, subscription="sub", location="region", model="approved-chat",
+            )["HYDRO_FOUNDRY_MODEL_SKU"], "DataZoneStandard")
             model["skus"] = [{"name": "GlobalStandard", "capacity": {"default": 12}}]
             capture.return_value = json.dumps([{"model": model}])
-            with self.assertRaisesRegex(fake.DeployError, "deployment type choice"):
-                project.model_defaults(fake, subscription="sub", location="region", model="approved-chat")
+            self.assertEqual(project.model_defaults(
+                fake, subscription="sub", location="region", model="approved-chat",
+            )["HYDRO_FOUNDRY_MODEL_SKU"], "GlobalStandard")
             with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_SKU": "GlobalStandard"}):
                 self.assertEqual(project.model_defaults(
                     fake, subscription="sub", location="region", model="approved-chat",
                 )["HYDRO_FOUNDRY_MODEL_SKU"], "GlobalStandard")
-            with self.assertRaisesRegex(fake.DeployError, "no unique supported chat version"):
+            model["skus"] = [{"name": "ProvisionedManaged", "capacity": {"minimum": 25}}]
+            capture.return_value = json.dumps([{"model": model}])
+            with self.assertRaisesRegex(fake.DeployError, "pay-as-you-go"):
+                project.model_defaults(fake, subscription="sub", location="region", model="approved-chat")
+            with self.assertRaisesRegex(fake.DeployError, "does not identify one underlying model"):
                 project.model_defaults(fake, subscription="sub", location="region", model="missing")
+
+    def test_deployment_alias_resolves_live_model_and_version_without_additional_inputs(self):
+        fake = self.fake()
+        catalog = [{"model": {
+            "name": "catalog-chat", "format": "OpenAI", "version": "v2",
+            "isDefaultVersion": False, "capabilities": {"chatCompletion": True},
+            "skus": [{"name": "GlobalStandard", "capacity": {"minimum": 1}}],
+        }}]
+        accounts = [{"kind": "AIServices", "name": "account", "resourceGroup": "group"}]
+        deployments = [{"name": "my-chat-alias", "properties": {
+            "provisioningState": "Succeeded",
+            "model": {"format": "OpenAI", "name": "catalog-chat", "version": "v2"},
+        }}]
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", side_effect=[
+            json.dumps(catalog), json.dumps(accounts), json.dumps(deployments),
+        ]) as capture:
+            settings = project.model_defaults(fake, subscription="sub", location="region", model="my-chat-alias")
+        self.assertEqual(settings, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "catalog-chat", "HYDRO_FOUNDRY_MODEL_VERSION": "v2",
+            "HYDRO_FOUNDRY_MODEL_SKU": "GlobalStandard", "HYDRO_FOUNDRY_MODEL_CAPACITY": "1",
+        })
+        encoded = project.deployments_parameter("my-chat-alias", settings)
+        self.assertEqual(json.loads(json.loads('{"value":"' + encoded + '"}')["value"])[0]["name"], "my-chat-alias")
+        self.assertTrue(all(call.args[0][call.args[0].index("--subscription") + 1] == "sub"
+                            for call in capture.call_args_list))
+        self.assertEqual(fake.log, [])
+
+    def test_duplicate_account_sku_catalog_rows_are_not_ambiguous_model_versions(self):
+        fake = self.fake()
+        model = {
+            "name": "chat", "format": "OpenAI", "version": "v1", "isDefaultVersion": True,
+            "capabilities": {"chatCompletion": True},
+            "skus": [{"name": "GlobalStandard", "capacity": {"default": 10, "minimum": None}}],
+        }
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", return_value=json.dumps([
+            {"model": model, "skuName": "S0"}, {"model": model, "skuName": "S1"},
+        ])) as capture:
+            settings = project.model_defaults(fake, subscription="sub", location="region", model="chat")
+            self.assertEqual(settings["HYDRO_FOUNDRY_MODEL_VERSION"], "v1")
+            self.assertEqual(settings["HYDRO_FOUNDRY_MODEL_CAPACITY"], "10")
+            capture.return_value = json.dumps([{"model": model}, {"model": {**model, "version": "v2"}}])
+            with self.assertRaisesRegex(fake.DeployError, "no unique supported chat version"):
+                project.model_defaults(fake, subscription="sub", location="region", model="chat")
+
+    def test_ambiguous_deployment_alias_fails_before_resource_creation(self):
+        fake = self.fake()
+        accounts = [{"kind": "OpenAI", "name": name, "resourceGroup": "group"} for name in ("first", "second")]
+        def deployment(name):
+            return [{"name": "shared-alias", "properties": {
+                "provisioningState": "Succeeded", "model": {"name": name, "format": "OpenAI", "version": "v1"},
+            }}]
+        with patch.object(fake, "run_capture", side_effect=[
+            json.dumps(accounts), json.dumps(deployment("chat-one")), json.dumps(deployment("chat-two")),
+        ]):
+            with self.assertRaisesRegex(fake.DeployError, "No model was guessed"):
+                project.model_reference(fake, subscription="sub", deployment="shared-alias")
 
     def test_catalog_capacity_constraints_and_nondefault_version_require_valid_selection(self):
         fake = self.fake()
@@ -589,6 +764,62 @@ class ProjectCreationTests(unittest.TestCase):
                 )["HYDRO_FOUNDRY_MODEL_VERSION"], "v1")
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "yes"}):
             self.assertFalse(project.enabled())
+
+    def test_new_capacity_prefers_75k_and_falls_back_to_available_model_specific_units(self):
+        fake = self.fake()
+        sku = {
+            "name": "Standard", "usageName": "OpenAI.Standard.chat",
+            "capacity": {"minimum": 1, "maximum": 1000, "step": 1},
+            "rateLimits": [{"key": "token", "count": 1000, "renewalPeriod": 60}],
+        }
+        cases = [
+            (1000, 100, 0, {}, "75"),
+            (1000, 50, 10, {}, "40"),
+            (6000, 100, 0, {}, "13"),
+            (1000, 100, 0, {"minimum": 10, "step": 10}, "80"),
+            (1000, 66, 0, {"minimum": 10, "step": 10}, "60"),
+            (1000, 100, 0, {"allowedValues": [10, 40, 100]}, "100"),
+            (1000, 60, 0, {"allowedValues": [10, 40, 100]}, "40"),
+            (1000, 100, 0, {"maximum": 30}, "30"),
+        ]
+        for rate, limit, used, constraints, expected in cases:
+            selected = {**sku, "capacity": {**sku["capacity"], **constraints},
+                        "rateLimits": [{"key": "token", "count": rate, "renewalPeriod": 60}]}
+            usage = [{"name": {"value": sku["usageName"]}, "limit": limit, "currentValue": used}]
+            with self.subTest(rate=rate, limit=limit, constraints=constraints), \
+                    patch.object(fake, "run_capture", return_value=json.dumps(usage)):
+                self.assertEqual(project.preferred_model_capacity(fake, "sub", "region", selected, "1"), expected)
+        with patch.object(fake, "run_capture", return_value=json.dumps([
+            {"name": {"value": sku["usageName"]}, "limit": 10, "currentValue": 10},
+        ])):
+            with self.assertRaisesRegex(fake.DeployError, "No supported positive capacity"):
+                project.preferred_model_capacity(fake, "sub", "region", sku, "1")
+
+    def test_new_model_uses_raw_catalog_rates_and_preserves_explicit_capacity(self):
+        fake = self.fake()
+        catalog = [{"model": {
+            "name": "chat", "format": "OpenAI", "version": "v1", "isDefaultVersion": True,
+            "capabilities": {"chatCompletion": True},
+            "skus": [{"name": "Standard", "usageName": "OpenAI.Standard.chat",
+                      "capacity": {"minimum": 1, "maximum": 1000},
+                      "rateLimits": [{"key": "token", "count": 1000, "renewalPeriod": 60}]}],
+        }}]
+        usage = [{"name": {"value": "OpenAI.Standard.chat"}, "limit": 50, "currentValue": 10}]
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "",
+            "HYDRO_FOUNDRY_MODEL_SKU": "", "HYDRO_FOUNDRY_MODEL_CAPACITY": "",
+        }), patch.object(fake, "run_capture", side_effect=[json.dumps(catalog), json.dumps(usage)]) as read:
+            self.assertEqual(project.model_defaults(
+                fake, subscription="sub", location="region", model="chat",
+            )["HYDRO_FOUNDRY_MODEL_CAPACITY"], "40")
+            self.assertEqual(read.call_count, 2)
+            read.reset_mock(side_effect=True)
+            read.return_value = json.dumps(catalog)
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_CAPACITY": "20"}):
+                self.assertEqual(project.model_defaults(
+                    fake, subscription="sub", location="region", model="chat",
+                )["HYDRO_FOUNDRY_MODEL_CAPACITY"], "20")
+            read.assert_called_once()
 
     def test_deployments_json_survives_the_templates_quoted_parameter_file(self):
         parameter = project.deployments_parameter("model-x")
@@ -664,6 +895,59 @@ class ProjectCreationTests(unittest.TestCase):
         self.assertEqual(order[0][:2], ["azd", "init"])
         self.assertEqual(order[-1], ["azd", "env", "get-values"])
         self.assertLess(order.index(["azd", "provision", "--environment"]), order.index(["azd", "env", "get-values"]))
+
+    def test_named_project_is_exact_and_state_is_scoped_to_target_and_name(self):
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_NEW_PROJECT_NAME": "My.Project"}):
+            name = project.environment_name("t", "w", "sub")
+            self.assertEqual(name, project.environment_name("T", "W", "SUB"))
+            self.assertNotEqual(name, project.environment_name("t", "other", "sub"))
+            fake = self.fake("https://new-res.services.ai.azure.com/api/projects/My.Project")
+            self.create(fake)
+            self.assertEqual(fake.environment_settings()["AZURE_AI_PROJECT_NAME"], "My.Project")
+            with self.assertRaisesRegex(fake.DeployError, "different project"):
+                self.create(self.fake())
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_NEW_PROJECT_NAME": "Another.Project"}):
+            self.assertNotEqual(name, project.environment_name("t", "w", "sub"))
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_NEW_PROJECT_NAME": "../bad"}):
+            with self.assertRaises(ValueError):
+                project.environment_name("t", "w", "sub")
+
+    def test_named_account_is_exact_and_scopes_state_without_changing_blank_defaults(self):
+        original = project.environment_name("t", "w", "sub")
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": "new-res"}):
+            name = project.environment_name("t", "w", "sub")
+            self.assertNotEqual(name, original)
+            fake = self.fake()
+            fake.azd_values += 'AZURE_AI_ACCOUNT_NAME="new-res"\n'
+            self.create(fake)
+            self.assertEqual(fake.environment_settings()["AZURE_AI_ACCOUNT_NAME"], "new-res")
+            with self.assertRaisesRegex(fake.DeployError, "different account"):
+                self.create(self.fake())
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": "NEW-RES"}):
+                self.assertEqual(name, project.environment_name("T", "W", "SUB"))
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": "other-account"}):
+                self.assertNotEqual(name, project.environment_name("t", "w", "sub"))
+        for invalid in ("a", "-account", "account-", "has.dot", "x" * 65):
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_ACCOUNT_NAME": invalid}):
+                fake = self.fake()
+                with self.assertRaisesRegex(fake.DeployError, "Foundry account name"):
+                    self.create(fake)
+                self.assertEqual(fake.commands("azd", "provision"), [])
+
+    def test_shared_project_name_reuses_the_existing_named_creation_pipeline(self):
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "",
+            "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "Shared.Project",
+        }):
+            endpoint = "https://new-res.services.ai.azure.com/api/projects/Shared.Project"
+            fake = self.fake(endpoint=endpoint)
+            self.assertEqual(self.create(fake), endpoint)
+            self.assertEqual(fake.environment_settings()["AZURE_AI_PROJECT_NAME"], "Shared.Project")
+            name = project.environment_name("tenant.example", "ws", "sub-1")
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "shared.project"}):
+                self.assertEqual(project.environment_name("tenant.example", "ws", "sub-1"), name)
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "another-project"}):
+                self.assertNotEqual(project.environment_name("tenant.example", "ws", "sub-1"), name)
 
     def test_an_already_initialized_folder_is_reused_not_reinitialized(self):
         fake = self.fake()

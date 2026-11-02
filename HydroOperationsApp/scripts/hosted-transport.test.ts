@@ -1,8 +1,10 @@
 import test from 'node:test'
+import { createHostedSourceAccess } from '../src/services/hostedSourceAccess.ts'
 import assert from 'node:assert/strict'
 import {
   hostedDecisionEdits, HostedTransport, HostedInvocationError, type SourceTokens,
 } from '../src/services/copilot/hostedTransport.ts'
+import { uncertifiedFailureMessage } from '../src/services/copilot/orchestration.ts'
 
 const project = 'https://test.services.ai.azure.com/api/projects/test'
 const endpoint = `${project}/agents/coordinator/endpoint/protocols/invocations`
@@ -15,6 +17,182 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
   presentation: { schema_version: 1, text: 'Backend-provided answer.', visualizations: [], execution_events: [] } })
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
+
+test('Foundry subdomain routing failures are explicit and never replay a question or source read', async () => {
+  const operations: string[] = []
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    operations.push(JSON.parse(String(init?.body)).operation)
+    return response({ error: {
+      code: 'ResourceNotFound', message: 'Subdomain does not map to a resource.', private: 'provider secret',
+    } }, 404)
+  })
+  await assert.rejects(client.run({ question: 'List facilities.' }), error => {
+    assert.ok(error instanceof HostedInvocationError)
+    assert.equal(error.status, 404)
+    assert.equal(error.detail?.category, 'platform_routing')
+    assert.match(error.message, /Subdomain does not map to a resource/)
+    assert.match(error.message, /No answer or write outcome is certified/)
+    assert.doesNotMatch(error.message, /provider secret/)
+    return true
+  })
+  assert.deepEqual(operations, ['run'])
+})
+
+test('native timeouts and transport failures retain their real boundary without provider secrets', () => {
+  for (const [status, category] of [[504, 'native_timeout'], [502, 'native_transport']] as const) {
+    const error = new HostedInvocationError(status, { category, message: 'private provider diagnostic' })
+    assert.match(error.message, new RegExp(`HTTP ${status}`))
+    assert.match(error.message, /Fabric Data Agent/)
+    assert.match(error.message, /No replacement answer or direct-source fallback/)
+    assert.doesNotMatch(error.message, /private provider diagnostic|HTTP 500/)
+  }
+})
+
+test('native provider moderation processing error is not mislabeled as a Data Agent refusal', () => {
+  const error = new HostedInvocationError(502, { category: 'native_provider_error' })
+  assert.match(error.message, /provider failed during output moderation/)
+  assert.match(error.message, /not a confirmed Data Agent refusal/)
+  assert.match(error.message, /No direct-source fallback/)
+  assert.match(error.message, /No answer or write outcome is certified/)
+})
+
+test('model throttling stays actionable across JSON, streaming and interrupted-run recovery without retry', async () => {
+  for (const delivery of ['json', 'stream', 'recovery'] as const) {
+    const operations: string[] = []
+    const failure = { category: 'model_rate_limit', http_status: 429, message: 'private provider diagnostics' }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+      const body = JSON.parse(String(init?.body))
+      operations.push(body.operation)
+      if (body.operation === 'result') return response({ status: 'failed', failure })
+      if (delivery === 'json') return response({ detail: failure }, 429)
+      if (delivery === 'stream') return new Response(
+        `${JSON.stringify({ type: 'error', status: 429, detail: failure })}\n`,
+        { headers: { 'Content-Type': 'application/x-ndjson' } },
+      )
+      let sent = false
+      return new Response(new ReadableStream({
+        pull(controller) {
+          if (sent) controller.error(new Error('connection reset'))
+          else {
+            sent = true
+            controller.enqueue(new TextEncoder().encode(`${JSON.stringify({
+              type: 'run', run_id: 'run-throttled', source,
+            })}\n`))
+          }
+        },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+    })
+    await assert.rejects(client.run({ question: 'Review telemetry and draft work.' }, () => {}), error => {
+      assert.ok(error instanceof HostedInvocationError)
+      assert.equal(error.status, 429)
+      assert.match(error.message, /model.*throughput quota/i)
+      assert.match(error.message, /HTTP 429/)
+      assert.doesNotMatch(error.message, /private provider diagnostics|HTTP 500/)
+      return true
+    })
+    assert.deepEqual(operations, delivery === 'recovery' ? ['run', 'result'] : ['run'])
+  }
+})
+
+test('normal Send acquires missing access before submitting exactly once, with no background popup', async () => {
+  const cached = new Map<string, string>()
+  let popups = 0
+  let requests = 0
+  const requirements = (['fabric', 'foundry', 'graphql', 'kusto'] as const)
+    .map(kind => ({ kind, label: kind, scopes: [kind] }))
+  const access = createHostedSourceAccess(requirements, {
+    silent: async scopes => cached.get(scopes[0]) ?? null,
+    popup: async scopes => {
+      popups++
+      for (const scope of scopes) cached.set(scope, `${scope}-token`)
+      return `${scopes[0]}-token`
+    },
+  })
+  const client = new HostedTransport(project, endpoint, source, interactive => access.acquire(interactive), async () => {
+    requests++
+    assert.equal(cached.size, 4)
+    return response(reply())
+  })
+  await client.warm()
+  assert.equal(popups, 0)
+  assert.equal(requests, 0)
+  await client.run({ question: 'Count facilities.' })
+  assert.equal(popups, 4)
+  assert.equal(requests, 1)
+  await client.run({ question: 'Count equipment.' })
+  assert.equal(popups, 4)
+  assert.equal(requests, 2)
+})
+
+test('only explicit operator requests can request interactive authorization, never warm-up or evidence reads', async () => {
+  const accessModes: boolean[] = []
+  const client = new HostedTransport(project, endpoint, source, async interactive => {
+    accessModes.push(interactive)
+    return tokens()
+  }, async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    return response(body.operation === 'decide' || body.operation === 'reconcile'
+      ? { run_id: 'run-1', proposal_id: 'draft-1', status: 'rejected', production_write_executed: false }
+      : reply())
+  })
+  await client.warm()
+  await client.run({ question: 'Count facilities.' })
+  await client.evidence('run-1')
+  const decision = { proposal_id: 'draft-1', proposal_digest: 'b'.repeat(64), approved: false }
+  await client.decide('run-1', decision)
+  await client.decide('run-1', decision, true)
+  assert.deepEqual(accessModes, [false, true, false, true, true])
+})
+
+test('native refusal is actionable and not presented as connectivity or retried', async () => {
+  for (const delivery of ['json', 'stream', 'recovery'] as const) {
+    const operations: string[] = []
+    const failure = { category: 'native_refusal', message: 'private untrusted provider diagnostics' }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+      const body = JSON.parse(String(init?.body))
+      operations.push(body.operation)
+      if (body.operation === 'result') return response({ status: 'failed', failure })
+      if (delivery === 'json') return response({ detail: failure }, 502)
+      if (delivery === 'stream') {
+        return new Response(`${JSON.stringify({ type: 'error', status: 502, detail: failure })}\n`,
+          { headers: { 'Content-Type': 'application/x-ndjson' } })
+      }
+      let sent = false
+      return new Response(new ReadableStream({
+        pull(controller) {
+          if (sent) controller.error(new Error('connection reset'))
+          else {
+            sent = true
+            controller.enqueue(new TextEncoder().encode(`${JSON.stringify({
+              type: 'run', run_id: 'run-refused', source,
+            })}\n`))
+          }
+        },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+    })
+    await assert.rejects(client.run({ question: 'Count facilities.' }, () => {}), error => {
+      assert.ok(error instanceof HostedInvocationError)
+      assert.equal(error.detail?.category, 'native_refusal')
+      const displayed = uncertifiedFailureMessage(error)
+      assert.match(displayed, /Fabric Data Agent.*refused/)
+      assert.match(displayed, /owner.*review/)
+      assert.match(displayed, /No answer or write outcome is certified/)
+      assert.doesNotMatch(displayed, /connectivity recovers|private untrusted/)
+      return true
+    })
+    assert.deepEqual(operations, delivery === 'recovery' ? ['run', 'result'] : ['run'])
+  }
+})
+
+test('native refusal does not hide a failure to persist its audit', () => {
+  const error = new HostedInvocationError(500, {
+    category: 'native_refusal', audit_available: false, message: 'private untrusted provider diagnostics',
+  })
+  const displayed = uncertifiedFailureMessage(error)
+  assert.match(displayed, /execution audit could not be saved/)
+  assert.match(displayed, /contact the service owner/)
+  assert.doesNotMatch(displayed, /private untrusted/)
+})
 
 test('default fetch preserves the browser receiver', async () => {
   const original = globalThis.fetch
@@ -184,8 +362,12 @@ test('streaming transport paints only backend execution events and returns the c
 
 test('stream interruption recovers the exact server run without starting a duplicate', async () => {
   const operations: string[] = []
+  const accessModes: boolean[] = []
   const encoder = new TextEncoder()
-  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+  const client = new HostedTransport(project, endpoint, source, async interactive => {
+    accessModes.push(interactive)
+    return tokens()
+  }, async (_input, init) => {
     const body = JSON.parse(String(init?.body))
     operations.push(body.operation)
     if (body.operation === 'result') {
@@ -207,6 +389,7 @@ test('stream interruption recovers the exact server run without starting a dupli
   const answer = await client.run({ question: 'Recover this run.' }, () => {})
   assert.equal(answer.runId, 'run-recover')
   assert.deepEqual(operations, ['run', 'result'])
+  assert.deepEqual(accessModes, [true, false])
 })
 
 test('missing stream heartbeat enters exact-run recovery without imposing an answer deadline', async () => {
@@ -281,6 +464,39 @@ test('transport rejects foreign invocation targets before acquiring source crede
     'https://foreign.services.ai.azure.com/api/projects/test/agents/x/invocations',
     `${endpoint}?unexpected=value`, `${endpoint}#fragment`]) {
     assert.throws(() => new HostedTransport(project, url, source, async () => tokens()))
+  }
+})
+
+test('validated maintenance outcomes survive transport without interpreting native prose', async () => {
+  for (const decision of ['no_draft', 'needs_clarification'] as const) {
+    const review = { decision, reason: 'Existing WO-42 covers this diagnostic purpose.' }
+    const body = { ...reply(), presentation: { ...reply().presentation, work_order_review: review } }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+    const answer = await client.run({ question: 'Prepare diagnostic drafts.' })
+    assert.deepEqual(answer.workOrderReview, review)
+    assert.equal(answer.text, reply().presentation.text)
+    assert.deepEqual(answer.proposals, [])
+  }
+  for (const review of [undefined, null]) {
+    const body = { ...reply(), presentation: { ...reply().presentation, work_order_review: review } }
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+    assert.equal((await client.run({ question: 'Read.' })).workOrderReview, undefined)
+  }
+})
+
+test('malformed supplied maintenance outcomes fail explicitly and release credentials', async () => {
+  for (const review of [
+    { decision: 'approved', reason: 'Not a valid review.' },
+    { decision: 'no_draft', reason: ' ' },
+    { decision: 'needs_clarification', reason: 'x'.repeat(1001) },
+    { decision: 'no_draft', reason: 'Valid text.', extra: true },
+    'No draft.',
+  ]) {
+    const lease = tokens()
+    const body = { ...reply(), presentation: { ...reply().presentation, work_order_review: review } }
+    const client = new HostedTransport(project, endpoint, source, async () => lease, async () => response(body))
+    await assert.rejects(client.run({ question: 'Prepare drafts.' }), /maintenance review|not an object/)
+    assert.ok(Object.values(lease).every(value => value === ''))
   }
 })
 

@@ -25,6 +25,7 @@ from sync_workspace_from_git import (
     fabric_operation_url,
     bind_notebook_definition,
     notebook_definition,
+    update_notebooks_from_checkout,
     ensure_spark_runtime,
     verify_environment_runtimes,
 )
@@ -168,15 +169,7 @@ class FeatureFabric(Fabric):
         headers = dict(kwargs.pop("headers", {}))
         headers["x-ms-fabric-skill"] = "git-integration-operations-cli"
         kwargs["allow_redirects"] = False
-        for attempt in range(3):
-            try:
-                return super().request(method, url, headers=dict(headers), **kwargs)
-            except (requests.Timeout, requests.ConnectionError):
-                if method.upper() != "GET" or attempt == 2:
-                    raise
-                print(f"  Fabric read interrupted; retrying the same read ({attempt + 1}/2).", flush=True)
-                time.sleep(5 * (attempt + 1))
-        raise FeatureWorkspaceError("Fabric read retry budget exhausted.")
+        return super().request(method, url, headers=headers, **kwargs)
 
     def poll_lro(self, response: requests.Response) -> requests.Response:
         if response.status_code != 202:
@@ -224,7 +217,7 @@ class EnergyConfig:
     state_path: Path
     env_suffix: str
     enable_energy_map: bool = True
-    enable_map_chat: bool = False
+    enable_map_chat: bool = True
 
 
 class FeatureWorkspace:
@@ -394,8 +387,13 @@ class FeatureWorkspace:
         return item_id
 
     def _item(self, name: str, item_type: str) -> dict[str, Any]:
-        matches = [i for i in self.fabric.list_workspace_items(self.config.workspace_id)
-                   if i.get("displayName") == name and i.get("type") == item_type]
+        items = self.fabric.list_workspace_items(self.config.workspace_id)
+        matches = [i for i in items if i.get("displayName") == name and i.get("type") == item_type]
+        if item_type == "Lakehouse" and name == f"Hydro_GeoContext_{self.config.env_suffix}":
+            owned = [i for i in items if i.get("type") == item_type
+                     and i.get("description") == f"{self.marker}: energy context"]
+            if owned:
+                matches = owned
         if len(matches) != 1:
             raise FeatureWorkspaceError(f"Expected one {item_type} named {name}, found {len(matches)}.")
         return matches[0]
@@ -537,7 +535,7 @@ class FeatureWorkspace:
         notebook_ids = {}
         for item_type in ("Notebook", "DataPipeline"):
             for spec in self.specs:
-                if spec["name"] not in ENERGY_ITEMS or spec["type"] != item_type:
+                if spec["name"] not in ENERGY_ITEMS | {MAP_AGENT_NOTEBOOK} or spec["type"] != item_type:
                     continue
                 matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
                            if item.get("type") == item_type and item.get("displayName") == spec["name"]]
@@ -545,7 +543,10 @@ class FeatureWorkspace:
                     raise FeatureWorkspaceError(f"Ambiguous energy artifact {spec['name']}.")
                 if matches and matches[0].get("description") != self.marker:
                     item_id = matches[0]["id"]
-                    print(f"Using Git-managed {spec['name']}; sync Git first to update its source.", flush=True)
+                    if item_type == "Notebook":
+                        update_notebooks_from_checkout(self.fabric, self.config.workspace_id, [spec["name"]])
+                    else:
+                        print(f"Using Git-managed {spec['name']}; sync Git first to update pipeline changes.", flush=True)
                 else:
                     item_id = self._upsert(spec, self._folder(spec["folder"]), notebook_ids, {
                         "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
@@ -556,11 +557,13 @@ class FeatureWorkspace:
 
     def _prepare_energy_map(self) -> None:
         name = f"Hydro_GeoContext_{self.config.env_suffix}"
-        matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
-                   if item.get("type") == "Lakehouse" and item.get("displayName") == name]
+        items = self.fabric.list_workspace_items(self.config.workspace_id)
+        marker = f"{self.marker}: energy context"
+        matches = [item for item in items if item.get("type") == "Lakehouse" and item.get("description") == marker]
+        if not matches:
+            matches = [item for item in items if item.get("type") == "Lakehouse" and item.get("displayName") == name]
         if len(matches) > 1:
             raise FeatureWorkspaceError("Energy context Lakehouse discovery is ambiguous.")
-        marker = f"{self.marker}: energy context"
         if matches and matches[0].get("description") != marker:
             raise FeatureWorkspaceError("Refusing to bind to an unowned energy context Lakehouse.")
         if not matches:
@@ -571,13 +574,14 @@ class FeatureWorkspace:
             self.fabric.poll_lro(response)
         for attempt in range(12):
             matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
-                       if item.get("type") == "Lakehouse" and item.get("displayName") == name]
+                       if item.get("type") == "Lakehouse" and item.get("description") == marker]
             if len(matches) == 1:
                 break
             time.sleep(5)
         if len(matches) != 1:
             raise FeatureWorkspaceError("The energy context Lakehouse did not become visible.")
         lakehouse = matches[0]
+        name = lakehouse["displayName"]
         self.ensure_energy_folder(lakehouse)
         self.state["energy_lakehouse_id"] = lakehouse["id"]
         self._save()
@@ -597,22 +601,50 @@ class FeatureWorkspace:
                 )
                 check_response(response, f"Bind {notebook_name}", {200, 202})
                 self.fabric.poll_lro(response)
-        self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
+        source_ran = self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
             "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
+            "geo_lakehouse_id": lakehouse["id"],
             "refresh_mode": "all", "force_refresh": False,
         }}})
-        self._complete_energy_map(lakehouse["id"])
+        self._complete_energy_map(lakehouse["id"], publish_agent=not source_ran)
 
-    def _complete_energy_map(self, lakehouse_id: str) -> None:
+    def _complete_energy_map(self, lakehouse_id: str, *, publish_agent: bool = True) -> None:
         self._publish_energy_read_models(lakehouse_id)
-        if self.config.enable_map_chat:
-            self._run(MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
-                {"name": "workspace_id", "value": self.config.workspace_id, "type": "Text"},
-                {"name": "env_suffix", "value": self.config.env_suffix, "type": "Text"},
-            ]})
+        if publish_agent:
+            self._publish_map_agent(lakehouse_id)
+        elif self.config.enable_map_chat:
             agent = self._item(f"Hydro_Map_Agent_{self.config.env_suffix}", "DataAgent")
             self.state["map_agent_id"] = agent["id"]
             self._save()
+
+    def _publish_map_agent(self, lakehouse_id: str) -> None:
+        if not self.config.enable_map_chat:
+            return
+        lakehouse = self._item(f"Hydro_GeoContext_{self.config.env_suffix}", "Lakehouse")
+        if lakehouse["id"] != lakehouse_id or lakehouse.get("description") != f"{self.marker}: energy context":
+            raise FeatureWorkspaceError("Map agent Lakehouse identity/ownership does not match the energy target.")
+        notebook = self._item(MAP_AGENT_NOTEBOOK, "Notebook")
+        definition = notebook_definition(self.fabric, self.config.workspace_id, notebook["id"])
+        target = {
+            "default_lakehouse": lakehouse_id, "default_lakehouse_name": lakehouse["displayName"],
+            "default_lakehouse_workspace_id": self.config.workspace_id,
+            "known_lakehouses": [{"id": lakehouse_id}],
+        }
+        if bind_notebook_definition(definition, target, {}):
+            response = self.fabric.request("POST",
+                f"{self.base}/notebooks/{notebook['id']}/updateDefinition?updateMetadata=true",
+                json={"definition": definition},
+            )
+            check_response(response, "Bind map publisher to GeoContext", {200, 202})
+            self.fabric.poll_lro(response)
+        self._run(MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
+            {"name": "workspace_id", "value": self.config.workspace_id, "type": "Text"},
+            {"name": "env_suffix", "value": self.config.env_suffix, "type": "Text"},
+            {"name": "geo_lakehouse_id", "value": lakehouse_id, "type": "Text"},
+        ]})
+        agent = self._item(f"Hydro_Map_Agent_{self.config.env_suffix}", "DataAgent")
+        self.state["map_agent_id"] = agent["id"]
+        self._save()
 
     def ensure_energy_folder(self, lakehouse: dict[str, Any] | None = None) -> None:
         lakehouse = lakehouse if lakehouse is not None else self._item(
@@ -699,23 +731,34 @@ class FeatureWorkspace:
                     raise FeatureWorkspaceError(f"Eventhouse rejected the {name} map read model.")
             response = session.post(f"{cluster}/v1/rest/query", headers=headers, json={
                 "db": database,
-                "csl": "external_table('HydroGeoStatus') | project layer_id, state, row_count",
+                "csl": "union "
+                       "(external_table('HydroGeoStatus')"
+                       " | project verification_kind='status', data=pack_array(layer_id, state, row_count)),"
+                       "(external_table('HydroGeoReservoirAreas') | extend p=parse_json(properties_json)"
+                       " | project verification_kind='areas', data=pack_array(tostring(p.area_code), tostring(p.country_code),"
+                       " tobool(p.has_reservoir_data), todouble(p.filling_fraction))),"
+                       "(external_table('HydroGeoMarketAssetLinks') | summarize link_count=count()"
+                       " | project verification_kind='links', data=pack_array(link_count))",
             }, timeout=90, allow_redirects=False)
-            area_response = session.post(f"{cluster}/v1/rest/query", headers=headers, json={
-                "db": database,
-                "csl": "external_table('HydroGeoReservoirAreas') | extend p=parse_json(properties_json)"
-                       " | project area_code=tostring(p.area_code), country_code=tostring(p.country_code),"
-                       " has_data=tobool(p.has_reservoir_data), filling=todouble(p.filling_fraction)",
-            }, timeout=90, allow_redirects=False)
-            link_response = session.post(f"{cluster}/v1/rest/query", headers=headers, json={
-                "db": database, "csl": "external_table('HydroGeoMarketAssetLinks') | summarize count()",
-            }, timeout=90, allow_redirects=False)
-        check_response(response, "Verify energy map source status", {200})
+        check_response(response, "Verify energy map read models", {200})
         payload = response.json()
         if payload.get("error") or payload.get("Exceptions"):
-            raise FeatureWorkspaceError("Eventhouse returned a partial or failed energy source-status query.")
+            raise FeatureWorkspaceError("Eventhouse returned a partial or failed energy read-model query.")
         tables = payload.get("Tables") or []
-        rows = tables[0].get("Rows", []) if tables else []
+        grouped = {"status": [], "areas": [], "links": []}
+        for row in tables[0].get("Rows", []) if tables else []:
+            if not isinstance(row, list) or len(row) != 2 or not isinstance(row[0], str) or row[0] not in grouped:
+                raise FeatureWorkspaceError("Energy read-model verification returned an unexpected result.")
+            data = row[1]
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except ValueError as exc:
+                    raise FeatureWorkspaceError("Energy read-model verification returned invalid JSON.") from exc
+            if not isinstance(data, list):
+                raise FeatureWorkspaceError("Energy read-model verification returned an invalid row.")
+            grouped[row[0]].append(data)
+        rows = grouped["status"]
         required = {
             "transmission", "regional", "distribution", "sea-cables", "masts", "transformers",
             "hydro-plants", "reservoirs", "power-balance", "power-flows", "grid-frequency", "umm",
@@ -726,12 +769,7 @@ class FeatureWorkspace:
                  and type(row[2]) is int and (row[2] > 0 or (row[0] == "umm" and row[2] == 0))}
         if required != ready:
             raise FeatureWorkspaceError(f"Energy map import is incomplete: {sorted(required - ready)}.")
-        for result, label in ((area_response, "reservoir areas"), (link_response, "asset message links")):
-            check_response(result, f"Verify {label}", {200})
-            if result.json().get("error") or result.json().get("Exceptions"):
-                raise FeatureWorkspaceError(f"Eventhouse returned partial or failed {label}.")
-        area_tables = area_response.json().get("Tables") or []
-        area_rows = area_tables[0].get("Rows", []) if area_tables else []
+        area_rows = grouped["areas"]
         expected_areas = {"NO", "SE", "FI", "DK", "NO1", "NO2", "NO3", "NO4", "NO5"}
         if len(area_rows) != 9 or {row[0] for row in area_rows if len(row) == 4} != expected_areas:
             raise FeatureWorkspaceError("Reservoir polygon coverage is incomplete.")
@@ -739,8 +777,7 @@ class FeatureWorkspace:
             raise FeatureWorkspaceError("Reservoir polygon country/area identities are inconsistent.")
         if any(row[1] != "NO" and (row[2] is not False or row[3] is not None) for row in area_rows):
             raise FeatureWorkspaceError("Foreign reservoir values must be explicitly unavailable.")
-        link_tables = link_response.json().get("Tables") or []
-        link_rows = link_tables[0].get("Rows", []) if link_tables else []
+        link_rows = grouped["links"]
         if len(link_rows) != 1 or len(link_rows[0]) != 1 or type(link_rows[0][0]) is not int or link_rows[0][0] < 0:
             raise FeatureWorkspaceError("Asset-message link table could not be verified.")
         self.state["energy_map_verification"] = {row[0]: row[2] for row in rows}

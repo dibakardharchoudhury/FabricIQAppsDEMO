@@ -10,6 +10,165 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_ukmet_is_served_before_optional_aurora(self):
+        pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
+        properties = pipeline["properties"]
+        self.assertIs(properties["parameters"]["enable_aurora"]["defaultValue"], False)
+        self.assertEqual(len(properties["activities"]), 1)
+        activity = properties["activities"][0]
+        self.assertEqual(activity["name"], "Weather_Orchestrator")
+        self.assertEqual(activity["typeProperties"]["parameters"]["enable_aurora"]["value"]["value"],
+                         "@pipeline().parameters.enable_aurora")
+        ns = self.orchestrator_functions()
+        for aurora in (False, True):
+            dag = ns["weather_dag"](aurora, 3600)
+            self.assertEqual(dag["concurrency"], 1)
+            stages = dag["activities"]
+            self.assertEqual(len(stages), 5 if aurora else 3)
+            self.assertEqual([stage["path"] for stage in stages[:3]], [
+                "Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations",
+            ])
+            self.assertIs(stages[0]["args"]["prepare_only"], True)
+            for index, stage in enumerate(stages):
+                self.assertEqual(stage["dependencies"], [stages[index - 1]["name"]] if index else [])
+                self.assertIs(stage["args"]["useRootDefaultLakehouse"], True)
+                self.assertEqual(stage["retry"], 0 if stage["name"] == "Ingest_Aurora" else 2)
+            if aurora:
+                self.assertIs(stages[3]["args"]["prepare_only"], False)
+                self.assertEqual(stages[4]["path"], "Weather_020_area_calculations")
+
+    def orchestrator_functions(self):
+        source = (ROOT / "Notebooks/Weather_Orchestrator.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)]
+        ns = {}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "weather-orchestrator", "exec"), ns)
+        return ns
+
+    def test_shared_session_orchestrator_rejects_missing_failed_and_skipped_stages(self):
+        ns = self.orchestrator_functions()
+        dag = ns["weather_dag"](False, 3600)
+        results = {stage["name"]: {"exitVal": "", "exception": None} for stage in dag["activities"]}
+        ns["require_weather_success"](results, dag)
+        for bad in (None, {}, {**results, "extra": {}},
+                    {**results, "Ingest_UKMet": {"exception": RuntimeError("HTTP 403")}},
+                    {**results, "Publish_UKMet": {"status": "Skipped"}},
+                    {**results, "Publish_UKMet": None},
+                    {**results, "Publish_UKMet": {}}):
+            with self.subTest(bad=bad), self.assertRaises(RuntimeError):
+                ns["require_weather_success"](bad, dag)
+        for aurora, timeout in (("false", 3600), (False, 0), (False, True)):
+            with self.assertRaises(ValueError):
+                ns["weather_dag"](aurora, timeout)
+
+    def test_forecast_refresh_uses_one_atomic_merge_with_exact_replacement_scopes(self):
+        import pandas as pd
+
+        source = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        function = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef) and node.name == "forecast_refresh_scope")
+        ns = {"pd": pd}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "forecast-refresh", "exec"), ns)
+        issue = datetime(2026, 10, 28, 12, tzinfo=timezone.utc)
+        rows = [{"source_id": "ukmet", "reference_time_utc": issue, "location_id": "F'1"},
+                {"source_id": "ukmet", "reference_time_utc": issue - timedelta(hours=6), "location_id": "F2"}]
+        predicate = ns["forecast_refresh_scope"](rows + rows)
+        self.assertEqual(predicate.count("target.source_id"), 2)
+        self.assertIn("target.location_id = 'F''1'", predicate)
+        self.assertIn("target.reference_time_utc = TIMESTAMP '2026-10-28T12:00:00Z'", predicate)
+        self.assertIn(") OR (", predicate)
+        with self.assertRaises(ValueError):
+            ns["forecast_refresh_scope"]([])
+        self.assertNotIn("DELETE FROM {TABLES['forecasts']}", source)
+        self.assertIn("WHEN NOT MATCHED BY SOURCE AND ({refresh_scope}) THEN DELETE", source)
+
+    def test_weather_optimizations_keep_raw_mirrors_and_written_table_diagnostics(self):
+        for name in ("Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"):
+            source = (ROOT / "Notebooks" / f"{name}.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+            raw = json.loads((ROOT / "Raw/RTI_Notebooks" / f"{name}.ipynb").read_text(encoding="utf-8"))
+            mirrored = "\n".join("".join(cell["source"]) for cell in raw["cells"] if cell["cell_type"] == "code")
+            self.assertEqual(ast.dump(ast.parse(source)), ast.dump(ast.parse(mirrored)), name)
+        source = (ROOT / "Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        for variable, table in (("area_metrics", "area_metrics"), ("serving", "latest_forecasts"),
+                                ("observed_serving", "latest_observations")):
+            written = source.index(f'saveAsTable(TABLES["{table}"])')
+            rebound = source.index(f'{variable} = spark.table(TABLES["{table}"])', written)
+            self.assertLess(written, rebound)
+            self.assertGreater(source.index(f"{variable}.count()", rebound), rebound)
+
+    def test_metadata_preparation_never_reads_aurora_credentials(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertLess(source.index("persist_station_areas(areas, started_at, selected_facility_ids)"),
+                        source.index("if prepare_only:"))
+        self.assertLess(source.index("if prepare_only:"), source.index("if not key_vault_uri.strip():"))
+        self.assertLess(source.index("if prepare_only:"), source.index("run_id = str(uuid4())"))
+        guard = next(node for node in ast.parse(source).body
+                     if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "prepare_only")
+
+        class NotebookExit(Exception):
+            pass
+
+        class Notebook:
+            @staticmethod
+            def exit(value):
+                raise NotebookExit(value)
+
+        class Utilities:
+            notebook = Notebook
+
+        with self.assertRaises(NotebookExit) as result:
+            exec(compile(ast.Module(body=[guard], type_ignores=[]), "prepare_only", "exec"),
+                 {"prepare_only": True, "notebookutils": Utilities, "json": json, "areas": [1, 2, 3]})
+        self.assertEqual(json.loads(str(result.exception)), {
+            "status": "prepared", "areas": 3, "aurora": "disabled",
+        })
+
+    def test_station_areas_are_prepared_without_a_vendor_response(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        function = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef) and node.name == "persist_station_areas")
+        queries = []
+        rows = []
+
+        class Frame:
+            columns = ["location_id"]
+
+            def createOrReplaceTempView(self, name):
+                self.name = name
+
+        class Spark:
+            @staticmethod
+            def table(name):
+                return Frame()
+
+            @staticmethod
+            def createDataFrame(values):
+                rows.extend(values)
+                return Frame()
+
+            @staticmethod
+            def sql(query):
+                queries.append(query)
+
+        context = {"spark": Spark, "json": json, "TABLES": {"areas": "weather_areas"},
+                   "geodesic_area_m2": lambda geometry: 123.0}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "station_areas", "exec"), context)
+        area = {"area_id": "weather_F001_20km", "area_name": "Station", "location_id": "F001",
+                "radius_km": 20.0, "geometry": object(), "geometry_json": "{}"}
+        context["persist_station_areas"]([area], datetime(2026, 10, 27), ["F001"])
+        self.assertEqual(rows[0]["area_id"], area["area_id"])
+        self.assertEqual(rows[0]["location_id"], area["location_id"])
+        self.assertEqual(json.loads(rows[0]["metadata_json"])["geodesic_area_m2"], 123.0)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("MERGE INTO weather_areas", queries[0])
+        context["persist_station_areas"]([area], datetime(2026, 10, 27), [])
+        self.assertIn("DELETE FROM weather_areas WHERE area_id NOT IN", queries[1])
+        Frame.columns = []
+        queries.clear()
+        context["persist_station_areas"]([area], datetime(2026, 10, 27), ["F001"])
+        self.assertEqual(len(queries), 2)
+        self.assertIn("ALTER TABLE weather_areas ADD COLUMNS (location_id STRING)", queries[0])
+        self.assertIn("MERGE INTO weather_areas", queries[1])
+
     def test_project_identity_producers_preserve_the_complete_natural_grain(self):
         expected = {
             "Weather_020_area_calculations": [
@@ -134,7 +293,7 @@ class WeatherSourceContractTests(unittest.TestCase):
     def test_scoped_area_run_does_not_execute_global_cleanup(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
         compile(source, "Weather_002", "exec")
-        self.assertIn("if not selected_facility_ids:\n    active_area_ids", source)
+        self.assertIn("if not selected_facility_ids:\n        active_area_ids", source)
 
     def test_canonical_metrics_keep_types_until_serving(self):
         source = (ROOT / "Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py").read_text(encoding="utf-8")
@@ -148,7 +307,7 @@ class WeatherSourceContractTests(unittest.TestCase):
     def test_raw_setup_binds_weather_020_environment_twice(self):
         notebook = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
         source = "\n".join("\n".join(cell.get("source", [])) for cell in notebook["cells"])
-        expected = '{"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}'
+        expected = '{"RTI_Orchestrator_Setup", "Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations", "Weather_Orchestrator"}'
         self.assertEqual(source.count(expected), 2)
 
     def test_weather_query_contract_pages_the_verified_connector_without_legacy_api(self):
@@ -222,9 +381,9 @@ class WeatherSourceContractTests(unittest.TestCase):
 
     def test_pipeline_and_redirect_contracts_remain_intact(self):
         pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
-        dependencies = [dependency["dependencyConditions"] for activity in pipeline["properties"]["activities"] for dependency in activity.get("dependsOn", [])]
-        self.assertTrue(dependencies)
-        self.assertTrue(all(conditions == ["Succeeded"] for conditions in dependencies))
+        self.assertEqual(pipeline["properties"]["concurrency"], 1)
+        self.assertEqual(len(pipeline["properties"]["activities"]), 1)
+        self.assertEqual(pipeline["properties"]["activities"][0]["policy"]["retry"], 0)
         rayfin = (ROOT / "HydroOperationsApp/rayfin/rayfin.yml").read_text(encoding="utf-8")
         self.assertNotIn("right-forge-2c0b55c94f", rayfin)
 

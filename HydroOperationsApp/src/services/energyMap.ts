@@ -1,6 +1,6 @@
 import { runKustoQuery, type KustoResult } from './fabric'
 import { connectedGeo } from './rayfin'
-import { createGeoEnergyService } from './geoConnector'
+import { createGeoEnergyService, readGeoPayloads } from './geoConnector'
 import type { EnergyFeature, EnergyLayerId, MapViewport, ReservoirAreaSelection } from '../ui-shared/energyMapModel'
 import type { EnergyPropertyFilters } from '../ui-shared/energyMapFilters'
 import { buildLiveFrequencyQuery, parseLiveFrequency, type LiveFrequencyReading } from '../ui-shared/liveFrequencyModel'
@@ -10,7 +10,9 @@ function rows(result: KustoResult): Record<string, unknown>[] {
   return result.rows.map(row => Object.fromEntries(result.columns.map((name, index) => [name, row[index]])))
 }
 
-const geo = () => createGeoEnergyService(connectedGeo())
+const geo = () => createGeoEnergyService(connectedGeo(), (metadata, area, signal) =>
+  readGeoPayloads(metadata, area, signal, async (query, maximumRows, requestSignal) =>
+    rows(await runKustoQuery(query, maximumRows, requestSignal))))
 
 export function queryEnergyMap(viewport: MapViewport, layers: EnergyLayerId[], signal: AbortSignal, properties?: EnergyPropertyFilters, areaSelection: ReservoirAreaSelection = null) {
   return geo().queryEnergyMap(viewport, layers, signal, properties, areaSelection)

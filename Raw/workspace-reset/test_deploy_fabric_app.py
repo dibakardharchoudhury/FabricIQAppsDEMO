@@ -7,10 +7,12 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
+from contextlib import ExitStack
 
 
 MODULE_PATH = Path(__file__).with_name("deploy_fabric_app.py")
@@ -20,7 +22,198 @@ DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
 
 
+class GraphClaimsChallengeTests(unittest.TestCase):
+    def setUp(self):
+        DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear()
+        self.addCleanup(DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear)
+
+    def test_windows_authentication_uses_one_cache_mode_and_restores_environment(self):
+        with patch.object(DEPLOY.sys, "platform", "win32"), patch.dict(os.environ, {
+            "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "true",
+        }):
+            os.environ.pop("AZURE_CORE_LOGIN_EXPERIENCE_V2", None)
+            with self.assertRaisesRegex(RuntimeError, "child failed"):
+                with DEPLOY.azure_cli_authentication_environment():
+                    self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "false")
+                    self.assertEqual(os.environ["AZURE_CORE_LOGIN_EXPERIENCE_V2"], "off")
+                    raise RuntimeError("child failed")
+            self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "true")
+            self.assertNotIn("AZURE_CORE_LOGIN_EXPERIENCE_V2", os.environ)
+
+    def test_non_windows_authentication_preserves_operator_configuration(self):
+        with patch.object(DEPLOY.sys, "platform", "linux"), patch.dict(os.environ, {
+            "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "true",
+        }):
+            with DEPLOY.azure_cli_authentication_environment():
+                self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "true")
+
+    def test_graph_accepted_cached_token_never_opens_sign_in_or_creates_session(self):
+        with (
+            patch.object(DEPLOY, "graph_claims_challenge", return_value=""),
+            patch.object(DEPLOY, "run_stream") as login,
+            patch.object(DEPLOY.tempfile, "mkdtemp") as create,
+        ):
+            DEPLOY.reauthenticate_azure_cli("tenant", "reading Graph", graph=True)
+        login.assert_not_called()
+        create.assert_not_called()
+
+    def test_graph_challenge_reuses_cache_and_allows_only_one_interactive_attempt(self):
+        with (
+            patch.dict(os.environ, {"AZURE_CONFIG_DIR": "existing-tenant-cache"}),
+            patch.object(DEPLOY, "graph_claims_challenge", return_value="claims"),
+            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(DEPLOY, "run_stream") as login,
+            patch.object(DEPLOY.tempfile, "mkdtemp") as create,
+        ):
+            DEPLOY.reauthenticate_azure_cli("tenant", "reading Graph", graph=True)
+            self.assertEqual(os.environ["AZURE_CONFIG_DIR"], "existing-tenant-cache")
+            with self.assertRaisesRegex(DEPLOY.DeployError, "No further sign-in popup"):
+                DEPLOY.reauthenticate_azure_cli("tenant", "reading Graph again", graph=True)
+        login.assert_called_once()
+        self.assertIn("--claims-challenge", login.call_args.args[0])
+        self.assertIn("https://graph.microsoft.com//.default", login.call_args.args[0])
+        create.assert_not_called()
+
+    def test_successful_graph_probe_reports_cached_token_accepted(self):
+        with (
+            patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"token"}'),
+            patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200)),
+        ):
+            self.assertEqual(DEPLOY.graph_claims_challenge("tenant"), "")
+
+    def test_graph_claims_propagation_retries_reads_without_repeating_login(self):
+        stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
+        action = Mock(side_effect=[stale, stale, "verified"])
+        with (
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as login,
+            patch.object(DEPLOY.time, "sleep") as sleep,
+        ):
+            self.assertEqual(DEPLOY.run_with_azure_cli_reauthentication(
+                "tenant", "reading Graph", action, graph=True,
+            ), "verified")
+        login.assert_called_once_with("tenant", "reading Graph", graph=True)
+        sleep.assert_called_once_with(2)
+        self.assertEqual(action.call_count, 3)
+
+    def test_graph_persistent_challenge_is_bounded_and_permission_denial_is_not_retried(self):
+        for error, expected_calls, waits in (
+            (DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies"), 6, 4),
+            (DEPLOY.DeployError("Authorization_RequestDenied"), 2, 0),
+        ):
+            action = Mock(side_effect=[DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")] + [error] * 5)
+            with (
+                self.subTest(error=str(error)),
+                patch.object(DEPLOY, "reauthenticate_azure_cli") as login,
+                patch.object(DEPLOY.time, "sleep") as sleep,
+            ):
+                with self.assertRaises(DEPLOY.AzureCliReauthenticationError):
+                    DEPLOY.run_with_azure_cli_reauthentication("tenant", "reading Graph", action, graph=True)
+            self.assertEqual(action.call_count, expected_calls)
+            self.assertEqual(sleep.call_count, waits)
+            login.assert_called_once()
+
+    def test_graph_challenge_is_preserved_without_logging_token_or_claims(self):
+        challenge = base64.b64encode(json.dumps({
+            "access_token": {"nbf": {"essential": True, "value": "123"}},
+        }).encode()).decode()
+        response = Mock(status_code=401, headers={
+            "WWW-Authenticate": f'Bearer error="insufficient_claims", claims="{challenge}"',
+        })
+        output = io.StringIO()
+        with (
+            patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"private-token"}') as capture,
+            patch.object(DEPLOY.requests, "get", return_value=response) as get,
+            patch("sys.stdout", output),
+        ):
+            self.assertEqual(DEPLOY.graph_claims_challenge("tenant"), challenge)
+        self.assertIn("https://graph.microsoft.com/", capture.call_args.args[0])
+        self.assertEqual(get.call_args.kwargs["headers"], {"Authorization": "Bearer private-token"})
+        self.assertEqual(get.call_args.kwargs["timeout"], 30)
+        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+        self.assertNotIn("private-token", output.getvalue())
+        self.assertNotIn(challenge, output.getvalue())
+
+    def test_graph_probe_rejects_non_challenges_and_invalid_claims(self):
+        for status, header in (
+            (403, ""),
+            (302, ""),
+            (401, 'Bearer error="insufficient_claims"'),
+            (401, 'Bearer error="insufficient_claims", claims="not-json"'),
+            (401, 'Bearer error="insufficient_claims", claims="e30="'),
+        ):
+            with (
+                self.subTest(status=status, header=header),
+                patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"token"}'),
+                patch.object(DEPLOY.requests, "get", return_value=Mock(
+                    status_code=status, headers={"WWW-Authenticate": header},
+                )),
+            ):
+                with self.assertRaises(DEPLOY.DeployError):
+                    DEPLOY.graph_claims_challenge("tenant")
+
+    def test_missing_graph_token_requires_scoped_login_but_other_failures_propagate(self):
+        with (
+            patch.object(DEPLOY, "run_capture", side_effect=DEPLOY.DeployError("Run 'az login'")),
+            patch.object(DEPLOY.requests, "get") as get,
+        ):
+            self.assertIsNone(DEPLOY.graph_claims_challenge("tenant"))
+            get.assert_not_called()
+        with patch.object(DEPLOY, "run_capture", side_effect=DEPLOY.DeployError("Forbidden")):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Forbidden"):
+                DEPLOY.graph_claims_challenge("tenant")
+
+    def test_invalid_token_metadata_and_transport_errors_fail_explicitly(self):
+        for payload in ("not-json", "{}", "[]", '{"accessToken":""}'):
+            with self.subTest(payload=payload), patch.object(DEPLOY, "run_capture", return_value=payload):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "Graph token"):
+                    DEPLOY.graph_claims_challenge("tenant")
+        with (
+            patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"token"}'),
+            patch.object(DEPLOY.requests, "get", side_effect=DEPLOY.requests.Timeout()),
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Could not read"):
+                DEPLOY.graph_claims_challenge("tenant")
+
+
 class CommandEncodingTests(unittest.TestCase):
+    def test_node_commands_pin_child_runtime_in_capture_and_stream(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            node = Path(temporary) / "node24" / ("node.exe" if os.name == "nt" else "node")
+            with patch.dict(os.environ, {"PATH": "global-toolchain"}), \
+                    patch.object(DEPLOY.subprocess, "run", return_value=Mock(
+                        returncode=0, stdout="captured", stderr="",
+                    )) as run:
+                self.assertEqual(DEPLOY.run_capture([str(node), "npm-cli.js"]), "captured")
+                self.assertEqual(run.call_args.kwargs["env"]["PATH"].split(os.pathsep)[0], str(node.parent))
+                self.assertEqual(os.environ["PATH"], "global-toolchain")
+            supplied = {"Path": "global-toolchain", "RAYFIN_TEST": "retained"}
+            process = Mock(stdout=iter(["streamed\n"]))
+            process.wait.return_value = 0
+            with patch.object(DEPLOY.subprocess, "Popen", return_value=process) as popen:
+                self.assertEqual(DEPLOY.run_stream([str(node), "npm-cli.js"], env=supplied), "streamed")
+            environment = popen.call_args.kwargs["env"]
+            self.assertEqual(environment["PATH"].split(os.pathsep)[0], str(node.parent))
+            self.assertEqual(environment["RAYFIN_TEST"], "retained")
+            self.assertEqual([key for key in environment if key.casefold() == "path"], ["PATH"])
+            self.assertEqual(supplied, {"Path": "global-toolchain", "RAYFIN_TEST": "retained"})
+
+    def test_stream_failure_retains_actionable_error_not_numeric_buffers(self):
+        lines = [
+            "npm warn cleanup Error: EPERM\n",
+            "npm error code 1\n",
+            "npm error Error: spawnSync esbuild.exe ENOENT\n",
+            *["npm error Buffer(2044) [110, 111, 100]\n"] * 20,
+        ]
+        process = Mock(stdout=iter(lines))
+        process.wait.return_value = 1
+        with patch.object(DEPLOY.subprocess, "Popen", return_value=process), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            with self.assertRaises(DEPLOY.DeployError) as failure:
+                DEPLOY.run_stream(["npm-ci"])
+        self.assertIn("spawnSync esbuild.exe ENOENT", str(failure.exception))
+        self.assertNotIn("Buffer", str(failure.exception))
+        self.assertNotIn("EPERM", str(failure.exception))
+
     def test_capture_child_can_print_unicode_even_with_legacy_parent_encoding(self):
         with patch.dict(os.environ, {"PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}):
             output = DEPLOY.run_capture([sys.executable, "-c", "print('\\u2501')"])
@@ -37,6 +230,16 @@ class CommandEncodingTests(unittest.TestCase):
 
 
 class DeploymentTimingTests(unittest.TestCase):
+    def test_substep_timing_records_failure_and_propagates_it(self):
+        with patch.object(DEPLOY.time, "monotonic", side_effect=[10, 13]), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            with self.assertRaisesRegex(DEPLOY.DeployError, "denied"):
+                with DEPLOY.timed_operation("Readback"):
+                    raise DEPLOY.DeployError("denied")
+        self.assertEqual(json.loads(output.getvalue().split("=", 1)[1]), {
+            "label": "Readback", "seconds": 3, "status": "failed",
+        })
+
     def test_ordered_durations_and_total_are_machine_readable(self):
         with patch.object(DEPLOY.time, "monotonic", side_effect=[10, 10, 15, 23]), \
              patch("sys.stdout", new_callable=io.StringIO) as output:
@@ -68,6 +271,24 @@ class DeploymentTimingTests(unittest.TestCase):
 
 
 class LakehouseConnectorReceiptTests(unittest.TestCase):
+    def test_batch_requires_every_connector_and_rejects_partial_or_duplicate_rows(self):
+        names = ("hydrolakehouse", "hydrooperations", "hydrogeo")
+        receipt = {
+            "status": "success",
+            "generate": [{"name": name, "status": "generated"} for name in names],
+            "results": [{"name": name, "status": "success"} for name in names],
+        }
+        DEPLOY.validate_lakehouse_connector_apply(json.dumps(receipt), names)
+        with self.assertRaises(DEPLOY.DeployError):
+            DEPLOY.validate_lakehouse_connector_apply(json.dumps({
+                **receipt, "results": receipt["results"] + [{"name": "unmatched", "status": "success"}],
+            }), names)
+        for key in ("generate", "results"):
+            for rows in (receipt[key][:-1], receipt[key] + [receipt[key][0]],
+                         [{**row, "status": "skipped"} for row in receipt[key]]):
+                with self.subTest(key=key, rows=rows), self.assertRaises(DEPLOY.DeployError):
+                    DEPLOY.validate_lakehouse_connector_apply(json.dumps({**receipt, key: rows}), names)
+
     def test_required_connector_generation_and_apply_must_both_succeed(self):
         receipt = {
             "status": "success",
@@ -111,7 +332,300 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
     )
 
 
-class FoundryGraphPrerequisiteTests(unittest.TestCase):
+class FoundryBackendGatewayTests(unittest.TestCase):
+    def test_energy_and_foundry_overlap_and_either_failure_blocks_completion(self):
+        from feature_workspace import FeatureWorkspaceError
+
+        for failure in ("", "energy", "foundry"):
+            with self.subTest(failure=failure):
+                energy_started = threading.Event()
+                foundry_started = threading.Event()
+                energy = Mock()
+
+                def finish_energy():
+                    energy_started.set()
+                    self.assertTrue(foundry_started.wait(5), "Foundry did not overlap Energy.")
+                    if failure == "energy":
+                        raise FeatureWorkspaceError("energy failed")
+
+                def foundry(*args):
+                    foundry_started.set()
+                    self.assertTrue(energy_started.wait(5), "Energy did not overlap Foundry.")
+                    if failure == "foundry":
+                        raise DEPLOY.DeployError("foundry failed")
+
+                energy.publish_energy.side_effect = finish_energy
+                with patch.object(DEPLOY, "energy_workspace", return_value=energy), \
+                     patch.object(DEPLOY, "provision_foundry_agents", side_effect=foundry), \
+                     patch.object(DEPLOY, "configure_app_feature_flags") as configure:
+                    if failure:
+                        with self.assertRaisesRegex(DEPLOY.DeployError, failure):
+                            DEPLOY.prepare_energy_and_foundry("tenant", "workspace")
+                    else:
+                        DEPLOY.prepare_energy_and_foundry("tenant", "workspace")
+                    configure.assert_not_called()
+                    energy.prepare_energy.assert_not_called()
+                    energy.publish_energy.assert_called_once_with()
+
+    def test_combined_deployment_reuses_core_and_gates_static_publication_on_both_branches(self):
+        from feature_workspace import FeatureWorkspaceError
+
+        for failure, isolated in (("", False), ("energy", False), ("foundry", False),
+                                  ("AppBackend", False), ("", True)):
+            with self.subTest(failure=failure, isolated=isolated), ExitStack() as stack:
+                energy = Mock()
+                energy.publish_energy.side_effect = (
+                    FeatureWorkspaceError("energy failed") if failure == "energy" else None
+                )
+                values = {"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true"}
+                mocks = {}
+                for name, result in {
+                    "prefer_tenant_scoped_azure_cli_config": None,
+                    "ensure_azure_tenant": "tenant",
+                    "resolve_workspace": ("workspace", "Demo", "capacity"),
+                    "resolve_spa": "11111111-1111-1111-1111-111111111111",
+                    "read_entra_spa_redirects_with_reauth": [],
+                    "write_rayfin_redirects": [],
+                    "prepare_rayfin_env": False,
+                    "current_rayfin_target": (values, None),
+                    "configure_geo_connector": None,
+                    "ensure_deploy_dependencies": None,
+                    "run_stream": "validated",
+                    "energy_workspace": energy,
+                    "appbackend_identity_present": failure != "AppBackend",
+                    "ensure_rayfin_login": None,
+                    "export_frontend_env": None,
+                    "run_rayfin_deployment": "Hosting URL: https://combined.webapp.fabricapps.net",
+                    "validate_lakehouse_connector_apply": None,
+                    "validate_fabric_app": "backend",
+                    "validate_hosted_page": "app-shell",
+                    "validate_rayfin_endpoint_contract": "https://api.test",
+                    "validate_rayfin_publishable_key": "pk-test",
+                    "validate_appbackend_cors": None,
+                    "validate_spa_redirect_preservation": None,
+                    "validate_entra_live_auth_with_reauth": None,
+                    "verify_foundry_agents": None,
+                    "verify_lakehouse_connector": {"facilities": 3, "equipment": 9, "instruments": 19},
+                }.items():
+                    mocks[name] = stack.enter_context(patch.object(DEPLOY, name, return_value=result))
+                provision = stack.enter_context(patch.object(
+                    DEPLOY, "provision_foundry_agents",
+                    side_effect=DEPLOY.DeployError("foundry failed") if failure == "foundry" else None,
+                ))
+                command = stack.enter_context(patch.object(
+                    DEPLOY, "rayfin24", side_effect=lambda *args: list(args),
+                ))
+                stack.enter_context(patch.dict(
+                    os.environ, {"FABRIC_FEATURE_CONFIG": "feature.json" if isolated else ""},
+                ))
+                if isolated:
+                    import feature_workspace
+                    stack.enter_context(patch.object(
+                        feature_workspace, "load_feature_config",
+                        return_value=Mock(enable_energy_map=True),
+                    ))
+                    stack.enter_context(patch.object(
+                        feature_workspace, "FeatureWorkspace", return_value=energy,
+                    ))
+                args = argparse.Namespace(
+                    tenant="tenant", workspace="workspace", client_id=None, push_config=False,
+                    stage="all", energy_map="enabled", energy_read_models_only=True,
+                )
+                if failure:
+                    with self.assertRaisesRegex(DEPLOY.DeployError, failure):
+                        DEPLOY._deploy(args, Mock())
+                    mocks["run_rayfin_deployment"].assert_not_called()
+                    mocks["validate_appbackend_cors"].assert_not_called()
+                else:
+                    DEPLOY._deploy(args, Mock())
+                    self.assertEqual(command.call_args_list[0].args, ("up", "staticapp", "deploy"))
+                    self.assertIn(
+                        ("up", "--workspace-id", "workspace", "--exclude-services", "staticHosting", "--yes"),
+                        [call.args for call in command.call_args_list],
+                    )
+                    mocks["validate_appbackend_cors"].assert_called_once()
+                    mocks["validate_entra_live_auth_with_reauth"].assert_called_once()
+                provision.assert_called_once_with("tenant", "workspace")
+                energy.prepare_energy.assert_not_called()
+                energy.prepare.assert_not_called()
+                energy.configure_app.assert_not_called()
+                energy.publish_energy.assert_called_once_with()
+                mocks["verify_foundry_agents"].assert_not_called()
+                mocks["prepare_rayfin_env"].assert_called_once()
+                mocks["resolve_spa"].assert_called_once()
+                if isolated:
+                    energy.finish.assert_called_once_with(
+                        lakehouse_counts={"facilities": 3, "equipment": 9, "instruments": 19},
+                    )
+
+    def test_fresh_image_and_gateway_overlap_but_publication_waits_for_both(self):
+        for failure in ("", "image", "backend"):
+            with self.subTest(failure=failure):
+                image_started = threading.Event()
+                backend_started = threading.Event()
+                image_finished = threading.Event()
+                backend_finished = threading.Event()
+                foundry = Mock()
+                foundry.resolve_project.return_value.project_id = "/projects/selected"
+
+                def image(*args):
+                    image_started.set()
+                    self.assertTrue(backend_started.wait(5), "Backend did not overlap image preparation.")
+                    image_finished.set()
+                    if failure == "image":
+                        raise DEPLOY.DeployError("image preparation failed")
+
+                def backend(*args):
+                    backend_started.set()
+                    self.assertTrue(image_started.wait(5), "Image preparation did not overlap backend.")
+                    backend_finished.set()
+                    if failure == "backend":
+                        raise DEPLOY.DeployError("backend failed")
+
+                def publish(*args, **kwargs):
+                    self.assertTrue(image_finished.is_set())
+                    self.assertTrue(backend_finished.is_set())
+
+                foundry.prepare_hosted_image.side_effect = image
+                foundry.provision.side_effect = publish
+                with (
+                    patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                        {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
+                    )),
+                    patch.object(DEPLOY, "appbackend_identity_present", return_value=False),
+                    patch.object(DEPLOY, "ensure_appbackend_identity", side_effect=backend),
+                    patch.object(DEPLOY, "ensure_hosted_source_prerequisites"),
+                    patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
+                    patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
+                    patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
+                ):
+                    if failure:
+                        with self.assertRaisesRegex(DEPLOY.DeployError, failure):
+                            DEPLOY.provision_foundry_agents("tenant", "workspace")
+                        foundry.provision.assert_not_called()
+                    else:
+                        DEPLOY.provision_foundry_agents("tenant", "workspace")
+                        foundry.provision.assert_called_once()
+                foundry.prepare_hosted_image.assert_called_once()
+
+    def test_existing_backend_skips_rayfin_but_identifies_the_progress_phase(self):
+        with (
+            patch.object(DEPLOY, "appbackend_identity_present", return_value=True),
+            patch.object(DEPLOY, "ensure_rayfin_login") as login,
+            patch.object(DEPLOY, "run_rayfin_deployment") as run,
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            DEPLOY.ensure_appbackend_identity("tenant", "workspace")
+        login.assert_not_called()
+        run.assert_not_called()
+        self.assertIn("Foundry: backend gateway", output.getvalue())
+        self.assertIn("Reusing the configured AppBackend identity", output.getvalue())
+
+    def test_new_backend_excludes_static_hosting_and_requires_identity_readback(self):
+        for readback in (True, False):
+            with (
+                self.subTest(readback=readback),
+                patch.object(DEPLOY, "appbackend_identity_present", side_effect=[False, readback]),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                    {"RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "11111111-1111-1111-1111-111111111111"},
+                    None,
+                )),
+                patch.object(DEPLOY, "ensure_rayfin_login") as login,
+                patch.object(DEPLOY, "rayfin24", return_value=["backend-command"]) as command,
+                patch.object(DEPLOY, "run_rayfin_deployment") as run,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                if readback:
+                    DEPLOY.ensure_appbackend_identity("tenant", "workspace")
+                else:
+                    with self.assertRaisesRegex(DEPLOY.DeployError, "did not record its identity"):
+                        DEPLOY.ensure_appbackend_identity("tenant", "workspace")
+                login.assert_called_once_with("tenant", "workspace")
+                command.assert_called_once_with(
+                    "up", "--workspace-id", "workspace", "--exclude-services", "staticHosting", "--yes",
+                )
+                run.assert_called_once_with(["backend-command"], "tenant")
+                self.assertIn("Fabric App item and its SQL/GraphQL dependencies", output.getvalue())
+                self.assertIn("without static hosting", output.getvalue())
+
+    def test_foundry_only_returns_before_any_website_publication_for_new_or_existing_target(self):
+        for reuse in (True, False):
+            with (
+                self.subTest(reuse=reuse),
+                patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": ""}),
+                patch.object(DEPLOY, "prefer_tenant_scoped_azure_cli_config"),
+                patch.object(DEPLOY, "ensure_azure_tenant", return_value="tenant"),
+                patch.object(DEPLOY, "resolve_workspace", return_value=("workspace", "Demo", "capacity")),
+                patch.object(DEPLOY, "resolve_spa", return_value="11111111-1111-1111-1111-111111111111"),
+                patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
+                patch.object(DEPLOY, "write_rayfin_redirects"),
+                patch.object(DEPLOY, "prepare_rayfin_env", return_value=reuse),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=({}, None)),
+                patch.object(DEPLOY, "configure_geo_connector"),
+                patch.object(DEPLOY, "ensure_deploy_dependencies"),
+                patch.object(DEPLOY, "node24_script", return_value=["validate-command"]),
+                patch.object(DEPLOY, "run_stream"),
+                patch.object(DEPLOY, "provision_foundry_agents") as provision,
+                patch.object(DEPLOY, "verify_foundry_agents") as verify,
+                patch.object(DEPLOY, "ensure_rayfin_login") as login,
+                patch.object(DEPLOY, "run_rayfin_deployment") as publish,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                timings = Mock()
+                DEPLOY._deploy(argparse.Namespace(
+                    push_config=False, tenant="tenant", workspace="workspace", stage="foundry",
+                    client_id=None, energy_map="keep",
+                ), timings)
+                provision.assert_called_once_with("tenant", "workspace")
+                verify.assert_not_called()
+                login.assert_not_called()
+                publish.assert_not_called()
+                self.assertEqual([call.args[0] for call in timings.stage.call_args_list], [1, 2, 3])
+                self.assertIn("FOUNDRY_SETUP_SUCCESS", output.getvalue())
+                self.assertIn("no website published; agent execution is separate", output.getvalue())
+
+
+class AppEnergySeparationTests(unittest.TestCase):
+    def test_app_and_combined_deployment_do_not_repeat_map_agent_preparation(self):
+        for stage, setting in (("app", "keep"), ("all", "keep"), ("all", "enabled")):
+            with (
+                self.subTest(stage=stage, setting=setting),
+                patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": ""}),
+                patch.object(DEPLOY, "prefer_tenant_scoped_azure_cli_config"),
+                patch.object(DEPLOY, "ensure_azure_tenant", return_value="tenant"),
+                patch.object(DEPLOY, "resolve_workspace", return_value=("workspace", "Demo", "capacity")),
+                patch.object(DEPLOY, "resolve_spa", return_value="11111111-1111-1111-1111-111111111111"),
+                patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
+                patch.object(DEPLOY, "write_rayfin_redirects"),
+                patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                    {"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true"}, None,
+                )),
+                patch.object(DEPLOY, "configure_geo_connector"),
+                patch.object(DEPLOY, "ensure_deploy_dependencies"),
+                patch.object(DEPLOY, "node24_script", return_value=["validate-command"]),
+                patch.object(DEPLOY, "run_stream"),
+                patch.object(DEPLOY, "provision_foundry_agents"),
+                patch.object(DEPLOY, "verify_foundry_agents"),
+                patch.object(DEPLOY, "energy_workspace") as energy,
+                patch.object(DEPLOY, "ensure_rayfin_login", side_effect=RuntimeError("stop before publication")),
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "stop before publication"):
+                    DEPLOY._deploy(argparse.Namespace(
+                        push_config=False, tenant="tenant", workspace="workspace", stage=stage,
+                        client_id=None, energy_map=setting,
+                    ), Mock())
+                energy.return_value.verify_energy.assert_called_once_with()
+                energy.return_value.prepare_map_chat.assert_not_called()
+                energy.return_value.publish_energy.assert_not_called()
+                if stage == "all" and setting == "enabled":
+                    energy.return_value.prepare_energy.assert_called_once_with()
+                else:
+                    energy.return_value.prepare_energy.assert_not_called()
+
+
+class FoundryOntologyPrerequisiteTests(unittest.TestCase):
     def test_core_energy_finalize_does_not_start_a_second_ingestion(self):
         for publish_only in (True, False):
             with self.subTest(publish_only=publish_only), \
@@ -132,33 +646,30 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
                     energy.return_value.prepare_energy.assert_called_once_with()
                     energy.return_value.publish_energy.assert_not_called()
 
-    def test_missing_graph_binding_stops_before_loading_foundry_provisioning(self):
+    def test_missing_ontology_id_stops_before_loading_foundry_provisioning(self):
         for binding in ("", "''", '""'):
             with (
                 self.subTest(binding=binding),
                 patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                    {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
+                    {"RAYFIN_PUBLIC_ONTOLOGY_ID": binding}, None,
                 )),
                 patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
                 patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
                 patch.object(
                     DEPLOY.importlib.util, "spec_from_file_location",
-                    side_effect=AssertionError("Foundry provisioning must not load without a graph binding."),
+                    side_effect=AssertionError("Foundry provisioning must not load without an ontology ID."),
                 ),
             ):
-                with self.assertRaisesRegex(DEPLOY.DeployError, "Native Ontology graph binding is missing"):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "verified selected Ontology item ID is missing"):
                     DEPLOY.provision_foundry_agents("tenant", "workspace")
                 backend.assert_not_called()
                 sources.assert_not_called()
 
-    def test_existing_binding_continues_to_the_existing_foundry_provisioner(self):
-        binding = json.dumps({
-            "workspaceId": "workspace", "ontologyId": "ontology", "graphModelId": "graph",
-        })
+    def test_ontology_without_graph_continues_to_the_existing_foundry_provisioner(self):
         foundry = Mock()
         with (
             patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
+                {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
             )),
             patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
             patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
@@ -179,7 +690,7 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
         foundry.resolve_project.side_effect = DEPLOY.DeployError("Choose one project")
         with (
             patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": '{"graphModelId":"graph"}'}, None,
+                {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
             )),
             patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
             patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
@@ -192,6 +703,41 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
         backend.assert_not_called()
         sources.assert_not_called()
         foundry.provision.assert_not_called()
+
+
+class OntologyAssociatedOperationalSourceTests(unittest.TestCase):
+    def test_published_ontology_needs_no_separate_sql_datasource(self):
+        from operational_store_support import SQL_PROJECT_ENTITIES, WEATHER_PROJECT_ENTITIES
+        workspace = "11111111-1111-1111-1111-111111111111"
+        ontology = "22222222-2222-2222-2222-222222222222"
+        sql = "33333333-3333-3333-3333-333333333333"
+        lakehouse = "44444444-4444-4444-4444-444444444444"
+        agent = "55555555-5555-5555-5555-555555555555"
+        context = {"workspaceId": workspace, "artifactId": ontology}
+        definition = {"definition": {"parts": [{
+            "path": "Files/Config/published/ontologies/selected/ontology.json",
+            "payload": base64.b64encode(json.dumps(context).encode()).decode(),
+        }]}}
+        paths = ["expressions.tmdl"]
+        for entity in {**SQL_PROJECT_ENTITIES, **WEATHER_PROJECT_ENTITIES}:
+            paths.extend((f"entities/{entity}.tmdl", f"tables/HydroProject_{entity}.tmdl"))
+        extension = {"definition": {"parts": [{"path": path, "payload": "Zml4dHVyZQ=="} for path in paths]}}
+        values = {
+            "RAYFIN_PUBLIC_ONTOLOGY_ID": ontology, "RAYFIN_PUBLIC_LAKEHOUSE_ID": lakehouse,
+            "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": sql,
+        }
+        with patch.dict(sys.modules, {"deploy_fabric_app": DEPLOY}), \
+             patch.object(DEPLOY, "fabric_get", return_value={"id": ontology, "properties": {"generation": 2}}), \
+             patch.object(DEPLOY, "_workspace_artifacts", return_value=[
+                 {"id": sql, "type": "SQLDatabase", "displayName": "store"},
+                 {"id": agent, "type": "DataAgent", "displayName": "RTI_Demo_Agent_Test"},
+             ]), \
+             patch("provision_foundry_agents.read_data_agent_definition", side_effect=[definition, extension]), \
+             patch("provision_foundry_agents.published_sql_source_ready",
+                   side_effect=AssertionError("Must not require an explicit SQL datasource")), \
+             patch("ontology_notebook_support._verify_definition") as verify:
+            self.assertTrue(DEPLOY._published_operational_source_ready(workspace, values, "store", {}))
+        verify.assert_called_once()
 
 
 class HostedSourceBootstrapTests(unittest.TestCase):
@@ -212,7 +758,7 @@ class HostedSourceBootstrapTests(unittest.TestCase):
             "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID": self.notebook,
             "RAYFIN_PUBLIC_ITEM_ID": self.backend,
             "RAYFIN_PUBLIC_LAKEHOUSE_ID": "66666666-6666-6666-6666-666666666666",
-            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({"ontologyId": self.ontology}),
+            "RAYFIN_PUBLIC_ONTOLOGY_ID": self.ontology,
         }
         self.active = []
         self.states = ["NotStarted", "InProgress", "Completed"]
@@ -347,13 +893,15 @@ class HostedSourceBootstrapTests(unittest.TestCase):
     def test_completion_without_verified_sql_publication_is_not_success(self):
         self.publication.side_effect = None
         self.publication.return_value = False
-        with self.assertRaisesRegex(DEPLOY.DeployError, "SQL source publication could not be verified"):
+        with self.assertRaisesRegex(DEPLOY.DeployError, "ontology-associated operational SQL could not be verified"):
             DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.assertNotIn(self.graphql, self.env.read_text(encoding="utf-8"))
 
 
 class DeployOrderTests(unittest.TestCase):
     def setUp(self):
+        DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear()
+        self.addCleanup(DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear)
         DEPLOY._FABRIC_TOKEN_CACHE.clear()
         self.addCleanup(DEPLOY._FABRIC_TOKEN_CACHE.clear)
         energy = patch.object(DEPLOY, "energy_workspace")
@@ -419,8 +967,8 @@ class DeployOrderTests(unittest.TestCase):
                     DEPLOY.check_capacity_availability("target", {})
         for status in (401, 429, 500):
             with self.subTest(status=status), patch.object(
-                DEPLOY.requests, "get", return_value=Mock(status_code=status, ok=False, text="service failure")
-            ):
+                DEPLOY.requests, "get", return_value=Mock(status_code=status, ok=False, text="service failure", headers={})
+            ), patch.object(DEPLOY.time, "sleep"):
                 with self.assertRaisesRegex(DEPLOY.DeployError, f"HTTP {status}"):
                     DEPLOY.check_capacity_availability("target", {})
 
@@ -491,6 +1039,48 @@ class DeployOrderTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(DEPLOY.DeployError, "invalid frontend config"):
                 DEPLOY.run_rayfin_deployment(["rayfin", "up"], "tenant")
+
+    def test_static_upload_401_refreshes_only_its_token_and_retries_without_rebuilding(self):
+        command = ["node24", "rayfin", "up", "staticapp", "deploy"]
+        key = ("tenant", "private-cli")
+        with (
+            patch.dict(os.environ, {"AZURE_CONFIG_DIR": "private-cli"}),
+            patch.dict(DEPLOY._FABRIC_TOKEN_CACHE, {key: (9999999999, "old"),
+                                                   ("other-tenant", "other-cli"): (9999999999, "other")}),
+            patch.object(DEPLOY, "rayfin_environment", side_effect=[
+                {"RAYFIN_TOKEN": "old"}, {"RAYFIN_TOKEN": "refreshed"},
+            ]),
+            patch.object(DEPLOY, "run_stream", side_effect=[
+                DEPLOY.DeployError("Static deploy failed: Static deploy failed: 401 Unauthorized"),
+                "Hosting URL: https://current.webapp.fabricapps.net",
+            ]) as run,
+            patch.object(DEPLOY, "export_frontend_env") as export,
+        ):
+            result = DEPLOY.run_rayfin_deployment(command, "TENANT")
+            self.assertNotIn(key, DEPLOY._FABRIC_TOKEN_CACHE)
+            self.assertIn(("other-tenant", "other-cli"), DEPLOY._FABRIC_TOKEN_CACHE)
+        self.assertIn("Hosting URL:", result)
+        self.assertEqual(command[-1], "deploy")
+        self.assertEqual(run.call_args_list[1].args[0], [*command, "--skip-build"])
+        self.assertEqual(run.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
+        export.assert_called_once()
+
+    def test_static_upload_authentication_recovery_is_bounded_and_not_a_general_mutation_retry(self):
+        cases = [
+            (["up", "staticapp", "deploy"], "Static deploy failed: 401 Unauthorized", 2),
+            (["up", "staticapp", "deploy"], "Static deploy failed: 403 Forbidden", 1),
+            (["up", "staticapp", "deploy"], "Build failed: 401 errors", 1),
+            (["up", "--yes"], "Static deploy failed: 401 Unauthorized", 1),
+        ]
+        for command, message, expected_calls in cases:
+            with self.subTest(command=command, message=message), \
+                    patch.object(DEPLOY, "rayfin_environment", return_value={}), \
+                    patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError(message)) as run, \
+                    patch.object(DEPLOY, "export_frontend_env") as export:
+                with self.assertRaisesRegex(DEPLOY.DeployError, message):
+                    DEPLOY.run_rayfin_deployment(command, "tenant")
+                self.assertEqual(run.call_count, expected_calls)
+                export.assert_called_once()
 
     def test_rayfin_commands_export_validated_configuration_on_success_and_failure(self):
         for fails in (False, True):
@@ -691,6 +1281,31 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(events, ["stop", "stop"])
 
+    def test_dependency_restore_does_not_repeat_nontransient_failures(self):
+        for error in ("spawnSync esbuild.exe ENOENT", "EACCES", "package-lock mismatch", "EPERM; ENOENT"):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(DEPLOY.shutil, "which", return_value="npx"), \
+                    patch.object(DEPLOY, "deploy_dependencies_ready", return_value=False), \
+                    patch.object(DEPLOY, "DEPENDENCY_STAMP", Path(temporary) / ".stamp"), \
+                    patch.object(DEPLOY, "stop_hydro_node_tooling"), \
+                    patch.object(DEPLOY, "npm24", return_value=["npm-ci"]), \
+                    patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError(error)) as run:
+                with self.assertRaisesRegex(DEPLOY.DeployError, error):
+                    DEPLOY.ensure_deploy_dependencies()
+                run.assert_called_once()
+                self.assertFalse(DEPLOY.DEPENDENCY_STAMP.exists())
+
+    def test_long_windows_native_path_fails_before_restoring_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(DEPLOY, "APP_DIR", Path(temporary) / ("x" * 200)), \
+                patch.object(DEPLOY.os, "name", "nt"), \
+                patch.object(DEPLOY, "deploy_dependencies_ready") as ready, \
+                patch.object(DEPLOY, "run_stream") as run:
+            with self.assertRaisesRegex(DEPLOY.DeployError, "path is too long"):
+                DEPLOY.ensure_deploy_dependencies()
+            ready.assert_not_called()
+            run.assert_not_called()
+
     def test_does_not_write_redirects_when_entra_snapshot_fails(self):
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -747,6 +1362,7 @@ class DeployOrderTests(unittest.TestCase):
                 patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
                 patch.object(DEPLOY, "run_stream") as run_stream,
                 patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
+                patch.object(DEPLOY, "graph_claims_challenge", return_value="verified-claims"),
             ):
                 redirects = DEPLOY.read_entra_spa_redirects_with_reauth("client-id", "tenant-id")
 
@@ -755,10 +1371,13 @@ class DeployOrderTests(unittest.TestCase):
         run_stream.assert_called_once_with(
             [
                 "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
+                "--scope", "https://graph.microsoft.com//.default",
+                "--claims-challenge", "verified-claims",
                 "--only-show-errors", "--output", "none",
             ]
         )
-        ensure_tenant.assert_called_once_with("tenant-id")
+        self.assertEqual(ensure_tenant.call_count, 2)
+        ensure_tenant.assert_called_with("tenant-id")
 
     def test_reauthenticates_after_stale_token_before_discovering_spa(self):
         stale = DEPLOY.DeployError(
@@ -781,6 +1400,7 @@ class DeployOrderTests(unittest.TestCase):
         reauthenticate.assert_called_once_with(
             "tenant-id",
             "discovering the tenant SPA app registration",
+            graph=True,
         )
         ensure_service_principal.assert_called_once_with(client_id)
 
@@ -1029,7 +1649,7 @@ class DeployOrderTests(unittest.TestCase):
                     with self.assertRaises(DEPLOY.DeployError):
                         DEPLOY.prefer_tenant_scoped_azure_cli_config("tenant-id")
 
-    def test_fresh_reauthentication_preserves_and_replaces_stale_cache(self):
+    def test_fresh_reauthentication_preserves_locked_stale_cache_in_place(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir) / "tenant-id"
@@ -1039,22 +1659,26 @@ class DeployOrderTests(unittest.TestCase):
 
             def assert_clean_cache(_command):
                 self.assertTrue(config_dir.is_dir())
-                self.assertFalse((config_dir / "msal_token_cache.bin").exists())
+                fresh = Path(os.environ["AZURE_CONFIG_DIR"])
+                self.assertNotEqual(fresh, config_dir)
+                self.assertFalse((fresh / "msal_token_cache.bin").exists())
 
             with (
                 patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
                 patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
                 patch.object(DEPLOY, "run_stream", side_effect=assert_clean_cache),
                 patch.object(DEPLOY, "ensure_azure_tenant"),
+                patch.object(DEPLOY.Path, "rename", side_effect=OSError("locked")),
             ):
                 DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
-            backups = list(Path(temp_dir).glob("tenant-id.stale-*"))
-            self.assertEqual(len(backups), 1)
+            self.assertEqual(list(Path(temp_dir).glob("tenant-id.stale-*")), [])
             self.assertEqual(
-                (backups[0] / "msal_token_cache.bin").read_text(encoding="utf-8"),
+                (config_dir / "msal_token_cache.bin").read_text(encoding="utf-8"),
                 "stale-token",
             )
+            with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
+                self.assertEqual(str(DEPLOY.isolated_azure_cli_config("tenant-id")), os.environ["AZURE_CONFIG_DIR"])
 
         if shared_config is None:
             os.environ.pop("AZURE_CONFIG_DIR", None)
@@ -1088,7 +1712,8 @@ class DeployOrderTests(unittest.TestCase):
                 DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
             isolated_config = os.environ.get("AZURE_CONFIG_DIR")
-            self.assertEqual(isolated_config, str(Path(temp_dir) / "tenant-id"))
+            self.assertEqual(Path(isolated_config).parent, Path(temp_dir))
+            self.assertTrue(Path(isolated_config).name.startswith("tenant-id.session-"))
             self.assertNotEqual(isolated_config, shared_config)
 
         if shared_config is None:
@@ -1102,19 +1727,44 @@ class DeployOrderTests(unittest.TestCase):
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
 
-    def test_reauthentication_does_not_login_when_cache_rotation_fails(self):
+    def test_reauthentication_does_not_login_when_new_session_creation_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir) / "tenant-id"
             config_dir.mkdir()
             with (
                 patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
-                patch.object(DEPLOY.Path, "rename", side_effect=OSError("locked")),
+                patch.object(DEPLOY.tempfile, "mkdtemp", side_effect=OSError("disk full")),
                 patch.object(DEPLOY, "run_stream") as run_stream,
             ):
-                with self.assertRaisesRegex(DEPLOY.DeployError, "No Azure CLI login state was changed"):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "existing sessions are unchanged"):
                     DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
         run_stream.assert_not_called()
+
+    def test_failed_fresh_login_keeps_active_pointer_and_process_identity(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AZURE_CONFIG_DIR": "previous"}):
+            root = Path(temp_dir)
+            old = root / "tenant-id.session-old"
+            old.mkdir()
+            pointer = root / "tenant-id.active"
+            pointer.write_text(old.name, encoding="utf-8")
+            with (
+                patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", root),
+                patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError("login cancelled")),
+            ):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "login cancelled"):
+                    DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+            self.assertEqual(pointer.read_text(encoding="utf-8"), old.name)
+            self.assertEqual(os.environ["AZURE_CONFIG_DIR"], "previous")
+
+    def test_active_session_pointer_cannot_escape_tenant_root(self):
+        for value in ("../outside", r"C:\outside", "other-tenant.session-abc"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "tenant-id.active").write_text(value, encoding="utf-8")
+                with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", root):
+                    with self.assertRaisesRegex(DEPLOY.DeployError, "invalid directory"):
+                        DEPLOY.isolated_azure_cli_config("tenant-id")
 
     def test_reauthentication_stops_after_second_stale_token_challenge(self):
         stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
@@ -1123,7 +1773,7 @@ class DeployOrderTests(unittest.TestCase):
         with patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate:
             with self.assertRaisesRegex(
                 DEPLOY.DeployError,
-                "even after a clean tenant-scoped login",
+                "even after a resource-aware tenant-scoped login",
             ):
                 DEPLOY.run_with_azure_cli_reauthentication(
                     "tenant-id",
@@ -1343,10 +1993,11 @@ class DeployOrderTests(unittest.TestCase):
                     "environment validated",
                     "Hosting URL: https://fast.webapp.fabricapps.net",
                     "backend updated",
-                    json.dumps({"status": "success", "generate": [{"name": "hydrolakehouse", "status": "generated"}],
-                                "results": [{"name": "hydrolakehouse", "status": "success"}]}),
-                    json.dumps({"status": "success", "generate": [{"name": "hydrooperations", "status": "generated"}],
-                                "results": [{"name": "hydrooperations", "status": "success"}]}),
+                    json.dumps({"status": "success",
+                                "generate": [{"name": name, "status": "generated"}
+                                             for name in ("hydrolakehouse", "hydrooperations")],
+                                "results": [{"name": name, "status": "success"}
+                                            for name in ("hydrolakehouse", "hydrooperations")]}),
                     "live auth configured",
                 ],
             ) as run_stream,
@@ -1364,7 +2015,7 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
         self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "first")
         self.assertEqual(run_stream.call_args_list[2].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
-        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[5].kwargs["env"])
+        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[4].kwargs["env"])
         provision_agents.assert_not_called()
         verify_agents.assert_called_once_with("11111111-1111-4111-8111-111111111111", "workspace-id")
 
@@ -1406,8 +2057,11 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
             patch.object(DEPLOY, "node24_script", side_effect=lambda script, *args: [script.stem]),
             patch.object(DEPLOY, "run_stream", side_effect=lambda command, **kwargs:
-                         json.dumps({"status": "success", "generate": [{"name": command[4], "status": "generated"}],
-                                     "results": [{"name": command[4], "status": "success"}]})
+                         json.dumps({"status": "success",
+                                     "generate": [{"name": name, "status": "generated"}
+                                                  for name in ("hydrolakehouse", "hydrooperations")],
+                                     "results": [{"name": name, "status": "success"}
+                                                 for name in ("hydrolakehouse", "hydrooperations")]})
                          if command[:3] == ["up", "connector", "apply"] else f"Hosting URL: {hosting_url}") as run_stream,
             patch.object(
                 DEPLOY.requests,
@@ -1429,7 +2083,7 @@ class DeployOrderTests(unittest.TestCase):
         ):
             DEPLOY.deploy(args)
 
-        self.assertEqual(run_stream.call_count, 6)
+        self.assertEqual(run_stream.call_count, 5)
         provision_agents.assert_called_once_with("11111111-1111-4111-8111-111111111111", "workspace-id")
         self.assertEqual(run_stream.call_args_list[0].args[0], ["validate-env"])
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
@@ -1437,9 +2091,8 @@ class DeployOrderTests(unittest.TestCase):
             run_stream.call_args_list[2].args[0],
             ["up", "--workspace-id", "workspace-id", "--exclude-services", "staticHosting", "--yes"],
         )
-        self.assertEqual(run_stream.call_args_list[3].args[0], ["up", "connector", "apply", "--name", "hydrolakehouse", "--json"])
-        self.assertEqual(run_stream.call_args_list[4].args[0], ["up", "connector", "apply", "--name", "hydrooperations", "--json"])
-        self.assertEqual(run_stream.call_args_list[5].args[0], ["setup-live-auth"])
+        self.assertEqual(run_stream.call_args_list[3].args[0], ["up", "connector", "apply", "--json"])
+        self.assertEqual(run_stream.call_args_list[4].args[0], ["setup-live-auth"])
         hosting_get.assert_called_once_with(hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False)
         output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
         self.assertIn("HOSTING_VERIFICATION=protected-sign-in-gate", output)
@@ -1762,6 +2415,7 @@ class DeployOrderTests(unittest.TestCase):
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": "/subscriptions/subscription/projects/project",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://account.services.ai.azure.com/api/projects/project",
                     "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "chat-model",
+                    "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX": "-" + "a" * 32,
                     "RAYFIN_PUBLIC_ORCHESTRATOR_VERSION": "old-version",
                     "RAYFIN_PUBLIC_API_URL": "old-capacity-endpoint",
                 }
@@ -1780,6 +2434,7 @@ class DeployOrderTests(unittest.TestCase):
                 for key in (
                     "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID", "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID",
                     "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT",
+                    "RAYFIN_PUBLIC_FOUNDRY_RESOURCE_SUFFIX",
                 ):
                     if same_tenant and same_workspace:
                         self.assertIn(f"{key}={old[key]}", restored)
@@ -1809,6 +2464,14 @@ class DeployOrderTests(unittest.TestCase):
                             "tenant", "workspace", "Demo", "capacity", "client", enable_energy_map=selection,
                         ))
                     self.assertIn(f"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP={expected}", (rayfin / ".env").read_text())
+
+    def test_current_hosting_remains_last_without_losing_existing_redirects(self):
+        current = "https://current.webapp.fabricapps.net"
+        other = "https://other.webapp.fabricapps.net"
+        self.assertEqual(
+            DEPLOY._redirects_with_current_hosting([current, other, current], current),
+            [other, current],
+        )
 
     def test_write_rayfin_redirects_retains_current_entra_origin(self):
         current = "https://current-app-swedencentral.webapp.fabricapps.net"
@@ -1912,6 +2575,20 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             return DEPLOY.resolve_public_artifact_config(
                 self.workspace, self.tenant, self.config if configured is None else configured
             )
+
+    def test_unmaterialized_ontology_identity_is_verified_without_graph_lineage_requests(self):
+        ontology_id = "99999999-9999-9999-9999-999999999999"
+        self.items.append({"id": ontology_id, "type": "Ontology", "displayName": "Hydro ontology"})
+        self.details[ontology_id] = {
+            "id": ontology_id, "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        result = self.resolve()
+        self.assertEqual(result["RAYFIN_PUBLIC_ONTOLOGY_ID"], ontology_id)
+        self.assertEqual(result["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"], "")
+        for generation in (1, "2", 2.0, None):
+            self.details[ontology_id]["properties"]["generation"] = generation
+            with self.subTest(generation=generation), self.assertRaisesRegex(DEPLOY.DeployError, "generation-2"):
+                self.resolve()
 
     def test_named_shared_store_is_discovered_without_the_legacy_display_name(self):
         from operational_store_support import OPERATIONAL_STORE_DESCRIPTION

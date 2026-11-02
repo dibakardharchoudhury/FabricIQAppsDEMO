@@ -8,16 +8,22 @@ import { applyDataAgentProgress } from '../src/services/dataAgentProgress.ts'
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
 const hydroDataHookSource = await readFile(new URL('../src/ui-shared/hooks/useHydroOperationsData.ts', import.meta.url), 'utf8')
 const copilotPageSource = await readFile(new URL('../src/ui-shared/pages/CopilotPage.tsx', import.meta.url), 'utf8')
+test('direct Data Agent is the default with an explicit orchestration switch and unmodified prompt', () => {
+  assert.match(hydroDataHookSource, /useState<CopilotEngine>\('data-agent'\)/)
+  assert.match(copilotPageSource, /onEngineChange=\{data\.actions\.changeCopilotEngine\}/)
+  assert.match(hydroDataHookSource, /const text = question\s+if \(!text\.trim\(\)/)
+})
 const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
   'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',
-  'dataAgentConversation', 'dataAgentVisualizations', 'entraTokens', 'copilot/answerPresentation',
+  'dataAgentConversation', 'dataAgentVisualizations', 'entraTokens', 'hostedSourceAccess', 'copilot/answerPresentation',
   'lakehouseConnector', 'ontologySourceGraph',
 ].map(async name => [`./${name}`, await import(`../src/services/${name}.ts`)])))
 serviceDependencies['./rayfin'] = {
   connectedLakehouse: () => undefined,
   lakehouseConnectionKey: () => `${workspaceId}:lakehouse:sql-endpoint:appbackend`,
   signInToRayfin: async () => undefined,
+  subscribeWorkOrdersChanged: () => () => {},
   ontologySourceConnectionKey: () => `${workspaceId}:user:connector-target`,
   ontologySourceReaders: () => [],
 }
@@ -199,6 +205,15 @@ test('unmaterialized graph fails before ontology definition loading or native ex
   await assert.rejects(service.queryOntologyGraph(), /204 No Content/)
   assert.equal(requests.filter(url => url.includes('/getQueryableGraphType')).length, 1)
   assert.equal(requests.filter(url => url.includes('/ontologies/') || url.endsWith('/items') || url.includes('/executeQuery')).length, 0)
+})
+
+test('selected ontology definition loads without graph materialization or lineage discovery', async () => {
+  const { service, requests } = graphService(undefined, {
+    VITE_RAYFIN_ONTOLOGY_ID: ontologyId, VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING: '',
+  })
+  assert.equal((await service.queryOntologyContract()).id, ontologyId)
+  assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
+  assert.equal(requests.filter(url => /graphModels|\/items$|relations/.test(url)).length, 0)
 })
 
 test('missing graph binding fails without discovery, definition reads or graph execution', async () => {

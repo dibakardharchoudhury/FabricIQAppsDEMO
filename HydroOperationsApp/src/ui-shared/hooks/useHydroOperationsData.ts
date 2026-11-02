@@ -55,14 +55,10 @@ type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream' | 'weather' | 'map'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
-export type CopilotEngine = 'data-agent' | 'foundry'
-export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; workOrderReview?: FoundryAnswer['workOrderReview']; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
-const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
-  'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
-  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, live telemetry, weather forecasts, or maintenance work. The deterministic Supervisor dispatches bounded Q&A, RCA, Weather and Work Order specialists and verifies their receipts. Weather uses the read-only Lakehouse connector; explicit published Data Agent requests use Sparky. Direct ontology-native chat is unavailable. Work-order drafts require your review and approval before any SQL write.' },
-}
+const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Hi! Ask about your assets, live data or maintenance. I can help investigate issues and prepare work-order drafts for your review.' }
 
 function readPersistedSetup(): PersistedSetup {
   try { return JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || '{}') as PersistedSetup }
@@ -124,13 +120,13 @@ function useHydroOperationsDataController() {
   const [streamState, setStreamState] = useState<ActionState>('idle')
   const [weatherState, setWeatherState] = useState<ActionState>('idle')
   const [mapRefreshState, setMapRefreshState] = useState<ActionState>('idle')
+  const [mapPrepared, setMapPrepared] = useState(false)
   const [mapRefreshMessage, setMapRefreshMessage] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [telemetrySelections, setTelemetrySelections] = useState<Record<string, TelemetryExplorerSelection>>({})
-  const copilotEngine: CopilotEngine = 'foundry'
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES.foundry])
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGE])
   const [copilotBusy, setCopilotBusy] = useState(false)
   const [mutationKey, setMutationKey] = useState<string>()
 
@@ -358,11 +354,10 @@ function useHydroOperationsDataController() {
     try {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setWeatherState('idle'); setNotice('Sign in with Fabric to load weather data.'); return }
-      beginProgress('weather', 'Loading Aurora and UKMet forecasts, then rebuilding weather metrics (Weather_002, Weather_003, Weather_020)...', WEATHER_ETA_MS)
+      beginProgress('weather', 'Preparing operating areas, loading UKMet weather and rebuilding serving metrics. Aurora is opt-in and disabled by default...', WEATHER_ETA_MS)
       const status = await runWeatherNotebooks(update => updateJob('weather', humanStatus(update)))
       if (status === 'Completed') {
         setWeatherState('complete')
-        setNotice('Aurora and UKMet weather data loaded and serving metrics refreshed.')
       } else {
         setWeatherState('error')
         setNotice(`Weather load ${humanStatus(status).toLowerCase()}.`)
@@ -373,7 +368,7 @@ function useHydroOperationsDataController() {
     } finally { endJob('weather') }
   }, [authenticate, jobs.weather, user, weatherState])
 
-  const updateAllMapData = useCallback(async () => {
+  const refreshMapData = useCallback(async (intent: 'prepare' | 'operational' | 'rebuild' = 'operational') => {
     if (!ENERGY_MAP_ENABLED) {
       setMapRefreshState('error')
       setMapRefreshMessage('Energy map provisioning is disabled for this deployment.')
@@ -381,31 +376,38 @@ function useHydroOperationsDataController() {
     }
     if (mapRefreshState === 'running' || jobs.map) return
     setMapRefreshState('running')
-    setMapRefreshMessage('Starting the full map refresh in Fabric...')
-    beginProgress('map', 'Refreshing map sources and chat data', MAP_REFRESH_MAX_AGE_MS)
+    const description = intent === 'prepare' ? 'Preparing the map using cached national sources'
+      : intent === 'rebuild' ? 'Rebuilding all map sources, bypassing the source cache'
+        : 'Updating operational map snapshots; national network and plant imports are skipped'
+    setMapRefreshMessage(`${description} in Fabric...`)
+    beginProgress('map', description, MAP_REFRESH_MAX_AGE_MS)
     let attached = false
     try {
       const status = await refreshEnergyMap(
         value => updateJob('map', humanStatus(value)),
-        true,
+        intent === 'rebuild',
         startedAt => {
           attached = true
-          setMapRefreshMessage('A map refresh is already running. Monitoring that run instead of starting a duplicate; it may use the normal source cache.')
+          setMapRefreshMessage('A map refresh is already running. Monitoring that run instead of starting a duplicate; its original refresh mode is unchanged.')
           if (startedAt) setJobs(current => current.map
             ? { ...current, map: { ...current.map, startedAt: Date.parse(startedAt), label: 'Monitoring existing map refresh' } } : current)
         },
+        intent === 'operational' ? 'operational' : 'all',
       )
       if (status === 'Completed') {
         setMapRefreshState('complete')
+        if (!attached && intent !== 'operational') setMapPrepared(true)
         setMapRefreshMessage(attached
-          ? 'The existing map refresh completed. Start a full update if you still need to bypass its source cache.'
-          : `All configured map sources refreshed. Completed ${new Date().toLocaleString()}.`)
+          ? 'The existing map refresh completed using its original refresh mode.'
+          : `${description}. Map pipeline completed ${new Date().toLocaleString()}.`)
       } else {
+        setMapPrepared(false)
         setMapRefreshState('error')
         setMapRefreshMessage(`Map refresh ${humanStatus(status).toLowerCase()}. A queued or running job continues in Fabric; starting again will reattach rather than duplicate it.`)
       }
     } catch (error) {
-      console.error('Full map data refresh failed.', error)
+      console.error('Map data refresh failed.', error)
+      setMapPrepared(false)
       setMapRefreshState('error')
       setMapRefreshMessage(error instanceof Error ? error.message : 'Map data refresh failed.')
     } finally { endJob('map') }
@@ -425,7 +427,7 @@ function useHydroOperationsDataController() {
 
   useEffect(() => subscribeWorkOrdersChanged(() => {
     void loadOperationalData().catch(error => {
-      setNotice(error instanceof Error ? error.message : 'Created work order, but refreshing operational data failed.')
+      setNotice(error instanceof Error ? error.message : 'Work order changed, but refreshing operational data failed.')
     })
   }), [loadOperationalData])
 
@@ -776,7 +778,7 @@ function useHydroOperationsDataController() {
       const activeUser = user ?? await authenticate()
       if (!activeUser) return
       const record = await createWorkOrder(activeUser, equipmentId, instrumentId, opcuaNodeId)
-      setOrders(current => [record, ...current])
+      setOrders(current => [record, ...current.filter(order => order.id !== record.id)])
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Work order creation failed.')
     } finally { setMutationKey(undefined) }
@@ -805,26 +807,25 @@ function useHydroOperationsDataController() {
   }, [orders])
 
   const sendCopilotQuestion = useCallback(async (question: string) => {
-    const text = question.trim()
-    if (!text || copilotBusy) return
+    const text = question
+    if (!text.trim() || copilotBusy) return
     const startedAt = Date.now()
     setCopilotBusy(true)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
-    // Foundry owns its local tool trace. Data Agent MCP internals stay hidden while its answer is pending.
     let liveText = ''
     let liveSteps: AgentStep[] | undefined
     let liveEvents: OrchestrationEvent[] | undefined
     let proposals: WorkOrderProposal[] | undefined
+    let workOrderReview: FoundryAnswer['workOrderReview']
     let backendOwned: boolean | undefined
     let failed = false
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, failed, steps: liveSteps, orchestrationEvents: liveEvents, proposals, backendOwned, artifacts, visualizations, models, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, failed, steps: liveSteps, orchestrationEvents: liveEvents, proposals, workOrderReview, backendOwned, artifacts, visualizations, models, meta }
       return next
     })
     try {
       const answer: FoundryAnswer = await askCopilot(
-          copilotEngine,
           text,
           partial => { liveText = partial; paint() },
           steps => { liveSteps = steps; paint() },
@@ -833,6 +834,7 @@ function useHydroOperationsDataController() {
       liveText = answer.text
       backendOwned = answer.backendOwned
       proposals = answer.proposals
+      workOrderReview = answer.workOrderReview
       liveSteps = answer.steps ?? liveSteps
       liveEvents = answer.orchestrationEvents ?? liveEvents
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)
@@ -845,14 +847,14 @@ function useHydroOperationsDataController() {
       liveEvents = failedExecutionEvents(liveEvents, detail)
       paint({ elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
-  }, [copilotBusy, copilotEngine])
+  }, [copilotBusy])
 
   const resetCopilot = useCallback(() => {
     if (copilotBusy) return
     resetDataAgentConversation()
     resetFoundryConversation()
-    setMessages([INITIAL_MESSAGES[copilotEngine]])
-  }, [copilotBusy, copilotEngine])
+    setMessages([INITIAL_MESSAGE])
+  }, [copilotBusy])
 
   return {
     user,
@@ -867,6 +869,7 @@ function useHydroOperationsDataController() {
     streamState,
     weatherState,
     mapRefreshState,
+    mapPrepared,
     mapRefreshMessage,
     stid,
     ontology,
@@ -899,7 +902,6 @@ function useHydroOperationsDataController() {
     facilityHealth,
     messages,
     copilotBusy,
-    copilotEngine,
     foundryAvailable: isFoundryConfigured(),
     mutationKey,
     counts: {
@@ -915,7 +917,7 @@ function useHydroOperationsDataController() {
       refreshOperationalData,
       startStream,
       connectWeather,
-      updateAllMapData,
+      refreshMapData,
       connectStid,
       refreshStid,
       connectTelemetry,

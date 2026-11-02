@@ -2,11 +2,75 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseOntologyContract, type OntologyContract } from '../src/services/ontologyContract.ts'
 import { parseOntologyGraph, type OntologyGraph } from '../src/services/ontologyGraph.ts'
-import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, NATIVE_GRAPH_LOAD_TIMEOUT_MS, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { buildKnowledgeGraph, buildOntologyModel, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, NATIVE_GRAPH_LOAD_TIMEOUT_MS, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { selectOntology } from '../src/services/ontologyArtifactDiscovery.ts'
 import { createOntologyCache } from '../src/services/ontologyCache.ts'
 
 const part = (path: string, text: string) => ({ path, payload: Buffer.from(text).toString('base64'), payloadType: 'InlineBase64' })
+
+test('schema Asset3DModel label is readable without changing source identity or declared topology', () => {
+  const contract = structuredClone(ontology)
+  const entity = contract.entityTypes[0]
+  entity.name = 'Asset3DModel'
+  entity.localName = 'Asset3DModel'
+  const before = structuredClone(contract)
+  const graph = buildOntologyModel(contract)
+  const model = graph.nodes.find(node => node.ontologyEntityTypeId === entity.id)!
+  assert.equal(model.label, 'Asset 3D model')
+  assert.equal(model.id, `ontology-type:${entity.id}`)
+  assert.equal(model.entityId, entity.id)
+  assert.deepEqual(contract, before)
+  assert.equal(graph.edges.length, contract.relationshipTypes.length)
+})
+
+test('ontology model renders every declared type and relationship without native or source instances', () => {
+  const before = JSON.stringify(ontology)
+  const graph = buildOntologyModel(ontology)
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.nodes.length, ontology.entityTypes.length)
+  assert.equal(graph.edges.length, ontology.relationshipTypes.length)
+  assert.ok(graph.nodes.every(node => !node.nativeOid && !node.equipmentId && !node.reading && node.status === 'nodata'))
+  for (const relationship of ontology.relationshipTypes) {
+    const edge = graph.edges.find(item => item.ontologyRelationshipId === relationship.id)!
+    assert.equal(edge.source, `ontology-type:${relationship.sourceEntityTypeId}`)
+    assert.equal(edge.target, `ontology-type:${relationship.targetEntityTypeId}`)
+    assert.equal(edge.nativeOid, undefined)
+  }
+  assert.equal(JSON.stringify(ontology), before)
+})
+
+test('ontology model follows endpoint identities, keeps parallel declarations and does not invent isolate links', () => {
+  const contract = structuredClone(ontology)
+  const relationship = contract.relationshipTypes[0]
+  relationship.sourceEntityName = 'deliberately misleading name'
+  relationship.targetEntityName = relationship.sourceEntityName
+  contract.relationshipTypes.push({ ...relationship, id: 'parallel', name: 'Another declared association', compatibilityUnsupported: true })
+  const graph = buildOntologyModel(contract)
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.edges.length, contract.relationshipTypes.length)
+  const parallel = graph.edges.find(edge => edge.ontologyRelationshipId === 'parallel')!
+  assert.equal(parallel.source, `ontology-type:${relationship.sourceEntityTypeId}`)
+  assert.equal(parallel.target, `ontology-type:${relationship.targetEntityTypeId}`)
+  const isolated = contract.entityTypes.find(entity => !contract.relationshipTypes.some(edge =>
+    edge.sourceEntityTypeId === entity.id || edge.targetEntityTypeId === entity.id))!
+  assert.ok(graph.nodes.some(node => node.ontologyEntityTypeId === isolated.id))
+  assert.ok(!graph.edges.some(edge => edge.source === `ontology-type:${isolated.id}` || edge.target === `ontology-type:${isolated.id}`))
+})
+
+test('ontology model rejects ambiguous or dangling definitions without a partial diagram', () => {
+  const dangling = structuredClone(ontology)
+  dangling.relationshipTypes[0].targetEntityTypeId = 'absent'
+  const duplicateEntity = structuredClone(ontology)
+  duplicateEntity.entityTypes.push(duplicateEntity.entityTypes[0])
+  const duplicateRelationship = structuredClone(ontology)
+  duplicateRelationship.relationshipTypes.push(duplicateRelationship.relationshipTypes[0])
+  for (const contract of [null, dangling, duplicateEntity, duplicateRelationship]) {
+    const graph = buildOntologyModel(contract)
+    assert.ok(graph.error)
+    assert.deepEqual(graph.nodes, [])
+    assert.deepEqual(graph.edges, [])
+  }
+})
 const entity = (name: string, key: string, foreignKey?: string) => part(`entities/${name}.tmdl`, `entity ${name}
     backingTable: ${name}
     keyProperty: ${key}_id
@@ -81,6 +145,100 @@ const input = (overrides: Partial<KnowledgeGraphInput> = {}): KnowledgeGraphInpu
   ...overrides,
 })
 
+test('declared source-column mappings bind native renamed properties to live OPC UA readings', () => {
+  const options = input()
+  options.ontology = structuredClone(ontology)
+  const instrument = options.ontology.entityTypes.find(entity => entity.name === 'instruments')!
+  options.ontology.sourceBindings = [{
+    entityTypeId: instrument.id,
+    binding: {
+      entityTypeId: instrument.id, logicalTable: 'instruments', workspaceId: 'workspace',
+      itemId: 'lakehouse', table: 'instruments',
+      properties: { NodeAddress: 'opcua_node_id', Unit: 'unit' },
+      columns: { NodeAddress: 'opcua_node_id', Unit: 'unit' },
+      keyProperty: 'instrument_id', keyColumn: 'instrument_id', omittedProperties: [],
+    },
+  }]
+  const raw = options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!
+  delete raw.properties.opcua_node_id
+  delete raw.properties.unit
+  raw.properties.NodeAddress = 'node-1'
+  raw.properties.Unit = 'C'
+  const before = structuredClone(raw)
+  const graph = buildKnowledgeGraph(options)
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.reading?.value, 96.8)
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.properties.Unit, 'C')
+  assert.deepEqual(raw, before)
+})
+
+test('a collapsed native signal retains its reading on the instrument when the OPC UA key lives only on the signal', () => {
+  const options = input()
+  delete options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.opcua_node_id
+  const graph = buildKnowledgeGraph(options)
+  const instrument = graph.nodes.find(node => node.id === 'instrument:I1')!
+  assert.equal(instrument.reading?.value, 96.8)
+  assert.equal(instrument.subtitle, '96.8 C')
+  assert.equal(instrument.properties['OPC UA node'], 'node-1')
+  assert.equal(instrument.status, 'crit')
+  assert.ok(!graph.nodes.some(node => node.type === 'signal'))
+  for (const id of ['equipment:E1', 'system:S1', 'facility:F1']) {
+    assert.equal(graph.nodes.find(node => node.id === id)?.status, 'crit', id)
+  }
+})
+
+test('different declared OPC UA addresses do not collapse into one instrument or transfer a foreign reading', () => {
+  const options = input()
+  options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.opcua_node_id = 'other-node'
+  const graph = buildKnowledgeGraph(options)
+  assert.ok(graph.nodes.some(node => node.type === 'signal'))
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.reading, undefined)
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.status, 'nodata')
+})
+
+test('telemetry refresh updates native signal values and health without changing topology and clears failed-source values', () => {
+  const options = input({ workOrders: [], notifications: [] })
+  delete options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.opcua_node_id
+  delete options.ontologyGraph!.nodes.find(node => node.oid === 'i1')!.properties.unit
+  const initial = buildKnowledgeGraph(options)
+  options.telemetry = [{ opcuaNodeId: 'node-1', eventTime: '2026-09-14T08:00:30Z', value: 72.3, quality: 'Uncertain' }]
+  const updated = buildKnowledgeGraph(options)
+  assert.equal(updated.nodes.find(node => node.id === 'instrument:I1')?.reading?.value, 72.3)
+  assert.equal(updated.nodes.find(node => node.id === 'instrument:I1')?.properties['Event time'], '2026-09-14T08:00:30Z')
+  for (const id of ['instrument:I1', 'equipment:E1', 'system:S1', 'facility:F1']) {
+    assert.equal(updated.nodes.find(node => node.id === id)?.status, 'warn', id)
+  }
+  assert.deepEqual(updated.nodes.map(node => node.id), initial.nodes.map(node => node.id))
+  assert.deepEqual(updated.edges, initial.edges)
+  options.telemetry = []
+  const unavailable = buildKnowledgeGraph(options)
+  const instrument = unavailable.nodes.find(node => node.id === 'instrument:I1')!
+  assert.equal(instrument.reading, undefined)
+  assert.equal(instrument.properties['Latest value'], undefined)
+  assert.equal(instrument.properties.Unit, 'C')
+  for (const id of ['instrument:I1', 'equipment:E1', 'system:S1', 'facility:F1']) {
+    assert.equal(unavailable.nodes.find(node => node.id === id)?.status, 'nodata', id)
+  }
+  assert.deepEqual(unavailable.edges, initial.edges)
+})
+
+test('unlinked native weather rows are omitted from the facility weather projection without fabricating topology', () => {
+  const options = input()
+  options.ontology = structuredClone(ontology)
+  options.ontology.entityTypes.push({
+    id: 'weather-type', name: 'WeatherLatestForecast', localName: 'WeatherLatestForecast',
+    properties: { Id: 'forecast-id' }, entityIdParts: ['Id'],
+  })
+  options.ontologyGraph!.nodes.push({
+    oid: 'forecast', labels: ['WeatherLatestForecast'], properties: { Id: 'weather-1', temperature: 7 },
+  })
+  const before = structuredClone(options.ontologyGraph)
+  const graph = buildKnowledgeGraph(options)
+  assert.equal(graph.error, undefined)
+  assert.ok(!graph.nodes.some(node => node.nativeOid === 'forecast'))
+  assert.deepEqual(options.ontologyGraph, before)
+})
+
 test('preserves main presentation for one-to-one signals and the existing inspector', () => {
   const graph = buildKnowledgeGraph(input())
   assert.equal(graph.error, undefined)
@@ -91,7 +249,7 @@ test('preserves main presentation for one-to-one signals and the existing inspec
     'Latest value': 96.8, Quality: 'Bad', 'Event time': '2026-09-14T08:00:00Z', 'Signal entity': 'node-1',
   })
 
-  assert.equal(instrument.provenance, 'Fabric Ontology · Native Hydro graph · combined one-to-one instruments + signal_master node with Eventhouse time-series binding')
+  assert.equal(instrument.provenance, 'Fabric Ontology · Native Hydro graph · materialized graph node · combined one-to-one instruments + signal_master with Eventhouse time-series binding')
   const system = graph.nodes.find(node => node.id === 'system:S1')!
   assert.equal(system.subtitle, '1 connected assets')
   assert.deepEqual(system.properties, { 'System ID': 'S1', 'OAG RDS code': undefined, 'Equipment count': 1 })
@@ -112,7 +270,7 @@ test('open maintenance priority contributes the correct equipment health', () =>
   assert.equal(instrument.reading?.quality, 'GOOD')
   assert.equal(instrument.reading?.value, 326.702)
   assert.equal(graph.nodes.find(node => node.id === 'equipment:E1')?.status, 'warn')
-  assert.ok(graph.edges.some(edge => edge.source === 'work-order:W1' && edge.target === 'equipment:E1'))
+  assert.ok(!graph.nodes.some(node => node.id === 'work-order:W1'), 'health context cannot fabricate topology')
   options.workOrders[0].priority = 'Critical'
   assert.equal(buildKnowledgeGraph(options).nodes.find(node => node.id === 'equipment:E1')?.status, 'crit')
   options.telemetry = [{ opcuaNodeId: 'node-1', eventTime: '2026-09-30T19:00:30Z', value: 327.1, quality: 'UNCERTAIN' }]
@@ -130,12 +288,12 @@ test('does not render STID topology or SQL overlays before the native query comp
     equipment: [{ equipment_id: 'E1', facility_id: 'F1', system_id: 'S1', tag: 'Turbine' }],
     instruments: [{ instrument_id: 'I1', equipment_id: 'E1', system_id: 'S1', facility_id: 'F1', opcua_node_id: 'node-1' }],
   }))
-  assert.match(graph.error ?? '', /No verified native Ontology graph.*Manage graph/)
+  assert.match(graph.error ?? '', /No verified Ontology instance graph.*bound sources/)
   assert.deepEqual(graph.nodes, [])
   assert.deepEqual(graph.edges, [])
 })
 
-test('keeps non-bijective signals separate and redirects other edges of collapsed signals', () => {
+test('keeps non-bijective and externally referenced signals separate without redirecting edges', () => {
   const multiple = nativeGraph()
   multiple.nodes.push({ ...multiple.nodes.find(node => node.oid === 'v1')!, oid: 'v2', properties: { opcua_node_id: 'node-2' } })
   multiple.edges.push({ oid: 'si2', labels: ['signals_from_instruments'], sourceOid: 'v2', targetOid: 'i1', properties: {} })
@@ -145,16 +303,44 @@ test('keeps non-bijective signals separate and redirects other edges of collapse
   assert.equal(separate.nodes.find(node => node.id === 'instrument:I1')?.properties['Signal entity'], undefined)
   const single = nativeGraph()
   single.edges.push({ oid: 'signal-document', labels: ['documented_by'], sourceOid: 'v1', targetOid: 'd1', properties: {} })
-  const collapsed = buildKnowledgeGraph(input({ ontologyGraph: single }))
-  assert.equal(collapsed.edges.find(edge => edge.nativeOid === 'signal-document')?.source, 'instrument:I1')
-  assert.equal(collapsed.edges.find(edge => edge.nativeOid === 'signal-document')?.target, 'ontology:d1')
+  const referenced = buildKnowledgeGraph(input({ ontologyGraph: single }))
+  assert.equal(referenced.edges.find(edge => edge.nativeOid === 'signal-document')?.source, 'signal:node-1')
+  assert.equal(referenced.edges.find(edge => edge.nativeOid === 'signal-document')?.target, 'ontology:d1')
+  assert.ok(referenced.nodes.some(node => node.id === 'signal:node-1'))
+  assert.equal(referenced.nodes.find(node => node.id === 'instrument:I1')?.properties['Signal entity'], undefined)
+  assert.ok(referenced.edges.some(edge => edge.nativeOid === 'si'))
+})
+
+test('native maintenance relationships preserve direction and identity without masquerading as signal topology', () => {
+  const native = nativeGraph()
+  native.nodes.push({
+    oid: 'work', labels: ['WorkOrder'], properties: { id: 'NW1', workOrderNumber: 'WO-native', priority: 'High', status: 'Open' },
+  })
+  native.edges.push(
+    { oid: 'for-instrument', labels: ['WorkOrder_for_instrument'], sourceOid: 'work', targetOid: 'i1', properties: {} },
+    { oid: 'for-signal', labels: ['WorkOrder_for_signal'], sourceOid: 'work', targetOid: 'v1', properties: {} },
+    { oid: 'for-equipment', labels: ['WorkOrder_for_equipment'], sourceOid: 'work', targetOid: 'e1', properties: {} },
+  )
+  const contract = { ...ontology, entityTypes: [...ontology.entityTypes, {
+    ...ontology.entityTypes[0], id: 'work-entity', name: 'WorkOrder', localName: 'WorkOrder', sourceTable: 'WorkOrder', entityIdParts: ['id'],
+  }] }
+  const graph = buildKnowledgeGraph(input({ ontologyGraph: native, ontology: contract }))
+  assert.equal(graph.error, undefined)
+  const maintenance = graph.edges.filter(edge => ['for-instrument', 'for-signal'].includes(edge.nativeOid ?? ''))
+  assert.equal(maintenance.length, 2)
+  assert.ok(maintenance.every(edge => edge.type === 'affects' && edge.source === 'work-order:NW1'))
+  assert.equal(maintenance.find(edge => edge.nativeOid === 'for-instrument')?.target, 'instrument:I1')
+  assert.equal(maintenance.find(edge => edge.nativeOid === 'for-signal')?.target, 'signal:node-1')
+  assert.equal(graph.edges.find(edge => edge.nativeOid === 'for-equipment')?.target, 'equipment:E1')
+  assert.ok(graph.edges.some(edge => edge.nativeOid === 'si' && edge.source === 'signal:node-1' && edge.target === 'instrument:I1'))
+  assert.notEqual(maintenance[0].id, maintenance[1].id)
 })
 
 test('missing native topology cannot expose SQL overlay nodes or guessed relationships', () => {
   const graph = buildKnowledgeGraph(input({
     ontologyGraph: null, ontology: { ...ontology, relationshipTypes: [] },
   }))
-  assert.match(graph.error ?? '', /native Ontology graph/)
+  assert.match(graph.error ?? '', /Ontology instance graph/)
   assert.deepEqual(graph.nodes, [])
   assert.deepEqual(graph.edges, [])
 })
@@ -262,7 +448,7 @@ test('requires a verified v2 contract and rejects invalid native results rather 
   }
 })
 
-test('retains KQL readings and every SQL overlay only for actual native equipment', () => {
+test('retains KQL readings and maintenance health without appending undeclared SQL topology in native mode', () => {
   const options = input()
   options.workOrders.push({ ...options.workOrders[0], id: 'orphan', equipmentId: 'MISSING' })
   options.models.push({ ...options.models[0], id: 'orphan', equipmentId: 'MISSING' })
@@ -270,8 +456,8 @@ test('retains KQL readings and every SQL overlay only for actual native equipmen
   options.notifications.push({ ...options.notifications[0], id: 'orphan', equipmentId: 'MISSING' })
   options.telemetry.push({ opcuaNodeId: 'not-native', eventTime: '', value: 1, quality: 'Good' })
   const graph = buildKnowledgeGraph(options)
-  assert.equal(graph.nodes.length, 11)
-  assert.equal(graph.edges.length, 9)
+  assert.equal(graph.nodes.length, 7)
+  assert.equal(graph.edges.length, 5)
   assert.ok(!graph.nodes.some(node => node.id.endsWith(':orphan') || node.entityId === 'not-native'))
   for (const id of ['instrument:I1']) {
     const node = graph.nodes.find(node => node.id === id)
@@ -280,10 +466,9 @@ test('retains KQL readings and every SQL overlay only for actual native equipmen
     assert.match(node?.provenance ?? '', /Eventhouse time-series binding/)
   }
   for (const id of ['work-order:W1', 'inspection:IN1', 'notification:N1', 'model:M1']) {
-    const node = graph.nodes.find(node => node.id === id)
-    assert.equal(node?.facilityId, 'F1')
-    assert.match(node?.provenance ?? '', /Rayfin operational database/)
+    assert.ok(!graph.nodes.some(node => node.id === id))
   }
+  assert.ok(graph.edges.every(edge => edge.nativeOid && !edge.provenance?.includes('SQL operational overlay')))
   const ids = new Set(graph.nodes.map(node => node.id))
   assert.ok(graph.edges.every(edge => ids.has(edge.source) && ids.has(edge.target)))
 })
@@ -416,11 +601,11 @@ test('ambiguous local entity labels and duplicate business identities fail close
 test('native scopes work without any GraphQL instance data and follow graph rather than FK containment', () => {
   const graph = buildKnowledgeGraph(input({ facilities: [], systems: [], equipment: [], instruments: [] }))
   const selected = knowledgeGraphScope(graph, 'asset', 'equipment:E1')!
-  for (const id of ['equipment:E1', 'system:S1', 'facility:F1', 'instrument:I1', 'ontology:d1', 'work-order:W1']) assert.ok(selected.has(id), id)
+  for (const id of ['equipment:E1', 'system:S1', 'facility:F1', 'instrument:I1', 'ontology:d1']) assert.ok(selected.has(id), id)
   assert.ok(!selected.has('facility:F2'))
   const facility = knowledgeGraphScope(graph, 'facility', 'instrument:I1')!
   assert.ok(facility.has('facility:F1'))
-  assert.ok(facility.has('model:M1'))
+  assert.ok(facility.has('ontology:d1'))
   assert.ok(!facility.has('facility:F2'))
   assert.equal(knowledgeGraphScope(graph, 'all'), undefined)
 })
@@ -445,7 +630,7 @@ test('discovers renamed Ontology without selecting a Graph Model', () => {
 test('selecting a parent keeps the existing shared asset scope and tree context', () => {
   const graph = buildKnowledgeGraph(input())
   const selected = knowledgeGraphScope(graph, 'asset', 'system:S1', 'E1')!
-  for (const id of ['equipment:E1', 'system:S1', 'facility:F1', 'instrument:I1', 'work-order:W1']) {
+  for (const id of ['equipment:E1', 'system:S1', 'facility:F1', 'instrument:I1', 'ontology:d1']) {
     assert.ok(selected.has(id), id)
   }
   const facility = knowledgeGraphScope(graph, 'facility', 'facility:F2', 'E1')!

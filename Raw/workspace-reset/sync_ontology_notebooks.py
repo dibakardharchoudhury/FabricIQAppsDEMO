@@ -1,4 +1,4 @@
-"""Distribute ontology support to 004/005/006 and shared-store support to 001/011.
+"""Distribute ontology support to 004/005/006, mirror 009, and shared-store support to 001/011.
 
 Preserves canonical headers and notebook/cell metadata. Never discovers or writes
 other notebooks. All generated sources are compiled before any file is written.
@@ -25,6 +25,35 @@ OWNED = (
 )
 CELL = "# CELL ********************"
 METADATA = "# METADATA ********************"
+
+
+def agent_project_contract(content, root, include_topology):
+    support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8")
+    names = {
+        "PROJECT_CORE_ENTITIES", "PROJECT_REQUIRED_EDGES", "WEATHER_PROJECT_ENTITIES",
+        "SQL_PROJECT_ENTITIES", "OPERATIONAL_COLUMNS", "_project_contract_objects",
+        "_project_contract_setting", "verify_project_ontology_contract",
+    }
+    if include_topology:
+        names.update(("ontology_context_elements", "ontology_source_bindings"))
+    nodes = []
+    for node in ast.parse(support).body:
+        if isinstance(node, ast.FunctionDef) and node.name in names:
+            nodes.append(node)
+        elif isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in names for target in node.targets):
+            nodes.append(node)
+    if len(nodes) != len(names):
+        raise RuntimeError("Incomplete shared project ontology publication gate.")
+    helpers = "\n\n".join(ast.get_source_segment(support, node) for node in nodes)
+    content, count = re.subn(
+        r"(?ms)^# BEGIN PROJECT ONTOLOGY CONTRACT\n.*?^# END PROJECT ONTOLOGY CONTRACT",
+        lambda _match: "# BEGIN PROJECT ONTOLOGY CONTRACT\n" + helpers
+        + "\n# END PROJECT ONTOLOGY CONTRACT", content,
+    )
+    if count != 1:
+        raise RuntimeError("Expected one shared project ontology publication gate.")
+    return content
 
 
 def synchronize(root=ROOT, check=False):
@@ -77,7 +106,7 @@ def synchronize(root=ROOT, check=False):
 def synchronize_operational_support(root=ROOT, check=False):
     support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8").strip()
     support = support.replace(
-        "from ontology_notebook_support import _fabric_operation_url, _fabric_result_url\n", "")
+        "from ontology_notebook_support import _fabric_operation_url, _fabric_result_url, _project_semantics\n", "")
     ontology_support = (root / "Raw/workspace-reset/ontology_notebook_support.py").read_text(encoding="utf-8")
     shared_names = {"_normal_text", "_decode_part", "_encode_part", "_parts_by_path", "_identifier_parts",
                     "_local_name", "_quote_name", "_object_spans", "_append_model_ref",
@@ -96,8 +125,9 @@ def synchronize_operational_support(root=ROOT, check=False):
     support_notebooks = ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut",
                          "RTI_011_seed_sql_wire_graphql_agent")
     for name in (*support_notebooks, "RTI_003_ingest_transform_medallion",
-                 "RTI_003_ingest_transform_medallion_SelfContained", "Weather_020_area_calculations",
-                 "RTI_Orchestrator_Setup"):
+                 "RTI_003_ingest_transform_medallion_SelfContained", "RTI_008_build_realtime_dashboard", "Weather_020_area_calculations",
+                 "RTI_Orchestrator_Setup", "Weather_001_create_lakehouse", "Weather_002_fetch_area_weather",
+                 "Weather_003_fetch_ukmet", "Weather_Orchestrator", "RTI_010_build_operations_agent"):
         canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
         raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
         sections = canonical.read_text(encoding="utf-8").split(CELL)
@@ -110,6 +140,8 @@ def synchronize_operational_support(root=ROOT, check=False):
         if len(matches) != (1 if name in support_notebooks else 0):
             raise RuntimeError(f"Unexpected shared operational support cell count in {canonical}")
         content = CELL.join(sections)
+        if name == "RTI_010_build_operations_agent":
+            content = agent_project_contract(content, root, include_topology=True)
         compile(content, str(canonical), "exec")
         notebook = json.loads(raw.read_text(encoding="utf-8"))
         def identity(kind, source):
@@ -149,11 +181,66 @@ def synchronize_operational_support(root=ROOT, check=False):
             path.write_text(content, encoding="utf-8", newline="\n")
     return tuple(pending)
 
+
+def synchronize_data_agent(root=ROOT, check=False):
+    """Mirror NB009's canonical cells without replacing cell or notebook metadata."""
+    name = "RTI_009_build_data_agent"
+    canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
+    raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
+    content = canonical.read_text(encoding="utf-8")
+    support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8")
+    names = {"selected_ontology_entities", "ontology_source_bindings",
+             "ontology_context_elements", "refresh_ontology_context_parts"}
+    helpers = [ast.get_source_segment(support, node) for node in ast.parse(support).body
+               if isinstance(node, ast.FunctionDef) and node.name in names]
+    if len(helpers) != len(names):
+        raise RuntimeError("Incomplete Data Agent source topology support.")
+    content, count = re.subn(
+        r"(?ms)^# BEGIN ONTOLOGY SOURCE TOPOLOGY SUPPORT\n.*?^# END ONTOLOGY SOURCE TOPOLOGY SUPPORT",
+        lambda _match: "# BEGIN ONTOLOGY SOURCE TOPOLOGY SUPPORT\n" + "\n\n".join(helpers)
+                       + "\n# END ONTOLOGY SOURCE TOPOLOGY SUPPORT",
+        content,
+    )
+    if count != 1:
+        raise RuntimeError("Expected one Data Agent source topology support region.")
+    content = agent_project_contract(content, root, include_topology=False)
+    if canonical.read_text(encoding="utf-8") != content:
+        if check:
+            raise RuntimeError("NB009 source topology distribution drift; run --sync.")
+        compile(content, str(canonical), "exec")
+        canonical.write_text(content, encoding="utf-8", newline="\n")
+    compile(content, str(canonical), "exec")
+    notebook = json.loads(raw.read_text(encoding="utf-8"))
+    chunks = re.findall(
+        r"# (MARKDOWN|CELL|PARAMETERS CELL) \*+\n(.*?)(?=\n# (?:MARKDOWN|CELL|PARAMETERS CELL) \*+|\Z)",
+        content, re.S,
+    )
+    if len(chunks) != len(notebook["cells"]):
+        raise RuntimeError("NB009 cell count changed; explicitly reconcile metadata before mirroring.")
+    for cell, (kind, body) in zip(notebook["cells"], chunks):
+        body = body.split(METADATA, 1)[0].strip("\n")
+        expected_type = "markdown" if kind == "MARKDOWN" else "code"
+        if cell["cell_type"] != expected_type:
+            raise RuntimeError("NB009 cell type changed; refusing to move metadata.")
+        if kind == "MARKDOWN":
+            body = "\n".join(line[2:] if line.startswith("# ") else "" if line == "#" else line
+                             for line in body.splitlines())
+        else:
+            compile(body, str(raw), "exec")
+        cell["source"] = (body + "\n").splitlines(keepends=True)
+    desired = json.dumps(notebook, ensure_ascii=False, indent=2) + "\n"
+    if raw.read_text(encoding="utf-8") != desired:
+        if check:
+            raise RuntimeError("NB009 distribution drift; run --sync.")
+        raw.write_text(desired, encoding="utf-8", newline="\n")
+    return (canonical, raw)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--check", action="store_true", help="Check embedded support and Raw mirrors without writing")
     modes.add_argument("--sync", action="store_true", help="Refresh owned ontology and operational notebooks (the default)")
     arguments = parser.parse_args()
-    for destination in (*synchronize(check=arguments.check), *synchronize_operational_support(check=arguments.check)):
+    for destination in (*synchronize(check=arguments.check), *synchronize_data_agent(check=arguments.check),
+                        *synchronize_operational_support(check=arguments.check)):
         print(destination)

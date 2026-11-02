@@ -3,7 +3,7 @@
 Use **Intelligence -> Foundry**, not the native-only Data Agent mode. Start a
 **New chat** for each numbered test. Expand **Agent crew** and inspect execution
 receipts, not just animation. These are expected routes, not claims of passing tests.
-The deterministic Supervisor coordinates every handoff; arrows below omit returns through
+The semantic Supervisor validates and coordinates every handoff; arrows below omit returns through
 Supervisor.
 For observed results and limitations, see [acceptance](AGENT-ACCEPTANCE.md).
 
@@ -30,6 +30,26 @@ Every cited ID/path must resolve to a
 real receipt. No approved threshold, matched baseline, numerical diagnostic
 confidence or physical cause may be invented. Inspect rejected chart/tool calls
 and their corrections; a finished animation alone is not an acceptance result.
+
+## Native Fabric IQ parity checks
+
+Run each in a new Foundry chat and in the published Fabric Data Agent under the
+same signed-in user and source configuration. Compare facts, IDs, scope, source,
+missing-data disclosures and completeness, not identical wording:
+
+1. "Use Fabric IQ to list every facility with its canonical facility ID and name.
+   Include the source. Read-only."
+2. "Sparky, which generating units belong to each power station? Include canonical
+   station and equipment IDs and explain the ontology relationship. Read-only."
+3. "Using Fabric IQ, show equipment with BAD-quality readings in the last six hours
+   and whether each has existing open work. Include equipment IDs, sample times,
+   quality meaning, work-order status and source limitations. Do not prepare a draft."
+
+Expected: native Fabric IQ for each, no silent direct-source substitution and no
+work-order proposal. Preserve the native provider's actual SQL/KQL source traces.
+An output-moderation processing error is a failed comparison even if its payload
+contains correct rows. Ontology context needs no materialized graph for these
+source-native questions. A refused/incomplete answer is not a zero-result answer.
 
 ## 1. BAD signals -> investigation -> gap review -> verification
 

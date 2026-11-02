@@ -1,11 +1,445 @@
 # Hydro Operations Knowledge Graph
 
+## Live ontology-bound instances
+
+The Knowledge Graph is one source-backed instance view, not separate schema and
+materialized operational tabs. It verifies the selected live generation-2 ontology,
+reads its physical source bindings through the authenticated read connectors, and
+evaluates only its declared, directed relationships against actual source keys.
+It never invents links from matching names or undeclared foreign keys. A native
+GraphModel, graph binding, GQL query, or portal materialization is not required.
+
+The existing entity icons, including weather, stay inside their nodes. Eventhouse
+readings refresh every 30 seconds; actual values, units, quality, timestamps and
+freshness appear on bound signals and in the inspector. Critical red and warning
+amber halos use the existing pulse engine, respect reduced motion, and pause
+offscreen. Stale values are labelled; failed telemetry reads clear old values.
+Health rolls up only through evaluated ontology relationships.
+
+Source instances refresh every five minutes and after work-order mutations.
+Their reads are bounded, coalesced, identity-keyed and memory-only, and are not an
+atomic cross-source snapshot. Failed source reads clear the instance graph rather
+than displaying a previous successful result. Unsupported projections are disclosed
+in Advanced graph details, together with source read times and the exact contract
+signature. Missing bindings, ambiguous identities, broken references and budget
+overruns are errors, never an invitation to manufacture topology.
+
+The read connector includes the ontology equipment-type dimension and the persisted
+weather area/location join columns so these declared relationships remain queryable.
+Weather is presented as at most one actual, declared WeatherLocation per facility,
+retaining its original identity and facility relationship. Its cloud icon and inspector
+show one recent observation (at most three hours old), otherwise the nearest upcoming
+location forecast (within six hours, issued within 48 hours). A valid declared area
+forecast is used only when location data is unavailable. Invalid/future observations,
+expired forecasts, inactive providers and malformed area geometry are not selected.
+Point geometry uses validated WGS84 longitude/latitude; area geometry must be a closed
+GeoJSON Polygon/MultiPolygon in WGS84. Missing current weather is explicit, never healthy
+or replaced by old values. Weather source/catalog/area/time-step rows remain available
+in the underlying source graph, not as a separate cluttered canvas cluster.
+Facility weather is included consistently in selected-asset, facility and all scopes.
+This is a display projection, not a change to the ontology or its declared relationships.
+
+The canvas telemetry badge is omitted; polling, freshness in the inspector, live values
+and health pulses are unchanged. Both export choices use Turtle (`.ttl`):
+**Turtle (OWL)** includes OWL ontology declarations; **Turtle (RDF/RDFS)** uses basic
+RDF/RDFS classes and properties. These name vocabularies, not different file formats
+or ontology generations. Exports retain the complete verified source graph, including
+weather source records, and identify source-backed instances without claiming a
+GraphModel identity.
+
+## Historical implementation notes (superseded)
+
+The sections below retain earlier implementation and verification history. Their
+schema/native view descriptions are not the current application contract above.
+
+### Direct Ontology model by default (historical)
+
+The default **Ontology model** reads the live numeric generation-2 definition.
+Its nodes are entity types, not asset instances; edges are exactly the declared
+relationship types, resolved by endpoint identity rather than inferred names or
+foreign keys. No GraphModel query, materialization, source-row execution or
+topology fallback is involved. Counts explicitly describe entity/relationship
+types. The inspector retains property definitions, declared keys, direction and
+cardinality; JSON export is labelled `ontology-schema`.
+
+Opening the Knowledge Graph therefore does not require materialization. The separate
+native operational view is opt-in; its prerequisites do not block the default Ontology
+diagram. Restoring this default does not implement a source-backed asset-instance graph.
+
+The separate **Operational graph** uses only the explicitly bound, materialized native
+generation-2 Ontology graph. Selecting a turbine in the asset tree shows its actual
+connected instruments and context in selected-asset scope. Icons remain inside nodes;
+native weather instances retain their declared Weather presentation. Eventhouse enriches
+only actual native entities, using declared property-to-source-column bindings to resolve
+OPC UA addresses. A collapsed one-to-one signal retains its value, quality, unit and event
+time on its instrument; distinct OPC UA addresses remain separate. Joined values and
+units appear beneath the native node names as well as in the inspector, without changing
+schema labels or entity identities.
+
+Telemetry refreshes every 30 seconds. Fresh readings animate only real native paths;
+red critical and amber warning halos pulse with theme colors, respecting reduced motion
+and pausing offscreen. Health rolls up through actual connected assets, systems and
+facilities; missing readings are not presented as healthy. The graph shows source freshness
+and its matched-signal count, with a manual refresh control. Failed telemetry reads clear
+previous values without removing otherwise available native topology or independent SQL
+operational state. The inspector retains the joined values, quality and timestamps.
+
+Each real component is laid out and packed separately. Types without declared
+relationships form a compact grid instead of a long row. All labels remain
+visible at overview zoom. Selecting a type highlights its neighborhood without
+dimming the rest of the model into unreadability. Search filters only the type
+list, preserving the complete diagram and every declared edge.
+Business categories supply readable icons, sizes and colors; canonical Weather source,
+location, area, latest-observation and latest-forecast types share the Weather category.
+Unknown types stay neutral. This presentation classification never creates relationships.
+The semantic layout starts from a deterministic compact seed and separates labeled nodes
+after force placement; native-instance layouts are unchanged. Zoom, fit, selected-neighborhood
+focus, relationship-label controls and expanded view remain available. Inspector property
+values show declared datatypes; lineage identifiers are optional collapsed technical details.
+
+The **Operational graph** uses **only the explicitly
+bound, materialized native Ontology graph**. Lakehouse/SQL connector joins cannot
+substitute for native instance topology. SQL and Eventhouse may enrich actual
+native entities. Its counts describe returned instances and links; selecting an
+asset in the tree switches to its selected-asset scope.
+
+The October 29 repaired live generation-2 definition readback verified **16 business
+entity types / 21 declared relationships / one connected component / zero isolates**.
+The preceding 18-type/17-relationship/five-component read was historical pre-repair
+evidence, not the current definition. Weather-to-facility, area/location and forecast
+relationships now use real persisted source projections, including target-kind-guarded
+forecast location/area keys. Equipment and SparePart connect through the meaningful
+**EquipmentType** dimension; part-category eligibility does **not** assert installation
+or verified fit. Existing operational relationship endpoints and bindings remain retained.
+The managed **WeatherVariable**, **WeatherIngestionRun** and **InstrumentClassification**
+catalog/audit/aggregate types were retired from the business ontology; their physical
+source data was not deleted. Original bindings and unknown definition parts were preserved.
+
+Fresh setup now constructs this complete baseline before either agent is published.
+The initial standard UKMet refresh precedes NB11 model preparation. Its gates verify
+authoritative Lakehouse/SQL identities, required backing tables and properties, both
+physical and semantic relationship keys, actual operational foreign-key consistency,
+and current forecast coverage for eligible facilities. Missing observations are disclosed,
+not manufactured. Invalid/orphaned keys and stale/missing required forecasts fail preparation.
+Required declarations are checked individually; compatible custom additions are not capped
+at 16 types or 21 edges. The preparation receipt describes source/model verification,
+not materialization or agent execution. An agent failure no longer prevents adding SQL
+and weather domains to the ontology. Historical live acceptance below is not evidence that
+the new setup sequence has executed in a newly recreated workspace.
+
+Data Agent draft and published ontology context were both refreshed and read back with
+16 types while preserving SQL/custom content. This verifies configuration, not agent
+execution or SQL/combined-source runtime. Native graph materialization remains a separate
+prerequisite. Canonical app deployment completed **SUCCESS, exit 0** at
+**2026-10-29T01:06:12Z**, from source `a08e13d`, to
+<https://sleek-echo-51b3703235-swedencentral.webapp.fabricapps.net>.
+GraphQL preflight/POST returned 200; token preflight returned 200 and POST 400;
+protected-connector preflight returned 200 and POST 401. All 43 Entra redirects
+were preserved. The hosted integrated browser reached private Fabric sign-in,
+but the popup was blocked (**Please allow pop-ups and try again**), so
+**authenticated hosted graph acceptance was not performed**. Successful deployment
+does not certify native materialization or agent runtime.
+
+Local browser acceptance against the exact saved repaired definition at 1536×1000
+retained all 16 types and 21 links. Default semantic-layout Fit improved from 34% to
+69%: rendered node labels measured 13.8 px, relationship labels 11.0 px and node diameters
+40–54 px, with zero overlapping labeled-node bounds. All five canonical Weather types
+received the Weather presentation; `Asset3DModel` displayed as **Asset 3D model**, and
+property datatypes appeared before optional lineage details. This is saved-readback
+presentation evidence, not an authenticated live UI or native-query certification.
+
+Operational canvas browser checks used a clearly labelled seven-node/six-edge fixture
+in both application themes. They verified five fresh telemetry paths, distinct pulsing
+red/amber halos, weather icons, visible values/units, selection, and stable positions
+while readings changed. Removing readings cleared visible values and stopped live paths
+without deleting topology; reduced motion kept the halos static. The 138 focused graph
+tests, changed-file lint and production build passed. These checks do not certify live
+native materialization or authenticated operational rendering.
+
+The latest read-only check of V15 also verified numeric generation 2 and the explicitly
+bound GraphModel item, but `getQueryableGraphType?beta=true` returned **204 No Content**.
+No native instances were returned or certified. These UI and telemetry-join changes do
+not materialize the graph; the operational view discloses the prerequisite rather than
+substituting schema nodes or source-derived topology. V15 portal source eligibility was
+not inspected by this check.
+
+On October 28, the live V14 Ontology passed the numeric generation-2 check, but
+its explicitly bound GraphModel returned **204 No Content** for queryable schema.
+The selected Ontology's **Manage graph** page showed **Graph not materialized**,
+all 18 entities **Ineligible**, and **Continue** disabled. Validation details
+reported **Unsupported Datasource** for the Lakehouse-backed facilities entity.
+This is not a layout failure and app hosting cannot resolve or certify it.
+
+A bounded test of the partition `ONT_` metadata workaround reported in
+[microsoft/skills-for-fabric#107](https://github.com/microsoft/skills-for-fabric/issues/107)
+failed live readback: Fabric removed the submitted source metadata, and eligibility
+remained unchanged. The original definition was restored and verified in both
+directions. No unverified workaround is included in the notebooks.
+
+**Native instance availability remains blocked; the Ontology model does not depend
+on this prerequisite.** Resolve source eligibility through
+the selected Ontology's supported portal binding/Manage graph workflow or Fabric
+support, then select eligible entities/relationships, Continue and Materialize.
+Verify native readiness and query results against the explicit binding before
+claiming a functional graph. No materialization REST endpoint, guessed ownership,
+source-topology fallback or artificial connecting edge is introduced.
+
+The dated source-backed acceptance records below are historical evidence only;
+they do not describe the current production execution contract or prove native
+materialization.
+
+Validation: focused graph and saved-preview tests cover exact schema endpoints,
+parallel declarations, dangling/duplicate identity rejection, immutable input,
+component packing and compact isolate grids in all three layouts, and separation
+from native/source-instance execution. Native maintenance endpoints, rejection
+of source topology at native boundaries, and asset-scope tests remain intact.
+This is not live native-query acceptance.
+
 ## Purpose
 
 The Knowledge Graph turns asset topology, live telemetry, and maintenance records into one
 navigable operational context. It is designed for an operator who starts with a turbine or issue
 and needs to move quickly between the affected facility, system, equipment, instruments, current
 readings, inspections, notifications, work orders, and 3D model.
+
+## Ontology endpoint identity and edge interaction repair
+
+The October 27 review read the published FEATURE Ontology definition: **18 entity
+types and 17 relationship types**. Its WorkOrder associations are distinct:
+
+| Declared relationship | Source key | Target entity/key |
+| --- | --- | --- |
+| `WorkOrder_for_equipment` | `equipmentId` | `equipment.equipment_id` |
+| `WorkOrder_for_instrument` | `instrumentId` | `instruments.instrument_id` |
+| `WorkOrder_for_signal` | `opcuaNodeId` | `signal_master.opcua_node_id` |
+
+These are associations, not assertions that a work order causes power output.
+The same review verified inspection/notification signal joins and the declared
+instrument/equipment/system/facility chain. No incorrect binding was established
+in the published definition, so no valid Ontology relationship was deleted or
+changed merely to simplify the canvas.
+
+The authenticated live inspector confirmed WO-2851, **Investigate power output
+dip**, references equipment `EQUIP_RTI_T008`, instrument
+`INST_T008_POWER_OUTPUT` and signal `ns=2;s=T008.power_output`.
+Before repair, its `WORKORDER FOR SIGNAL` link incorrectly displayed the
+destination as an **instrument**, reproducing the presentation discrepancy
+against the actual operational record.
+
+The presentation previously collapsed every one-to-one signal into its instrument
+and redirected other relationships to the instrument. That could turn the last
+two associations above into apparently duplicate WO-to-power links. Now only an
+**unreferenced leaf signal** can collapse. A signal referenced by a work order,
+inspection, notification or any other relationship stays a separate `Signal`
+node; relationship direction, endpoint identity and provenance are preserved.
+
+Both execution modes now render source-provided topology without appending the
+old native-mode SQL `AFFECTS`/`DOCUMENTS`/`REPORTS`/`HAS MODEL` overlay links.
+Operational entities must come through Ontology execution. Separate telemetry
+readings and native maintenance-health context remain observations, not invented
+graph relationships.
+
+Cytoscape's default active edge was reproduced with a black overlay, opacity
+0.25 and 10 px padding. Active/selected edges now explicitly suppress that overlay,
+preserving semantic stroke colors and arrowheads. Selecting a turbine or related
+record keeps its existing governed ancestor path readable through the facility,
+without highlighting sibling branches or manufacturing telemetry flow. Existing
+palette, icons, layouts, fault halos, freshness rules and dash motion are retained.
+
+Validation: **114 graph tests pass**, including physical-column projection and
+distinct maintenance endpoints in both presentations, leaf compaction, native
+overlay removal, scope preservation, ancestor focus and computed Cytoscape
+active/selected styles. Scoped ESLint, Node 24 environment validation and the
+production TypeScript/Vite build pass. An explicitly synthetic browser fixture
+of the actual React/Cytoscape component verified zero overlay opacity/padding
+on activated hierarchy and WO edges, preserved semantic colors/triangle arrows,
+readable facility ancestry, dimmed siblings and unchanged node positions on
+selection. This fixture is not live-source performance or native-query acceptance.
+
+Published to FEATURE as **v1.0.1141 / b7087f1** at
+`2026-10-27T09:01:08.737252Z`. Canonical deployment readiness checks and
+preservation of all 42 SPA redirects passed. Authenticated hosted acceptance
+verified WO-2851's three correctly typed targets, the separate **Signal ·
+power_output** inspector entry, zero active/selected edge overlay, preserved
+semantic colors/arrows, readable facility/system ancestry and unchanged node
+positions when changing selection. The T008 scope contained 16 nodes/19 edges.
+The hosted graph reported **18/18 entity types and 17/17 relationship types**;
+one forced refresh completed in **6.217 s**. A separate synthetic visual-helper
+preparation run for 2,000 nodes/4,000 edges took **37.86 ms** against 250 ms.
+Neither measurement is a full-render/load-test or native-query certification.
+No Ontology binding was changed and no operational record was written.
+
+## Loading and refresh interaction
+
+The graph workspace, toolbar, filters and inspector render immediately. First-load
+verification uses a static skeleton inside the canvas, not a separate blocking
+page. No placeholder entities or relationships are invented. The header does not
+show a green ready indicator or graph counts until a verified graph is available.
+
+During refresh, the existing verified graph remains visible with an explicit
+refreshing/last-verified label and verification timestamp. Refresh failures still
+clear analytical graph data and display an inline error with **Connect Fabric and
+retry**, preserving the fail-closed source contract. Identity changes hide the
+previous user's graph, and changing execution mode clears the old topology;
+neither transition displays it as a result from the new user or mode.
+
+**Advanced graph details** contains the execution selector in every state,
+including first load and errors. The configured mode is never silently changed.
+Existing bounded query deadlines apply; this presentation change does not claim
+to reduce source-query latency. Node styles, layouts, telemetry highlights and
+health animations are unchanged.
+
+Validation: the focused graph suite passes **111 tests**, scoped ESLint and the
+production TypeScript/Vite build pass. An isolated synthetic browser fixture of
+the actual page confirmed the initial workspace/skeleton, verified canvas,
+canvas retention and timestamp during refresh, inline fail-closed errors, and
+successful explicit retry. This is UI verification, not a live-source latency
+benchmark. The temporary fixture and its server were cleaned up.
+
+Published to FEATURE on October 27 as **v1.0.1139 / 91e8756** through the
+canonical deployer. Endpoint/CORS readiness and preservation of all 42 SPA
+redirects passed. Authenticated browser inspection confirmed the deployed
+workspace and in-canvas loading state with no blocking placeholder card.
+That background-tab inspection is not a new live graph-query or latency
+acceptance result.
+
+## Relationship strokes, freshness and health alerts
+
+The current visual contract supersedes the older telemetry-bearing-path behavior in the
+historical acceptance tables below:
+
+- **Solid arrows** are valid, governed relationships, including signal bindings. A relationship
+  does not disappear or become broken when telemetry stops.
+- **Dashed telemetry highlights** require a valid event timestamp with age **0 <= age < 60 s**,
+  matching the application shell's live tier. At 60 s the reading is delayed; at 300 s it is
+  stale. Missing, invalid and future timestamps never activate flow. A one-second local check
+  expires highlights even when no new data arrives; returning to the visible page rechecks
+  freshness before animating. One fresh branch cannot activate its stale siblings.
+- Highlights trace only existing signal/instrument/equipment/system/facility ancestry, in either
+  declared relationship orientation. Maintenance and other contextual links are never telemetry
+  paths. Arrowheads and dash motion retain the Ontology's **declared source-to-target direction**;
+  neither is a claim about physical process flow.
+- **Red and amber halos breathe** on critical and warning nodes, respectively, including when
+  all telemetry is stale. They reflect last-known quality or recorded maintenance, not a confirmed
+  current physical fault. Stale signal cards say **Stale bound signal**, show event age and
+  last-known quality, and no longer use the live-green treatment.
+- Both halo animations and dash motion pause offscreen, in hidden tabs and for reduced motion.
+  Reduced motion retains static colored halos. Above 150 displayed edges, dash motion is limited
+  to the selected immediate neighborhood; fault halos remain noticeable across the whole map,
+  including dimmed context.
+
+Hierarchy layout starts at the highest visible facility/system/equipment level rather than
+mistaking incoming maintenance records for roots. Referenced signals retain their own nodes;
+parallel relationships between the same endpoints retain their identities and labels in
+separate curved lanes. The inspector explicitly identifies incoming and outgoing relationships.
+Changing only readings or selection does not relayout or recenter the map; **Focus selected
+entity** and **Fit graph** remain explicit camera actions. Topology changes relayout the visible
+scope, including when returning to previously cached nodes.
+Hierarchy bounds are based on the canvas size, not the current zoomed extent.
+Long unbroken identities wrap within the existing label width, and overview zoom
+can fit the full bounded graph rather than clipping it at 25%. Fault halos are
+amplified at overview scale; normal-detail sizes and status colors are unchanged.
+
+### October 27 visual regression validation
+
+The focused graph suite passes **108 tests**; production TypeScript/Vite build and scoped ESLint
+also pass. The 2,000-node/4,000-edge flow-and-route preparation fixture completed in **12.93 ms**
+against a 250 ms budget.
+
+An explicitly synthetic, browser-only fixture exercised the actual React/Cytoscape component:
+
+| Check | Observation |
+| --- | --- |
+| Fresh reading ages past 60 seconds without another render/fetch | Four highlighted edges became zero; all seven relationships remained solid |
+| Critical halo across time | Opacity 0.1402-0.4395; padding 9.01-21.98 px |
+| Warning halo across time | Opacity 0.1214-0.3373 |
+| Reduced motion | Both halos static at opacity 0.26 / padding 13 px |
+| Offscreen / return | Static 0.26 / 0.26, then resumed breathing 0.1567 / 0.3588 |
+| Quality recovers to healthy | Restored stylesheet halo; no stale animation style bypass |
+| Only readings change | Exact node positions, zoom and pan retained |
+| Parallel instrument/signal context | Separate labeled curves; unchanged source and target identities |
+| Initial hierarchy / selection | Facility remained in view; selecting context did not recenter |
+
+These are component regressions, not fabricated operational telemetry or proof of a running
+stream. A separate read-only check on the real source-backed All scope confirmed **225 nodes /
+238 links**, all 225 positions finite and distinct under the revised hierarchy options, including
+disconnected ontology components. Live source counts may change with ingestion.
+
+**Initial publication blocker (subsequently resolved).** The fixes were pushed in `162a6cd`, with
+validation proof in `209c8f8`. The canonical deployer verified the FEATURE workspace
+and Active capacity, then required renewed Microsoft/Azure CLI sign-in while
+discovering the existing tenant SPA (step 2/8). The user was unavailable to complete
+that sign-in, so the task-owned waiting process was stopped before Rayfin publication.
+No `SUCCESS` or `DEPLOYED_APP_URL` completion receipt was issued.
+At that point the signed-in hosted page still reported **1.0.1121 / 1673261**,
+not these graph fixes. Publication and hosted acceptance remained outstanding;
+the component checks above did not substitute for them.
+
+An autonomous retry confirmed the exact authentication blocker:
+`az account get-access-token` returned a future Graph expiry, but the actual
+read-only SPA lookup was rejected with **Continuous Access Evaluation:
+InteractionRequired / TokenCreatedWithOutdatedPolicies**. The canonical retry
+also stopped at step 2. Token expiry alone is not proof of usable Graph access;
+fresh interactive tenant sign-in is required. No alternate identity or policy
+bypass was used.
+
+The standard Azure CLI browser/device sign-in subsequently succeeded using the
+same already-signed-in administrator, without password entry, policy changes or
+new consent. The actual Graph SPA lookup then passed. The canonical deployment
+completed at `2026-10-27T02:20:43Z` with `SUCCESS` / `DEPLOYED_APP_URL`, in
+620.609 seconds. All five specialists and coordinator image
+`src-5afb91f86a3d8ee5` were reused; 42 redirects were preserved.
+Signed-browser acceptance confirmed **1.0.1127 / 6efd792**, 18/18 entity bindings,
+17/17 relationships, and zero flowing edges against actual stale readings.
+A cold application-memory reload took 6.213 seconds.
+
+All scope retained **225 nodes / 238 edges** and the exact pre-publication
+directed relationship identity hash
+`1942e870f420f3803d46844c30286c7df429952466393828e0375ec2419bef9f`.
+This hosted check also exposed the old minimum-zoom clipping and long-label
+layout expansion; the follow-up adds wrapped labels, canvas-sized hierarchy
+bounds, overview zoom and zoom-aware fault halos. Its focused suite passes
+**109 tests**; final publication acceptance is recorded separately below.
+
+### Final hosted acceptance: 1.0.1128 / 44325bc
+
+The canonical orchestrator completed at `2026-10-27T02:47:55Z` in **719.344 seconds**,
+printing `SUCCESS` and `DEPLOYED_APP_URL`. The signed-in browser confirmed
+**1.0.1128 / 44325bc** at
+[the deployed Knowledge Graph](https://prime-twist-5b46085aac-swedencentral.webapp.fabricapps.net/?ui=v1&tab=knowledge-graph).
+This supersedes the earlier publication blocker and intermediate fit/clipping result.
+
+| Hosted check | Actual observation |
+| --- | --- |
+| Ontology contract coverage | 18/18 entity bindings and 17/17 relationship types; explicitly source-backed, not materialized |
+| All-scope topology | 225 nodes / 238 edges; 225 finite, distinct positions |
+| Directed relationship identities | Exact hash above unchanged; no endpoint or relationship identity changes |
+| Actual stale telemetry | Zero flowing edges in both Selected and All scopes |
+| Full-map Fit | All bounds inside the 992 x 778 canvas at zoom 0.028482; rendered x bounds 48-943.27 px |
+| Critical alerts | 15 nodes; measured halo opacity 0.14217-0.43994, rendered padding 1.535-3.713 px at overview zoom |
+| Warning alerts | 35 nodes; measured halo opacity 0.12155-0.33926, rendered padding 1.531-3.201 px at overview zoom |
+| Reduced motion | Both halos stayed at opacity 0.26 and rendered padding 2.193 px over 400 ms; breathing resumed when restored |
+| Real parallel maintenance relationships | WORKORDER FOR INSTRUMENT and WORKORDER FOR SIGNAL remain distinct `affects` links from WO-2841 to the combined T001 vibration instrument; triangle arrows retain source-to-target direction |
+| Parallel curve geometry | Control points separated by 208 model units and midpoints by 107.21; separate labels and identities retained |
+| Stale inspector | Actual reading marked `Stale bound signal`, with event age of 7 h, `Quality (last known)` and incoming/outgoing relationship labels |
+| Cold application-memory reload | 10.147 s; graph loader reported 5.33 s |
+| Explicit source refresh | 5.067 s |
+| Warm Overview-to-Graph return | 83 ms; original observation timestamp retained |
+
+These are single signed-browser session measurements, not load testing, a cache-cleared
+network benchmark or an SLA certification. Fresh-reading expiry was exercised in the
+synthetic component regressions above; no operational telemetry was fabricated to
+produce a hosted live-flow result. One unrelated Leaflet map teardown exception was
+observed after rapid Overview navigation; graph checks remained functional, so this
+receipt does not claim that every application tab is browser-error-free.
+
+Final validation passed **109 graph tests**, the production TypeScript/Vite build
+and scoped ESLint. The 2,000-node/4,000-edge preparation fixture took **33.21 ms**
+against its 250 ms budget. Deployment reused all five specialists and the unchanged
+coordinator image `src-5afb91f86a3d8ee5`, preserved 42 SPA redirects, and passed
+runtime/CORS, connector preflights and protected POST readiness checks.
+No stream, notebook, seed DML or production business write was started for these checks.
+The browser was left on the readable Selected T006 scope.
 
 ## Ontology context versus native graph execution
 
@@ -150,7 +584,7 @@ the existing five-minute in-memory caching; an explicit refresh rechecks live re
 The graph opens in the performant 2D analysis view. Directed arrowheads preserve the declared
 Ontology relationship orientation, while animated cyan/status-colored dashes show current
 telemetry moving from a reading-bearing instrument through equipment, system, and facility
-relationships. Maintenance and other SQL overlays are never treated as telemetry paths.
+relationships. Maintenance and other contextual links are never treated as telemetry paths.
 
 Solid arrows are governed relationships without a telemetry-path highlight. Static dashed arrows
 are governed signal bindings; they do not mean that a relationship is broken. Fine moving
@@ -212,7 +646,8 @@ The authoritative semantic asset is built before the app runs:
    only the exact documented temporary unsupported-Ontology response after verified v2 publication;
    other failures propagate. There are no agent-mode flags.
 5. `RTI_011_seed_sql_wire_graphql_agent` prepares independent operational SQL, enriches the additive
-   operational/weather ontology entities, and always attempts its Data Agent SQL-source extension.
+   operational/weather ontology entities, and publishes Data Agent operational guidance without
+   attaching the ontology-associated SQL Database again. Existing custom sources are preserved.
    It preserves compatible custom content and does not recreate `Hydro_STID_API`.
 
 The governed semantic path is:
@@ -327,7 +762,7 @@ flowchart LR
    GM["Ontology-managed GraphModel"]
    SRC["Verified Rayfin bound-source projections"]
     EH["Eventhouse OPCUAEvents"]
-    SQL["Rayfin SQL operational records"]
+    SQL["Native maintenance health observations"]
    GQL["Native Graph REST\nGQL queries"]
     KQL["KQL latest readings"]
    BUILD["buildKnowledgeGraph()\nexplicit governed execution + telemetry enrichment"]
@@ -348,7 +783,7 @@ GraphModel metadata, queryable aliases, node/edge types, and relationship endpoi
 native GQL results. `queryOntologySourceGraph()` instead requires verified physical source
 bindings and builds only explicitly supported entity/relationship projections. Pending reads show
 a loading state; failed or empty reads show an explicit unavailable state. No topology is substituted
-between modes. Live mode does not append the historical hardcoded SQL overlay relationships.
+between modes. Neither mode appends the historical hardcoded SQL overlay relationships.
 
 Relative to `/v1/workspaces/{workspaceId}/`, native reads use
 `GET graphModels/{id}/getQueryableGraphType?beta=true` and
@@ -373,18 +808,17 @@ polls preserve the current viewport, selection, and dragged node positions inste
 the graph. A layout is rerun only on initial load or when the operator selects a different layout.
 
 Latest Eventhouse readings enrich the measurement point by `opcua_node_id`; this preserves telemetry
-freshness independently of graph materialization. When one native `signal_master` node has a
-one-to-one native `signals_from_instruments` relationship, the UI combines it with that instrument into one
+freshness independently of graph materialization. When one `signal_master` node has a
+one-to-one `signals_from_instruments` relationship and no other relationship, the UI combines it with that instrument into one
 visual node and retains both entities in the inspector provenance. This removes duplicate labels
-without changing the governed v2 semantic contract. Unbound and non-one-to-one signals remain explicit nodes.
+without redirecting any external relationship. Referenced, unbound and non-one-to-one signals remain explicit nodes.
 The v2 adaptation retains the existing page layout, controls, friendly inspector labels, and
 one-to-one signal presentation. Native identity validation and errors do not introduce new panels.
-In native mode only, Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
-`instrumentId`, or `opcuaNodeId` as explicit external overlays attached to the corresponding
-native equipment. GraphQL/STID reads are not dependencies or topology substitutes for the
+Neither execution mode appends inferred SQL work orders, inspections, notifications or 3D model topology.
+GraphQL/STID reads are not dependencies or topology substitutes for the
 native canvas, tree or scopes; missing native edges are never filled in from foreign keys.
 Live mode reads operational entities through their ontology bindings and renders only relationships
-declared in the ontology, rather than these external overlays.
+declared in the ontology. Native mode preserves returned native topology and its provenance.
 
 The application does not execute GraphModel queries without an explicit, validated v2 graph binding.
 REST `/v1` does not mean Ontology generation 1.
@@ -453,8 +887,8 @@ or operational record, source timestamp, quality, and provenance.
 4. For live sources, verify item/table/property/key bindings and supported declared joins before reads.
    For native execution, validate graph metadata, queryable types/endpoints and complete responses.
 5. Preserve execution-specific identities, ontology type mappings and provenance; disclose coverage.
-6. Enrich loaded measurement points with separately observed KQL readings. Historical SQL overlays
-   remain native-only; live topology uses declared ontology relationships exclusively.
+6. Enrich loaded measurement points with separately observed KQL readings. Neither execution mode
+   appends historical SQL overlay topology; live topology uses declared ontology relationships exclusively.
 7. Fail closed on denied, invalid, incomplete or over-budget reads; never substitute guessed STID.
 
 This reuses the deployed v2 contract without silently substituting an unrelated graph or a v1 ontology.
@@ -494,8 +928,8 @@ It does not provide a GraphModel-instance REST export contract.
 
 1. Verify a v1 item is rejected. For a v2 ontology, verify the live TMDL contract, explicit managed
    graph binding, queryable type mappings, and native result paths; reject unrelated graphs.
-2. Verify every edge references two existing nodes and every operational overlay record exposes its
-   source join key.
+2. Verify every edge references two existing nodes, declared maintenance joins keep their distinct
+   endpoint entity types, and externally referenced signals never collapse into instruments.
 3. Compare representative relationship paths with the `ontology_relationship_audit` output from
    RTI_004/005.
 4. Select a turbine in Overview and verify Knowledge Graph restores it; select another turbine in
@@ -742,8 +1176,16 @@ with the unsupported-API semantic error (RootActivityId `5082e3f9-6b1e-45a5-b675
 That probe preceded the authorized revised-NB09 run documented below; it remains historical
 publication/semantic-error evidence, not a verified smoke result.
 
-The revised implementation requires a **bounded functional smoke test**, not full agent
-certification or attested execution provenance:
+**Historical smoke policy, no longer a setup gate:** the automatic NB09 functional query
+and answer-format check described below has been removed. NB09 now verifies publication
+and source identity/readback, records deployment/publication as `published` and runtime
+as `not_checked`, and continues to NB11. It does not add duplicate execution sources to
+satisfy the old smoke. Existing sources and selections are preserved. NB11's later phase
+publishes operational guidance against the ontology-associated SQL Database, without
+adding it again. Deployment/Foundry verify the published ontology's operational SQL/weather
+bindings without requiring a separate SQL datasource profile.
+
+The earlier implementation used a bounded functional smoke test:
 
 - NB09 uses the selected ontology as semantic context and permits source-native SQL on its
   associated Lakehouse static binding for the first five facility IDs/names. Expected values are
@@ -759,7 +1201,7 @@ certification or attested execution provenance:
   agent.
 - Semantic errors (including nested JSON errors despite `isError: false`), wrong rows, and
   transport failures are `failed`. Nonparseable, count-only, or otherwise unverifiable answers are
-  `inconclusive`. Both fail required modes; neither is a static v2 skip.
+  `inconclusive`. Those outcomes blocked setup under the old policy, not the current one.
 - NB11 configures its SQL source independently of NB09's ontology status or attachment.
   It preserves existing sources and custom content, verifies the submitted SQL source in draft
   and published readback, and writes only its own SQL-source status. It neither requires nor

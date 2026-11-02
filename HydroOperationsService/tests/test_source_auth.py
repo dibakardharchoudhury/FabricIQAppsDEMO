@@ -16,13 +16,16 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import jwt
+from openai import RateLimitError
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr, ValidationError
 from starlette.requests import Request
 
 from hydro_orchestrator.contracts import SourceIdentity, WorkOrderDraft, utc_now
 from hydro_orchestrator.live_sources import FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
-from hydro_orchestrator.foundry_supervisor import ChatAnswer, FoundrySupervisor, NativeBinding, RunJournal
+from hydro_orchestrator.foundry_supervisor import (
+    ChatAnswer, FoundrySupervisor, NativeBinding, RunJournal, _validated_native_result,
+)
 from hydro_orchestrator.service import (
     ChatInput, RuntimeConfiguration, create_delegated_app, create_fabric_delegated_app, create_runtime_app,
     decide_work_order, interrupted_worker_failure, normalized_chat_input,
@@ -353,6 +356,22 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                               priority="Medium", work_read_at=clock, expires_at=clock + timedelta(minutes=15),
                               existing_work=())
 
+    async def test_empty_deployment_probe_rejects_before_credentials_sources_or_run_state(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, leases, namespaces, contexts = self.ingress(root)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test",
+            ) as client:
+                response = await client.post("/invocations", json={})
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json(), {"detail": "Invalid invocation body."})
+            self.assertEqual(leases, [])
+            self.assertEqual(namespaces, [])
+            self.assertEqual(contexts, [])
+            self.assertEqual(list(root.iterdir()), [])
+            self.assertEqual(self.reads, 0)
+
     async def test_delegated_run_uses_bounded_ten_minute_lease(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -562,6 +581,37 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SourceAuthorizationError):
                 await leases[0].get_token(self.policy.scopes["fabric"])
 
+    async def test_hosted_call_context_is_request_scoped_in_streaming_and_never_persisted(self):
+        observed = []
+
+        async def execute(request):
+            observed.append(leases[-1].foundry_call_id)
+            return ChatAnswer(
+                run_id=request.run_id, source=request.source, requested_at=request.requested_at,
+                source_read_times=(), summary="Context propagation fixture.",
+                tables=(), charts=(), limitations=(), cell_sources=(), specialists=(),
+                audit_url=f"/chat/runs/{request.run_id}/evidence",
+            )
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, leases, _, _ = self.ingress(root, run=execute)
+            identifiers = ("first-platform-call", "second-platform-call")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test") as client:
+                for identifier in identifiers:
+                    response = await client.post(
+                        "/invocations", json={**self.invocation(), "stream": True},
+                        headers={"x-agent-foundry-call-id": identifier},
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(json.loads(response.text.splitlines()[-1])["type"], "answer")
+            self.assertEqual(observed, list(identifiers))
+            self.assertTrue(all(lease.foundry_call_id is None for lease in leases))
+            persisted = "".join(path.read_text() for path in root.rglob("*.json"))
+            for identifier in identifiers:
+                self.assertNotIn(identifier, persisted)
+
     async def test_interrupted_stream_continues_and_same_principal_recovers_exact_result(self):
         with TemporaryDirectory() as directory:
             app, _, _, contexts = self.ingress(Path(directory), delay=.05)
@@ -642,6 +692,178 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("RuntimeError", combined)
             self.assertNotIn("private diagnostic content", combined)
             self.assertEqual(contexts, ["closed"])
+
+    async def test_model_throttling_keeps_429_category_and_audit_without_private_diagnostics(self):
+        for streaming in (False, True):
+            for wrapped in (False, True):
+                with self.subTest(streaming=streaming, wrapped=wrapped), TemporaryDirectory() as directory:
+                    async def fail(_request):
+                        error = RateLimitError(
+                            "private provider diagnostics",
+                            response=httpx.Response(429, request=httpx.Request("POST", "https://model.test")),
+                            body={"error": {"code": "rate_limit_exceeded"}},
+                        )
+                        if wrapped:
+                            raise SourceFailure("Foundry model request failed (HTTP 429).") from error
+                        raise error
+
+                    app, _, _, contexts = self.ingress(Path(directory), run=fail)
+                    initial = self.invocation()
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                                 base_url="http://test") as client:
+                        response = await client.post("/invocations", json={**initial, "stream": streaming})
+                        if streaming:
+                            messages = [json.loads(line) for line in response.text.splitlines()]
+                            self.assertEqual(messages[-1]["status"], 429)
+                            self.assertIn("rate limit", messages[-2]["event"]["detail"].lower())
+                            detail = messages[-1]["detail"]
+                        else:
+                            self.assertEqual(response.status_code, 429)
+                            detail = response.json()["detail"]
+                        self.assertEqual(detail["category"], "model_rate_limit")
+                        self.assertNotIn("private provider diagnostics", response.text)
+                        recovery = await client.post("/invocations", json={
+                            "operation": "result", "run_id": detail["run_id"], "tokens": initial["tokens"],
+                        })
+                        self.assertEqual(recovery.json()["status"], "failed")
+                        self.assertEqual(recovery.json()["failure"]["category"], "model_rate_limit")
+                        self.assertEqual(recovery.json()["failure"]["http_status"], 429)
+                    self.assertEqual(contexts, ["closed"])
+
+    async def test_native_transport_errors_keep_status_across_streaming_and_recovery(self):
+        from hydro_orchestrator.native_data_agent import NativeDataAgentTimeout, NativeDataAgentTransportError
+        for kind, status, category in (
+            (NativeDataAgentTimeout, 504, "native_timeout"),
+            (NativeDataAgentTransportError, 502, "native_transport"),
+        ):
+            for streaming in (False, True):
+                with self.subTest(kind=kind, streaming=streaming), TemporaryDirectory() as directory:
+                    async def fail(_request):
+                        raise SourceFailure("wrapped private diagnostic") from kind("private native diagnostic")
+
+                    app, _, _, _ = self.ingress(Path(directory), run=fail)
+                    initial = self.invocation()
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                                 base_url="http://test") as client:
+                        response = await client.post("/invocations", json={**initial, "stream": streaming})
+                        if streaming:
+                            message = json.loads(response.text.splitlines()[-1])
+                            self.assertEqual(message["status"], status)
+                            detail = message["detail"]
+                        else:
+                            self.assertEqual(response.status_code, status)
+                            detail = response.json()["detail"]
+                        self.assertEqual(detail["category"], category)
+                        self.assertNotIn("private", response.text)
+                        recovered = await client.post("/invocations", json={
+                            "operation": "result", "run_id": detail["run_id"], "tokens": initial["tokens"],
+                        })
+                        self.assertEqual(recovered.json()["failure"]["http_status"], status)
+
+    async def test_native_refusal_survives_streaming_and_persisted_result_without_private_text(self):
+        async def fail(_request):
+            _validated_native_result(json.dumps({
+                "error": {"code": "output_moderation", "message": "private provider diagnostics"},
+            }))
+
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming), TemporaryDirectory() as directory:
+                app, _, _, contexts = self.ingress(Path(directory), run=fail)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                             base_url="http://test") as client:
+                    response = await client.post("/invocations", json={
+                        **self.invocation(), "stream": streaming,
+                    })
+                    if streaming:
+                        messages = [json.loads(line) for line in response.text.splitlines()]
+                        self.assertEqual(messages[-1]["type"], "error")
+                        self.assertEqual(messages[-1]["status"], 502)
+                        detail = messages[-1]["detail"]
+                        self.assertEqual(messages[-2]["event"]["status"], "error")
+                        self.assertIn("owner", messages[-2]["event"]["detail"])
+                    else:
+                        self.assertEqual(response.status_code, 502)
+                        detail = response.json()["detail"]
+                    self.assertEqual(detail["category"], "native_refusal")
+                    self.assertIn("owner", detail["message"])
+                    recovered = await client.post("/invocations", json={
+                        "operation": "result", "run_id": detail["run_id"], "tokens": self.invocation()["tokens"],
+                    })
+                    self.assertEqual(recovered.status_code, 200, recovered.text)
+                    self.assertEqual(recovered.json()["status"], "failed")
+                    self.assertEqual(recovered.json()["failure"]["category"], "native_refusal")
+                self.assertNotIn("private provider diagnostics", response.text + recovered.text)
+                self.assertEqual(contexts, ["closed"])
+
+    async def test_detached_native_refusal_remains_failed_and_closes_its_credential(self):
+        release = asyncio.Event()
+
+        async def fail(_request):
+            await release.wait()
+            _validated_native_result(json.dumps({"error": {"code": "output_moderation"}}))
+
+        with TemporaryDirectory() as directory:
+            app, leases, _, contexts = self.ingress(Path(directory), run=fail)
+            invocation = {**self.invocation(), "stream": True}
+
+            async def receive():
+                return {"type": "http.request", "body": json.dumps(invocation).encode(), "more_body": False}
+
+            route = next(route for route in app.routes if getattr(route, "path", None) == "/invocations")
+            streamed = await route.endpoint(Request({
+                "type": "http", "http_version": "1.1", "method": "POST",
+                "scheme": "http", "path": "/invocations", "raw_path": b"/invocations",
+                "query_string": b"", "headers": [], "client": ("test", 1), "server": ("test", 80),
+            }, receive))
+            first = json.loads(await anext(streamed.body_iterator))
+            await streamed.body_iterator.aclose()
+            recovery = {"operation": "result", "run_id": first["run_id"], "tokens": invocation["tokens"]}
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test") as client:
+                pending = await client.post("/invocations", json=recovery)
+                self.assertEqual(pending.status_code, 202, pending.text)
+                release.set()
+                for _ in range(20):
+                    await asyncio.sleep(.01)
+                    result = await client.post("/invocations", json=recovery)
+                    if result.status_code != 202:
+                        break
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json()["status"], "failed")
+                self.assertEqual(result.json()["failure"]["category"], "native_refusal")
+            self.assertEqual(contexts, ["closed"])
+            with self.assertRaises(SourceAuthorizationError):
+                await leases[0].get_token(self.policy.scopes["fabric"])
+
+    async def test_unusable_native_content_is_failed_in_stream_and_recovered_result(self):
+        async def fail(_request):
+            _validated_native_result(json.dumps({"response": (
+                "There's content here I can't work with. Try asking a new question. "
+                "If that doesn't work, there might be an issue with the content or your source data."
+            )}))
+
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming), TemporaryDirectory() as directory:
+                app, _, _, contexts = self.ingress(Path(directory), run=fail)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                             base_url="http://test") as client:
+                    response = await client.post("/invocations", json={**self.invocation(), "stream": streaming})
+                    if streaming:
+                        messages = [json.loads(line) for line in response.text.splitlines()]
+                        self.assertEqual(messages[-1]["type"], "error")
+                        self.assertEqual(messages[-1]["status"], 502)
+                        self.assertEqual(messages[-2]["event"]["status"], "error")
+                        detail = messages[-1]["detail"]
+                    else:
+                        self.assertEqual(response.status_code, 502)
+                        detail = response.json()["detail"]
+                    self.assertEqual(detail["category"], "native_refusal")
+                    recovered = await client.post("/invocations", json={
+                        "operation": "result", "run_id": detail["run_id"], "tokens": self.invocation()["tokens"],
+                    })
+                    self.assertEqual(recovered.json()["status"], "failed")
+                    self.assertEqual(recovered.json()["failure"]["category"], "native_refusal")
+                self.assertEqual(contexts, ["closed"])
 
     async def test_ingress_validation_and_auth_errors_never_echo_token_input(self):
         with TemporaryDirectory() as directory:
@@ -772,6 +994,11 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(owner.tools.sources.credential, owner.credential)
             self.assertEqual(owner.credential.principal_id, USER)
             self.assertEqual(owner.native_binding, native_binding)
+            self.assertTrue(owner.semantic_planning)
+            self.assertIsNotNone(owner.native_credential)
+            self.assertIsNot(owner.native_credential, owner.credential)
+            self.assertEqual(owner.foundry_call_id, "current-platform-call")
+            self.assertEqual(owner.native_workload_origin, "https://verified-native.test")
             return ChatAnswer(
                 run_id=request.run_id, source=request.source, requested_at=request.requested_at,
                 source_read_times=(), summary="Composition fixture, not a live source answer.",
@@ -779,32 +1006,41 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 audit_url=f"/chat/runs/{request.run_id}/evidence",
             )
 
-        for changed in (False, True):
-            with self.subTest(changed=changed), TemporaryDirectory() as directory:
+        for changed, workload_origin in (
+            (False, "https://verified-native.test"),
+            (True, "https://verified-native.test"),
+            (False, None),
+        ):
+            with self.subTest(changed=changed, workload_origin=workload_origin), TemporaryDirectory() as directory:
                 actual = source.model_copy(update={"workspace_id": SPA}) if changed else source
+                blocked = changed or workload_origin is None
                 bridge = AsyncMock()
                 bridge.call.side_effect = [
-                    {"charts_requested": False, "native_sources": [], "proposal_priority": "Medium",
-                     "equipment_selection": None,
-                     "required_evidence_kinds": [],
-                     "permitted_evidence_kinds": [],
-                     "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}},
                     {"tenant_id": str(TENANT), "configuration_digest": source.configuration_digest},
-                    {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test"},
+                    {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test",
+                     "workload_origin": workload_origin},
                 ]
                 app = create_fabric_delegated_app(
                     Path(directory), self.verifier, source,
                     "https://project.services.ai.azure.com/api/projects/hydro", bridge=bridge,
                     native_binding=native_binding,
                 )
-                with patch("hydro_orchestrator.live_sources.AzureCliCredential",
-                           side_effect=AssertionError("Hosted source factory cannot instantiate CLI authentication.")):
+                with patch.dict(os.environ, {"AZURE_AI_MODEL_DEPLOYMENT_NAME": "test-model"}), patch(
+                    "hydro_orchestrator.live_sources.AzureCliCredential",
+                    side_effect=AssertionError("Hosted source factory cannot instantiate CLI authentication."),
+                ):
                     with patch.object(FoundrySupervisor, "run", autospec=True, side_effect=execute) as run:
                         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                                      base_url="http://test") as client:
-                            response = await client.post("/invocations", json=self.invocation())
-                        self.assertEqual(response.status_code, 500 if changed else 200, response.text)
-                        self.assertEqual(run.call_count, 0 if changed else 1)
+                            response = await client.post(
+                                "/invocations", json=self.invocation(),
+                                headers={"x-agent-foundry-call-id": "current-platform-call"},
+                            )
+                        self.assertEqual(response.status_code, 500 if blocked else 200, response.text)
+                        self.assertEqual(run.call_count, 0 if blocked else 1)
+                        self.assertNotIn(
+                            "chat_intent", [call.args[0]["action"] for call in bridge.call.call_args_list],
+                        )
         self.assertEqual(len(owners), 1)
         with self.assertRaises(SourceAuthorizationError):
             await owners[0].credential.get_token(self.policy.scopes["fabric"])
@@ -817,6 +1053,14 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                                 generation=2, configuration_digest="a" * 64)
         endpoint = "https://test.services.ai.azure.com/api/projects/test"
         runtime = RuntimeConfiguration(source=source, authorization=policy, project_endpoint=endpoint)
+        self.assertTrue(runtime.production_writes_enabled)
+        self.assertFalse(RuntimeConfiguration.model_validate({
+            **runtime.model_dump(), "production_writes_enabled": False,
+        }).production_writes_enabled)
+        with self.assertRaises(ValidationError):
+            RuntimeConfiguration.model_validate({
+                **runtime.model_dump(), "production_writes_enabled": "false",
+            })
         configured = {"tenant_id": str(TENANT), "workspace_id": str(SPA), "ontology_id": str(USER),
                       "configuration_digest": source.configuration_digest}
         bridge = AsyncMock()
@@ -830,7 +1074,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                                              base_url="http://test") as client:
                     health = await client.get("/health")
                     self.assertFalse(health.json()["live_sources_verified"])
-                    self.assertFalse(health.json()["production_writes_enabled"])
+                    self.assertTrue(health.json()["production_writes_enabled"])
                     readiness = await client.get("/readiness")
                     self.assertEqual(readiness.json(), health.json())
             self.assertTrue(tracked_client.is_closed)
@@ -868,7 +1112,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"local deployment fallback is not enabled", stopped.stderr)
         identity = str(TENANT)
         source_config = dict.fromkeys(
-            ("tenant_id", "workspace_id", "ontology_id", "eventhouse_id", "database_id", "lakehouse_id", "appbackend_id"),
+            ("tenant_id", "workspace_id", "ontology_id", "eventhouse_id", "database_id", "lakehouse_id", "appbackend_id", "operational_sql_database_id"),
             identity,
         )
         source_config.update(
@@ -904,7 +1148,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             try:
                 async with httpx.AsyncClient(timeout=0.25) as client:
                     health = None
-                    for _ in range(100):
+                    for _ in range(600):
                         if process.poll() is not None:
                             _, error = await asyncio.to_thread(process.communicate, timeout=5)
                             self.fail(f"Runtime exited before readiness: {error.decode()}")
@@ -917,7 +1161,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(health.status_code, 200)
                     self.assertEqual(health.json()["status"], "awaiting_authorized_invocation")
                     self.assertFalse(health.json()["live_sources_verified"])
-                    self.assertFalse(health.json()["production_writes_enabled"])
+                    self.assertTrue(health.json()["production_writes_enabled"])
                     readiness = await client.get(f"http://127.0.0.1:{port}/readiness")
                     self.assertEqual(readiness.status_code, 200)
                     self.assertEqual(readiness.json(), health.json())

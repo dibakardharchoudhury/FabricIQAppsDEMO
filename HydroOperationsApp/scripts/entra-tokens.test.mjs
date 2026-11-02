@@ -3,6 +3,7 @@ import test from 'node:test'
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { readFileSync } from 'node:fs'
 import { createEntraTokens } from '../src/services/entraTokens.ts'
+import { createHostedSourceAccess } from '../src/services/hostedSourceAccess.ts'
 
 const account = { homeAccountId: 'operator', tenantId: 'target-tenant' }
 function fixture() {
@@ -16,7 +17,7 @@ function fixture() {
       if (state.silentError) throw state.silentError
       const token = state.tokens.get(request.scopes.join(' '))
       if (!token) throw new InteractionRequiredAuthError('consent_required')
-      return { accessToken: token, expiresOn: state.expiresOn }
+      return { accessToken: token, expiresOn: request.forceRefresh ? state.refreshedExpiresOn ?? state.expiresOn : state.expiresOn }
     },
     acquireTokenPopup: async request => {
       state.popups.push(request)
@@ -60,6 +61,56 @@ test('concurrent requests for the same resource coalesce into one interaction', 
   assert.equal(state.popups.length, 1)
   assert.equal(state.popups[0].prompt, undefined)
   assert.equal(await tokens.silent(['foundry']), 'token-foundry')
+})
+
+test('mixed-resource scopes are rejected before MSAL or initialization can send a request', async () => {
+  const { state, tokens } = fixture()
+  const mixed = ['https://api.fabric.microsoft.com/Item.Read.All', 'https://ai.azure.com/user_impersonation']
+  await assert.rejects(tokens.popup(mixed), /one resource at a time/)
+  await assert.rejects(tokens.silent(mixed), /one resource at a time/)
+  assert.equal(state.popups.length, 0)
+  assert.equal(state.silent.length, 0)
+})
+
+test('cold hosted authorization reaches the MSAL boundary as four separate audience requests', async () => {
+  const { state, tokens } = fixture()
+  state.expiresOn = new Date(Date.now() + 60 * 60_000)
+  const requirements = [
+    { kind: 'fabric', label: 'Fabric', scopes: [
+      'https://api.fabric.microsoft.com/Workspace.Read.All',
+      'https://api.fabric.microsoft.com/Item.Read.All',
+      'https://api.fabric.microsoft.com/Item.Execute.All',
+      'https://api.fabric.microsoft.com/DataAgent.Execute.All',
+    ] },
+    { kind: 'foundry', label: 'Foundry', scopes: ['https://ai.azure.com/user_impersonation'] },
+    { kind: 'graphql', label: 'Lakehouse/SQL', scopes: [
+      'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All',
+      'https://analysis.windows.net/powerbi/api/Item.Execute.All',
+    ] },
+    { kind: 'kusto', label: 'Eventhouse', scopes: ['https://trd-hu7um09mfguk87jh2m.z0.kusto.fabric.microsoft.com/user_impersonation'] },
+  ]
+  const access = createHostedSourceAccess(requirements, {
+    silent: scopes => tokens.silent(scopes, false, 12 * 60_000),
+    popup: tokens.popup,
+  })
+  const result = await access.acquire(true)
+  assert.deepEqual(state.popups.map(request => request.scopes), requirements.map(item => item.scopes))
+  assert.ok(state.popups.every(request => !Object.hasOwn(request, 'extraScopesToConsent')))
+  assert.equal(state.maxPopups, 1)
+  assert.deepEqual(Object.keys(result), ['fabric', 'foundry', 'graphql', 'kusto'])
+  await access.acquire(true)
+  assert.equal(state.popups.length, 4)
+})
+
+test('empty authorization cannot be silently submitted and same-audience scopes remain supported', async () => {
+  const { state, tokens } = fixture()
+  for (const scopes of [[], [' '], ['openid', 'profile'], ['https://ai.azure.com/user_impersonation ']]) {
+    await assert.rejects(tokens.popup(scopes), /requires non-empty|one resource/)
+  }
+  const scopes = ['https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All',
+    'https://analysis.windows.net/powerbi/api/Item.Execute.All']
+  await tokens.popup([...scopes, scopes[0]])
+  assert.deepEqual(state.popups[0].scopes, scopes)
 })
 
 test('different resources serialize their required interactions and retry silently after waiting', async () => {
@@ -120,10 +171,11 @@ test('hosted Rayfin exchange never submits a lease that can expire during a boun
   assert.match(source,
     /const POWER_BI_ITEM_EXECUTE_SCOPE = 'https:\/\/analysis\.windows\.net\/powerbi\/api\/Item\.Execute\.All'/)
   assert.match(source, /const HOSTED_RUN_TOKEN_LIFETIME_MS = 12 \* 60_000/)
-  assert.match(source, /silentToken\(\[\.\.\.new Set\(\[\.\.\.FABRIC_JOB_SCOPES, \.\.\.DATA_AGENT_SCOPES\]\)\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
-  assert.match(source, /silentToken\(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
-  assert.match(source, /silentToken\(\[CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
-  assert.match(source, /silentToken\(\[kustoScope\(cluster\)\], false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
+  assert.match(source, /label: 'Fabric', scopes: \[\.\.\.new Set\(\[\.\.\.FABRIC_JOB_SCOPES, \.\.\.DATA_AGENT_SCOPES\]\)\]/)
+  assert.match(source, /label: 'Foundry', scopes: FOUNDRY_AGENT_SCOPES/)
+  assert.match(source, /label: 'Lakehouse\/SQL', scopes: \[CONNECTOR_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\]/)
+  assert.match(source, /label: 'Eventhouse telemetry', scopes: \[kustoScope\(cluster\)\]/)
+  assert.match(source, /silent: scopes => silentToken\(scopes, false, HOSTED_RUN_TOKEN_LIFETIME_MS\)/)
 })
 
 test('a cached lease is reused only while it outlives the bounded operation, otherwise it is refreshed once', async () => {
@@ -136,6 +188,7 @@ test('a cached lease is reused only while it outlives the bounded operation, oth
   assert.equal(state.silent[0].forceRefresh, false)
   state.silent.length = 0
   state.expiresOn = minutes(6)
+  state.refreshedExpiresOn = minutes(45)
   assert.equal(await tokens.silent(['foundry'], false, 12 * 60_000), 'cached')
   assert.deepEqual(state.silent.map(request => request.forceRefresh), [false, true])
   state.silent.length = 0
@@ -147,6 +200,14 @@ test('a cached lease is reused only while it outlives the bounded operation, oth
   assert.deepEqual(state.silent.map(request => request.forceRefresh), [false])
 })
 
+test('a refreshed or unknown short lease cannot pass the hosted-run lifetime guard', async () => {
+  const { state, tokens } = fixture()
+  state.tokens.set('foundry', 'cached')
+  state.expiresOn = new Date(Date.now() + 6 * 60_000)
+  await assert.rejects(tokens.silent(['foundry'], false, 12 * 60_000), /shorter than the required operation lifetime/)
+  state.expiresOn = undefined
+  await assert.rejects(tokens.silent(['foundry'], true, 12 * 60_000), /shorter than the required operation lifetime/)
+})
 test('Lakehouse connection uses Rayfin while Eventhouse retains explicit delegated consent', () => {
   const source = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
   const connect = source.slice(

@@ -14,7 +14,7 @@ export type V1Tab = {
 
 const ALL_V1_TABS: V1Tab[] = [
   { id: 'overview', label: 'Overview', title: 'Overview', icon: Gauge, Page: lazy(() => import('./pages/OverviewPage').then(module => ({ default: module.OverviewPage }))) },
-  { id: 'map', label: 'Map', title: 'Operations Map', icon: Map, Page: lazy(() => import('../ui-shared/pages/OperationsMapPage').then(module => ({ default: module.OperationsMapPage }))) },
+  { id: 'map', label: 'Norwegian Energy Map', title: 'Norwegian Energy Map', icon: Map, Page: lazy(() => import('../ui-shared/pages/OperationsMapPage').then(module => ({ default: module.OperationsMapPage }))) },
   { id: 'telemetry', label: 'Real Time Telemetry', title: 'Real Time Telemetry', icon: Activity, Page: lazy(() => import('./pages/TelemetryPage').then(module => ({ default: module.TelemetryPage }))) },
   { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: lazy(() => import('./pages/WeatherPage').then(module => ({ default: module.WeatherPage }))) },
   { id: 'inflow-model', label: 'Inflow Model', title: 'Inflow Model', icon: Waves, Page: lazy(() => import('../ui-shared/pages/InflowModelPage').then(module => ({ default: module.InflowModelPage }))) },

@@ -1,8 +1,9 @@
-"""Create the Foundry project (account, project, model deployment, ACR, Application Insights) on request.
+"""Bootstrap a missing Foundry account, project, model deployment, ACR and Application Insights on request.
 
 Called by provision_foundry_agents.provision() only when no Foundry endpoint is selected AND the operator explicitly
 opted in (HYDRO_FOUNDRY_CREATE=true, or the local app's checkbox), because it creates billable Azure resources. It
 is not a separate deployment path: it provisions the project the rest of the deployer then discovers and uses.
+Existing-account project-only creation is handled by shared_foundry_project without model allocation.
 
 It runs the same Azure Developer CLI template Microsoft documents for new Foundry projects
 (Azure-Samples/azd-ai-starter-basic) from a persistent per-target folder, so a rerun reuses the same azd
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -21,6 +23,7 @@ from urllib.parse import urlparse
 TEMPLATE = "https://github.com/Azure-Samples/azd-ai-starter-basic"
 ACCESS_TIMEOUT_S = 600
 ACCESS_POLL_S = 15
+PREFERRED_ORCHESTRATION_TPM = 75_000
 
 
 def enabled() -> bool:
@@ -32,8 +35,34 @@ def normalize_location(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
+def requested_project_name() -> str:
+    name = os.environ.get("HYDRO_FOUNDRY_NEW_PROJECT_NAME", "").strip()
+    if not name and enabled():
+        name = os.environ.get("HYDRO_FOUNDRY_EXISTING_PROJECT_NAME", "").strip()
+    if name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name):
+        raise ValueError("New Foundry project name must be 1-64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.")
+    return name
+
+
+def requested_account_name() -> str:
+    name = os.environ.get("HYDRO_FOUNDRY_ACCOUNT_NAME", "").strip()
+    if name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", name):
+        raise ValueError("Foundry account name must be 2-64 letters, digits or hyphens, starting and ending with a letter or digit.")
+    return name
+
+
 def environment_name(tenant: str, workspace: str, subscription: str = "") -> str:
     """Stable per target, so reruns reuse one azd environment (and its resource-name salt)."""
+    project = requested_project_name()
+    account = requested_account_name()
+    if account:
+        return "hydro-foundry-" + hashlib.sha256(
+            f"{tenant.lower()}|{subscription.lower()}|{workspace.lower()}|{account.lower()}|{project.lower()}".encode()
+        ).hexdigest()[:12]
+    if project:
+        return "hydro-foundry-" + hashlib.sha256(
+            f"{tenant.lower()}|{subscription.lower()}|{workspace.lower()}|{project.lower()}".encode()
+        ).hexdigest()[:12]
     override = os.environ.get("HYDRO_FOUNDRY_PROJECT_NAME", "").strip()
     if override:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,30}", override):
@@ -44,28 +73,121 @@ def environment_name(tenant: str, workspace: str, subscription: str = "") -> str
     ).hexdigest()[:12]
 
 
+def model_reference(deploy, *, subscription: str, deployment: str) -> tuple[str, str]:
+    """Resolve a deployment alias without guessing its underlying catalog model."""
+    accounts = json.loads(deploy.run_capture(deploy.az(
+        "cognitiveservices", "account", "list", "--subscription", subscription, "-o", "json",
+    )))
+    matches = set()
+    for account in accounts:
+        if account.get("kind") not in ("AIServices", "OpenAI"):
+            continue
+        deployments = json.loads(deploy.run_capture(deploy.az(
+            "cognitiveservices", "account", "deployment", "list", "--subscription", subscription,
+            "--resource-group", account["resourceGroup"], "--name", account["name"], "-o", "json",
+        )))
+        for item in deployments:
+            properties = item.get("properties", {})
+            reference = properties.get("model", {})
+            if (item.get("name") == deployment and properties.get("provisioningState") == "Succeeded"
+                    and reference.get("format") == "OpenAI" and reference.get("name") and reference.get("version")):
+                matches.add((str(reference["name"]), str(reference["version"])))
+    if len(matches) != 1:
+        raise deploy.DeployError(
+            f"Model deployment '{deployment}' does not identify one underlying model in the selected subscription. "
+            "Enter a ready chat deployment name or an available catalog chat model name. "
+            "No model was guessed and no resources were created."
+        )
+    return matches.pop()
+
+
+def preferred_model_capacity(deploy, subscription, location, sku, fallback):
+    limits = sku.get("capacity") or {}
+    rates = [rate for rate in sku.get("rateLimits") or []
+             if isinstance(rate, dict) and rate.get("key") == "token"]
+    if not sku.get("usageName") or not rates or any(
+        type(rate.get("count")) not in (int, float) or not math.isfinite(rate["count"]) or rate["count"] <= 0
+        or type(rate.get("renewalPeriod")) not in (int, float)
+        or not math.isfinite(rate["renewalPeriod"]) or rate["renewalPeriod"] <= 0
+        for rate in rates
+    ):
+        print("Foundry: WARNING: catalog token units are unverified; using its supported capacity "
+              "default, not assuming 1 unit = 1,000 TPM. Azure must validate the allocation.", flush=True)
+        return fallback
+    usage = json.loads(deploy.run_capture(deploy.az(
+        "cognitiveservices", "usage", "list", "--subscription", subscription,
+        "--location", location, "-o", "json",
+    )))
+    matches = [entry for entry in usage if entry.get("name", {}).get("value") == sku["usageName"]]
+    if len(matches) != 1 or any(
+        type(matches[0].get(key)) not in (int, float)
+        or not math.isfinite(matches[0][key]) or matches[0][key] < 0
+        for key in ("limit", "currentValue")
+    ):
+        raise deploy.DeployError("Cannot verify regional quota for the selected model deployment type.")
+    available = math.floor(matches[0]["limit"] - matches[0]["currentValue"])
+    maximum = limits.get("maximum")
+    if type(maximum) is int:
+        available = min(available, maximum)
+    tpm_per_unit = min(rate["count"] * 60 / rate["renewalPeriod"] for rate in rates)
+    desired = math.ceil(PREFERRED_ORCHESTRATION_TPM / tpm_per_unit)
+    minimum = limits.get("minimum") or 1
+    step = limits.get("step") or 1
+    allowed = limits.get("allowedValues")
+    if isinstance(allowed, list) and allowed:
+        candidates = sorted(value for value in allowed
+                            if type(value) is int and minimum <= value <= available
+                            and (value - (limits.get("minimum") or 0)) % step == 0)
+        units = next((value for value in candidates if value >= desired), candidates[-1] if candidates else 0)
+    else:
+        base = limits.get("minimum") or 0
+        target = base + math.ceil((max(desired, minimum) - base) / step) * step
+        ceiling = base + math.floor((available - base) / step) * step
+        units = min(target, ceiling)
+    if units < minimum:
+        raise deploy.DeployError(
+            "No supported positive capacity is available in the selected model/SKU's regional quota. "
+            "No model or region was substituted."
+        )
+    print(f"Foundry: preferred {PREFERRED_ORCHESTRATION_TPM:,} TPM; selected capacity {units} "
+          f"({units * tpm_per_unit:g} catalog TPM) within available quota. "
+          "Actual deployed token limits will be verified.", flush=True)
+    return str(units)
+
+
 def model_defaults(deploy, *, subscription: str, location: str, model: str) -> dict[str, str]:
     """Use live regional catalog defaults, never guessed versions or quota."""
     if not model:
-        raise deploy.DeployError("Enter the model name for the new project. Resource names and model version are automatic.")
+        raise deploy.DeployError("Enter the model deployment name for the new project. Model settings are automatic.")
     catalog_name = os.environ.get("HYDRO_FOUNDRY_MODEL_NAME", "").strip() or model
     version = os.environ.get("HYDRO_FOUNDRY_MODEL_VERSION", "").strip()
     sku = os.environ.get("HYDRO_FOUNDRY_MODEL_SKU", "").strip()
     capacity = os.environ.get("HYDRO_FOUNDRY_MODEL_CAPACITY", "").strip()
+    # The model-list SDK drops rateLimits.key; raw ARM preserves token-vs-request units.
     catalog = json.loads(deploy.run_capture(deploy.az(
-        "cognitiveservices", "model", "list", "--subscription", subscription, "--location", location, "-o", "json",
+        "rest", "--method", "GET", "--subscription", subscription, "--url",
+        f"https://management.azure.com/subscriptions/{subscription}/providers/"
+        f"Microsoft.CognitiveServices/locations/{location}/models?api-version=2025-06-01",
+        "--query", "value", "-o", "json",
     )))
-    models = [entry["model"] for entry in catalog if isinstance(entry.get("model"), dict)
-              and entry["model"].get("name") == catalog_name
-              and entry["model"].get("format") == "OpenAI"
-              and entry["model"].get("capabilities", {}).get("chatCompletion") in (True, "true")]
+    chat_models = [entry["model"] for entry in catalog if isinstance(entry.get("model"), dict)
+                   and entry["model"].get("format") == "OpenAI"
+                   and entry["model"].get("capabilities", {}).get("chatCompletion") in (True, "true")]
+    # Azure can repeat identical model metadata for different account SKUs.
+    chat_models = list({json.dumps(entry, sort_keys=True): entry for entry in chat_models}.values())
+    models = [entry for entry in chat_models if entry.get("name") == catalog_name]
+    if not models and not os.environ.get("HYDRO_FOUNDRY_MODEL_NAME", "").strip():
+        catalog_name, reference_version = model_reference(deploy, subscription=subscription, deployment=model)
+        version = version or reference_version
+        models = [entry for entry in chat_models if entry.get("name") == catalog_name]
     models = [entry for entry in models if entry.get("version") == version] if version else [
         entry for entry in models if entry.get("isDefaultVersion") is True
     ]
     if len(models) != 1:
         raise deploy.DeployError(
             f"Model '{catalog_name}' has no unique supported chat version in {location}. "
-            "Choose an available model, or set its version under 'Model deployment settings'."
+            "The named model must be available in the Fabric capacity region. "
+            "No resources were created; check regional model availability."
         )
     selected = models[0]
     skus = [entry for entry in selected.get("skus", [])
@@ -73,14 +195,19 @@ def model_defaults(deploy, *, subscription: str, location: str, model: str) -> d
     if sku:
         skus = [entry for entry in skus if entry.get("name") == sku]
     else:
-        # Never silently move inference across regions or reserve provisioned capacity.
-        skus = [entry for entry in skus if entry.get("name") == "Standard"]
+        # Prefer regional inference; never automatically reserve provisioned capacity.
+        for preferred in ("Standard", "DataZoneStandard", "GlobalStandard"):
+            available = [entry for entry in skus if entry.get("name") == preferred]
+            if available:
+                skus = available
+                break
+        else:
+            skus = []
     if len(skus) != 1:
         choices = ", ".join(str(entry.get("name")) for entry in selected.get("skus", []))
         raise deploy.DeployError(
-            f"Model '{catalog_name}' requires a deployment type choice in {location}. "
-            f"Under 'Model deployment settings', choose an approved SKU. Available: {choices}. "
-            "Global, data-zone and provisioned deployments are never selected automatically."
+            f"Model '{catalog_name}' has no unique supported pay-as-you-go deployment type in {location}. "
+            f"Available: {choices}. Provisioned capacity is never selected automatically."
         )
     limits = skus[0].get("capacity") or {}
     minimum = limits.get("minimum")
@@ -94,9 +221,10 @@ def model_defaults(deploy, *, subscription: str, location: str, model: str) -> d
             capacity = str(limits["default"])
         else:
             raise deploy.DeployError(
-                "The model catalog did not report a capacity default. Enter an approved capacity "
-                "under 'Model deployment settings'; quota is verified by Azure during provisioning."
+                "The model catalog did not report a valid capacity default. "
+                "No resources were created; check the selected model's regional availability."
             )
+        capacity = preferred_model_capacity(deploy, subscription, location, skus[0], capacity)
     if not re.fullmatch(r"[1-9][0-9]*", capacity):
         raise deploy.DeployError("Model capacity must be a positive whole number.")
     units = int(capacity)
@@ -161,9 +289,11 @@ def ensure_foundry_project(
     deploy, hosted, *, tenant: str, workspace: str, subscription: str, location: str, model: str, check_access,
     sleep=time.sleep,
     model_settings: dict[str, str] | None = None,
+    project_name: str = "",
 ) -> str:
     """Provision a Foundry project and return its endpoint once the signed-in user can create agents in it."""
     try:
+        account_name = requested_account_name()
         deployments = deployments_parameter(model, model_settings)
     except ValueError as error:
         raise deploy.DeployError(str(error)) from error
@@ -182,6 +312,11 @@ def ensure_foundry_project(
         "ENABLE_HOSTED_AGENTS": "true", "ENABLE_CAPABILITY_HOST": "false", "ENABLE_MONITORING": "true",
         "AI_PROJECT_DEPLOYMENTS": deployments,
     }
+    project_name = requested_project_name() or project_name
+    if project_name:
+        settings["AZURE_AI_PROJECT_NAME"] = project_name
+    if account_name:
+        settings["AZURE_AI_ACCOUNT_NAME"] = account_name
     hosted.set_azd_environment(deploy, directory, name, settings)
     print(
         f"Foundry: provisioning environment {name} in {location} (Foundry account, project, model {model}, "
@@ -197,6 +332,10 @@ def ensure_foundry_project(
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".services.ai.azure.com"):
         raise deploy.DeployError("Provisioning finished but reported no valid Foundry project endpoint.")
+    if project_name and parsed.path.rstrip("/").rsplit("/", 1)[-1].casefold() != project_name.casefold():
+        raise deploy.DeployError("Provisioning reported a different project than the requested new project name.")
+    if account_name and values.get("AZURE_AI_ACCOUNT_NAME", "").casefold() != account_name.casefold():
+        raise deploy.DeployError("Provisioning reported a different account than the requested Foundry account name.")
 
     # Role assignments from the template can take a few minutes to take effect for the signed-in user.
     deadline = time.monotonic() + ACCESS_TIMEOUT_S

@@ -12,7 +12,6 @@ export type CopilotSettings = {
   endpoint: string
   deployment: string
   projectEndpoint: string
-  battleEnabled: boolean
   systemPrompt: string
   promptExtra: string
   tools: Record<string, boolean>
@@ -135,7 +134,6 @@ export function defaultCopilotSettings(): CopilotSettings {
     endpoint: FOUNDRY_ENV_DEFAULTS.endpoint,
     deployment: FOUNDRY_ENV_DEFAULTS.deployment,
     projectEndpoint: FOUNDRY_ENV_DEFAULTS.projectEndpoint,
-    battleEnabled: false,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     promptExtra: '',
     tools: allEnabled(TOOL_NAMES),
@@ -154,7 +152,6 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
     endpoint: text(stored.endpoint, defaults.endpoint),
     deployment: text(stored.deployment, defaults.deployment),
     projectEndpoint: text(stored.projectEndpoint, defaults.projectEndpoint),
-    battleEnabled: stored.battleEnabled === true,
     systemPrompt: stored.systemPrompt === LEGACY_SYSTEM_PROMPT
       || stored.systemPrompt === COUNT_SYSTEM_PROMPT
       || stored.systemPrompt === PREVIOUS_DEFAULT_SYSTEM_PROMPT
@@ -212,8 +209,6 @@ export function subscribeCopilotSettings(listener: () => void): () => void {
     window.removeEventListener('storage', listener)
   }
 }
-
-export const isAgentBattleEnabled = () => loadCopilotSettings().battleEnabled
 
 export const isToolEnabled = (settings: CopilotSettings, name: string) => settings.tools[name] !== false
 export const isEntityEnabled = (settings: CopilotSettings, key: string) => settings.entities[key] !== false

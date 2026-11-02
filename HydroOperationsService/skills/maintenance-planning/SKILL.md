@@ -5,7 +5,8 @@ description: Assess maintenance coverage, recorded spare-part stock and downtime
 
 # Maintenance feasibility
 
-- Read existing work, inspections, maintenance notifications and recorded spare-part stock.
+- Read only sources needed for the assigned purpose. Parts or outage planning may need inspections,
+  maintenance notifications and stock; a diagnostic draft does not require those unrelated reads.
 - Stock at or below the recorded reorder level merits a factual stock-risk observation, not a diagnosis.
 - Quantity on hand does not establish unreserved usable availability.
 - Equipment type/category does not prove exact part compatibility. Require authoritative BOM or compatibility evidence.

@@ -110,7 +110,8 @@ class FeatureWorkspaceTests(unittest.TestCase):
             "weather_environment_id": "weather-environment", "weather_environment_name": "Weather",
         }
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
-        for name, expected in ((feature.ENERGY_NOTEBOOK, "geo"), ("RTI_002_Setup_Eventhouse_Only", "operational")):
+        for name, expected in ((feature.ENERGY_NOTEBOOK, "geo"), (feature.MAP_AGENT_NOTEBOOK, "geo"),
+                               ("RTI_002_Setup_Eventhouse_Only", "operational")):
             result = namespace["_rebind_lakehouse"](name)
             self.assertTrue(result[1])
             definition = json.loads(notebooks.notebook.updateDefinition.call_args.kwargs["content"])
@@ -122,7 +123,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
     def test_core_finish_only_publishes_and_verifies_energy_without_a_second_import(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             workspace = feature.FeatureWorkspace(
-                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V11"), ROOT,
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V11", enable_map_chat=False), ROOT,
             )
             lakehouse = {"id": "geo", "description": f"{workspace.marker}: energy context"}
             with patch.object(workspace, "_item", return_value=lakehouse), \
@@ -181,7 +182,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
 
     def test_energy_only_setup_has_no_core_or_azure_prerequisite_configuration(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
-            config = feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V9")
+            config = feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V9", enable_map_chat=False)
             workspace = feature.FeatureWorkspace(config, ROOT)
             workspace.fabric.list_workspace_items.return_value = []
             with patch.object(workspace, "_upsert", side_effect=["notebook", "pipeline"]) as upsert, \
@@ -197,6 +198,27 @@ class FeatureWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(feature.FeatureWorkspaceError, "cannot provision the core"):
                 workspace.prepare()
 
+    def test_energy_retry_updates_git_managed_geo_notebooks_before_running_without_core_setup(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "V15"), ROOT,
+            )
+            energy_specs = [spec for spec in workspace.specs
+                            if spec["name"] in feature.ENERGY_ITEMS | {feature.MAP_AGENT_NOTEBOOK}]
+            workspace.fabric.list_workspace_items.return_value = [
+                {"id": spec["logical_id"], "displayName": spec["name"], "type": spec["type"],
+                 "description": "Git-managed"}
+                for spec in energy_specs
+            ]
+            with patch.object(feature, "update_notebooks_from_checkout") as sync, \
+                    patch.object(workspace, "_prepare_energy_map") as run, \
+                    patch.object(workspace, "_upsert") as upsert:
+                workspace.prepare_energy()
+            self.assertEqual([call.args[2] for call in sync.call_args_list],
+                             [[feature.ENERGY_NOTEBOOK], [feature.MAP_AGENT_NOTEBOOK]])
+            run.assert_called_once_with()
+            upsert.assert_not_called()
+
     def test_energy_verification_does_not_publish_read_models_or_start_jobs(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             workspace = feature.FeatureWorkspace(
@@ -204,10 +226,27 @@ class FeatureWorkspaceTests(unittest.TestCase):
             )
             with patch.object(workspace, "_item", return_value={"id": "lakehouse"}), \
                     patch.object(workspace, "_publish_energy_read_models") as publish, \
+                    patch.object(workspace, "_publish_map_agent") as agent, \
                     patch.object(workspace, "_run") as run:
                 workspace.verify_energy()
             publish.assert_called_once_with("lakehouse", publish=False)
+            agent.assert_not_called()
             run.assert_not_called()
+
+    def test_geocontext_discovery_uses_workspace_ownership_not_a_stale_display_name(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            workspace = feature.FeatureWorkspace(
+                feature.EnergyConfig(TENANT, WORKSPACE, Path(directory) / "energy.json", "PROD_42"), ROOT,
+            )
+            target = {"id": "current-geo", "type": "Lakehouse", "displayName": "Norway Energy Production",
+                      "description": f"{workspace.marker}: energy context"}
+            workspace.fabric.list_workspace_items.return_value = [
+                {"id": "stale-geo", "type": "Lakehouse", "displayName": "Hydro_GeoContext_PROD_42"}, target,
+            ]
+            self.assertEqual(workspace._item("Hydro_GeoContext_PROD_42", "Lakehouse"), target)
+            workspace.fabric.list_workspace_items.return_value.append({**target, "id": "ambiguous"})
+            with self.assertRaisesRegex(feature.FeatureWorkspaceError, "found 2"):
+                workspace._item("Hydro_GeoContext_PROD_42", "Lakehouse")
 
     def test_bootstrap_is_opt_in(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -302,17 +341,21 @@ class FeatureWorkspaceTests(unittest.TestCase):
         notebook = json.loads((ROOT / "Notebooks/Geo_001_ingest_energy_context.Notebook/.platform").read_text())
         properties = pipeline["properties"]
         self.assertEqual(properties["concurrency"], 1)
-        self.assertEqual(len(properties["activities"]), 1)
+        self.assertEqual(len(properties["activities"]), 2)
         activity = properties["activities"][0]
         self.assertEqual(activity["typeProperties"]["notebookId"], notebook["config"]["logicalId"])
-        self.assertEqual(set(properties["parameters"]), {"workspace_id", "env_suffix", "refresh_mode", "force_refresh"})
-        for name in properties["parameters"]:
+        self.assertEqual(set(properties["parameters"]), {"workspace_id", "env_suffix", "geo_lakehouse_id", "map_agent_name", "refresh_mode", "force_refresh"})
+        for name in set(properties["parameters"]) - {"map_agent_name"}:
             self.assertEqual(activity["typeProperties"]["parameters"][name]["value"]["value"], f"@pipeline().parameters.{name}")
         self.assertEqual(properties["parameters"]["force_refresh"]["defaultValue"], False)
         self.assertEqual(properties["parameters"]["refresh_mode"]["defaultValue"], "all")
-        self.assertNotIn(feature.MAP_AGENT_NOTEBOOK, json.dumps(properties["activities"]))
+        self.assertEqual(properties["parameters"]["env_suffix"]["defaultValue"], "")
+        publisher = properties["activities"][1]
+        self.assertEqual(publisher["name"], feature.MAP_AGENT_NOTEBOOK)
+        self.assertEqual(publisher["dependsOn"], [{"activity": feature.ENERGY_NOTEBOOK, "dependencyConditions": ["Succeeded"]}])
+        publisher_id = json.loads((ROOT / "Notebooks/Geo_002_publish_map_agent.Notebook/.platform").read_text())["config"]["logicalId"]
         rebound = feature.rebind_pipeline(
-            pipeline, {notebook["config"]["logicalId"]: "target-notebook"}, WORKSPACE,
+            pipeline, {notebook["config"]["logicalId"]: "target-notebook", publisher_id: "target-publisher"}, WORKSPACE,
             {"workspace_id": WORKSPACE, "env_suffix": "V8"},
         )
         self.assertEqual(rebound["properties"]["activities"][0]["typeProperties"]["workspaceId"], WORKSPACE)
@@ -365,7 +408,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 }
                 workspace.fabric.list_workspace_items.return_value = [lakehouse]
                 with (
-                    patch.object(workspace, "_item", side_effect=lambda name, kind: {"id": name}),
+                    patch.object(workspace, "_item", side_effect=lambda name, kind: lakehouse if kind == "Lakehouse" else {"id": name}),
                     patch.object(feature, "notebook_definition", return_value={}),
                     patch.object(feature, "bind_notebook_definition", return_value=False) as bind,
                     patch.object(workspace, "_publish_energy_read_models"),
@@ -373,12 +416,14 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     patch.object(workspace, "_run", return_value=source_ran) as run,
                 ):
                     workspace._prepare_energy_map()
-                self.assertEqual(bind.call_count, 2)
-                self.assertEqual(run.call_count, 2)
-                run.assert_called_with(feature.MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
-                    {"name": "workspace_id", "value": WORKSPACE, "type": "Text"},
-                    {"name": "env_suffix", "value": "V6", "type": "Text"},
-                ]})
+                self.assertEqual(bind.call_count, 2 if source_ran else 3)
+                self.assertEqual(run.call_count, 1 if source_ran else 2)
+                if not source_ran:
+                    run.assert_called_with(feature.MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
+                        {"name": "workspace_id", "value": WORKSPACE, "type": "Text"},
+                        {"name": "env_suffix", "value": "V6", "type": "Text"},
+                        {"name": "geo_lakehouse_id", "value": SUBSCRIPTION, "type": "Text"},
+                    ]})
                 self.assertEqual(workspace.state["map_agent_id"], "Hydro_Map_Agent_V6")
 
     def test_terminal_chat_publisher_can_retry_without_discarding_other_checkpoints(self):
@@ -455,8 +500,9 @@ class FeatureWorkspaceTests(unittest.TestCase):
             "transmission", "regional", "distribution", "sea-cables", "masts", "transformers",
             "hydro-plants", "reservoirs", "power-balance", "power-flows", "grid-frequency", "umm",
         ]
-        for case in ("ready", "missing", "failed", "duplicate", "empty", "partial-query", "foreign-location",
-                     "missing-area", "invented-foreign-data", "invalid-links"):
+        for case in ("ready", "verify-only", "missing", "failed", "duplicate", "empty", "partial-query",
+                     "http-failure", "foreign-location", "missing-area", "invented-foreign-data",
+                     "invalid-links", "missing-links", "duplicate-links", "unknown-kind", "invalid-json", "invalid-data"):
             with (
                 self.subTest(case=case), tempfile.TemporaryDirectory() as directory,
                 patch.object(feature, "FeatureFabric"), patch.object(feature, "kusto_session") as session_factory,
@@ -485,33 +531,53 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     rows[-1] = rows[0]
                 elif case == "empty":
                     rows[0][2] = 0
-                result = {"Tables": [{"Rows": rows}]}
-                if case == "partial-query":
-                    result["Exceptions"] = ["partial result failure"]
                 areas = [[code, code[:2], code.startswith("NO"), 0.5 if code.startswith("NO") else None]
                          for code in ("NO", "SE", "FI", "DK", "NO1", "NO2", "NO3", "NO4", "NO5")]
                 if case == "missing-area":
                     areas.pop()
                 elif case == "invented-foreign-data":
                     areas[1][3] = 0
+                verification_rows = [
+                    *[["status", json.dumps(row)] for row in rows],
+                    *[["areas", row] for row in areas],
+                    ["links", json.dumps([-1 if case == "invalid-links" else 0])],
+                ]
+                if case == "missing-links":
+                    verification_rows.pop()
+                elif case == "duplicate-links":
+                    verification_rows.append(["links", "[0]"])
+                elif case == "unknown-kind":
+                    verification_rows.append(["unrequested", "[]"])
+                elif case == "invalid-json":
+                    verification_rows[-1][1] = "["
+                elif case == "invalid-data":
+                    verification_rows[-1][1] = "{}"
+                result = {"Tables": [{"Rows": verification_rows}]}
+                if case == "partial-query":
+                    result["Exceptions"] = ["partial result failure"]
+                publish = case != "verify-only"
                 post.side_effect = [
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: {}),
-                    Mock(status_code=200, json=lambda: result),
-                    Mock(status_code=200, json=lambda: {"Tables": [{"Rows": areas}]}),
-                    Mock(status_code=200, json=lambda: {"Tables": [{"Rows": [[-1 if case == "invalid-links" else 0]]}]}),
+                    *[Mock(status_code=200, json=lambda: {}) for _ in range(4 if publish else 0)],
+                    Mock(status_code=503 if case == "http-failure" else 200, json=lambda: result),
                 ]
                 with patch.object(workspace, "_item", return_value={"id": "eventhouse"}):
-                    if case == "ready":
-                        workspace._publish_energy_read_models(SUBSCRIPTION)
+                    if case in ("ready", "verify-only"):
+                        workspace._publish_energy_read_models(SUBSCRIPTION, publish=publish)
                         self.assertEqual(workspace.state["energy_map_verification"]["umm"], 0)
                         self.assertEqual(len(workspace.state["energy_map_verification"]), 12)
                         self.assertEqual(workspace.state["energy_area_count"], 9)
                         self.assertEqual(workspace.state["energy_asset_link_count"], 0)
-                        for index, table in enumerate(tables):
+                        for index, table in enumerate(tables if publish else []):
                             self.assertIn(table["location"] + ";impersonate", post.call_args_list[index].kwargs["json"]["csl"])
+                        self.assertEqual(post.call_count, 5 if publish else 1)
+                        query_calls = [call for call in post.call_args_list if call.args[0].endswith("/query")]
+                        self.assertEqual(len(query_calls), 1)
+                        query = query_calls[0].kwargs["json"]["csl"]
+                        self.assertEqual(query.count("project verification_kind="), 3)
+                        self.assertNotIn("project kind=", query)
+                        for name in ("HydroGeoStatus", "HydroGeoReservoirAreas", "HydroGeoMarketAssetLinks"):
+                            self.assertEqual(query.count(f"external_table('{name}')"), 1)
+                        self.assertNotIn("isfuzzy", query)
                         self.assertIn("continuationToken=next%2Fpage", workspace.fabric.request.call_args.args[1])
                     else:
                         with self.assertRaises(feature.FeatureWorkspaceError):
@@ -533,9 +599,10 @@ class FeatureWorkspaceTests(unittest.TestCase):
         response = Mock(status_code=200)
         url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"
         with (
-            patch.object(feature.Fabric, "request", side_effect=[
+            patch.object(feature.requests.Session, "request", side_effect=[
                 feature.requests.ReadTimeout("temporary read timeout"), response,
             ]) as request,
+            patch.object(feature.Fabric, "_token", return_value="test-token"),
             patch.object(feature.time, "sleep") as sleep,
         ):
             client = feature.FeatureFabric(TENANT)
@@ -544,7 +611,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
         self.assertTrue(all(call.args == ("GET", url) for call in request.call_args_list))
         self.assertTrue(all(call.kwargs["allow_redirects"] is False for call in request.call_args_list))
         self.assertTrue(all("x-ms-fabric-skill" in call.kwargs["headers"] for call in request.call_args_list))
-        sleep.assert_called_once_with(5)
+        sleep.assert_called_once_with(1)
 
     def test_fabric_mutations_are_not_retried_after_transport_uncertainty(self):
         url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"
@@ -740,7 +807,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         patch.object(deploy, "npm24", return_value=["validate"]),
                         patch.object(deploy, "node24_script", return_value=["auth"]),
                         patch.object(deploy, "run_stream", side_effect=lambda argv, **_: events.append(argv[0]) or url),
-                        patch.object(deploy, "run_rayfin_deployment", side_effect=lambda argv, tenant: events.append(argv[0]) or url),
+                        patch.object(deploy, "run_rayfin_deployment", side_effect=lambda argv, tenant, **_: events.append(argv[0]) or url),
                         patch.object(deploy.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
                         patch.object(deploy, "validate_fabric_app", return_value=item_id),
                         patch.object(deploy, "validate_hosted_page", return_value="verified"),
@@ -759,7 +826,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         deploy, "validate_rayfin_endpoint_contract",
                         side_effect=lambda *args: readiness("endpoint") or api_url,
                     ))
-                    cors = stack.enter_context(patch.object(deploy, "validate_appbackend_cors", side_effect=lambda *args: readiness("cors")))
+                    cors = stack.enter_context(patch.object(deploy, "validate_appbackend_cors", side_effect=lambda *args, **kwargs: readiness("cors")))
                     if failure:
                         with self.assertRaisesRegex(deploy.DeployError, f"{failure} failed"):
                             deploy.deploy(args)
@@ -767,10 +834,10 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     else:
                         deploy.deploy(args)
                         self.assertEqual(events, [
-                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "app", "auth",
+                            "prepare", "configure", "auth", "agents", "login", "app", "app", "app", "auth",
                             "endpoint", "cors", "auth-ready", "finish",
                         ])
-                        cors.assert_called_once_with(api_url, url, "pk-test")
+                        cors.assert_called_once_with(api_url, url, "pk-test", energy_enabled=True)
                     prepare_env.assert_called_once_with(
                         TENANT,
                         WORKSPACE,
@@ -785,8 +852,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     self.assertEqual([call.args for call in rayfin.call_args_list], [
                         ("up", "staticapp", "deploy"),
                         ("up", "--workspace-id", WORKSPACE, "--exclude-services", "staticHosting", "--yes"),
-                        ("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
-                        ("up", "connector", "apply", "--name", "hydrooperations", "--json"),
+                        ("up", "connector", "apply", "--json"),
                     ])
 
     def test_private_endpoint_is_ready_before_import_or_setup(self):

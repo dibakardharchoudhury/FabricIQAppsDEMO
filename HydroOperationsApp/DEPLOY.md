@@ -1,5 +1,14 @@
 # Deploy Hydro Operations
 
+**Recommended: use the local deployment app, "Initialize Your Fabric Demo".**
+It is included in [`Raw/workspace-reset/`](../Raw/workspace-reset/) and opens at
+<http://127.0.0.1:5000/>. It automates the workflow; this is not the hosted Hydro
+Operations website.
+
+- [Where to find it and how to launch it](#2-start-the-local-app)
+- [Every deployment field: what to type and what it means](#local-app-parameters-what-to-type)
+- [Foundry automation and resource reuse](#6-set-up-foundry-agents)
+
 ## Quick start: one path for each job
 
 1. From the repository root, run `python Raw\workspace-reset\launch.py`.
@@ -13,8 +22,64 @@
 | Agent update | **Set up Foundry agents**, then **Deploy app** |
 | Energy data refresh | **Refresh energy sources** |
 
+Deployment targets **one workspace at a time**; there is no multi-workspace checkbox
+or fan-out worker. Foundry agents, connections, toolbox and hosted state now use a
+stable suffix derived from the verified workspace GUID. Reruns reuse/update that
+workspace's set without overwriting another workspace's bindings. Previously
+created cloud agents and private state are retained, not deleted automatically.
+
+The engine retains Node 24 for npm and build-tool children. On Windows, use a short
+repository path if a native executable exceeds the path limit. Current-hosting
+redirect preservation and the bounded static-upload HTTP 401 refresh/retry remain
+enabled; other failures still propagate. Do not reset deployment state or repeat
+Core setup just to repair local dependencies or app publication.
+
+Microsoft Graph can reject a still-unexpired CLI token with a Continuous Access
+Evaluation claims challenge. On Windows, the deployer uses Azure CLI's documented
+browser login mode for itself and its children, so Graph recovery and subsequent
+commands use the same non-broker cache. This is process-scoped: it does not change
+global CLI configuration, remove credentials, or disable tenant security policies.
+Graph recovery reads the resource's actual
+`WWW-Authenticate` challenge and requests Graph-scoped sign-in with those claims,
+rather than repeating an ARM-only login. It reuses the existing CLI cache:
+if Graph accepts its cached token, no sign-in opens. A genuine claims challenge
+allows at most one interactive Graph sign-in per deployment process; subsequent
+challenges stop with an explicit error instead of opening repeated account pickers.
+Complete that Microsoft sign-in prompt when required by tenant policy.
+Graph reads allow up to 37 seconds of bounded claims propagation after that single
+login; permission denials and other errors are not retried.
+Browser sign-in setup uses this same Graph recovery path, not a second generic login.
+This does not bypass Conditional Access: a repeated rejection stops deployment.
+After recovery, retry the failed final deployment stage; do not repeat successful
+Git sync/Core setup. Account metadata alone does not verify Graph authorization.
+Non-Graph stale-session recovery creates a new owner-only CLI session directory;
+it never renames or deletes an active cache
+that Windows or another process may hold open. Only after successful login and
+tenant verification is the active-session pointer atomically updated for later
+deployments. Failed login leaves the previous session selection intact.
+
 **Do not reset, delete items or reimport Git to update an existing website.**
-If a step fails, fix the reported prerequisite and retry that module.
+If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
+continue**. Completed stages are checkpointed locally across reloads/server restarts.
+Related REST status reads share bounded retries for resets, timeouts and transient HTTP errors.
+An interrupted Setup monitor resumes its recorded job URL, never submits a duplicate.
+Failure, cancellation or an unverified outcome blocks dependent stages. Persistent errors
+still propagate; this is not a blanket retry of deployment/start requests.
+Changed notebook code requires **Sync updated definitions and resume**: only those notebooks
+are updated from this checkout, retaining live bindings and unrelated workspace items.
+A Geo-only fix resumes the combined Energy/Foundry/app stage without repeating
+successful Core setup. A changed core notebook reruns Core and its dependent stages.
+Pipeline/environment/item-metadata changes still require explicit full Git sync/setup.
+Checkpoints from the older five-stage layout explicitly refuse automatic resume;
+their completed-stage information remains available. Runs made before checkpoint
+support cannot be recovered automatically. For this older
+Energy failure, use **Refresh energy sources** (it updates changed Geo notebook code
+only), then **Set up Foundry agents** and **Deploy app**. Do not repeat successful Core setup.
+
+If `NB11_model` reports `Project contract requires one entityName binding` with
+valid core tables, update the checkout and import the latest notebook definitions
+before retrying Setup pipeline. An older validator mishandled Fabric's CRLF line
+endings; do not recreate the ontology or change its source bindings for this error.
 
 ### What you need to enter
 
@@ -25,8 +90,8 @@ If a step fails, fix the reported prerequisite and retry that module.
 | Key Vault URI / Teams IDs | Saved for this target; unknown values stay blank |
 | Alert email | Signed-in user's email when the tenant matches; confirm the recipient |
 | Azure subscription | Active or sole subscription in the target tenant; otherwise choose |
-| Existing Foundry project / model | Saved selection, target-named project, or unambiguous discovery |
-| New Foundry project | Chat model name + explicit resource-creation approval |
+| Foundry project name / Model deployment name | Saved selection, target-named project, or unambiguous discovery |
+| New-project creation checkbox | Off; enable only to approve billable creation |
 
 Core/Full Deploy values autosave on this machine in gitignored
 [`pipeline-defaults.local.json`](../Raw/workspace-reset/webapp/pipeline-defaults.local.json).
@@ -72,7 +137,7 @@ controls Fabric Git import, not local app or agent source.
 
 Global Administrator and subscription Owner are not routine requirements.
 For scoped access without subscription-wide discovery, use the existing project's
-full ARM ID in **Existing project name** instead of its display name. Fabric and Foundry may use
+full ARM ID in **Foundry project name** instead of its display name. Fabric and Foundry may use
 different subscriptions in the same tenant.
 
 ### No admin rights? Hand this to your Entra admin
@@ -85,17 +150,238 @@ Never paste credential values into the launcher or Git.
 them or remove existing redirects. App ownership alone does not grant tenant-wide
 consent. `npm run setup-live-auth:dry` previews changes without writing.
 
+Hydro Intelligence acquires delegated access separately for Fabric, Foundry,
+Power BI and the verified Kusto cluster. First-use consent is serial and
+audience-specific; tokens are revalidated before an agent request is sent.
+Do not combine all four audiences into one consent request: this can produce
+Entra `AADSTS28004`. Cancellation or failed authorization sends no agent request.
+The shared MSAL boundary also rejects mixed-resource scopes before network access;
+it has no aggregated `extraScopesToConsent` path. Verify the published build in
+each workspace: an already-open older SPA continues running its old authorization
+code until reloaded. Cached-token acceptance does not certify first-use consent.
+
 ## 2. Start the local app
 
-Install Python **3.11+**, Git and Azure CLI; Foundry also needs `azd`.
-The engine resolves Node **24** and locked dependencies.
+### Where to find it and how to launch it
+
+Use an up-to-date local checkout of **`main`**. Install Python **3.11+**, Git and
+Azure CLI; Foundry also needs `azd`. On Windows, enable Python's **Add python.exe
+to PATH** installer option. The engine resolves Node **24** and locked dependencies;
+you do not need to choose a Node version or build the local UI.
+
+**Windows, no command needed:** in File Explorer, open the repository's
+`Raw\workspace-reset` folder and double-click
+[`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd).
+This is a file in your local checkout, not a button on the GitHub website.
+
+**Command-line alternative:** open a terminal at the repository root:
 
 ```powershell
 python Raw\workspace-reset\launch.py
 ```
 
-Or open [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd).
-The app opens at <http://127.0.0.1:5000>.
+On macOS/Linux, run `python3 Raw/workspace-reset/launch.py` from the repository
+root, or use [`start-fabric-demo.sh`](../Raw/workspace-reset/start-fabric-demo.sh).
+
+The launcher checks Python dependencies and Azure CLI, starts the local server,
+and opens <http://127.0.0.1:5000/>. If the browser does not open, enter that address
+yourself. Click **Sign in** inside the page; use **Switch** if the displayed account
+is wrong. Azure sign-in is performed from the page, not by typing credentials into
+deployment fields.
+
+You can close the launcher window after it reports the app is running. Closing
+the browser does not stop the server. Use **Stop server** in the sidebar to stop
+it, or **Restart server** after Python server changes. Restart/stop refuses while
+a deployment job is running. Relaunching the launcher replaces an idle old instance
+and waits for the port to be released. Do not start a second deployment against
+the same target while another job is still running.
+
+### Local app parameters: what to type
+
+The entries below are **examples**, not tenant/workspace defaults. Replace them
+with your own values. Paste full values without surrounding quotes; a long value
+may be clipped visually without being truncated.
+
+#### A. Sidebar: choose the target first
+
+| Field | What to type | Meaning |
+|---|---|---|
+| **Tenant id or domain** | Your tenant GUID or `contoso.onmicrosoft.com` | The Microsoft Entra tenant containing the target Fabric workspace. Confirm the signed-in identity has access. |
+| **Workspace (GUID or name)** | The workspace GUID from `/groups/<workspace-id>` in its Fabric URL, or its exact name | The existing Fabric workspace to deploy into, not a new workspace name to create. Prefer the GUID when names are duplicated. The workspace field starts empty deliberately. |
+
+Select **Full Deploy** for a new/prepared-empty workspace. It runs **1. GitHub sync
+→ 2. Core setup → 3. Energy + Foundry + app deployment**, stops on failure, and streams
+the component's output. After Core's Weather and energy ingestion finish, Energy
+finalization and Foundry setup run concurrently inside one deployment process.
+App publication waits for both to succeed. Target/SPA resolution, configuration and
+dependency preflight run once, not once for each of three subprocesses.
+Core first completes the ontology: core bindings and initial UKMet ingestion precede
+operational SQL seeding, actual source-key/coverage checks, and readback of all required
+business entities and relationships. Only then are the Fabric Data Agent and retained
+Operations Agent published/configured; Data Agent operational guidance follows.
+Foundry setup therefore receives the complete published Fabric context, not a five-type
+intermediate ontology. No Foundry prompt/model changes are needed for this ordering fix.
+Full Deploy is not a workspace-creation wizard or a safe routine website update:
+Git synchronization can remove generated items. For an existing prepared target,
+use **Deploy app**, or **Set up Foundry agents** followed by **Deploy app** when
+agent definitions also need updating.
+
+#### B. Full Deploy: GitHub sync
+
+| Field | Entry/default | Meaning |
+|---|---|---|
+| **Repository (owner/repo or URL)** | `dibakardharchoudhury/FabricIQAppsDEMO`, or your maintained fork | Repository containing the Fabric artifacts. Confirm the chosen source includes the latest fixes. |
+| **Branch** | `main` for the canonical release | Remote branch to import into Fabric. It must be pushed and match the local source you intend to deploy. |
+| **Directory (workspace root)** | `/` for this repository | Path **inside the Git repository** containing Fabric artifacts, not a Windows folder or workspace GUID. |
+| **Reuse existing connection** | Leave checked when a suitable Fabric GitHub connection exists | Uses an accessible connection instead of requesting a new GitHub credential. |
+| **Keep connected after sync** | Off unless persistent Fabric Git integration is wanted | Keeps the workspace linked to Git after import; otherwise the sync disconnects it. |
+| **GitHub PAT**, only if shown | A GitHub token authorized for the repository | Needed to create a connection when reuse is unavailable. It is not your Azure token or SPN client secret and is never saved by the form. |
+
+Click **Test connection** to check Git connectivity before starting the workflow.
+This tests connection/initialization, not deployment readiness.
+**Changing Branch does not switch the local checkout.** Fabric notebook source
+comes from the selected remote branch; website and Foundry code come from the
+local deployment checkout. Use current `main` for both. The launcher's **Deployment
+source** line and the local version API identify the actual checkout.
+
+#### C. Full Deploy / Core setup: Fabric parameters
+
+| Field | Example/default | Meaning |
+|---|---|---|
+| **Environment suffix** | Default `V6`; for example `V20` for a new environment | Separates owned items, such as `RTI_DEMO_V20`. Reuse the existing suffix for the same environment; choose an unused suffix for a separate one. Do not change it merely to update the website. |
+| **Workspace name or ID** | Copied from the sidebar; read-only | The same deployment target, not a second workspace selection. |
+| **Key Vault URI** | `https://contoso-demo-kv.vault.azure.net/` | An existing vault holding notebook SPN credentials. The vault, secrets, access and connectivity must already be prepared. |
+| **Teams team id** | The full GUID after `groupId=` in a Teams channel link | Team receiving Operations Agent notifications. Not the tenant ID or team display name. |
+| **Teams channel id** | Full URL-decoded `19:...@thread.tacv2` value | Channel receiving notifications. Not its display name. [Find both IDs](#find-your-teams-team-and-channel-ids). |
+| **Alert email recipient** | `operations@contoso.com` | Default `alert_email_to` for Send Email's **To** field. Review the signed-in-user suggestion; this is not the agent's identity. |
+
+Key Vault URI, both Teams IDs and alert email are required by the local Core/Full
+Deploy form. Unknown destination values stay blank rather than being guessed.
+The **Operations Agent** badges identify its run-as user, Teams IDs and email recipient. NB10 applies the email
+recipient as a pipeline parameter default; the **To** expression reads it at runtime.
+Existing pipelines need updated NB10 source and a setup rerun. Changing the local
+form alone does not update Fabric or attest email/Teams delivery.
+The same vault must contain `ukmet-global-spot-api-key` and
+`ukmet-land-observations-api-key` for the required initial weather refresh. Aurora is optional.
+Disabling the future Weather schedule does not skip initial ingestion or ontology validation.
+Stage 1 also binds the **parent** `RTI_Orchestrator_Setup` notebook to the published Weather
+Environment. Binding only Weather child notebooks is insufficient: `runMultiple` uses the
+parent Spark session. A missing `numcodecs`, `pyproj` or `shapely` now fails before the DAG
+starts, with binding-repair guidance. Sync the corrected notebook source and rerun Core
+setup (including Stage 1), rather than installing packages locally or retrying Stage 2 alone.
+Standalone app/SQL bootstrap does not refresh weather or require current provider forecasts;
+it validates existing keys and explicitly does not certify weather readiness. Ontology SQL
+bindings are verified without requiring a separate Data Agent SQL attachment.
+NB11 updates guidance in a nonempty existing agent definition; it does not reconstruct an unreadable
+agent or add duplicate SQL sources. Existing/custom instructions are preserved without silent truncation.
+If the existing 15,000-character service limit would be exceeded, publication stops before
+changing the agent and identifies the instructions to shorten. Both NB11 settings writers
+share the bounded Delta-conflict retry used by the parallel agent setup branches; unrelated
+errors still propagate.
+
+NB09 verifies source identity and publication/readback without invoking the agent or enforcing
+an answer format. It records runtime as `not_checked`; a successful publish is not runtime
+certification. NB11 publishes operational guidance afterward, and interactive app requests
+use Supervisor → Sparky → Fabric Responses. That sequence is expected; no extra SQL/KQL/
+combined-source runtime or Teams/email delivery checks are required to complete setup.
+Key Vault secret-name fields stay visible. Review defaults before running:
+
+| Field | Default | Meaning |
+|---|---|---|
+| **KV secret · tenant id** | `tenantid` | Name of the vault secret containing the SPN tenant ID. |
+| **KV secret · client id** | `clientid` | Name of the vault secret containing the SPN application/client ID. |
+| **KV secret · client secret** | `clientsecret` | Name of the vault secret containing the SPN credential. **Never paste the credential value here.** |
+| **Agent run-as user** | Blank | Uses the deploying signed-in user. An explicit UPN is an identity guard, not a way to impersonate another user or grant permissions. |
+
+The launcher omits the timeout control; child notebooks retain the pipeline's `3600`-second default.
+
+#### D. Foundry agents: subscription, then project and model
+
+These are the same shared fields in **Full Deploy** and **Set up Foundry agents**:
+
+| Field | What to enter | Meaning |
+|---|---|---|
+| **Azure subscription** | Choose the target subscription; use **Refresh subscriptions** to load accessible choices | Where Foundry resources are found or created. Select this **before** the project/model. Fabric capacity can be in a different subscription in the same tenant. |
+| **Foundry account name (optional)** | For example `hydro-demo-account` | Parent Azure AI Services resource containing the project. Scopes existing-project selection to this account and sets the exact account name when creating missing resources. Blank preserves automatic naming/discovery. |
+| **Foundry project name** | For example `hydro-demo-project` | Existing project to reuse, or the exact project name to create with approval below. For duplicate names/scoped access, a full project ARM ID can identify an existing project. |
+| **Model deployment name** | For example `hydro-chat` if that deployment already exists, or a supported catalog chat model name for creation | Not an agent name or API endpoint. An existing alias must resolve to a model/version in the selected subscription; an arbitrary invented alias is not a catalog model. |
+| **Allow project creation (billable)** | Leave off for an existing project, even in a fresh Fabric workspace; check only to approve missing resources | Existing projects are still reused when checked. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
+| **Use a pre-created app registration** | Leave off for automatic discovery/reuse or creation | Enable only to select a specific administrator-prepared SPA in the target tenant. |
+| **Application (client) ID**, shown when that option is enabled | The SPA's full Application/client GUID | Not its object ID, tenant ID, or the notebook SPN secret. The registration is verified; redirects, permissions and consent setup remain automated. |
+
+For an already prepared, unambiguous target, blank project/model fields can use
+saved values or verified discovery. For a new Foundry setup, select the subscription,
+enter the intended account (optional), project and model names once, and approve creation if needed.
+Account names use 2-64 letters, digits or hyphens and must start and end with a letter
+or digit. The project is a child resource, not another name for the account.
+An account name alone does not approve creation. A conflicting project ARM ID or
+provisioned account readback stops setup instead of silently selecting another account.
+The optional app-registration controls are inside **Fabric App authentication**;
+leave that section unchanged for automatic discovery/reuse.
+Setup configures the specialists, connections, toolbox and hosted coordinator
+automatically. You do **not** enter catalog version, deployment type, model capacity,
+Fabric region, endpoint URLs, registry URLs, or individual agent definitions.
+Missing permissions, ambiguous selections and unavailable quota are reported as
+prerequisites, not silently replaced with another target.
+
+#### Choosing project sharing and creation
+
+A **Foundry account** contains model deployments and projects. A **Fabric workspace**
+is separate: it does not automatically require a new Foundry account or project.
+
+| Layout | Select for each Fabric workspace |
+|---|---|
+| **Recommended: one verified working shared project** | Same exact existing account, project and model deployment. FEATURE and DEV were live-tested in this layout. Each workspace gets distinct workspace-suffixed agents, connections and hosted configuration. This is logical separation, not separate project/RBAC boundaries. |
+| **Separate projects: not end-to-end verified** | Provisioning exists in the code, but this is not a verified deployment recommendation. Creating another project did not resolve the earlier hosted-routing 404. Separate projects do not add model TPM/RPM. |
+
+**Verified deployment evidence, not universal defaults:** FEATURE and DEV used
+account `ai-hydro-feature-c7da7c28`, project `hydro-feature-c7da7c28`, and model
+deployment `gpt-5.6-sol`. The earlier account `ai-hydroIQ` had a hosted-routing
+404; its recovery has not been verified. Do not select it merely because it
+remains in saved form values, and do not treat project creation as a 404 repair.
+These results do not certify a fresh live Full Deploy or separate-project deployment.
+
+| Situation | **Allow project creation (billable)** |
+|---|---|
+| Fresh Fabric workspace using an existing Foundry project | **Unchecked** |
+| New, missing project under an existing account | **Checked** permits creation, but separate-project runtime remains unverified; not the recommended multi-workspace path |
+| Subsequent update using the same account/project/model | **Unchecked**; agent updates still run |
+| Missing account and project | **Checked**; billable account/model bootstrap also requires permissions, availability and quota |
+
+Approval permits creation; it does not force recreation. To share a project, enter
+its exact existing name. A blank project uses saved target identity or a stable
+workspace-GUID project; it is not an explicit shared-project selection.
+
+**Full Deploy includes Foundry setup using these same fields**; do not run the
+standalone Foundry action first. Full Deploy repeats Git sync and Core setup.
+For routine updates, use **Set up Foundry agents** for agent changes and **Deploy app**
+for website changes. Resource selection alone does not certify deployment or runtime success.
+
+### Run, confirm success, and keep settings
+
+After reviewing the target and fields, click **Run Full Deploy**, **Set up Foundry
+agents**, or **Deploy app**, according to the job table above. If a run button is
+disabled, wait for target settings to load, review validation messages/required
+fields, and check whether another job is still running. Follow the live progress;
+do not treat a running progress bar or an accessible HTML page as completed deployment.
+Final app publication must pass its endpoint/authentication/connector checks and
+print **`SUCCESS`** and **`DEPLOYED_APP_URL`**. Open the reported URL: it is the
+hosted Hydro Operations app, not the local `127.0.0.1:5000` deployment interface.
+
+On failure, read the failed component and exact prerequisite in its log. Correct
+that prerequisite, then retry the relevant standalone module; do not delete the
+workspace or repeat Git import merely to retry app publication.
+
+Core/Full Deploy non-secret values autosave per tenant/workspace; wait for
+**Settings saved on this machine**. Foundry names and other sidebar choices use
+browser storage. PATs and credential values are not saved, and creation approval
+must be checked again deliberately. Changing targets must not reuse another
+target's credentials or guessed resource identities.
+
+Automation does not create the prerequisite Key Vault secrets or grant permissions
+you do not hold. Follow any explicit administrator action. If using the optional
+native GQL utilities, their portal materialization remains manual;
+the Knowledge Graph page does not require that materialization.
 
 ## 3. Prepare core Fabric data, only when needed
 
@@ -107,44 +393,53 @@ complete. Supply Key Vault URI, Teams IDs and alert email.
 Notebook identity defaults to the signed-in user; timeout is 3600 seconds.
 
 Core creates Lakehouse, Eventhouse, independent operational SQL, v2 ontology,
-dashboard and agents. NB11 adds missing demo records and publishes the SQL source.
+dashboard and agents. NB11 adds missing demo records and publishes ontology-backed operational guidance.
 After NB01 creates and binds the Lakehouses, the Core/Weather `runMultiple` DAG
 and `Geo_001_ingest_energy_context` run in parallel branches of `01_Pipe_Setup`.
 Energy keeps its separate, schema-disabled GeoContext Lakehouse and Spark session:
 it must not inherit Core's operational default Lakehouse. The pipeline waits for
-both branches; either failure stops later steps. The local job then publishes and
-verifies the map read models without running ingestion a second time. The local
-progress display groups both operations under **Core Setup: Fabric, Weather and
-Energy**; publishing map read models is not a second notebook-ingestion stage.
-Foundry remains separate. Sync from GitHub once to import the updated pipeline/notebooks;
+both branches; either failure stops later steps. Standalone **Core setup** then
+publishes and verifies the map read models without running ingestion a second time.
+**Full Deploy** overlaps that finalization with independent Foundry setup, then
+publishes the website only after both succeed. It does not run Core or Geo_001
+again. Standalone Foundry, energy-refresh and app-only actions remain available.
+Sync from GitHub once to import the updated pipeline/notebooks;
 Core refuses the old serial pipeline before starting a long run.
 
 Notebook completion is not agent runtime acceptance. NB09's exact unsupported-v2
 API response is a documented product limitation, not proof of a working query.
 
-## 4. Choose Knowledge Graph execution
+## 4. Verify Knowledge Graph sources
 
-The app defaults to **Live ontology-governed sources**. It verifies the live
+The app's single Knowledge Graph uses **live ontology-governed sources**. It verifies the live
 ontology's workspace/item/table/property/key bindings against the existing
 Rayfin Lakehouse and independent SQL connectors, then joins only declared
 relationships. Materialization is not required for this mode. The page reports
 supported/excluded coverage, source observation times, load duration and
 non-atomic cross-source consistency. It does not append inferred SQL topology.
 Denied, invalid, incomplete and over-budget reads fail closed, not to mock data.
+Successful work-order creation, status changes and deletion invalidate graph
+snapshots immediately. Returning to the Knowledge Graph reads the committed
+records without a page refresh; an already-open graph refreshes automatically
+(or when the browser tab becomes visible). In-flight pre-mutation reads cannot
+replace the refreshed snapshot. There is no separate operational/native tab.
 On a first visit, **Connect Fabric and retry** authorizes only Fabric workspace/item
 read access. The graph does not require connecting telemetry to establish this
 separate ontology-read session.
 
-For the separate **Materialized native graph (GQL)** mode, use Fabric:
+Optional native GQL utilities, which are not used by the Knowledge Graph page, require Fabric:
 **Manage graph → select eligible entities/relationships → Continue →
 Materialize**. This remains a manual portal prerequisite for native execution.
-The app never silently switches modes or treats source-backed instances as a GraphModel.
-When Fabric returns HTTP 204 for the queryable schema, the graph path stops before loading
-the ontology definition or executing queries. Readiness network checks are bounded to ten
-seconds; **Retry graph query** rechecks failed readiness without waiting for a cache expiry.
+Source-backed instances are never presented as a native GraphModel. Native-only readiness
+failures do not block the source-backed page.
 
-If setup stops here, materialize the graph, then retry **Foundry agents → Deploy
-app**. Do not reimport Git or rerun Core.
+Foundry setup and app publication do not require graph materialization. The deployer
+resolves `RAYFIN_PUBLIC_ONTOLOGY_ID` from the verified live generation-2 item,
+independently of optional `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`.
+Continue with **Foundry agents → Deploy app** without materializing a graph.
+New model allocations prefer 75,000 TPM within the selected model/SKU's available
+regional quota; smaller positive allocations are accepted with a throttling advisory.
+Existing allocations and explicit capacity overrides are not automatically resized.
 
 The engine resolves authoritative graph lineage. If unavailable, supply verified
 `workspaceId`, `ontologyId`, `graphModelId` JSON in graph overrides. Never infer
@@ -155,60 +450,296 @@ ownership from names or remove valid time-series bindings to force eligibility.
 
 | Source | Core setup | Later refresh |
 |---|---|---|
-| Energy | Loads GeoContext alongside Core/Weather, then verifies twelve layers and nine area polygons | **Refresh energy sources** |
+| Energy | Loads GeoContext alongside Core/Weather, then verifies twelve layers and nine area polygons | Hosted setup step 6: **Prepare map**, then **Refresh snapshots** |
 | Weather | Creates tables and enables its schedule | **Connect weather** in the hosted app, or scheduled ingestion |
 
-Weather ingestion still requires valid provider credentials/connectivity.
+Weather ingestion defaults to UKMet and requires its Global Spot and Land
+Observations keys/connectivity. Aurora is optional (`enable_aurora=false` by default);
+its MAI key remains in Key Vault but is not read in the default flow.
 Energy map chat is separate from ingestion. Neither a successful import nor app
 publication proves chat or alert delivery.
 
 Weather setup creates its tables; `03_Pipe_Weather` fetches forecasts and computes
-area metrics on its six-hour schedule. Energy is different: its first import runs
+area metrics on its six-hour schedule. It prepares shared operating areas without
+Aurora, ingests and serves UKMet first, then runs Aurora only when explicitly enabled.
+An opted-in Aurora failure remains visible but cannot block the preceding UKMet
+serving refresh. Existing schedules are not changed by a website update.
+Energy is different: its first import runs
 inside Core; `04_Pipe_EnergyMap` is retained for later on-demand refreshes and no
 energy schedule is enabled automatically. Network/plant snapshots cache for 24h;
 reservoir statistics, Statnett and UMM refresh on each eligible run. Use
 `refresh_mode=operational` for only the changing operational sources, or `all`
 for every source with static-cache reuse. A recurring energy schedule is needed
 only if unattended freshness is required; select its cadence deliberately.
+The hosted Administration page exposes **Prepare Norwegian Energy Map** as step 6.
+It uses `all` with cache reuse, not a forced national import. Routine
+**Refresh snapshots** in that same step uses `operational` and skips network/plant
+inventories even if their cache is old. **Advanced: full national source rebuild**
+is collapsed under **Maintenance and source details** in step 6. It is the explicit
+`all` + `force_refresh=true` option and may take tens of minutes.
+All three reuse active runs and report actual pipeline completion, including
+map-chat failures; a browser-stored flag alone does not mark setup complete.
+Notebook startup, projection changes and SQL synchronization still take time:
+operational mode is lighter, not an instant/live feed.
 Do not overlap Core ingestion and standalone energy refreshes against the same
 GeoContext tables. Parallelism overlaps independent Core/energy branches, not
 multiple writers to one energy snapshot.
+
+### Map-agent publication and payload checks
+
+Map-agent publication verifies the owned read models and published definition.
+It does not query the agent or gate setup on an immediate MCP answer. The output
+reports publication as `published` and runtime/AI readiness as `not_checked`.
+SQL synchronization and interactive answer quality are separate from provisioning;
+publication alone is not proof of working map chat.
+Retries with unchanged source Delta versions reuse the last complete owned
+projection and its run ID, rather than rewriting the tables and restarting SQL
+synchronization. Matching draft and published agent definitions are not republished;
+no automatic grounding canary runs during setup. Explicit diagnostic helpers remain available.
+Definition comparison ignores service-added optional JSON nulls, so an unchanged
+source is not rewritten or republished merely because Fabric hydrated its metadata.
+Projection reuse also checks the projection-contract version and refuses reuse
+when any owned model table was missing before creation. Increment that version
+when changing projection semantics, even if source Delta versions are unchanged.
+
+Map queries use the GeoContext SQL connector for bounded identity/viewport
+selection, then retrieve complete feature payloads through the existing
+`HydroGeoFeatures` and `HydroGeoReservoirAreas` Eventhouse Delta shortcuts. No
+data is copied. Geometry and property JSON must not pass through Lakehouse SQL:
+its [Delta STRING mapping](https://learn.microsoft.com/fabric/data-warehouse/data-types#autogenerated-data-types-in-the-sql-analytics-endpoint)
+is `varchar(8000)` and truncates larger payloads. Missing or inconsistent shortcut
+payloads fail explicitly; there is no fallback to truncated SQL JSON.
+Full-size reservoir polygons use indexed ring containment and bounded candidate
+checks so validation preserves holes and boundary semantics without repeatedly
+scanning every edge for every sample.
+The map-agent projection normalizes negative/nonfinite physical measurements to
+NULL, matching the map's exclusion of invalid installed capacities. Current-view
+questions use the supplied browser summary; SQL queries remain authoritative for
+complete imported-dataset totals, not a substitute for rendered-map membership.
+The NVE inventory itself is Norwegian; its asset `country_code` values can be
+NULL. Both agent-level and source-level SQL instructions prohibit using that
+column as an asset-country filter. Source instructions also distinguish source
+ingestion timestamps from projection build timestamps and require checking
+unexpected empty results against source counts. Agent instructions alone do
+not reliably constrain the separate natural-language-to-SQL generation step.
+Live acceptance on October 28 verified 2,010 imported plants, 35,707.0066 MW
+of known capacity and 33 plants with unknown capacity, including a formerly
+failing paraphrase through hosted Map Chat. Adamselv's 50 MW, owner and NO4
+price area also matched the independently queried imported source row.
 
 ## 6. Set up Foundry agents
 
 ### Persistent Foundry agents
 
+**Project creation:** check only for a missing project. **Redeploy:** leave unchecked;
+keep the same workspace/account/project/model. Agent updates still run.
+A missing project stops deployment when creation is unchecked.
+
 Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
-specialists and `hydro-orchestrator` against this checkout and the selected Fabric target.
+specialists and `hydro-orchestrator`, each suffixed with the workspace GUID without
+hyphens, against this checkout and the selected Fabric target.
 An existing project/model may still contain missing or older agents. Setup reuses matching
 connections and specialists, creates versions only for changed/missing agents, builds only
 missing source-fingerprinted images, and republishes the hosted coordinator only when its
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
 
-- **Reuse a specific project:** enter its name under **Project and model
-  choices**. Without a name, setup uses saved settings, the target-named project,
+**Implementation details only: separate-project runtime is not end-to-end verified.**
+Use the shared-project path above for the verified multi-workspace layout.
+Creating another project did not resolve the earlier hosted-routing 404.
+For project-only provisioning, the code selects the same
+existing Foundry account and ready model deployment for each single-workspace run.
+Leave the project name blank for `hydro-workspace-<full-workspace-GUID-without-hyphens>`,
+or enter an exact project name. Enable **Allow project creation (billable)** only
+when that project is missing. Setup first verifies the existing account/model,
+then creates only the project and its managed identity, scoped access and
+connections to the shared registry/monitoring. It does not run model catalog/quota
+allocation, resize the model, or change account networking. Partial project setup
+is retained and converged on retry; project endpoint/access and connection readback
+must succeed. A model/region mismatch, denied access, missing/ambiguous shared
+infrastructure or changed model allocation is a hard failure, not bootstrap.
+Registry connections use `ManagedIdentity` credentials containing the verified
+project principal ID and shared registry resource ID. Existing connections are
+reused; a failed connection setup retains the project for retry without reallocating
+model TPM. Errors identify the exact ARM resource and API version.
+Hosted ACR images use the platform's project managed identity; the generic
+`registryConnectionId` field is omitted for this deployment path.
+Python containers set `PYTHONNOUSERSITE=1` in both the image and hosted environment
+to prevent session-uploaded user-site packages from affecting startup. Immutable
+version convergence verifies this environment setting as well as the image and source bindings.
+Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
+not its instrumentation key. It is validated before project changes and rechecked
+on retry; credential values are not saved in the preflight plan.
+
+An explicitly selected existing project supports multiple concurrent workspace-scoped
+agent sets in one shared project. This is the live-tested FEATURE/DEV layout;
+separate projects remain unverified end-to-end.
+Same-target saved project identities are preserved;
+blanking the field does not migrate or delete an existing deployment. New targets
+with an explicit account and no project selection use the stable workspace project.
+Only a genuinely missing account with creation approval uses the original
+account/model/registry/monitoring bootstrap and its regional quota preflight.
+Each workspace gets its own stable agent set, native connections/toolbox and
+hosted runtime configuration. Generated azd state is isolated by project endpoint
+and hosted agent name; container images are reused by source fingerprint.
+
+The model's TPM/RPM limits are shared across all agent sets; model inference and
+hosted compute remain billable. Projects allow scoped permissions and separate agent lifecycles, but share
+account-level networking/governance and model capacity. A busy project can throttle
+other projects; projects do not multiply TPM. Shared account/model resources are
+not owned by the project-only provisioning path and must not be included in project
+cleanup. Resource names alone do not provide security isolation between users with
+access to the same project. Existing unsuffixed deployments
+remain supported by read-only app publication; running Foundry setup creates the
+workspace-scoped set without deleting or retargeting the older set.
+
+**Foundry setup can create Fabric resources.** Before configuring the Hosted Agent,
+setup creates or reuses its required AppBackend gateway. On a fresh target this uses
+Rayfin with `--exclude-services staticHosting`, so Fabric can already show the
+`hydro-operations-ui` **App** item with its SQL database, SQL analytics endpoint and
+GraphQL API. That is backend provisioning, not website publication or proof that
+the Foundry agents are ready. Progress labels it **Fabric backend gateway**, followed
+by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds should
+**Deploy app** publish the website and run its authentication/CORS/connector checks.
+`FOUNDRY_SETUP_SUCCESS` confirms configuration readback, not agent execution.
+Registry and monitoring resources stay shared, but new infrastructure connection
+names are project-specific. Compatible connections already owned by the selected
+project are retained; sibling-project connections are never updated or claimed.
+Native Fabric IQ and ontology connections are also named from both the project
+ARM identity and workspace GUID, since Azure enforces account-wide name ownership.
+Existing workspace-only names are retained only when their ARM identity proves
+selected-project ownership. Setup persists the verified connection names and uses
+them consistently in specialists, the toolbox, hosted configuration and publication
+readback; changing projects never updates the old project's private connections.
+Setup and app publication also probe the real invocation URL with an empty body.
+Only the runtime's exact HTTP 422 admission rejection passes; no question, decision
+or source tokens are submitted. This verifies routing, not answers or delivery.
+`404 ResourceNotFound: Subdomain does not map to a resource` blocks publication.
+If the URL matches Azure's project endpoint, contact Azure support; do not reset
+Fabric, replay a request or treat an active agent as proof of runtime readiness.
+Model inference and agent metadata can succeed while hosted invocation and session
+provisioning fail. Retain Azure request IDs for those separate serving failures.
+An identical-definition redeployment can reuse the existing version, and an
+enabled-state readback after a lifecycle restart does not verify serving recovery.
+Do not automate either as a claimed repair without successful invocation admission.
+
+**Deploy app** checks the prepared source/authentication bindings,
+specialist definitions and active immutable Hosted runtime identity. A packaged-code
+fingerprint difference (or missing fingerprint) alone is a warning, not missing setup:
+compatible deployed agents are reused without provisioning or republishing them. This
+does not certify new agent features or execution. Run **Set up Foundry agents** separately
+to update agent code; missing or incompatible configuration still blocks app publication.
+
+Model preflight requires a verifiable positive token limit. New allocations prefer
+**75,000 tokens/minute** within the selected model/SKU's available regional quota.
+Existing smaller allocations are reused with a warning, not silently increased;
+they may throttle the planner, source catalog or concurrent workspace requests.
+For new account/model bootstrap only, `HYDRO_FOUNDRY_MODEL_CAPACITY` can override the catalog capacity
+before the canonical deployment command. Capacity units are model/SKU-specific:
+verify the resulting live token limit and available regional quota. Existing model
+allocation is never silently changed, and concurrent requests can require more.
+Runtime model throttling retains HTTP 429 with an explicit quota message and a
+failed-run audit; it is not reported as successful execution or automatically replayed.
+
+Fabric IQ connections use the Fabric API audience
+`https://api.fabric.microsoft.com` and `metadata.type=fabric_iq_preview`,
+matching portal-created Data Agent tools. Setup reuses an existing verified
+workspace-specific Fabric endpoint only for the selected workspace and item;
+fresh targets otherwise use the documented generic Fabric MCP endpoint.
+Conflicting workspace-specific endpoints fail rather than choosing an arbitrary
+connection. Portal-created connections are not deleted.
+
+The app's native route pins the `hydro-fabric-iq-tools` Foundry toolbox as its
+connection manifest, bound to the verified `hydro-fabric-iq` connection.
+Setup creates or versions it only when
+needed, preserves existing toolbox policies/skills/metadata, promotes its default
+version and verifies readback. Prepared app deployment verifies it without
+repairing it. Each run verifies the immutable version and connection target, then
+uses the published Data Agent's native Responses interface with the original
+question and the signed-in user's verified Power BI token lease. Live source discovery
+verifies the deployed AppBackend origin against its workspace, item and current capacity.
+Native execution rechecks the capacity before using that verified origin; capacity drift
+fails and requires the canonical deployer. This avoids the private workload-routing token
+operation that rejected the SPA lease. Never copy a generated capacity URL between targets.
+No MCP query or intermediate Fabric IQ model runs in this
+answer path; the prompt specialist and MCP utility remain for compatibility.
+Native acceptance found that Fabric MCP declined ordinary cross-source questions,
+while the [official Responses interface](https://learn.microsoft.com/fabric/data-science/fabric-data-agent-sdk)
+successfully executed the ontology's sandboxed cross-source combine. This transport
+change is explicit, not a retry/fallback to direct tables or another identity.
+For compatibility-path MCP execution, the hosted runtime must forward `x-agent-foundry-call-id` on
+every toolbox request, using the agent credential for the toolbox boundary and
+the connection's delegated user identity downstream. A successful direct toolbox
+test does not certify this hosted caller-context boundary.
+The primary Responses path instead uses the existing per-request delegated leases
+and application authorization; it does not claim managed MCP execution-policy enforcement.
+Original source text and resource receipts are retained; downstream analysis and
+approval drafts are separate, never replacements for the source answer.
+
+The ontology supplies semantic context and associated data sources. NB09 preserves these
+and compatible existing execution sources; it does not add Lakehouse/Eventhouse profiles to
+work around an intermediate MCP smoke response. NB11 preserves existing selections when
+publishing operational guidance, without attaching the ontology-associated SQL Database again.
+The deployer/Foundry verify the published ontology's SQL/weather bindings without requiring
+a separate SQL datasource profile. Existing custom sources are retained. No automatic agent
+query is a setup prerequisite.
+Only the five operational SQL tables are
+selected; visible but unselected SQL control tables are not extra query sources.
+Native JSON result files and their typed tables are retained without rewriting the
+answer. Quality/work evidence must match successful native source-query and combine
+receipts; row-limited reads, unmatched keys or failed coverage cannot certify completeness.
+Dependent specialists receive typed evidence and the original source answer, not duplicate
+result documents or provider execution traces. Complete artifacts remain in the audit.
+The same quality/work completeness gate applies to semantically selected native steps.
+Existing temporal, identity and duplicate-work checks still apply before any approved write.
+Check actual tool output during compatibility-path native acceptance: a completed Foundry response
+can still include an error in `raiPostToolAnnotations`. Endpoint readiness or
+successful tool discovery alone does not establish a successful native answer.
+
+- **Reuse a specific project:** enter **Foundry project name**.
+  Without a name, setup uses saved settings, the target-named project,
   or the sole available project. Choose a model only for a specific deployment.
 - **Duplicate project names or scoped access:** paste the full project ARM ID
-  into **Existing project name**. No separate resource-ID field is needed.
+  into **Foundry project name**. No separate resource-ID field is needed.
 - **Fabric App authentication:** automatic registration discovery/reuse is the
   default. Select **Use a pre-created app registration** only to choose a specific
   target-tenant SPA, then enter its Application (client) ID. The choice is shared
   across Foundry, full workflow and app publication for this tenant/workspace.
   An explicit selection requires a valid GUID and is verified before deployment;
   redirect, permission and consent setup remains automated.
-- **Work-order permissions:** the launcher preserves this target's current policy
-  without a UI override; enabled writes require human approval.
+- **Work-order permissions:** approval-gated writes are enabled by default for both
+  new and redeployed coordinators. An old disabled flag is not inherited.
+  To deliberately disable writes, set the process-local
+  `$env:HYDRO_PRODUCTION_WRITES_ENABLED = 'false'` before the canonical combined CLI
+  command in section 7. Keep that explicit override for deployments that must remain
+  read-only; without it, deployment enables approval-gated writes. This grants no SQL
+  permissions and creates nothing automatically: every creation still requires a fresh
+  draft, explicit human approval and backend validation/readback. Remove the process-local
+  override when finished so it cannot affect another target.
 - **Automatic configuration:** project endpoints, connected registries and ontology
   graph ownership are resolved internally. The launcher does not accept graph-binding
   JSON. Missing or ambiguous prerequisites produce explicit errors; specialist
   overrides remain available through the documented command-line configuration.
-- **New project:** expand **Create a new project**, enter a chat model and
-  explicitly approve resource creation.
+- **New project:** select **Azure subscription**, enter **Foundry project name** and
+  **Model deployment name**, then select **Check this box if you want to create a
+  new Foundry project with the multi-agent setup.**
+  The exact project name is used. A ready deployment alias in the selected
+  subscription is resolved to its catalog model/version; catalog chat model
+  names also work. Both standalone Foundry setup and Full Deploy use this flow.
   Approval resets on reload or target change.
-- **Defaults:** target-hashed resource names, capacity region, catalog default
-  version, regional Standard SKU and minimum/default capacity. No automatic
-  global/provisioned substitution; catalog availability does not guarantee quota.
+- **Account naming:** enter **Foundry account name (optional)** to control the parent
+  resource name too. CLI users can set process-local `HYDRO_FOUNDRY_ACCOUNT_NAME`.
+  The template receives it as `AZURE_AI_ACCOUNT_NAME`; the project name remains
+  `AZURE_AI_PROJECT_NAME`. Existing projects are reused only inside the selected
+  account. This is not a rename/move operation and does not adopt an arbitrary
+  existing account from another resource group to create a missing project.
+  Azure name conflicts or missing permissions stop provisioning; no replacement name is generated.
+- **Defaults:** target/project-hashed supporting resource names, capacity region,
+  catalog default version (or the resolved deployment's version) and minimum/default
+  capacity. Setup prefers regional Standard, then DataZoneStandard, then
+  GlobalStandard; the form discloses global inference. Provisioned capacity is
+  never automatic. Catalog availability does not guarantee quota; unavailable or
+  ambiguous model identities and missing access stop setup explicitly.
 
 Project/model preflight precedes AppBackend creation. Same-target Foundry hints
 survive backend rotation. Missing/inaccessible selections fail; they are never
@@ -219,6 +750,9 @@ silently replaced.
 
 Choose **Deploy app**. It verifies prepared agents, publishes the website and checks
 runtime/CORS, SQL and authentication. It does not rebuild agents or seed data.
+The launcher preserves the target's prepared energy-map setting; app publication
+does not offer a second enable/disable selector. Run **Energy setup** first to
+prepare map data and enable its navigation.
 Readiness requires browser-equivalent preflights and POST checks for `/graphql`
 and `/api/auth/v1/token`, plus `/connectors/hydrolakehouse/graphql`,
 `/connectors/hydrooperations/graphql` and, with energy enabled,
@@ -229,6 +763,18 @@ Operational SQL uses the delegated `fabric-sqldatabase` connector. The deployer
 resolves both Lakehouse SQL endpoint IDs from live workspace metadata, validates
 their distinct identities, and applies each connector with an explicit success receipt.
 Energy-disabled targets omit the GeoContext connector declaration.
+
+The **Norwegian Energy Map** uses the selected workspace's owned GeoContext
+Lakehouse and its verified SQL endpoint, not a saved workspace or `V6` default.
+Both Geo notebooks receive that Lakehouse binding; refresh passes its item ID and
+the current workspace ID. An empty environment suffix resolves from the bound
+GeoContext, while renamed Lakehouses require the verified item ID. Cross-workspace
+or mismatched bindings stop before writes. The refresh pipeline runs
+`Geo_002_publish_map_agent` only after successful ingestion, so map chat sees the
+new read models. **Refresh energy sources** owns map-agent preparation and publication.
+Routine **Deploy app** reuses that prepared setup and checks the existing serving data;
+it does not execute either Geo notebook, rebuild the agent projection or republish the
+map agent. Run Energy refresh separately when its sources or agent definition change.
 
 No standalone `Hydro_STID_API` setup or legacy GraphQL source-rebinding is performed.
 Existing standalone items are not automatically modified or deleted. Rayfin's managed
@@ -260,6 +806,12 @@ Never replace the engine with bare `npm run deploy` or `rayfin up`.
 Require **`SUCCESS` and `DEPLOYED_APP_URL`**, then open the URL and sign in.
 Test the sources, graph and agent flows you use. Validate approved writes and
 Teams/email delivery separately; hosting success is not runtime acceptance.
+
+If a draft reports **Production work-order writes are disabled; no SQL write was
+attempted**, the coordinator's write-policy flag is off, not a SQL write failure.
+Check for an explicit disable override or an older coordinator deployment using section 6.
+New deployments enable approval-gated writes by default. Do not retry an expired or previously
+blocked card after changing it: request fresh evidence and review a new draft.
 
 ### Independent operational SQL lifecycle
 
@@ -297,6 +849,114 @@ images are reused; runtime/auth checks remain mandatory.
 Elapsed time is shown in the UI; detailed `DEPLOY_TIMINGS` receipts remain in logs.
 Historical measurements: [deployment record](../docs/ontology-test-review.md).
 
+The October 29 Full Deploy baseline took **70m 35.688s**, without creating a new
+managed private endpoint:
+
+| Component | Measured duration | Critical-path audit |
+|---|---:|---|
+| GitHub sync | 11m 17.922s | Git import was about 2m 40s; finishing included the Weather Environment's library publication/build. Reruns now avoid a rebuild only after verifying unchanged published/staged contents. |
+| Core setup pipeline | 23m 01.391s | Root lakehouse setup precedes parallel Core/Weather and Geo_001 branches. Core uses a shared Spark session with concurrency four; agents wait for complete ontology bindings. |
+| Energy finalization | 9m 00.922s | 14.312s prerequisites and 524.110s preparation, including one Geo_002 job, not a second Geo_001 ingestion. |
+| Foundry setup | 15m 32.890s | The fresh Fabric backend gateway took about 8m 03s; hosted image preparation/publication took about 4m 47s. |
+| App deployment | 11m 42.407s | Backend reapplication, repeated connector CLI startup and final authentication readback contributed more than the static upload alone. |
+
+Substep review of that same run:
+
+| Area | Measured substeps | Treatment |
+|---|---|---|
+| Git | Connection discovery 7s; connect 2s; initialize 3s; import 2m 40s; finishing 8m 24s (rounded UI phases) | Retain import, runtime checks, changed/fresh Weather Environment publication/readback and disabled-until-ready schedule. An unrelated Git change no longer automatically forces an unchanged Environment rebuild. |
+| Core dependencies | Public activity-run readback: root setup 298.586s; then Core/Weather 1043.633s and Geo_001 888.459s overlap. The Core Spark session reports 102s queued and 843s running. | Preserve source/publication dependencies and existing Core/energy parallelism. These activity/session durations are not individual `runMultiple` child timings and must not be added together. |
+| Energy notebooks | Geo_001 ingestion is in Core; Geo_002 finalizes serving models and its agent | Consolidate verification reads and redundant actions, not jobs, source-version checks or required publication commands. |
+| Foundry | Identity 8.531s; SPA 9.750s; source/gateway/project/agents/hosted setup 913.781s | Resolve approved project creation before independent image/gateway work. Specialists and hosted publication still wait for verified backend and sources. |
+| App, sections 1–4 | Identity 8.797s; SPA 7.813s; state/readiness 128.500s; login 1.625s | Reuse a single invocation's successful definition read and Foundry token during read-only verification; retain source, connection, toolbox and specialist checks. |
+| App, sections 5–7 | Static build/publication 141.281s; backend/connector synchronization 217.890s; sign-in setup 51.141s | Keep backend runtime/CORS/database reapplication; batch explicit connector generation/application and validate each required receipt. |
+| App, section 8 | Full final verification 144.203s | Keep hosted identity, endpoint contract, real POST/preflight checks, redirect preservation and permissions/consent. The UI's roughly 24s endpoint/CORS slice was not this section's complete duration. |
+
+Implemented reductions:
+
+- Full Deploy no longer adds Energy finalization, Foundry setup and app setup as
+  three serial subprocesses. One canonical `--stage all --energy-map enabled
+  --energy-read-models-only` invocation finalizes the completed Core import while
+  Foundry provisions independently. Only the parent owns app configuration writes.
+  Both branches must succeed before static publication; the newly verified backend
+  is reused, and runtime/CORS/database reapplication and all final checks still run.
+  Standalone actions retain their existing behavior. Older five-stage checkpoints
+  are rejected explicitly rather than mapped onto different completion boundaries.
+  The historical **9m 00.922s** Energy phase is therefore eligible to overlap Foundry,
+  not simply subtracted from a future estimate.
+- A successful Weather Environment is no longer rebuilt merely because Git
+  imported an unrelated change. Compare authoritative published/staged library
+  inventories, full Spark compute settings and external-library YAML exports.
+  Only exact equivalence skips the rebuild. Changed versions, channels or compute,
+  custom/unknown libraries and incomplete paginated inventories require full
+  publication; API read failures propagate. Fresh/unsuccessful Environments still
+  publish normally. This uses Microsoft's documented
+  [published](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/list-libraries)
+  and [staging](https://learn.microsoft.com/en-us/rest/api/fabric/environment/staging/list-libraries)
+  library APIs, [compute readback](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/get-spark-compute)
+  and [external-library export](https://learn.microsoft.com/en-us/rest/api/fabric/environment/published/export-external-libraries).
+- On a fresh backend, prepare the immutable hosted source image **concurrently**
+  with Fabric gateway provisioning. No Rayfin configuration or azd environment is
+  written by the image worker. Publication still rereads the registry digest and
+  current source fingerprint after backend/source verification; failures stop
+  publication. Existing-backend deployments do not add a prebuild pass.
+- Run all declared connectors through one supported Rayfin `up connector apply
+  --json` invocation, rather than one per connector. The receipt must prove both
+  generation and application for Lakehouse, operational SQL and enabled energy
+  connectors; missing, skipped, duplicate or failed results stop deployment.
+- Share successful Fabric definition reads only inside one read-only Foundry
+  verification invocation, keyed by workspace/item/collection. Reuse its Foundry
+  token for toolbox and agent verification. Nothing is persisted or reused by a
+  later invocation, after a failed read, or across publication.
+- Energy serving verification uses **one Kusto query instead of three**, retaining
+  every validation and all four publication commands. Geo_002 uses **one preflight
+  instead of two**, retaining both source-version checks. Geo_001's no-manual-links
+  coverage check uses **one Spark count instead of two**; manual-history checks stay.
+- `DEPLOY_SUBSTEP_TIMING=` receipts now separate image preparation, gateway,
+  operational source verification, backend reapplication, connector application,
+  hosted identity, endpoint/CORS and Entra readback. Overlapping image/backend
+  durations are not additive wall-clock time.
+
+Regression tests verify these request/action reductions and synchronized overlap
+without weakening readiness checks. They are **not a new live Full Deploy
+benchmark**. Spark startup, source ingestion, fresh Environment build, Fabric
+provisioning and hosted activation remain service-dependent. Do not subtract
+entire historical phases or promise a new end-to-end duration from these tests.
+Read-only checks against the existing FEATURE target verified Weather equivalence
+in **16.110s** and complete prepared-Foundry configuration in **46.125s**. These
+isolated checks changed no cloud resources and are not directly comparable to an
+entire historical deployment section.
+
+#### Live combined-stage verification
+
+The canonical post-Core command completed successfully against the prepared FEATURE
+workspace on October 30 in **14m 05.266s**. It did not reimport Git, repeat Core/Geo_001,
+create a fresh backend, or rebuild the unchanged hosted image.
+
+| Measured work | Duration |
+|---|---:|
+| Energy finalization, including Geo_002 and verified serving readback | 4m 44.921s |
+| Foundry setup, concurrently with Energy | 1m 19.671s |
+| Static build/publication | 2m 24.828s |
+| Mandatory backend runtime/CORS/database reapplication | 2m 54.031s |
+| All connector generation/application and individual receipt checks | 19.328s |
+| Final endpoint/browser-equivalent CORS/POST readiness | 12.578s |
+
+Both setup branches completed before static publication. All 45 registered SPA
+redirects were preserved, and final deployment/permission/consent checks passed.
+This proves live overlap and end-to-end execution of the **combined post-Core
+stage**, not a fresh 70-minute Full Deploy comparison. Fresh Git import, Environment
+build, Spark startup and Core ingestion were not remeasured; no new full-deployment
+duration is certified. Hosting was protected by sign-in; interactive source/agent
+execution acceptance remains separate.
+The consolidated energy verifier was also executed against live serving data:
+**one query POST, 1.289s**; all validation took **7.713s**, or **11.460s** including
+discovery. It verified 12 ready layers, nine reservoir areas, 79 links, foreign-value
+restrictions and four owned-Lakehouse Delta locations. That check exposed and
+corrected a reserved KQL output alias before final validation. It did not run
+notebooks, ingestion, publication or control commands, and does not measure a new
+Geo notebook run.
+
 ## Deploying the merged feature branch
 
 Use the pushed branch containing your changes. Branch selection or website
@@ -313,8 +973,8 @@ publication does not configure provider authentication or ingest data.
 |---|---|
 | Permission, consent or private endpoint | Give the exact error to the resource owner; do not weaken access controls |
 | Stale agent/source configuration | Foundry setup, then app deployment |
-| Native graph not materialized | Use the explicitly labelled live-source mode, or complete the portal action for native GQL; never fabricate graph ownership |
-| Weather provider HTTP 401 | Credential owner checks `mai-weather-api-key` in Key Vault; rerun Weather only |
+| Graph source unavailable | Verify the ontology's exact source bindings, connector coverage and access; no materialization is required for the Knowledge Graph page |
+| Weather provider HTTP 401 | Credential owner checks the named provider's Key Vault key: UKMet Global Spot/Land Observations by default; `mai-weather-api-key` only for opted-in Aurora. Rerun Weather only |
 | Energy/Weather source failure | Fix that source's credentials/connectivity, then refresh it |
 | Paused capacity or unsupported region | Fix the target prerequisite, not the app build |
 | Sign-in popup blocked | Allow normal browser sign-in and retry |

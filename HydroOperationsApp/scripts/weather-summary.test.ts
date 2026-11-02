@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { summarizePrecipitation } from '../src/ui-shared/weatherSummary.ts'
+import { resolveWeatherVendor, summarizePrecipitation } from '../src/ui-shared/weatherSummary.ts'
+
+test('defaults to UKMet without discarding explicit historical-provider selection', () => {
+  assert.equal(resolveWeatherVendor(['aurora', 'ukmet'], ''), 'ukmet')
+  assert.equal(resolveWeatherVendor(['aurora', 'ukmet'], 'aurora'), 'aurora')
+  assert.equal(resolveWeatherVendor(['ukmet'], 'aurora'), 'ukmet')
+  assert.equal(resolveWeatherVendor(['aurora'], ''), 'aurora')
+  assert.equal(resolveWeatherVendor([], 'ukmet'), '')
+})
 
 const anchor = Date.parse('2026-09-16T09:20:00Z')
 const at = (hours: number) => new Date(anchor + hours * 3_600_000).toISOString()

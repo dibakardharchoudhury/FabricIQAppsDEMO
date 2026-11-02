@@ -3,6 +3,15 @@ import test from 'node:test'
 import { applyFilter, validateFilters, QueryInputValidationError, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { describeToolEvidence } from '../src/services/copilot/domainContract.ts'
 
+test('snapshot evidence does not certify truncated or unqualified population rows as complete', () => {
+  for (const tool of ['query_signal_quality_snapshot', 'query_turbine_temperature_snapshot']) {
+    for (const truncated of [true, undefined]) {
+      assert.equal(describeToolEvidence(tool, {}, { rows: [], truncated })[0].complete, false)
+    }
+    assert.equal(describeToolEvidence(tool, {}, { rows: [], truncated: false })[0].complete, true)
+  }
+})
+
 test('low-stock column comparisons include equality and exclude above-threshold and missing quantities', () => {
   const rows = [
     { id: 'below', quantityOnHand: 2, reorderLevel: 3 },

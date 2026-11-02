@@ -3,6 +3,20 @@ import { InteractionRequiredAuthError, type PublicClientApplication } from '@azu
 type TokenClient = Pick<PublicClientApplication,
   'getActiveAccount' | 'getAllAccounts' | 'setActiveAccount' | 'acquireTokenSilent' | 'acquireTokenPopup'>
 
+function audienceScopes(scopes: string[]): string[] {
+  if (!Array.isArray(scopes) || !scopes.length
+    || scopes.some(scope => typeof scope !== 'string' || !scope.trim() || scope !== scope.trim())) {
+    throw new Error('Entra authorization requires non-empty scopes for exactly one resource. No request was sent.')
+  }
+  const unique = [...new Set(scopes)]
+  const resources = new Set(unique.filter(scope => !['openid', 'profile', 'offline_access'].includes(scope))
+    .map(scope => scope.includes('://') ? scope.slice(0, scope.lastIndexOf('/')).toLowerCase() : 'https://graph.microsoft.com'))
+  if (resources.size !== 1) {
+    throw new Error('Entra authorization must request one resource at a time. Mixed-resource consent is not supported. No request was sent.')
+  }
+  return unique
+}
+
 export function createEntraTokens(client: TokenClient, initialize: () => Promise<void>, tenantId: string) {
   const selectAccount = () => {
     const active = client.getActiveAccount()
@@ -12,6 +26,7 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
   }
 
   const silent = async (scopes: string[], forceRefresh = false, minimumLifetimeMs = 0): Promise<string | null> => {
+    scopes = audienceScopes(scopes)
     await initialize()
     const account = selectAccount()
     if (!account) return null
@@ -23,6 +38,10 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
         result = await client.acquireTokenSilent({ account, scopes, forceRefresh: true })
       }
       if (!result.accessToken) throw new Error('Entra returned no access token.')
+      if (minimumLifetimeMs > 0
+        && !(result.expiresOn && result.expiresOn.getTime() - Date.now() >= minimumLifetimeMs)) {
+        throw new Error('Entra returned a token lease shorter than the required operation lifetime. No request was sent.')
+      }
       return result.accessToken
     } catch (error) {
       if (error instanceof InteractionRequiredAuthError) return null
@@ -33,8 +52,9 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
   const pending = new Map<string, Promise<string>>()
   let interactiveQueue: Promise<void> = Promise.resolve()
   const popup = async (scopes: string[]): Promise<string> => {
+    scopes = audienceScopes(scopes)
     await initialize()
-    const key = JSON.stringify([selectAccount()?.homeAccountId, [...new Set(scopes)].sort()])
+    const key = JSON.stringify([selectAccount()?.homeAccountId, [...scopes].sort()])
     const existing = pending.get(key)
     if (existing) return existing
     const current = interactiveQueue.then(async () => {

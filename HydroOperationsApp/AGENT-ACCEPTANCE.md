@@ -1,5 +1,140 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
+## October 28 structured work-order drafts and pagination
+
+Two regressions were reproduced before correction: Direct Data Agent mode returned
+before the drafting workflow, and a native prose answer without structured
+canonical equipment IDs caused a conditional Work Order handoff to be skipped.
+Explicit new-draft requests now reach guarded planning, and Fixer can resolve
+canonical identities through the existing tools before fresh open-work checks
+and in-memory proposal staging. Native prose is not parsed into approvable cards.
+Explicit ranking/selection and verified-fault repair gates are retained.
+Diagnostic drafts do not require a proven mechanical fault when RCA is also
+requested. The single native factual step receives the original operator prompt
+unchanged; its original answer remains immutable.
+
+Only the visual approval cards paginate: one visible card, numbered "Draft N of M",
+previous/next and numbered page controls. Summary/results remain afterward.
+Proposal-only responses no longer render an endless thinking indicator.
+An isolated browser fixture used the real approval-card component and verified
+edits, rejection and in-flight simulated approval surviving navigation, exactly
+one visible card, disabled boundary controls and no decisions on page changes.
+The fixture made no production writes; it is not authenticated hosted acceptance.
+
+Focused validation passed: 214 backend tests (one optional live-planning skip),
+67 frontend tests, frontend typecheck/scoped lint and production build. A further
+native/multi-card fidelity run passed after preserving the original compound prompt.
+The real-source multi-agent check initially stopped at SQL discovery with HTTP 404;
+the same SQL item was present and its Fabric capacity was confirmed Paused.
+After resuming that existing capacity and verifying Active, the exact operator
+question passed live semantic planning, native execution (67.699 seconds) and
+RCA (10.460 seconds). The run then failed explicitly at Fixer's Rayfin SQL
+exchange with `AUTH_FAILED` (155.863 seconds total); no proposal or SQL write
+was accepted. A bounded CLI-token comparison failed for both already-authorized
+Fabric and Power BI token scopes. No authentication bypass or empty-work
+fallback was added. This CLI diagnostic does not establish signed-browser SQL
+authorization; authenticated hosted multi-card acceptance remains unverified.
+
+The multi-card regression stages five proposals in separate successive model
+rounds, not just one parallel batch, and verifies all five backend digests and
+the unchanged native answer.
+
+Source fix `6d474cb` was committed and pushed to `main`. Canonical Foundry setup
+completed in 513.875 seconds: Fixer is v2, hosted coordinator v6 is Active on
+`src-274e437625a7f106`, and the selected model allocation remains 75,000 TPM.
+Other specialist definitions and the native toolbox were reused.
+
+The canonical app stage **did not publish the website**. It stopped before
+deployment after 136 seconds with the required prerequisite:
+`Cannot resolve the energy Delta table geo_reservoir_areas`.
+No energy flag was disabled and no alternate deployment path was used.
+The previously hosted app remains v1.0.1215; the tested pagination is committed
+but not yet hosted. Run the existing local energy setup module successfully
+before retrying the canonical app stage. This is separate from the CLI
+`AUTH_FAILED` acceptance blocker above.
+
+## October 28 unusable-content response correction
+
+The exact provider template "There's content here I can't work with. Try asking
+a new question. If that doesn't work, there might be an issue with the content
+or your source data." previously passed as domain evidence. Reproduction tests
+confirmed false success in direct and orchestrated execution. It now fails
+with `native_refusal`, without a rewritten answer, automatic retry or fallback.
+Typographic apostrophes are recognized; quoting the template inside a usable
+answer does not reject that answer. Specialist-return events no longer claim
+verification before the deterministic verifier runs.
+
+The shared browser was verified on app **v1.0.1213**, while the reported screenshot
+showed **v1.0.1211**. The unchanged screenshot question, including open-work
+coverage and requested work-order drafts, returned a native answer in **77.332
+seconds** (`resp_fab8ZJrv438QxJrBKYsmIdQAdJLi`). It included 15 turbines,
+existing work and five suggested diagnosis drafts. No work orders were created.
+This confirms the current source can answer that question; it does not identify
+the upstream cause of the earlier generic response, independently certify the
+SQL/telemetry values, or constitute authenticated browser acceptance.
+
+## October 28 direct-query latency correction
+
+Direct Data Agent is now an explicit read-only default; Foundry orchestration
+remains selectable for specialist reasoning. Explicit draft requests now use the
+guarded drafting exception described above. The ordinary read-only direct
+path makes zero planning, specialist-wrapper or answer-writer model calls.
+Questions and native answer text remain unchanged. Artifact downloads and local
+identity-resolution queries are not prerequisites for this read-only answer.
+Foundry binding/source checks and immutable answer receipts remain in place.
+
+The native Responses reader now stops at a terminal server-sent event instead
+of buffering until the HTTP connection closes. A regression test leaves the
+connection open indefinitely after completion and verifies immediate return and
+cleanup. Native timeouts retain 504; other native transport failures return 502.
+
+A bounded operator-identity test of the exact screenshot question, **“Which
+turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?”**, returned
+the native answer in **104.123 seconds**, including CLI authentication and live
+discovery. It listed all 15 turbines, disclosed source timestamps and distinguished
+quality flags from mechanical faults. This is a real native source result, not a
+latency guarantee or signed-browser/hosted end-to-end acceptance. The matching
+capacity, `fabcapswc`, was verified Active; no capacity resume was necessary.
+
+Focused backend regressions passed (209 tests before the additional open-stream
+test; all 27 native transport tests then passed), plus 28 focused frontend
+tests, app typecheck, scoped lint and production build. Broader discovery tests
+have an existing missing `hostedSourceAccess` fixture dependency; backend Pyright
+also reports two unchanged findings outside these edits. Those are not recorded
+as clean full-suite acceptance.
+
+## Semantic orchestration acceptance gate
+
+The [current implementation record](../docs/foundry-multi-agent-implementation.md#october-27-semantic-orchestration-implementation)
+replaces keyword-owned production routing with typed semantic planning and
+governed execution. Six live-model planning probes passed, including negation,
+Sparky/ontology relationships, Weather, RCA and clarification. This is not a
+claim that the source-backed native answers pass.
+
+Published app **1.0.1147 / `a2ccda0`**, coordinator **v28**, Fabric IQ **v3**.
+Signed-browser facility and station/unit comparisons both reached the native
+Data Agent with plain-language input and returned matching facts in diagnostic
+receipts, but both carried provider output-moderation processing errors.
+The third native quality/work comparison reproduced the same error; its direct
+Fabric-editor counterpart also failed generically, leaving that parity unverified.
+**All three native comparisons failed acceptance; do not certify those answers.**
+No native fallback, safety bypass or write approval occurred.
+The [live publication and acceptance record](../docs/foundry-multi-agent-implementation.md#live-publication-and-acceptance)
+contains response/run IDs and timings for provider escalation.
+
+The independent ordinary inventory-reader smoke test passed in 7.8s with all
+three facilities, one planned read and no specialist/narrative model chain.
+All 18 Ontology entities are now published in the Data Agent context.
+Eventhouse's absence from the Ontology data sources UI group remains unresolved;
+its working Kusto mount was not removed.
+Further live smoke tests selected Weather for a rainfall paraphrase (37.9s) and
+Sleuth for unreliable T007 readings (about 81s), leaving Gauge idle. Neither
+prepared a work-order draft. The final full backend suite passed all 283 tests.
+Existing Foundry telemetry shows safe prompt/completion categories for the first
+two native responses, separately from the error-bearing native tool output.
+Connection audiences, enabled default safety policy and network settings were
+verified; no speculative safety/runtime change or support-ticket creation occurred.
+
 For current FEATURE deployment receipts and limitations, use the
 [current verification record](../docs/ontology-test-review.md).
 Dated release/version claims below are historical, not the current target's inventory.
@@ -13,6 +148,146 @@ Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md
 Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPTS.md).
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
+
+## October 26 current failure repair
+
+The [current end-to-end audit](../docs/foundry-multi-agent-implementation.md#october-26-end-to-end-failure-audit-and-repair)
+supersedes the dated routing/runtime claims below. It reproduces the actual
+Gauge failure, fixes Kusto's empty-string zero-match join representation and
+preserves historical versus latest quality semantics. Ordinary operational
+requests and paraphrases use governed source tools, not three exact-sentence
+native-routing exceptions. An explicitly selected Data Agent remains native;
+its failure never triggers a direct-source fallback. Publication and signed
+browser acceptance must be recorded separately from local validation.
+The first repaired publication completed Gauge but exposed Fixer HTTP 429 against
+the existing 60,000-token/minute model. The follow-up preserves no-RCA direct
+handoff evidence. Transport recovery now uses one official SDK retry per model
+HTTP request, retaining existing function-result messages instead of restarting
+the agent. Native transport retains its separate no-SDK-retry correction bound;
+service/run deadlines and failure propagation remain mandatory.
+
+### Earlier v19 signed-browser result: acceptance failed
+
+Canonical publication of **`89c7dd4`** succeeded: app **1.0.1115**, coordinator
+**v19**, image `src-ad9a38b9fbbba1da` (ACR `dtg`); all five specialists were
+reused. Local checks passed **111** supervisor and **83** boundary tests plus
+Pyright. Those checks do **not** make this a live workflow pass.
+
+In authenticated session `6e8dd994-227e-4f40-943d-34d1dd791551`, the original
+compound question failed in Gauge after **69 seconds** because equipment,
+instrument and work-order connector reads failed (`READ_FAILED`). A single
+equipment-inventory request independently failed after **61 seconds** and a
+bounded diagnostic repeat after **63 seconds**. There is no certified draft,
+write, RCA or successful handoff from those runs.
+
+An explicit native-only identity/source request selected Sparky and returned
+after **51.2 seconds**, but reported endpoint unavailability/output moderation,
+unverified identity and zero scalar claims. The crew's **Finished** label is
+not proof that the Data Agent returned verified source data. There was no
+silent direct-source fallback. ARM confirmed capacity **Active**; no resume
+was needed. That connector failure had not yet been resolved at this checkpoint.
+Full receipts, limitations and the independent weather credential blocker are
+in the [current audit](../docs/foundry-multi-agent-implementation.md#v19-publication-and-signed-browser-acceptance-not-passed).
+
+The subsequent connector investigation obtained real rows from both connectors
+using the app's delegated credential in **40-43 seconds**. The Node SDK's
+30-second default was below that observed transit time. The follow-up sets a
+bounded **60-second read timeout**, preserves safe failure codes and corrects
+the production reconciliation client's SQL-connector wiring. Native error and
+output-moderation payloads can no longer qualify as successful domain evidence.
+**196 Python tests**, **105 Node contracts** and Pyright passed. Canonical
+publication returned final success at **23:30:34 UTC** with coordinator **v20**
+and signed app **1.0.1117 / `6b7ec1c`**; all specialists and 42 redirects were
+preserved.
+
+### Earlier v20 signed-browser result: execution succeeds, coverage acceptance fails
+
+Session `413e72bd-56be-414c-aebb-9c3f573c424d` completed the original compound
+question through Gauge and Fixer in **91 seconds**, with pending draft cards
+and no approved action or production write. The answer exposed only **44**
+verified signal rows, however: a legacy 40,000-character model budget had
+halved the actual source rows. Its partial-coverage warning prevents this
+from being called an enterprise acceptance pass.
+
+The follow-up preserves all bounded fleet evidence, fails closed on truncated
+or unqualified snapshots and aligns operator context with the certified
+500-row table limit instead of clipping it at 80. The
+[full-coverage follow-up](../docs/foundry-multi-agent-implementation.md#complete-source-evidence-follow-up-acceptance-not-yet-passed)
+records the root cause and regressions. New publication and authenticated
+RCA and native-result acceptance are still required.
+
+### Earlier v21 signed-browser result: full fleet passed; RCA/native remained open
+
+Canonical publication succeeded on **October 27 at 00:05:23 UTC**, coordinator
+**v21**, signed app **1.0.1118 / `f660a39`**. Capacity was resumed from Paused to
+Active under the user's authorization; all five specialists and 42 redirects
+were preserved. Signed session `6f760307-9b7f-464a-84b9-804bbc180af8` verified
+the full-fleet request over the last 24 hours in **82 seconds**: the actual
+rendered source table has **89 rows / 15 turbine IDs**, 12 work records and
+15 unapproved drafts. No production writes occurred. The original "today"
+question correctly returned no new-day readings and no drafts in **33.6 seconds**.
+
+A named T005 RCA exposed missing pre-RCA evidence fulfillment and scope
+precedence defects; three failing repros now pass within **200 Python tests**,
+with zero Pyright diagnostics. Native-only facility count failed explicitly
+in **42.9 seconds** on a real provider error envelope, with no count or direct
+fallback certified. The [RCA follow-up](../docs/foundry-multi-agent-implementation.md#rca-prerequisite-and-scope-follow-up)
+was unpublished/unaccepted at that checkpoint; neither crew animation nor
+the fleet pass is a substitute for those remaining gates.
+
+### Current v23: failure contract published; operational retest and diagnostic draft verified
+
+Canonical publication of **`1673261`** completed at **01:17:57 UTC on October 27**:
+coordinator **v23**, image `src-5afb91f86a3d8ee5`, ACR `dtm`, signed browser
+**1.0.1121**. Five specialists were reused; 204 Python and 179 Node regressions,
+type checks, build and targeted lint passed.
+
+Signed session `0f143dea-1f74-48b2-9a93-433a57f3b433` first encountered a
+**194.3-second Fixer model read timeout**; capacity was Active. A controlled
+retry completed QA/RCA/work-order review in **75.1 seconds**, retaining the
+actual 89-row/all-15-turbine source table. No draft was staged on that turn
+because telemetry was about six hours old. A diagnostic-only follow-up then
+staged one unapproved T005 card in **36.5 seconds**, explicitly limiting scope
+to fresh samples/log review and leaving current physical condition unconfirmed.
+No approval/rejection or production write occurred.
+
+The [complete v23 record](../docs/foundry-multi-agent-implementation.md#october-27-v23-publication-and-signed-browser-retest)
+retains the timeout alongside successful results. Native refusal and Weather
+credential prerequisites remain unresolved; overall acceptance is **blocked**.
+Synthetic refusal regressions are not native business acceptance.
+
+### Prior v22: three-specialist RCA passed; native provider remains blocked
+
+Subsequent native-refusal failure-contract hardening is documented in the
+[current audit](../docs/foundry-multi-agent-implementation.md#october-27-native-refusal-failure-contract-hardening).
+Its synthetic transport/ingress regressions are not native business acceptance.
+The external native and Weather prerequisites remain unresolved.
+
+Canonical publication of **`bb184aa`** succeeded on October 27 at **00:36:23 UTC**.
+The signed browser verified **1.0.1119**, coordinator **v22**, image
+`src-b850ab2a1ec1e3fc` (ACR `dtk`), with unchanged specialists and 42 preserved
+redirects. All 200 Python regressions and type checks passed before publication;
+the unchanged complete-fleet source layer had passed 107 Node contracts.
+
+Signed session `00ecc4ad-7c2d-47cb-9560-40bc73a3e12b` completed **Gauge -> Sleuth
+-> Fixer in 97 seconds** for T005's historical BAD signals, RCA, open-work check
+and conditional diagnostic draft. Actual history for all six T005 signals,
+inspections, notifications and compatible spares reached the analysis. It
+staged one T005-only draft, retained the full 89-row source table, distinguished
+latest GOOD/UNCERTAIN from prior BAD, and disclosed stale/one-hour-only data and
+unconfirmed physical causes. No production write or approval action occurred.
+
+A separate signed native-only count failed in **42.2 seconds** with a provider
+error envelope, correctly showing **Needs attention** instead of a false pass.
+A different-client Azure CLI diagnostic of the same existing specialist and
+benign question surfaced output moderation in its actual MCP receipt; that is
+diagnosis, not browser acceptance. Provider moderation was not bypassed or
+disabled and no direct-source fallback was used.
+
+The [v22 publication and remaining blockers](../docs/foundry-multi-agent-implementation.md#october-27-v22-publication-operational-rca-passed-native-provider-blocked)
+contain exact sessions/response IDs. Native acceptance needs provider-owner
+review of that refusal. Weather remains separately blocked by the invalid
+Aurora credential/private-vault prerequisite. Overall acceptance is not complete.
 
 ## October 12 v77 canonical-prompt release
 
@@ -1095,6 +1370,10 @@ verification rather than inferring speed from reduced input construction.
    Reading existing work is not drafting work and does not require Fixer.
 4. **Running BAD:** latest raw row per signal first, then literal quality BAD; default
    30-minute window, all matching active turbine signals. "Today" means midnight UTC.
+   **Had BAD/any BAD samples:** count matching samples in the whole requested window,
+   retaining first/last matching times and the actual latest raw state separately.
+   A recovered latest GOOD reading does not erase earlier BAD samples. All paths
+   distinguish zero matches from absent readings and physical condition.
 5. **Running HOT:** latest raw turbine-temperature readings, default hottest five over
    30 minutes. Preserve explicit counts, thresholds, windows and scope. Do not average
    or silently exclude non-GOOD signals. Freshness is independent of quality/temperature.
@@ -1134,12 +1413,12 @@ verification rather than inferring speed from reduced input construction.
 13. **Independent final verification requested:** Gauge after the relevant review/draft.
     Independence here means a separately invoked factual specialist, not independent
     physical measurements or a different model family.
-14. **Compound workflow:** use requested capabilities in order; maximum four delegations
-    and six Responses rounds for Chief/Sparky, eight for direct specialists (including
-    identity/coverage reads, investigation or staging, and final acknowledgement).
-    RCA may correct one locally rejected final-round assessment in one additional
-    completion-only round; no new reads or relaxed evidence checks are permitted.
-    Bounds and actual source failures are
+14. **Compound workflow:** the deterministic hosted workflow compiles requested
+    capabilities in order and pins remote specialist versions. Framework function
+    loops allow six iterations/eight calls, stop after the first real callback
+    error, and retain one bounded local argument/completion correction. Native
+    execution has its separate shared one-correction budget; it does not authorize
+    new direct-source reads or relaxed evidence checks. Bounds and source failures are
     explicit; no hidden retry of failed writes or forced completion from invented data.
 15. **Battle:** the same prompt reaches both configured entries. Read-only comparisons
     can be capacity-safe sequential or parallel. Recognized work-order requests use

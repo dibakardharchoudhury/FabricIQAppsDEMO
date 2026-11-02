@@ -227,12 +227,11 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         result["result"]["row_count"] = 2
         result["result"]["population"]["signals_without_readings"] = ["no-reading"]
         result["result"]["unresolved_nodes"] = ["unmapped"]
-        result["result"]["truncated"] = True
         sources.bridge.call.return_value = result
         evidence = await FabricBackendTools(sources).execute("query_signal_quality_snapshot", {}, request)
         self.assertEqual(evidence.column_units, {})
         self.assertEqual(evidence.resolved_equipment_ids, ("T1", "T2"))
-        self.assertEqual(len(evidence.limitations), 3)
+        self.assertEqual(len(evidence.limitations), 2)
         result["result"]["rows"] = []
         result["result"]["row_count"] = 0
         evidence = await FabricBackendTools(sources).execute("query_turbine_temperature_snapshot",
@@ -251,6 +250,8 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             lambda result: result["population"].update(work_coverage_equipment_ids=[]),
             lambda result: result["population"].update(work_coverage_equipment_ids=["T1", "T1"]),
             lambda result: result.update(row_count=2),
+            lambda result: result.update(truncated=True),
+            lambda result: result.pop("truncated"),
             lambda result: result["rows"][0].update(unit=""),
             lambda result: result["rows"][0].update(value="77.5"),
             lambda result: result["rows"][0].update(value=True),
@@ -857,6 +858,7 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             identities = {name: str(uuid4()) for name in (
                 "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
                 "database_id", "lakehouse_id", "appbackend_id",
+                "operational_sql_database_id",
             )}
             return json.dumps({**identities, "api_url": f"https://{'b' * 32}.pbidedicated.windows.net/workload",
                                "publishable_key": key})
@@ -910,7 +912,9 @@ class ContainerPackagingTests(unittest.TestCase):
     runtime_files = (
         "HydroOperationsApp/scripts/local-fabric-sources.mjs",
         "HydroOperationsApp/src/services/kustoResult.ts",
+        "HydroOperationsApp/src/services/hostedSourceAccess.ts",
         "HydroOperationsApp/src/services/lakehouseConnector.ts",
+        "HydroOperationsApp/src/services/operationalConnector.ts",
         *(f"HydroOperationsApp/src/services/copilot/{name}.ts" for name in (
             "query", "catalog", "domainContract", "rcaEvidence", "agentDefinitions", "answerPresentation",
             "orchestration",
@@ -1028,7 +1032,7 @@ class ContainerPackagingTests(unittest.TestCase):
             self.assertTrue((packaged / "HydroOperationsApp" / "node_modules" / "typescript").is_dir())
             config = {key: str(uuid4()) for key in (
                 "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
-                "database_id", "lakehouse_id", "appbackend_id",
+                "database_id", "lakehouse_id", "appbackend_id", "operational_sql_database_id",
             )}
             config.update(api_url=f"https://{'a' * 32}.pbidedicated.windows.net/workload",
                           publishable_key="pk-synthetic-packaging-contract")

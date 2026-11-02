@@ -158,6 +158,7 @@ export function ontologySourceReaders(): OntologySourceReader[] {
     reader('Lakehouse', 'silver_equipment', lake.SilverEquipment, cursor => lakehouse.SilverEquipment.select([...lake.SilverEquipment]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'silver_instruments', lake.SilverInstruments, cursor => lakehouse.SilverInstruments.select([...lake.SilverInstruments]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'silver_signal_master', lake.SilverSignalMaster, cursor => lakehouse.SilverSignalMaster.select([...lake.SilverSignalMaster]).first(200).after(cursor).executePaginated()),
+    reader('Lakehouse', 'ontology_equipment_types', lake.OntologyEquipmentTypes, cursor => lakehouse.OntologyEquipmentTypes.select([...lake.OntologyEquipmentTypes]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'weather_sources', lake.WeatherSources, cursor => lakehouse.WeatherSources.select([...lake.WeatherSources]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'weather_ingestion_runs', lake.WeatherIngestionRuns, cursor => lakehouse.WeatherIngestionRuns.select([...lake.WeatherIngestionRuns]).first(200).after(cursor).executePaginated()),
     reader('Lakehouse', 'gold_instrument_classification', lake.InstrumentClassification, cursor => lakehouse.InstrumentClassification.select([...lake.InstrumentClassification]).first(200).after(cursor).executePaginated()),
@@ -188,6 +189,10 @@ export function subscribeWorkOrdersChanged(listener: () => void): () => void {
   if (typeof window === 'undefined') return () => undefined
   window.addEventListener(WORK_ORDERS_CHANGED_EVENT, listener)
   return () => window.removeEventListener(WORK_ORDERS_CHANGED_EVENT, listener)
+}
+
+function notifyWorkOrdersChanged() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORK_ORDERS_CHANGED_EVENT))
 }
 
 export async function initializeRayfin(): Promise<AppUser | null> {
@@ -247,7 +252,7 @@ export async function createWorkOrder(
     createdByOid: user.id,
     createdAt: new Date(),
   }) as WorkOrderRecord
-  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORK_ORDERS_CHANGED_EVENT))
+  notifyWorkOrdersChanged()
   return record
 }
 
@@ -256,11 +261,13 @@ export async function updateWorkOrderStatus(id: string, status: string): Promise
   const patch: { status: string; completedAt?: Date | null } = { status }
   patch.completedAt = ['completed', 'closed', 'done'].includes(status.toLowerCase()) ? new Date() : null
   await client.connectors.hydrooperations.WorkOrder.update({ id }, patch)
+  notifyWorkOrdersChanged()
 }
 
 export async function deleteWorkOrder(id: string): Promise<void> {
   if (!client) throw new Error('Rayfin backend is not configured.')
   await client.connectors.hydrooperations.WorkOrder.delete({ id })
+  notifyWorkOrdersChanged()
 }
 
 export async function listInspections(): Promise<InspectionRecord[]> {

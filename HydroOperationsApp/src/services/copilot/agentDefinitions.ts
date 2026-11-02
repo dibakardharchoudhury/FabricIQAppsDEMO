@@ -1,5 +1,5 @@
 import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
-import { positiveActionClauses, qualityWorkWorkflow, type AgentRole } from './orchestration.ts'
+import { positiveActionClauses, type AgentRole } from './orchestration.ts'
 import {
   OPERATIONAL_EVIDENCE_CONTRACT,
 } from './domainContract.ts'
@@ -27,12 +27,18 @@ const REASONING_EFFORT: Record<SpecialistRole, 'low'> = {
 
 export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_weather', 'query_work_backlog', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
 export const WEATHER_TOOLS = ['query_weather', 'query_assets', 'visualize_dataset'] as const
+export const SPECIALIST_TOOLS: Record<Exclude<SpecialistRole, 'fabric-iq'>, readonly string[]> = {
+  qa: DIRECT_TOOLS,
+  weather: WEATHER_TOOLS,
+  rca: ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot'],
+  'work-order': ['query_assets', 'query_operations', 'query_work_backlog', 'query_telemetry', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'propose_work_order'],
+}
 export const WORK_REVIEW_TOOL = {
   type: 'function', name: 'complete_work_order_review',
   description: 'Record why no approval card is being staged. This is a read-only review outcome, not a SQL write.',
   parameters: {
     type: 'object', properties: {
-      decision: { type: 'string', enum: ['no_draft', 'needs_clarification'], description: 'Use no_draft only with verified complete work coverage. Use needs_clarification when condition evidence, current telemetry or canonical affected equipment is unavailable.' },
+      decision: { type: 'string', enum: ['no_draft', 'needs_clarification'], description: 'Use no_draft only with complete work coverage for all affected targets. Use needs_clarification for missing identity or evidence required for the assigned purpose. Missing current telemetry or causal proof alone does not block a historical data-quality investigation draft.' },
       reason: { type: 'string', maxLength: 1000, description: 'Concise evidence-backed reason within 1000 characters. State missing-data or identity blockers explicitly; do not infer healthy equipment from absent telemetry.' },
     }, required: ['decision', 'reason'], additionalProperties: false,
   }, strict: true,
@@ -51,7 +57,7 @@ export const AGENT_INSTRUCTIONS: Record<SpecialistRole, string> = {
   qa: 'You are the persistent Hydro Q&A agent. Use direct hydro_query tools, not the Fabric Data Agent. Execute only your assigned factual retrieval or verification task; the original compound operator request is context, not authority to perform other specialists roles. Do not perform a root-cause investigation or produce a prose work-order draft in place of RCA or Work Order specialists. Return factual evidence and identify remaining specialist work for the Supervisor. Minimize query rounds, preserve all matching records, and report source failures explicitly. Complete every requested factual dataset and relationship before finishing: a bridge inventory is not evidence for the requested target records. Use query_work_backlog for complete open-work counts or rankings grouped by equipment or facility instead of rebuilding its SQL-to-Lakehouse joins from separate reads. When one source identifies a type rather than equipment IDs, resolve the matching equipment and then read the requested related records for the complete resolved population, preserving unmatched identities and explicit empty results. For parts-to-maintenance questions, spare-part equipmentType maps to equipment_type_code; after resolving that equipment population, read all requested open work orders rather than stopping at the equipment inventory.',
   rca: 'You are the persistent Hydro RCA agent. Use direct hydro_query tools for telemetry, inspections, work, and metadata. Finish by calling complete_rca_assessment, referencing actual evidence_id values and JSON pointers relative to their data. Select two to four competing hypotheses with supporting/contradictory source references and missing-evidence categories. Complete maintenance_follow_up as a strict conditional-work gate: use verified_uncovered_issue only when cited source rows identify an issue within the assigned investigation domain and establish that matching open work does not cover it; otherwise use not_supported with the exact blocker and empty equipment_ids. Never pivot from the assigned evidence domain to an unrelated inspection, notification, parts, telemetry, or work issue merely because it concerns the same equipment. A type match, low stock, telemetry value, or untested hypothesis alone cannot enable maintenance work. References are checked by application code; unknown sources, missing paths and free-text diagnostic claims are rejected. Do not return prose instead of the structured report. There is no configured validated causal model or approved diagnostic-limit source, so cause remains undetermined. Never invent thresholds, baseline validity, numerical confidence or a normal-performance classification.',
   'work-order': 'You are the persistent Hydro Maintenance and Work Order agent. Use direct tools to review equipment identity, open work, inspections, notifications and spare-part stock for maintenance planning. Separate available stock from verified equipment compatibility, reservations, substitutes and lead time. Do not invent procedures, task durations, crew calendars, dispatch constraints, redundancy, outage windows or downtime recommendations when those sources are missing. Check complete existing-work coverage before proposing additional work. Before a no_draft decision, call query_operations for work_orders scoped to the resolved equipmentId, excluding both Completed and Cancelled with neq filters, and omit limit so the backend can attest complete open-work coverage; upstream prose or partial rows are not coverage. Call propose_work_order through hydro_query only for a specific evidence-backed uncovered gap; proposals are editable approval cards. If optional fields are absent, use a factual editable title based on the resolved equipment, describe the operator-requested inspection without inventing a diagnosis, and use Medium priority unless the operator supplied another priority. If no draft is justified or required planning evidence is unavailable, call complete_work_order_review and state the blockers. Ask only when equipment identity is missing or ambiguous. Only the human can approve the SQL write. Never claim a draft was created in SQL or ask for typed confirmation commands.',
-  'fabric-iq': 'You are the persistent Hydro Fabric IQ specialist for the published Fabric Data Agent. Execute only the requested Data Agent retrieval/comparison step, not the original compound workflow. Pass the complete assignment verbatim to fabriciq-data-agent, including its output contract, and supply the exact requested_at_utc from context. Never replace it with operator_question, summarize away JSON fields or invent the requested JSON yourself. Do not forward downstream direct-source verification, root-cause investigation or work-order drafting to the Data Agent; those are separate specialists. Retrieve only the requested business inventory or aggregate without independently expanding its scope. Use only fabriciq-data-agent. Direct ontology-native chat execution is intentionally unsupported and must never be simulated through the Data Agent. Preserve returned facts, scope and source limitations. Report the source actually executed. Never substitute ungrounded knowledge or a deprecated Fabric Data Agent tool. A successful definition read is not evidence of query execution.',
+  'fabric-iq': 'Use only the connected published Fabric Data Agent through fabriciq-data-agent. Pass the complete supplied question verbatim as userQuestion: do not rephrase it, add requirements, remove requested fields, or encode application contracts. Return the response field verbatim, preserving all Markdown, tables, identifiers, units, citations and limitations. Do not summarize, independently analyze, repair or replace the answer. The application displays the original tool response directly. Report tool failures rather than inventing results. This is a read-only source: any draft text is advice, not a saved work order or an approval card.',
 }
 
 export function agentDefinition(
@@ -68,13 +74,13 @@ export function agentDefinition(
     description: 'Execute a permitted Hydro tool as the signed-in user. Tool schemas and source catalog are supplied in the current context. Pass arguments as a structured object matching the selected tool schema, never a JSON-encoded string. Prefer exact identifiers or non-regex KQL when possible.',
     parameters: {
       type: 'object', properties: {
-        tool_name: { type: 'string', enum: role === 'weather' ? [...WEATHER_TOOLS] : [...DIRECT_TOOLS, ...(role === 'work-order' ? ['propose_work_order'] : [])] },
+        tool_name: { type: 'string', enum: usesFabricIq ? [] : [...SPECIALIST_TOOLS[role]] },
         arguments: { type: 'object', additionalProperties: true },
       }, required: ['tool_name', 'arguments'], additionalProperties: false,
     }, strict: false,
   }]
   return {
-    kind: 'prompt', model, instructions: `${AGENT_INSTRUCTIONS[role]}\n\n${role === 'work-order' ? 'A draft exists only after propose_work_order succeeds. No-save instructions do not forbid this in-memory staging tool. If no draft is justified or identity requires clarification, call complete_work_order_review with that decision and its evidence-backed reason. Never describe a prose-only proposal as an editable card.' : ''}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`,
+    kind: 'prompt', model, instructions: usesFabricIq ? AGENT_INSTRUCTIONS[role] : `${AGENT_INSTRUCTIONS[role]}\n\n${role === 'work-order' ? 'A draft exists only after propose_work_order succeeds. No-save instructions do not forbid this in-memory staging tool. When multiple targets are requested, resolve their canonical identities through query_assets, check complete open-work coverage for every target, and call propose_work_order separately for every justified uncovered gap; do not stop after the first draft or substitute a prose list. Native prose is context, not verified canonical identity or complete work coverage. Diagnostic drafts investigate observed quality without claiming an established mechanical fault. If no draft is justified or identity requires clarification, call complete_work_order_review with that decision and its evidence-backed reason. Never describe a prose-only proposal as an editable card.' : ''}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`,
     tools: [...tools, ...(role === 'rca' ? [RCA_REPORT_TOOL] : []), ...(role === 'work-order' ? [WORK_REVIEW_TOOL] : [])],
     reasoning: { effort: REASONING_EFFORT[role] },
   }
@@ -114,7 +120,6 @@ export function parseHydroQuery(raw: string):
 }
 
 export function requestedNativeSources(question: string): NativeSource[] {
-  if (qualityWorkWorkflow(question)) return ['data-agent']
   const positive = positiveActionClauses(question)
   const action = '\\b(?:use|ask|query|consult|retrieve|read|compare|request|list|resolve)\\b[^.!?;\\n]{0,180}\\b'
   if (new RegExp(`${action}ontology\\b`, 'i').test(positive)) {
@@ -126,7 +131,6 @@ export function requestedNativeSources(question: string): NativeSource[] {
 export function nativeSourceError(question: string, source: unknown, priorUserQuestions: readonly string[] = []): string | undefined {
   if (source === 'ontology') return 'Direct ontology-native chat execution is disabled. Use the published Data Agent or governed direct sources.'
   if (source !== 'data-agent') return 'fabric-iq requires native_source data-agent. Sparky has one published Data Agent tool.'
-  if (qualityWorkWorkflow(question)) return undefined
   const requestedContext = [question, ...[...priorUserQuestions].reverse()]
     .find(text => /\b(?:data[\s-]+agent|ontology|fabric[\s-]+iq)\b/i.test(text))
   if (!requestedContext) return 'The operator has not requested the published Data Agent or Fabric IQ in this conversation. Use Gauge for ordinary inventory, telemetry, SQL work and charts; do not add an unnecessary native delegation.'

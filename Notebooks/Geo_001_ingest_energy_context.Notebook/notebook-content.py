@@ -21,7 +21,8 @@
 #
 # Bind this notebook to **Hydro_GeoContext_{env_suffix}**, never the synthetic STID
 # lakehouse. Deployment supplies the binding; no service principal, secret, or Fabric
-# control-plane call is needed here. `workspace_id` defaults to runtime context.
+# control-plane call is needed here. Workspace and suffix default to runtime context.
+# A supplied `geo_lakehouse_id` must match that binding and supports custom names.
 # Use separate workspace/bindings and an explicit suffix for dev/test/prod promotion.
 # Create a **schema-disabled** GeoContext Lakehouse by omitting `creationPayload`
 # from the REST create request (`enableSchemas` only accepts `true`). The aliases
@@ -40,6 +41,8 @@
 # IDs and one page, not 800,000 feature dictionaries. Normalized gzip JSONL shards
 # are read by Spark once per layer; Delta `replaceWhere` atomically replaces only a
 # complete layer. Source/validation failures retain the previous partition.
+# Imports use provider-bounded pages of up to 1,000 records, fast lossless gzip,
+# and one initial status transaction. Per-layer phase timings are logged and archived.
 # Bronze responses, rejected geometry and attempt logs are retained under
 # `Files/bronze/geo_context/<source>/<run_id>/<layer>/`; nothing is vacuumed here.
 #
@@ -109,6 +112,9 @@
 #   Historical manual corrections are retained byte-for-byte, not promoted to a
 #   later revision. Serving MUST join message_feature_id AND message_version.
 #   Unsupported/ambiguous notices remain unlinked with coverage counts in run logs.
+#   When no manual links exist, coverage counts only the staged automatic keys;
+#   no empty-manual join/count job is launched. Nonempty manual history keeps all
+#   revision/asset validation and orphan coverage checks.
 # Both new tables have validated flat `Tables/<table>` locations and atomic writes.
 # Auxiliary failures keep last-good tables, are archived/reported, and fail the job.
 # Auxiliary attempt logs do not add rows or change counts in `geo_source_status`.
@@ -129,7 +135,8 @@
 # PARAMETERS CELL ********************
 
 workspace_id = ""
-env_suffix = "V6"
+env_suffix = ""
+geo_lakehouse_id = ""
 refresh_mode = "all"
 force_refresh = False
 
@@ -247,7 +254,8 @@ AREA_POINTS = {
     "LT": (24.0, 55.2), "PL": (19.1, 52.1),
 }
 NVE_EXTENT = (-15.0, 48.0, 45.0, 82.0)  # also rejects swapped Norwegian lon/lat
-ARCGIS_CHUNK_SIZE = 1000  # <= advertised maxRecordCount=2000
+# NVE rejects object-ID queries above 1,000 even when maxRecordCount advertises 2,000.
+ARCGIS_CHUNK_SIZE = 1000
 NORMALIZED_SHARD_ROWS = 10000  # gzip shards allow parallel Spark input
 UMM_HORIZON_DAYS = 30
 UMM_PAGE_SIZE = 500
@@ -533,7 +541,7 @@ class LayerSpool:
         artifact = config.get("artifact_id", config["layer_id"])
         self.local = Path(root) / config["source_id"] / artifact
         self.local.mkdir(parents=True, exist_ok=False)
-        self.raw = gzip.open(self.local / "responses.jsonl.gz", "wt", encoding="utf-8")
+        self.raw = gzip.open(self.local / "responses.jsonl.gz", "wt", encoding="utf-8", compresslevel=1)
         self.normalized = None
         self.row_count = self.unmapped_count = self.rejected_count = 0
         self.details = {}
@@ -557,7 +565,7 @@ class LayerSpool:
             directory = self.local / "normalized"
             directory.mkdir(exist_ok=True)
             filename = directory / f"part-{self.row_count // NORMALIZED_SHARD_ROWS:06d}.jsonl.gz"
-            self.normalized = gzip.open(filename, "wt", encoding="utf-8")
+            self.normalized = gzip.open(filename, "wt", encoding="utf-8", compresslevel=1)
         self.normalized.write(json_text(row) + "\n")
         self.row_count += 1
         if not row["geometry_json"]:
@@ -673,7 +681,12 @@ class PublicHTTP:
                 except ValueError as exc:
                     raise SourceError(f"non-JSON response: {url}; response retained in bronze") from exc
                 if isinstance(result, dict) and result.get("error"):
-                    raise SourceError(f"source returned an error envelope: {url}")
+                    error = result["error"]
+                    code = error.get("code") if isinstance(error, dict) else None
+                    if (code == 429 or isinstance(code, int) and 500 <= code < 600) and attempt + 1 < self.attempts:
+                        time.sleep(retry_seconds(response.headers.get("Retry-After"), attempt, datetime.now(timezone.utc)))
+                        continue
+                    raise SourceError(f"source returned an error envelope: {url}: {json_text(error)}")
                 return result
             finally:
                 response.close()
@@ -1772,12 +1785,13 @@ class SparkStore:
         self.link_schema = spark_schema(ASSET_LINK_FIELDS)
         self.table_locations = {}
         for name, fields, partitions in TABLE_CONTRACTS:
-            schema = spark_schema(fields)
             if not spark.catalog.tableExists(name):
-                writer = spark.createDataFrame([], schema).write.format("delta").mode("errorifexists")
-                if partitions:
-                    writer = writer.partitionBy(*partitions)
-                writer.saveAsTable(name)
+                columns = ",".join(f"`{field}` {dtype}" for field, dtype in fields)
+                partition_clause = (
+                    " PARTITIONED BY (" + ",".join(f"`{field}`" for field in partitions) + ")"
+                    if partitions else ""
+                )
+                spark.sql(f"CREATE TABLE `{name}` ({columns}) USING DELTA{partition_clause}")
             schema_matches(
                 [(field.name, field.dataType.simpleString().replace("bigint", "long")) for field in spark.table(name).schema],
                 fields,
@@ -1818,11 +1832,16 @@ class SparkStore:
         return self.statuses.get(layer)
 
     def set_status(self, value):
-        frame = self.spark.createDataFrame([value], self.status_schema)
+        self.set_statuses([value])
+
+    def set_statuses(self, values):
+        if not values:
+            return
+        frame = self.spark.createDataFrame(values, self.status_schema).coalesce(1)
         self.delta.forName(self.spark, STATUS_TABLE).alias("target").merge(
             frame.alias("incoming"), "target.layer_id = incoming.layer_id",
         ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
-        self.statuses[value["layer_id"]] = value
+        self.statuses.update({value["layer_id"]: value for value in values})
 
     def publish(self, spool, table_name=FEATURE_TABLE):
         from pyspark import StorageLevel
@@ -1948,13 +1967,9 @@ class SparkStore:
             )).select(F.col("feature_id").alias("asset_feature_id"), F.col("layer_id").alias("asset_layer_id"))
             # Validate curated references with a distributed join, not a driver
             # collection of national network features. Preserve orphaned history.
-            current_manual_rows = real_assets.join(
-                F.broadcast(manual_for_current_messages), ["asset_feature_id", "asset_layer_id"], "inner",
-            ) if manual_count else manual_for_current_messages
-            current_manual = current_manual_rows.select(*LINK_MESSAGE_KEY).distinct()
-            linked_messages = automatic_messages.unionByName(current_manual).distinct().count()
-            current_manual_count = current_manual.count()
-            orphaned_manual_current = manual_for_current_messages.count() - current_manual_rows.count() if manual_count else 0
+            linked_messages, current_manual_count, orphaned_manual_current = current_link_coverage(
+                automatic_messages, manual_for_current_messages, real_assets, manual_count,
+            )
             spool.row_count = automatic_count + manual_count
             spool.details.update({
                 **asset_counts, "source_feature_table_version": source_version,
@@ -1984,6 +1999,21 @@ class SparkStore:
 
 def exclude_manually_curated_messages(automatic, manual):
     return automatic.join(manual.select(*LINK_MESSAGE_KEY).distinct(), list(LINK_MESSAGE_KEY), "left_anti")
+
+
+def current_link_coverage(automatic_messages, manual_for_current_messages, real_assets, manual_count):
+    if not manual_count:
+        return automatic_messages.count(), 0, 0
+    from pyspark.sql import functions as F
+    current_manual_rows = real_assets.join(
+        F.broadcast(manual_for_current_messages), ["asset_feature_id", "asset_layer_id"], "inner",
+    )
+    current_manual = current_manual_rows.select(*LINK_MESSAGE_KEY).distinct()
+    return (
+        automatic_messages.unionByName(current_manual).distinct().count(),
+        current_manual.count(),
+        manual_for_current_messages.count() - current_manual_rows.count(),
+    )
 
 
 def validate_link_frame(frame, manual=False):
@@ -2047,10 +2077,22 @@ def run_one_layer(config, store, fs, root, run_id, session, clock,
     spool, archived = None, False
     try:
         spool = LayerSpool(root, config, run_id, attempted)
+        phase_started = time.monotonic()
+        print(json_text({"layer_id": config["layer_id"], "phase": "acquiring"}), flush=True)
         producer(spool, PublicHTTP(session, spool), clock)
+        timings = {"acquisition": round(time.monotonic() - phase_started, 3)}
+        spool.details["timings_seconds"] = timings
+        print(json_text({"layer_id": config["layer_id"], "phase": "archiving",
+                         "rows": spool.row_count, "timings_seconds": timings}), flush=True)
+        phase_started = time.monotonic()
         spool.archive(fs, "prepared", "Source acquisition complete; not yet committed to Delta")
         archived = True
+        timings["archive"] = round(time.monotonic() - phase_started, 3)
+        print(json_text({"layer_id": config["layer_id"], "phase": "validating_and_publishing",
+                         "timings_seconds": timings}), flush=True)
+        phase_started = time.monotonic()
         store.publish(spool)
+        timings["validation_and_publication"] = round(time.monotonic() - phase_started, 3)
     except failure_types as exc:
         message = f"{type(exc).__name__}: {exc}; last-good counts/success preserved"
         if spool is not None:
@@ -2090,9 +2132,10 @@ def run_layers(configs, store, fs, root, run_id, session, mode, force, clock,
                producer=produce_layer, failure_types=(SourceError, OSError)):
     results = []
     # All twelve layer statuses are visible even while the first large import runs.
-    for config in configs:
-        if store.get_status(config["layer_id"]) is None:
-            store.set_status(source_status(config, None, None, "error", "No successful snapshot yet; not imported"))
+    store.set_statuses([
+        source_status(config, None, None, "error", "No successful snapshot yet; not imported")
+        for config in configs if store.get_status(config["layer_id"]) is None
+    ])
     for config in configs:
         previous = store.get_status(config["layer_id"])
         refresh, reason = refresh_decision(config, previous, mode, force, clock())
@@ -2174,28 +2217,36 @@ def run_auxiliary_outputs(store, fs, root, run_id, session, mode, force, clock,
         result = run_auxiliary_output(config, store, fs, root, run_id, session, mode, force, clock, failure_types)
         results.append(result)
         print(json_text(result))
-    failures = [result["table"] for result in results if result["state"] == "error"]
+    failures = [f"{result['message']}; archive={result['bronze_uri']}/attempt.json"
+                for result in results if result["state"] == "error"]
     if failures:
         raise SourceError("Required auxiliary publication failed: " + ", ".join(failures) + "; see archived attempt logs")
     return results
 
 
-def validate_parameters(workspace, suffix, mode, force, context):
+def validate_parameters(workspace, suffix, mode, force, context, target_lakehouse_id=""):
     if mode not in ("all", "operational"):
         raise SourceError("refresh_mode must be 'all' or 'operational'")
     if isinstance(force, str) and force.lower() in ("true", "false"):
         force = force.lower() == "true"
     if not isinstance(force, bool):
         raise SourceError("force_refresh must be boolean (or true/false pipeline text)")
-    if not isinstance(suffix, str) or not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
-        raise SourceError("env_suffix must be an explicit safe environment suffix")
-    expected = f"Hydro_GeoContext_{suffix}"
-    if context.get("defaultLakehouseName") != expected or not context.get("defaultLakehouseId"):
-        raise SourceError(f"Bind the notebook to default lakehouse {expected}; refusing writes to another lakehouse")
+    if not isinstance(suffix, str) or (suffix and not re.fullmatch(r"[A-Za-z0-9_]+", suffix)):
+        raise SourceError("env_suffix must be a safe environment suffix or empty for the bound GeoContext")
+    bound_name = context.get("defaultLakehouseName")
+    bound_id = context.get("defaultLakehouseId")
+    if not isinstance(bound_name, str) or not bound_name.strip() or not bound_id:
+        raise SourceError("Bind the notebook to this workspace's GeoContext Lakehouse before importing energy data")
+    if not target_lakehouse_id:
+        expected = f"Hydro_GeoContext_{suffix}" if suffix else None
+        if (expected and bound_name != expected) or not re.fullmatch(r"Hydro_GeoContext_[A-Za-z0-9_]+", bound_name):
+            raise SourceError("The default Lakehouse is not the selected GeoContext; pass its verified geo_lakehouse_id for a custom name")
     current = context.get("currentWorkspaceId")
     workspace = workspace or current
     try:
-        if str(UUID(workspace)) != str(UUID(current)):
+        if not UUID(str(bound_id)).int or (target_lakehouse_id and UUID(str(target_lakehouse_id)) != UUID(str(bound_id))):
+            raise SourceError("geo_lakehouse_id does not match the notebook's bound Lakehouse; refusing writes")
+        if not UUID(str(workspace)).int or str(UUID(workspace)) != str(UUID(current)):
             raise SourceError("workspace_id does not match the runtime workspace")
         lakehouse_workspace = context.get("defaultLakehouseWorkspaceId")
         if not lakehouse_workspace or str(UUID(lakehouse_workspace)) != str(UUID(workspace)):
@@ -2225,7 +2276,7 @@ from pyspark.errors import PySparkException
 
 context = notebookutils.runtime.context
 workspace_id, force_refresh = validate_parameters(
-    workspace_id, env_suffix, refresh_mode, force_refresh, context,
+    workspace_id, env_suffix, refresh_mode, force_refresh, context, geo_lakehouse_id,
 )
 is_for_pipeline = context["isForPipeline"]
 run_id = str(uuid4())

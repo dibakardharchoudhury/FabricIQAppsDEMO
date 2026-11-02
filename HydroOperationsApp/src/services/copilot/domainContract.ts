@@ -113,8 +113,7 @@ export function describeToolEvidence(
   tool: string, args: Record<string, unknown>, result: Record<string, unknown>,
 ): EvidenceDatasetDescription[] {
   const complete = result.truncated === false
-    || ['query_work_backlog', 'query_station_power', 'query_signal_quality_snapshot',
-      'query_turbine_temperature_snapshot', 'propose_work_order'].includes(tool)
+    || ['query_work_backlog', 'query_station_power', 'propose_work_order'].includes(tool)
   const scope = hasEquipmentFilter(args) || tool === 'query_telemetry' ? 'focus' : 'population'
   const describe = (
     kind: string, field = 'rows', options: Partial<EvidenceDatasetDescription> = {},
@@ -167,10 +166,10 @@ export function describeToolEvidence(
     })]
   }
   if (tool === 'query_signal_quality_snapshot') {
-    return [describe('signal_quality', 'rows', { scope: 'population', complete: true })]
+    return [describe('signal_quality', 'rows', { scope: 'population' })]
   }
   if (tool === 'query_turbine_temperature_snapshot') {
-    return [describe('temperature', 'rows', { scope: 'population', complete: true })]
+    return [describe('temperature', 'rows', { scope: 'population' })]
   }
   if (tool === 'propose_work_order') {
     return [describe('work_orders', 'existing_work', {

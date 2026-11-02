@@ -16,7 +16,7 @@ import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -59,7 +59,7 @@ def load_helpers():
         Timeout=RequestTimeout, ConnectionError=RequestConnectionError, RequestException=RequestFailure,
     )}
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(NOTEBOOK), "exec"), namespace)
-    namespace["time"] = types.SimpleNamespace(sleep=Mock())
+    namespace["time"] = types.SimpleNamespace(sleep=Mock(), monotonic=Mock(return_value=0))
     return namespace
 
 
@@ -191,6 +191,10 @@ class MemoryStore:
     def set_status(self, row):
         self.history.append(copy.deepcopy(row))
         self.statuses[row["layer_id"]] = copy.deepcopy(row)
+
+    def set_statuses(self, rows):
+        for row in rows:
+            self.set_status(row)
 
     def publish(self, spool):
         rows = []
@@ -553,6 +557,27 @@ class UMMTests(HelpersTest):
 
 
 class HTTPAndArcGISTests(HelpersTest):
+    def test_arcgis_http_200_service_not_started_retries_with_existing_budget(self):
+        error = {"error": {"code": 500, "details": [], "message": "Error handling service request :Service not started."}}
+        responses = [FakeResponse(error), FakeResponse({"name": "Budomraade"})]
+        spool = types.SimpleNamespace(record=Mock())
+        session = Mock(request=Mock(side_effect=responses))
+        result = self.ns["PublicHTTP"](session, spool).get_json(self.ns["PRICE_AREA_URL"])
+        self.assertEqual(result, {"name": "Budomraade"})
+        self.assertEqual(session.request.call_count, 2)
+        self.assertEqual(spool.record.call_count, 2)
+        self.assertTrue(all(response.closed for response in responses))
+        self.ns["time"].sleep.assert_called_once_with(1.0)
+
+    def test_arcgis_error_envelope_exhaustion_preserves_provider_reason(self):
+        response = FakeResponse({"error": {"code": 500, "message": "Service not started."}})
+        session = Mock(request=Mock(return_value=response))
+        spool = types.SimpleNamespace(record=Mock())
+        with self.assertRaisesRegex(self.error, "Service not started"):
+            self.ns["PublicHTTP"](session, spool, attempts=3).get_json(self.ns["PRICE_AREA_URL"])
+        self.assertEqual(session.request.call_count, 3)
+        self.assertEqual(spool.record.call_count, 3)
+
     def test_bounded_backoff_archives_responses_and_uses_read_only_post(self):
         spool = types.SimpleNamespace(record=Mock())
         responses = [FakeResponse({}, 429, {"Retry-After": "999999"}), FakeResponse({}, 503), FakeResponse({"count": 2})]
@@ -620,6 +645,36 @@ class HTTPAndArcGISTests(HelpersTest):
             list(self.call("iter_arcgis", SequenceHTTP(self.arcgis_bodies([1, 2, 4])), self.ns["GRID_SERVICE"] + "/4", details))
         self.assertFalse(details["reconciled"])
 
+    def test_arcgis_page_size_still_honors_smaller_provider_limit(self):
+        bodies = self.arcgis_bodies()
+        bodies[1]["maxRecordCount"] = 2
+        http, details = SequenceHTTP(bodies), {}
+        self.assertEqual(self.ns["ARCGIS_CHUNK_SIZE"], 1000)
+        rows = list(self.call("iter_arcgis", http, self.ns["GRID_SERVICE"] + "/4", details))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(details["page_size"], 2)
+        self.assertTrue(details["reconciled"])
+
+    def test_arcgis_caps_id_queries_despite_larger_advertised_record_limit(self):
+        ids = list(range(1, 2002))
+        bodies = [
+            {"copyrightText": "Fixture notice"},
+            {"fields": [{"name": "objectid"}], "maxRecordCount": 2000},
+            {"count": len(ids)}, {"objectIdFieldName": "objectid", "objectIds": ids},
+            {"type": "FeatureCollection", "features": [feature(oid) for oid in ids[:1000]]},
+            {"type": "FeatureCollection", "features": [feature(oid) for oid in ids[1000:2000]]},
+            {"type": "FeatureCollection", "features": [feature(ids[-1])]},
+            {"count": len(ids)}, {"objectIdFieldName": "objectid", "objectIds": ids},
+        ]
+        http, details = SequenceHTTP(bodies), {}
+        rows = list(self.call("iter_arcgis", http, self.ns["GRID_SERVICE"] + "/4", details))
+        pages = [call for call in http.calls if "objectIds" in (call[1] or {})]
+        self.assertEqual([len(call[1]["objectIds"].split(",")) for call in pages], [1000, 1000, 1])
+        self.assertTrue(all(call[2] == "POST" for call in pages))
+        self.assertEqual(len(rows), len(ids))
+        self.assertEqual(details["page_size"], 1000)
+        self.assertTrue(details["reconciled"])
+
     def test_arcgis_missing_duplicate_unexpected_and_truncated_ids_fail(self):
         for features, extra in [
             ([feature(1)], {}), ([feature(1), feature(1)], {}),
@@ -633,6 +688,47 @@ class HTTPAndArcGISTests(HelpersTest):
 
 
 class PublicationTests(HelpersTest):
+    def test_missing_statuses_are_initialized_in_one_transaction_before_import(self):
+        configs = [self.config("masts"), self.config("reservoirs")]
+        store = Mock()
+        store.get_status.return_value = None
+        self.ns["run_one_layer"] = Mock(return_value={"state": "ready"})
+        self.call("run_layers", configs, store, MemoryFS(), "unused", RUN_ID, Mock(),
+                  "all", False, lambda: NOW)
+        store.set_statuses.assert_called_once()
+        rows = store.set_statuses.call_args.args[0]
+        self.assertEqual([row["layer_id"] for row in rows], ["masts", "reservoirs"])
+        self.assertTrue(all(row["state"] == "error" and row["last_success_at"] is None for row in rows))
+        store.set_status.assert_not_called()
+
+    def test_batch_status_cache_changes_only_after_successful_delta_commit(self):
+        store = self.ns["SparkStore"].__new__(self.ns["SparkStore"])
+        store.spark, store.delta = Mock(), Mock()
+        store.status_schema, store.statuses = Mock(), {}
+        rows = [{"layer_id": "masts"}, {"layer_id": "reservoirs"}]
+        store.set_statuses(rows)
+        store.spark.createDataFrame.assert_called_once_with(rows, store.status_schema)
+        store.delta.forName.assert_called_once()
+        self.assertEqual(store.statuses, {row["layer_id"]: row for row in rows})
+        store.statuses = {}
+        commit = store.delta.forName.return_value.alias.return_value.merge.return_value
+        commit.whenMatchedUpdateAll.return_value.whenNotMatchedInsertAll.return_value.execute.side_effect = OSError("commit failed")
+        with self.assertRaisesRegex(OSError, "commit failed"):
+            store.set_statuses(rows)
+        self.assertEqual(store.statuses, {})
+
+    def test_new_delta_tables_are_created_without_empty_dataframe_write_jobs(self):
+        source = NOTEBOOK.read_text(encoding="utf-8")
+        store = next(node for node in ast.parse(source).body
+                     if isinstance(node, ast.ClassDef) and node.name == "SparkStore")
+        initializer = next(node for node in store.body
+                           if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+        text = ast.get_source_segment(source, initializer)
+        self.assertIn("CREATE TABLE", text)
+        self.assertIn("PARTITIONED BY", text)
+        self.assertNotIn("createDataFrame", text)
+        self.assertIn('info["partitionColumns"] != partitions', text)
+
     def old_status(self, config):
         return self.call("source_status", config, None, "2026-09-20T00:00:00Z", "ready", "old good",
                          "2026-09-20T00:00:00Z", {"row_count": 7, "unmapped_count": 2, "rejected_count": 1})
@@ -849,12 +945,25 @@ class RepositoryContractTests(HelpersTest):
             with self.subTest(parameters=parameters), self.assertRaises(self.error):
                 self.call("validate_parameters", *parameters)
         source = NOTEBOOK.read_text(encoding="utf-8")
-        for line in ('workspace_id = ""', 'env_suffix = "V6"', 'refresh_mode = "all"', "force_refresh = False"):
+        for line in ('workspace_id = ""', 'env_suffix = ""', 'geo_lakehouse_id = ""', 'refresh_mode = "all"', "force_refresh = False"):
             self.assertIn(line, source)
         self.assertNotIn("__main__", source)
         self.assertNotIn("SparkSession.builder", source)
         self.assertNotIn("credentials.get", source)
         self.assertNotIn("api.fabric.microsoft.com", source)
+
+    def test_bound_geocontext_is_dynamic_and_explicit_ids_support_renamed_lakehouses(self):
+        workspace, lakehouse = str(UUID(int=100)), str(UUID(int=101))
+        context = {"currentWorkspaceId": workspace, "defaultLakehouseWorkspaceId": workspace,
+                   "defaultLakehouseName": "Hydro_GeoContext_PROD_42", "defaultLakehouseId": lakehouse}
+        self.assertEqual(self.call("validate_parameters", "", "", "all", False, context), (workspace, False))
+        renamed = {**context, "defaultLakehouseName": "Norway Energy - production"}
+        self.assertEqual(self.call("validate_parameters", workspace, "", "all", True, renamed, lakehouse), (workspace, True))
+        for target in ("", str(UUID(int=102)), "not-a-guid"):
+            with self.subTest(target=target), self.assertRaises(self.error):
+                self.call("validate_parameters", workspace, "", "all", False, renamed, target)
+        with self.assertRaises(self.error):
+            self.call("validate_parameters", "", "V6", "all", False, context)
 
     def test_spark_publication_is_partition_scoped_and_not_per_page(self):
         source = NOTEBOOK.read_text(encoding="utf-8")
@@ -1093,6 +1202,38 @@ class TinyFrame:
 
 
 class AssetLinkTests(HelpersTest):
+    def test_no_manual_links_needs_one_count_and_no_manual_or_asset_actions(self):
+        automatic, manual, assets = Mock(), Mock(), Mock()
+        automatic.count.return_value = 7
+        self.assertEqual(self.call("current_link_coverage", automatic, manual, assets, 0), (7, 0, 0))
+        automatic.count.assert_called_once()
+        automatic.unionByName.assert_not_called()
+        self.assertEqual(manual.mock_calls, [])
+        self.assertEqual(assets.mock_calls, [])
+
+    def test_nonempty_manual_coverage_retains_asset_join_and_orphan_counts(self):
+        automatic, manual, assets = Mock(), Mock(), Mock()
+        matched = assets.join.return_value
+        current = matched.select.return_value.distinct.return_value
+        automatic.unionByName.return_value.distinct.return_value.count.return_value = 6
+        current.count.return_value = 2
+        manual.count.return_value = 4
+        matched.count.return_value = 3
+        functions = types.ModuleType("pyspark.sql.functions")
+        functions.broadcast = Mock(side_effect=lambda frame: frame)
+        sql = types.ModuleType("pyspark.sql")
+        sql.functions = functions
+        with patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": sql,
+                                      "pyspark.sql.functions": functions}):
+            result = self.call("current_link_coverage", automatic, manual, assets, 4)
+        self.assertEqual(result, (6, 2, 1))
+        functions.broadcast.assert_called_once_with(manual)
+        assets.join.assert_called_once_with(manual, ["asset_feature_id", "asset_layer_id"], "inner")
+        matched.select.assert_called_once_with(*self.ns["LINK_MESSAGE_KEY"])
+        manual.count.assert_called_once()
+        matched.count.assert_called_once()
+        current.count.assert_called_once()
+
     def asset(self, identifier="plant:1", name="Test Plant", owner="Example Energy AS", layer="hydro-plants", **extra):
         raw = {"Navn": name, "HovedEier": owner, "VannKraftverkID": 1, **extra} if layer == "hydro-plants" else {
             "navn": name, "eier": owner, "objectid": 1, **extra,

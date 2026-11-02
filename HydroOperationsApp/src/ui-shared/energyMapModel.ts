@@ -1,5 +1,6 @@
 import type { Feature, FeatureCollection, Geometry } from 'geojson'
 import { validateEnergyPropertyFilters, createEnergyPropertyFilters, type EnergyPropertyFilters } from './energyMapFilters'
+import { lakehouseTimestamp } from '../services/lakehouseConnector'
 
 export const MAP_LAYERS = [
   { id: 'transmission', label: 'Transmission lines', source: 'NVE grid', color: '#0f766e', minZoom: 3, defaultVisible: true },
@@ -103,9 +104,10 @@ function onSegment(a: XY, b: XY, p: XY): boolean {
     && p[0] >= Math.min(a[0], b[0]) && p[0] <= Math.max(a[0], b[0])
     && p[1] >= Math.min(a[1], b[1]) && p[1] <= Math.max(a[1], b[1])
 }
-function ringContains(ring: Ring, point: XY): -1 | 0 | 1 {
+function ringContains(ring: Ring, point: XY, indices?: number[]): -1 | 0 | 1 {
   let inside = false
-  for (let i = 1; i < ring.length; i++) {
+  for (let offset = 0; offset < (indices?.length ?? ring.length - 1); offset++) {
+    const i = indices ? indices[offset] : offset + 1
     const a = ring[i - 1], b = ring[i]
     if (onSegment(a, b, point)) return 0
     if ((a[1] > point[1]) !== (b[1] > point[1])
@@ -163,21 +165,52 @@ export function prepareAreaGeometry(geometry: Geometry | null): (point: XY) => b
       if (crossing || (touching && (a.polygon === b.polygon || sharedLine))) return invalid()
     }
   }
-  const contains = (polygon: Ring[], point: XY) => ringContains(polygon[0], point) >= 0
-    && !polygon.slice(1).some(hole => ringContains(hole, point) === 1)
-  const interior = (polygon: Ring[], point: XY) => ringContains(polygon[0], point) === 1
-    && polygon.slice(1).every(hole => ringContains(hole, point) === -1)
+  const ringBounds = (ring: Ring) => ring.reduce((box, point) => [
+    Math.min(box[0], point[0]), Math.min(box[1], point[1]), Math.max(box[2], point[0]), Math.max(box[3], point[1]),
+  ], [Infinity, Infinity, -Infinity, -Infinity])
+  const ringIndices = new Map<Ring, { minimum: number; maximum: number; buckets: number[][] }>()
+  const indexedContains = (ring: Ring, point: XY): -1 | 0 | 1 => {
+    let index = ringIndices.get(ring)
+    if (!index) {
+      const box = ringBounds(ring), count = Math.min(256, Math.ceil(Math.sqrt(ring.length)))
+      index = { minimum: box[1], maximum: box[3], buckets: Array.from({ length: count }, () => []) }
+      const bucket = (y: number) => Math.min(count - 1, Math.floor((y - box[1]) / (box[3] - box[1]) * count))
+      for (let i = 1; i < ring.length; i++) {
+        const first = bucket(Math.min(ring[i - 1][1], ring[i][1])), last = bucket(Math.max(ring[i - 1][1], ring[i][1]))
+        for (let position = first; position <= last; position++) index.buckets[position].push(i)
+      }
+      ringIndices.set(ring, index)
+    }
+    if (point[1] < index.minimum || point[1] > index.maximum) return -1
+    const bucket = Math.min(index.buckets.length - 1,
+      Math.floor((point[1] - index.minimum) / (index.maximum - index.minimum) * index.buckets.length))
+    return ringContains(ring, point, index.buckets[bucket])
+  }
+  const holes = new Map(polygons.map(polygon => [polygon, polygon.slice(1)
+    .map(ring => ({ ring, box: ringBounds(ring) })).sort((a, b) => a.box[1] - b.box[1])]))
+  const inHole = (polygon: Ring[], point: XY, includeBoundary: boolean) => {
+    for (const { ring, box } of holes.get(polygon)!) {
+      if (box[1] > point[1]) break
+      if (box[3] < point[1] || box[0] > point[0] || box[2] < point[0]) continue
+      const position = indexedContains(ring, point)
+      if (position === 1 || (includeBoundary && position === 0)) return true
+    }
+    return false
+  }
+  const contains = (polygon: Ring[], point: XY) => indexedContains(polygon[0], point) >= 0 && !inHole(polygon, point, false)
+  const interior = (polygon: Ring[], point: XY) => indexedContains(polygon[0], point) === 1 && !inHole(polygon, point, true)
   const samples = (ring: Ring) => ring.slice(1).flatMap((point, index) =>
     [point, [(point[0] + ring[index][0]) / 2, (point[1] + ring[index][1]) / 2]])
-  const bounds = polygons.map(polygon => polygon[0].reduce((box, point) => [
-    Math.min(box[0], point[0]), Math.min(box[1], point[1]), Math.max(box[2], point[0]), Math.max(box[3], point[1]),
-  ], [Infinity, Infinity, -Infinity, -Infinity]))
+  const bounds = polygons.map(polygon => ringBounds(polygon[0]))
+  const samplePoints = polygons.map(polygon => samples(polygon[0]))
+  const interiorSample = (points: XY[], polygon: Ring[], box: number[]) => points.some(point =>
+    point[0] > box[0] && point[0] < box[2] && point[1] > box[1] && point[1] < box[3] && interior(polygon, point))
   for (let i = 0; i < polygons.length; i++) {
     for (let j = 0; j < i; j++) {
       const a = bounds[i], b = bounds[j]
       if (a[0] >= b[2] || b[0] >= a[2] || a[1] >= b[3] || b[1] >= a[3]) continue
-      if (samples(polygons[i][0]).some(point => interior(polygons[j], point))
-        || samples(polygons[j][0]).some(point => interior(polygons[i], point))) return invalid()
+      if (interiorSample(samplePoints[i], polygons[j], b)
+        || interiorSample(samplePoints[j], polygons[i], a)) return invalid()
     }
   }
   return point => point.length >= 2 && point.every(Number.isFinite) && polygons.some(polygon => contains(polygon, point))
@@ -191,7 +224,7 @@ function parseObject(value: unknown, name: string): Record<string, unknown> {
 
 export function parseEnergyFeature(row: Record<string, unknown>): EnergyFeature {
   if (!isEnergyLayer(row.layer_id) || typeof row.feature_id !== 'string'
-    || typeof row.label !== 'string' || typeof row.ingested_at !== 'string') {
+    || typeof row.label !== 'string') {
     throw new Error('Fabric returned an invalid energy map feature.')
   }
   let geometry: Geometry | null = null
@@ -203,8 +236,8 @@ export function parseEnergyFeature(row: Record<string, unknown>): EnergyFeature 
   return {
     id: row.feature_id, layerId: row.layer_id, label: row.label, geometry,
     properties: parseObject(row.properties_json, 'feature properties'),
-    observedAt: typeof row.observed_at === 'string' && row.observed_at ? row.observed_at : null,
-    ingestedAt: row.ingested_at,
+    observedAt: row.observed_at == null || row.observed_at === '' ? null : lakehouseTimestamp(row.observed_at, 'observed_at'),
+    ingestedAt: lakehouseTimestamp(row.ingested_at, 'ingested_at'),
     sourceUrl: typeof row.source_url === 'string' ? row.source_url : '',
   }
 }
@@ -221,8 +254,8 @@ export function parseSourceStatus(row: Record<string, unknown>): EnergySourceSta
   }
   return {
     layerId: row.layer_id, state: row.state as 'ready' | 'error',
-    lastAttemptAt: typeof row.last_attempt_at === 'string' ? row.last_attempt_at : null,
-    lastSuccessAt: typeof row.last_success_at === 'string' ? row.last_success_at : null,
+    lastAttemptAt: row.last_attempt_at == null || row.last_attempt_at === '' ? null : lakehouseTimestamp(row.last_attempt_at, 'last_attempt_at'),
+    lastSuccessAt: row.last_success_at == null || row.last_success_at === '' ? null : lakehouseTimestamp(row.last_success_at, 'last_success_at'),
     rowCount: count(row.row_count), unmappedCount: count(row.unmapped_count),
     rejectedCount: count(row.rejected_count),
     message: typeof row.message === 'string' ? row.message : '',

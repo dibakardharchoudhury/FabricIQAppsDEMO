@@ -1,8 +1,19 @@
+import { HostedSourceAccessError } from '../hostedSourceAccess.ts'
+
 export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq' | 'weather'
 export const AGENT_DISPLAY_NAMES: Record<AgentRole, string> = {
-  supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky', weather: 'Weather',
+  supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky', weather: 'Gale',
 }
+export const AGENT_CAPABILITIES: ReadonlyArray<{ role: AgentRole; specialty: string; description: string }> = [
+  { role: 'supervisor', specialty: 'Coordination', description: 'Plans only the capabilities needed, coordinates dependencies and checks evidence and approval contracts.' },
+  { role: 'qa', specialty: 'Q&A and verification', description: 'Exact governed source queries, analytics and independent checks. Fully specified reads run without a specialist model call.' },
+  { role: 'fabric-iq', specialty: 'Fabric IQ', description: 'Ontology-grounded business questions through the Fabric Data Agent. Preserves its original answer without an extra rewriting model.' },
+  { role: 'weather', specialty: 'Weather', description: 'Scoped forecasts and observations with provider, location, time and units. Known queries use model-free source readers; adaptive queries can use the specialist.' },
+  { role: 'rca', specialty: 'Root-cause investigation', description: 'Assesses competing explanations against source evidence and identifies missing evidence. BAD telemetry alone does not establish a mechanical fault.' },
+  { role: 'work-order', specialty: 'Maintenance and work orders', description: 'Reviews current work coverage and prepares requested editable drafts. Saving requires your separate review and approval.' },
+]
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
+export type WorkOrderReview = { decision: 'no_draft' | 'needs_clarification'; reason: string }
 
 export type AgentTraceEntry = {
   id: string
@@ -52,11 +63,12 @@ export function failedExecutionEvents(
 }
 
 export function uncertifiedFailureMessage(error: unknown): string {
+  if (error instanceof HostedSourceAccessError) return error.message
   const technical = error instanceof Error && error.message.trim()
     ? error.message.trim()
     : 'The agent transport failed.'
   return `The request failed before a certified answer was returned. No answer or write outcome is certified. ` +
-    `Do not repeat this request or any write decision until connectivity recovers and the prior run audit is checked. ` +
+    `Do not repeat this request or any write decision until the reported failure is resolved and the prior run audit is checked. ` +
     `Technical detail: ${technical}`
 }
 
@@ -98,6 +110,13 @@ export function requiresInspectionEvidence(question: string): boolean {
 
 export function requiresDirectSourceVerification(question: string): boolean {
   return /\b(?:verify|check|compare|reconcile|reconciliation|verification)\b[^.!?;\n]{0,240}\bdirect\b/i.test(positiveActionClauses(question))
+}
+
+export function requestsDirectSourceRead(question: string): boolean {
+  const positive = positiveActionClauses(question)
+  return requiresDirectSourceVerification(question)
+    || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
+    || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)
 }
 
 export function requiredIndependentQaSteps(question: string): number {
@@ -291,29 +310,27 @@ export function requestsWeather(question: string): boolean {
 }
 
 export function qualityWorkWorkflow(question: string): 'facts' | 'drafts' | 'rca-drafts' | undefined {
-  const normalize = (value: string) => value.toLowerCase().replace(/[.,?!]/g, ' ').replace(/\s+/g, ' ').trim()
-  const base = 'Which turbines had BAD telemetry quality today, and what work is already open for these?'
-  const suffix = 'tell me which WOs need to be created and help me with the drafts.'
-  const normalized = normalize(question)
-  if (normalized === normalize(base)) return 'facts'
-  if (normalized === normalize(`${base} Based on this data, ${suffix}`)) return 'drafts'
-  if (normalized === normalize(`${base} Based on this data, do a RCA and ${suffix}`)) return 'rca-drafts'
-  return undefined
+  const positive = positiveActionClauses(question)
+  if (!requestsSignalQuality(question) || !/\bBAD\b/i.test(positive)
+    || !/\b(?:work|work[\s-]*orders?)\b/i.test(positive)
+    || !/\b(?:open|existing|already)\b/i.test(positive)) return undefined
+  if (!isWorkOrderRequest(question)) return 'facts'
+  return /\b(?:RCA|root[- ]cause|investigate|diagnose)\b/i.test(positive) ? 'rca-drafts' : 'drafts'
+}
+
+export function qualityMatchForRequest(question: string): 'latest' | 'any' {
+  const positive = positiveActionClauses(question)
+  if (/\b(?:latest|currently|current|running)\b/i.test(positive)) return 'latest'
+  return /\b(?:had|any|ever|occurred|occurrences?|samples?)\b/i.test(positive) ? 'any' : 'latest'
 }
 
 export function requiredSpecialists(question: string, hasNativeRequest = false): AgentRole[] {
-  const qualityWorkflow = qualityWorkWorkflow(question)
-  if (qualityWorkflow) {
-    return qualityWorkflow === 'facts' ? [] : qualityWorkflow === 'drafts' ? ['work-order'] : ['rca', 'work-order']
-  }
   const positive = positiveActionClauses(question)
   const weather = requestsWeather(question)
   const operational = /\b(?:telemetry|signals?|readings?|work[\s-]*orders?|inspections?|notifications?|spare parts?|inventory|turbines?|generators?|equipment)\b/i.test(positive)
   // A chart can only be drawn from source data, so any requested chart is a factual read whatever the measure.
   const factualRead = requiresChartOutput(question) || /\b(?:read|retrieve|inspect|list|show|return|query|check|verify|reconcile|compare|chart|plot|visualize|which|what)\b[^.!?;\n]{0,220}\b(?:telemetry|signals?|readings?|work(?:[\s-]+orders?)?|wos?|inspections?|notifications?|spare parts?|inventory|assets?|equipment|turbines?|generators?|facilit(?:y|ies)|relationships?|power|temperature|quality)\b/i.test(positive)
-  const downstreamRead = requiresDirectSourceVerification(question)
-    || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
-    || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)
+  const downstreamRead = requestsDirectSourceRead(question)
   const required = missingRequestedSpecialists(question, [])
   if ((factualRead || requestsWorkOrderNeedAssessment(question)) && (!weather || operational) && (!hasNativeRequest || downstreamRead) && !required.includes('qa')) required.push('qa')
   if (weather && (!hasNativeRequest || downstreamRead)) required.push('weather')

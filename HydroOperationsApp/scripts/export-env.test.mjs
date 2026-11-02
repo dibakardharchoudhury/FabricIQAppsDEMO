@@ -89,6 +89,12 @@ test('absent binding is optional and exporting unrelated public fields does not 
   assert.equal(canonicalGraphBinding("''", binding.workspaceId), '')
 })
 
+test('selected ontology identity exports without any native graph binding', () => {
+  const result = prepareFrontendEnv(`RAYFIN_PUBLIC_ONTOLOGY_ID=${binding.ontologyId}\n`)
+  assert.match(result.frontend, new RegExp(`VITE_RAYFIN_ONTOLOGY_ID='${binding.ontologyId}'`))
+  assert.doesNotMatch(result.frontend, /ONTOLOGY_GRAPH_BINDING/)
+})
+
 test('prebuild and predev use the repository producer, not the lossy SDK framework writer', async () => {
   const { scripts } = JSON.parse(await readFile(path.join(appRoot, 'package.json'), 'utf8'))
   assert.equal(scripts.env, 'node ./scripts/export-env.mjs')
