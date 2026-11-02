@@ -591,7 +591,6 @@ function renderFoundryFields(prefix, clientId) {
       <span>Allow project creation (billable)</span></label>
     <p id="${prefix}FoundryCreateHelp" class="hint">Existing project (even for a new Fabric workspace): unchecked. Missing project: check. Agent updates still run.</p>
     <p class="hint">Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked. Each workspace gets its own agent set. Model TPM/RPM remains shared. Global inference may apply.</p>
-    <p class="hint">Separate projects are not end-to-end verified. Creating another project did not resolve the earlier hosted-routing 404; do not use project creation as a 404 fix.</p>
     <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
     <details class="form-details">
       <summary>Setup details</summary>
@@ -1121,7 +1120,7 @@ function foundryValid(prefix) {
   const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Creation is enabled. For the verified multi-workspace shared-project path, leave unchecked. Creation does not fix hosted-routing 404s."
+    ? ""
     : "Enter a valid model deployment name above. Names use up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit.";
   return valid;
 }

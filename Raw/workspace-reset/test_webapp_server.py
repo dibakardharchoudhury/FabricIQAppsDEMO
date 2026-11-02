@@ -2453,8 +2453,8 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(help_text.split()), 20)
             self.assertIn("Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked.", normal_fields)
             self.assertIn("Model TPM/RPM remains shared.", normal_fields)
-            self.assertIn("Separate projects are not end-to-end verified.", normal_fields)
-            self.assertIn("Creating another project did not resolve the earlier hosted-routing 404", normal_fields)
+            self.assertNotIn("Separate projects are not end-to-end verified.", normal_fields)
+            self.assertNotIn("Creating another project did not resolve the earlier hosted-routing 404", normal_fields)
             self.assertNotIn("or use separate projects in one account", form)
             self.assertNotIn("Separate projects: keep the account/model", form)
             self.assertIn("stable workspace-GUID project", form)
@@ -2615,8 +2615,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal($(prefix+"FoundryProjectName").value, "existing-project-name");
   assert.equal($(prefix+"FoundryModel").value, "existing-model");
   assert.match($(prefix+"FoundryModeSummary").textContent, /Create only if missing/);
-  assert.match($(prefix+"FoundryCreationStatus").textContent, /verified multi-workspace shared-project path, leave unchecked/);
-  assert.match($(prefix+"FoundryCreationStatus").textContent, /Creation does not fix hosted-routing 404s/);
+  assert.equal($(prefix+"FoundryCreationStatus").textContent, "");
   assert.equal(foundryValid(prefix), true);
   const creating = foundryPayload(prefix);
   assert.equal(creating.createFoundry, true);
