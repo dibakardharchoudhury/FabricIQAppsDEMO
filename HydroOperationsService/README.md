@@ -335,6 +335,16 @@ and [workflow observability guidance](https://learn.microsoft.com/en-us/agent-fr
 Older dated deployment sections below are historical evidence, not the current
 architecture or a certification of those outstanding enterprise requirements.
 
+Fixer's function loop uses the same bounded 40-call allowance as the backend
+source budget, rather than a six-round/eight-call limit that could disable draft
+tools after a parallel verification batch or truncate a multi-target card set.
+Only complete work coverage read during the current request is attested to
+Fixer or accepted for a no-draft review. Missing coverage should
+be read in one equipment-ID batch, not one query per turbine. Every specialist
+completion attempt records its response ID, finish reason, function-call count,
+usage and elapsed time before completion validation, including failed attempts.
+These regression guarantees do not replace signed-in, source-backed acceptance.
+
 The opt-in live architecture evaluation uses the **existing** project/model,
 calls no business source tools and creates no agents or work orders. Set
 `HYDRO_EVALUATE_LIVE_PLANNER=1`, `HYDRO_FOUNDRY_PROJECT_ENDPOINT` and

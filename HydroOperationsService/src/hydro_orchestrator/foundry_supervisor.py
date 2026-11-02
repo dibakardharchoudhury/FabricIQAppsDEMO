@@ -41,6 +41,7 @@ Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq", "weather"]
 NativeSource = Literal["data-agent"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
+MAX_SOURCE_TOOL_CALLS = 40
 SEMANTIC_PLANNING_ATTEMPTS = 2
 PLANNING_MAX_OUTPUT_TOKENS = 3072
 REPORT_MAX_OUTPUT_TOKENS = 3072
@@ -1929,7 +1930,7 @@ class FoundrySupervisor:
                 task = self.source_tasks.get(key)
                 if task is None:
                     self.tool_calls += 1
-                    if self.tool_calls > 40:
+                    if self.tool_calls > MAX_SOURCE_TOOL_CALLS:
                         raise SourceFailure("The per-run source-tool budget was exceeded.")
                     task = asyncio.create_task(read_source())
                     self.source_tasks[key] = task
@@ -3354,7 +3355,10 @@ class FoundrySupervisor:
                 if prior is not None and prior != result:
                     raise SourceFailure("Evidence identity was reused for a different source result.")
                 self.evidence[result.id] = result
-                return {"evidence_id": result.id, "data": result.result, "limitations": result.limitations}
+                return {
+                    "evidence_id": result.id, "data": result.result, "limitations": result.limitations,
+                    "verified_work_coverage_equipment_ids": list(result.work_coverage_equipment_ids),
+                }
 
         async def report(**kwargs) -> dict[str, object]:
             nonlocal completed_report
@@ -3399,7 +3403,9 @@ class FoundrySupervisor:
                                      "Never reference receipt metadata such as /limitations.") from error
             if role == "work-order" and validated_report.get("decision") == "no_draft":
                 covered = {
-                    equipment for item in self.evidence.values() for equipment in item.work_coverage_equipment_ids
+                    equipment for item in self.evidence.values()
+                    if item.completed_at >= request.requested_at
+                    for equipment in item.work_coverage_equipment_ids
                 }
                 targets = self.selected_equipment_ids or {
                     equipment for item in self.evidence.values()
@@ -3520,6 +3526,10 @@ class FoundrySupervisor:
                 "and source limitations. Do not reproduce source rows or construct tables: the Supervisor presents "
                 "the complete immutable source records. Do not perform another specialist's analysis or prepare work."
                 if role in ("qa", "weather")
+                else "Call propose_work_order through hydro_query for every justified draft, or "
+                     "complete_work_order_review. No prose-only drafts, SQL writes or dispatch. "
+                     "Reuse attested coverage and batch missing reads."
+                if role == "work-order"
                 else "Tables by default. Values must be source references, never authored cells. "
                      "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
                      "Only an in-memory proposal is permitted; no SQL writes or dispatch."
@@ -3579,6 +3589,11 @@ class FoundrySupervisor:
                 "in the audit; verify only supplied source rows and structured specialist reports without rereading."
             )
         if role == "work-order":
+            context["verified_work_coverage"] = [
+                {"evidence_id": item.id, "equipment_ids": list(item.work_coverage_equipment_ids)}
+                for item in self.evidence.values()
+                if item.work_coverage_equipment_ids and item.completed_at >= request.requested_at
+            ]
             if proposal_authorized and not maintenance_gate_required:
                 context["work_order_execution"] = (
                     "Requested drafts are not fault-contingent repairs. RCA's not_supported repair gate does not "
@@ -3632,8 +3647,8 @@ class FoundrySupervisor:
             tools=functions, timeout=service_timeout,
             middleware=[finish_assessment],
             function_invocation_configuration={
-                "max_iterations": 6,
-                "max_function_calls": 8,
+                "max_iterations": MAX_SOURCE_TOOL_CALLS if role == "work-order" else 6,
+                "max_function_calls": MAX_SOURCE_TOOL_CALLS if role == "work-order" else 8,
                 "max_consecutive_errors_per_request": 1,
                 "terminate_on_unknown_calls": True, "include_detailed_errors": False,
                 "allow_concurrent_invocation": role != "supervisor",
@@ -3701,6 +3716,15 @@ class FoundrySupervisor:
                 except APITimeoutError as error:
                     raise SourceFailure(f"Foundry {role} invocation exceeded an upstream service deadline.") from error
                 self.healthy(request)
+                journal.save(f"specialist_attempt:{role}:{self.delegations}:{completion_attempt}", {
+                    "role": role, "response_id": response.response_id,
+                    "finish_reason": response.finish_reason,
+                    "function_call_count": sum(
+                        content.type == "function_call"
+                        for message in response.messages for content in message.contents
+                    ),
+                    "usage": response.usage_details, "duration_ms": (perf_counter() - started) * 1000,
+                })
                 if not response.response_id or (response.finish_reason == "length" and role != "fabric-iq"):
                     if completion_attempt == 0 and role != "supervisor":
                         logger.warning(

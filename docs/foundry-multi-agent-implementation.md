@@ -1,5 +1,32 @@
 # Foundry and multi-agent implementation record
 
+## November 2 Fixer function-budget incident
+
+The failed Dev browser invocation was traced to its original hosting session,
+not inferred from deployment health or another session's startup logs. Fixer
+performed ten parallel equipment-level work checks, but its Agent Framework
+loop allowed only eight function calls. The framework's best-effort limit is
+checked after a parallel batch and then disables tools, forcing a text response.
+The bounded repair repeated the problem instead of staging cards or completing
+a structured review. A separate ten-target regression reproduced another
+truncation: the six-round limit returned only six cards.
+
+Fixer's function and round limits now align with the existing 40-call backend
+budget. The backend still rejects source work beyond that bound; the larger
+function loop does not authorize writes or bypass coverage, identity or approval
+checks. Prior-turn work coverage cannot authorize a current no-draft decision.
+Fixer receives fresh source-attested complete-work coverage and instructions
+to batch missing coverage rather than repeat a query per turbine. Completion
+attempt diagnostics are committed before validating the returned response, so
+an omitted structured result retains response identity, finish reason, function
+count, usage and elapsed time.
+
+Regression scenarios include ten/fifteen-target card sets, parallel verification
+before staging, enforcement of the 40-source-call boundary, and retained failure
+diagnostics. These tests are not signed-in runtime acceptance. Promotion to
+Feature and Dev remains gated on representative source-backed prompt flows;
+authentication or deployment success alone cannot satisfy that gate.
+
 ## November 2 automatic ontology context and Fixer evidence handoff
 
 Complex correlations and contextual investigations use **Supervisor -> Sparky/Fabric IQ ->
