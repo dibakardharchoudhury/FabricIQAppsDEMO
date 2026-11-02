@@ -110,8 +110,8 @@ test('direct access resolves the unique published matching v2 source without dis
     ] })
     if (url.includes('/dataAgents/')) {
       publishedReads++
-      const source = { type: 'Ontology', artifactId: url.includes(agentId) ? ontologyId : graphModelId, workspaceId }
-      return Response.json({ definition: { parts: [{ path: 'Files/Config/published/source/datasource.json',
+      const source = { artifactId: url.includes(agentId) ? ontologyId : graphModelId, workspaceId }
+      return Response.json({ definition: { parts: [{ path: 'Files/Config/published/ontologies/source/ontology.json',
         payloadType: 'InlineBase64', payload: Buffer.from(JSON.stringify(source)).toString('base64') }] } })
     }
   }, { VITE_RAYFIN_ONTOLOGY_ID: ontologyId }, { './artifactDiscovery': artifactDiscovery })

@@ -1,5 +1,53 @@
 # Foundry and multi-agent implementation record
 
+## November 2 published MCP repair and live acceptance findings
+
+The direct browser Responses implementation reached a regional routing-token
+endpoint that does not allow the hosted application's CORS origin. Fabric IQ now
+uses the official published Data Agent MCP endpoint on `api.fabric.microsoft.com`,
+not that internal routing endpoint or a Foundry/server proxy. Published ontology
+definitions can occupy dedicated `published/ontologies/.../ontology.json` parts;
+verification must inspect those parts, not conclude that the ontology is absent
+from the SQL datasource profile alone.
+
+A real delegated Dev browser MCP call to the verified generation-2 ontology agent
+returned three facilities successfully (HTTP 200, `isError:false`, 20.313 seconds).
+The exact native answer digest was
+`258ca0a2848cbf23bbe1f2c596cf2877f8269fbb7d02a0637467cecdf72de733`.
+Native resource attachments and the envelope are retained without correcting a
+provider JSON-reference/CSV-attachment discrepancy. This transport provides
+independent questions; native conversational continuation is not established and
+must not be claimed by the UI.
+
+Separate authenticated Dev hosted passthrough run
+`dedd1fc8-e0f6-42c5-809f-2006720fc989` recorded ontology context injection and
+Lakehouse, Kusto and operational SQL analysis calls. This disproves a blanket
+missing-source or missing-SPA-permission diagnosis. The original mixed question
+has not passed acceptance: a subsequent run logged failed Rayfin work-order and
+Lakehouse connector GraphQL reads, and another streamed run terminated without
+certifying an answer. Missing current telemetry was also explicitly disclosed.
+No approval decisions or production SQL writes were exercised.
+
+Later probes could not resolve the deployment's capacity-specific AppBackend
+hostname from either the browser or local requests, although the selected
+capacity remained Active. Do not repair this by inventing another capacity URL,
+weakening source authentication, or treating failed work reads as empty work.
+Both earlier canonical deployments completed successfully; that historical
+readiness result does not certify the current source path or agent execution.
+
+Read-only intent also now retains negation across coordinated action lists:
+`Do not perform RCA, recommend, draft, create, approve or save any work orders`
+must not force proposal generation. Explicit positive commands after `but`,
+`however`, `instead` or a sentence boundary still require the governed draft
+workflow.
+
+The repair passed all 423 service tests (one skipped), Python type checking,
+64 focused MCP/mode/discovery/card tests, focused frontend lint/type checking,
+and the production build. Adding artifact snapshot checks produced 75 passes
+and two failures; the same two failures were reproduced against the deployed
+source baseline with the identical TypeScript loader. The full frontend suite
+is therefore not reported as passing.
+
 ## November 2 chat separation and role-completion contracts
 
 The current UX deliberately supersedes the October 29 single-entry design:

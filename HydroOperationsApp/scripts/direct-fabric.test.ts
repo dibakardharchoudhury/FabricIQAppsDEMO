@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DirectFabricConversation, readNativeResponse } from '../src/services/directFabric.ts'
+import { DirectResponsesConversation as DirectFabricConversation, readNativeResponse } from '../src/services/directFabric.ts'
+import { invokeVerifiedDataAgent, verifyPublishedAgentOntology } from '../src/services/artifactDiscovery.ts'
 
 const workspaceId = '11111111-1111-1111-1111-111111111111'
 const dataAgentId = '22222222-2222-2222-2222-222222222222'
 const capacity = '33333333-3333-3333-3333-333333333333'
+const ontologyId = '44444444-4444-4444-4444-444444444444'
 const origin = `https://${capacity.replaceAll('-', '')}.pbidedicated.windows.net`
 const nativeText = '  Native answer\r\n\n[Actual citation](https://example.com/evidence)\n'
 const completed = (id = 'resp_1') => ({ id, status: 'completed', output: [
@@ -14,6 +16,28 @@ const completed = (id = 'resp_1') => ({ id, status: 'completed', output: [
     { type: 'file_citation', filename: 'query-result.json', file_id: 'file_rows1' },
   ] }] },
 ] })
+
+test('dedicated published ontology parts verify exact v2 identity without requiring a datasource type field', async () => {
+  const part = (stage: string, value: unknown) => ({
+    path: `Files/Config/${stage}/ontologies/arbitrary-display-name/ontology.json`, payloadType: 'InlineBase64',
+    payload: Buffer.from(JSON.stringify(value)).toString('base64'),
+  })
+  const source = { artifactId: ontologyId, workspaceId, elements: [{ id: 'facilities', is_selected: true }] }
+  const definition = { definition: { parts: [part('published', source)] } }
+  verifyPublishedAgentOntology(definition, workspaceId, ontologyId)
+  let called = false
+  const result = await invokeVerifiedDataAgent({ generation: 2, workspaceId, ontologyId }, async () => definition, async () => { called = true; return 'native'; })
+  assert.equal(result, 'native')
+  assert.equal(called, true)
+  for (const invalid of [
+    { definition: { parts: [part('draft', source)] } },
+    { definition: { parts: [part('published', { ...source, artifactId: dataAgentId })] } },
+    { definition: { parts: [part('published', { ...source, workspaceId: dataAgentId })] } },
+    { definition: { parts: [part('published', { ...source, type: 'lakehouse' })] } },
+    { definition: { parts: [{ ...part('published', source), payload: Buffer.from('{broken').toString('base64') }] } },
+  ]) assert.throws(() => verifyPublishedAgentOntology(invalid, workspaceId, ontologyId))
+  await assert.rejects(invokeVerifiedDataAgent({ generation: '2', workspaceId, ontologyId }, async () => definition, async () => 'must not run'), /generation|v2/i)
+})
 
 function fixture(override?: (url: string, init?: RequestInit) => Response | undefined | Promise<Response | undefined>) {
   const requests: Array<{ url: string; init?: RequestInit }> = []
@@ -108,10 +132,28 @@ test('CORS/auth/provider/artifact failures are real errors without fallback or s
       if (url.includes('/files/')) return new Response('', { status: 500 })
     })
     await assert.rejects(client.ask('question', new AbortController().signal), kind === 'cors'
-      ? /CORS\/network.*no Foundry fallback/ : kind === 'provider' ? /did not complete \(failed\)/ : /HTTP/)
+      ? /CORS\/network[\s\S]*no Foundry fallback/i : kind === 'provider' ? /did not complete \(failed\)/ : /HTTP/)
     assert.equal(requests.filter(request => request.url.includes('/responses?')).length, 1)
     client.reset()
   }
+})
+
+test('regional ML routing preflight failure is an explicit platform boundary and cannot execute or downgrade the question', async () => {
+  const { client, requests } = fixture(url => {
+    if (url.endsWith('/metadata/v201606/generatemwctokenv2')) throw new TypeError('Failed to fetch')
+  })
+  await assert.rejects(client.ask('  Keep this native question unchanged.  ', new AbortController().signal), error => {
+    assert.ok(error instanceof Error)
+    assert.match(error.message, /regional ML routing failed \(POST https:\/\/test\.analysis\.windows\.net\/metadata\/v201606\/generatemwctokenv2\)/)
+    assert.match(error.message, /valid delegated token cannot bypass provider CORS/)
+    assert.match(error.message, /No answer was obtained; no Foundry fallback or proxy was used/)
+    return true
+  })
+  assert.ok(requests.some(request => request.url.endsWith('/clusterDetails')))
+  assert.equal(requests.filter(request => request.url.includes('/responses')).length, 0)
+  assert.equal(requests.filter(request => request.url.includes('/mcp/') || request.url.includes('.services.ai.azure.com')).length, 0)
+  assert.equal(requests.filter(request => request.url.endsWith('/generatemwctokenv2')).length, 1)
+  client.reset()
 })
 
 test('cancelled direct requests stop before invocation and do not advance follow-up state', async () => {

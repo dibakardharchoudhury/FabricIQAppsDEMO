@@ -4443,6 +4443,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "Stage an inspection draft only if an uncovered issue is supported.",
             "I need a WO for T005.",
             "Read BAD quality, investigate and propose a T005 signal inspection; verify.",
+            "Do not create work orders, but prepare editable work-order drafts.",
+            "Never create work orders automatically; instead prepare editable work-order drafts.",
         ):
             self.assertTrue(requests_new_work_order_proposal(question), question)
         for question in (
@@ -4451,6 +4453,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "Prepare a concise unsent notification. Do not save a work order.",
             "Do not create a work order.",
             "Review the prior draft and show the evidence gaps.",
+            "Do not perform RCA, recommend, draft, create, approve or save any work orders.",
+            "Never analyze the historical draft and then create or propose work orders.",
+            "Do not prepare, stage, propose, generate or create editable work-order drafts.",
         ):
             self.assertFalse(requests_new_work_order_proposal(question), question)
 

@@ -372,7 +372,7 @@ def requests_unsent_message(question: str) -> bool:
 
 def requests_new_work_order_proposal(question: str) -> bool:
     normalized = re.sub(r"\s+", " ", question.lower())
-    for clause in re.split(r"[.!?;]+", normalized):
+    for clause in re.split(r"[.!?;]+|\b(?:but|however|instead)\b", normalized):
         if not any(term in clause for term in ("work order", "work-order", " wo ", "draft", "propose")):
             continue
         if re.search(r"(?:^|please\s+)draft\b", clause.strip()):
@@ -381,8 +381,10 @@ def requests_new_work_order_proposal(question: str) -> bool:
             r"\b(?:prepare|create|stage|propose|open|raise|generate|make|need|want|request)\b",
             clause,
         ):
-            prefix = clause[max(0, match.start() - 32):match.start()]
-            if not re.search(r"\b(?:do not|don't|never|no)\b(?:\W+\w+){0,3}\W*$", prefix):
+            prefix = clause[:match.start()]
+            if not re.search(r"\b(?:do not|don't|never)\b", prefix) and not re.search(
+                r"\bno\b(?:\W+\w+){0,3}\W*$", prefix,
+            ):
                 return True
     return False
 
