@@ -23,9 +23,11 @@ do not prove source freshness or connector execution.
 ## Start a deployment
 
 1. Start the local app from the intended pushed checkout.
-2. Complete Core setup, including the verified generation-2 ontology and published Data Agent.
-3. Confirm the subscription; run **Set up Foundry agents**.
-4. Run **Deploy app**; require `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
+2. For a fresh workspace, confirm the subscription/account/project/model and run
+   **Full Deploy**. It includes Core setup, Foundry setup and app publication.
+3. For an already prepared workspace, use **Set up Foundry agents** for agent changes,
+   followed by **Deploy app** to publish website/configuration changes.
+4. Require `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
 
 Existing resources are reused. New-project creation requires a chat model name
 and explicit resource-creation approval. Website-only updates need **Deploy app** only.
@@ -72,8 +74,9 @@ current code; earlier records that describe a separate Chief prompt agent are hi
 
 1. The SPA posts to the Hosted Agent's Invocations endpoint with short-lived delegated tokens. The runtime verifies
    signature, tenant, audience, SPA client and one user identity across all resources.
-2. The Supervisor compiles a typed answer contract and a plan of one to eight steps, then runs the specialists
-   **serially**, passing earlier reports and immutable evidence forward.
+2. The Supervisor compiles a typed answer contract and a bounded plan. Independent
+   governed readers can run concurrently; evidence-dependent specialist steps run
+   in order, passing earlier reports and immutable evidence forward.
 3. Specialists call governed tools. The hosted runtime executes the reads with the user's own tokens, so the agents
    can read nothing the user could not.
 4. The runtime certifies receipts, validates every table cell against its source receipt, then asks the model for a
@@ -83,6 +86,30 @@ current code; earlier records that describe a separate Chief prompt agent are hi
    path is enabled only by `production_writes_enabled`.
 
 Run state is local filesystem state in the hosted container (`HYDRO_RUNTIME_STATE_DIR`), not a distributed store.
+
+### Orchestration choice and production-readiness boundary
+
+This is a custom **bounded supervisor workflow on Microsoft Agent Framework**,
+not the built-in Magentic manager. Checkpointing is its recovery mechanism, not
+an alternative orchestration pattern. Resume selects the authoritative checkpoint
+ID, checks immutable request/source/version identity and does not replay a verified
+turn or a terminal failure.
+
+Microsoft recommends the [lowest orchestration complexity that meets the task](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns).
+[Magentic](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/magentic)
+targets open-ended, dynamically collaborating teams; switching to it would not
+repair authorization, source binding or persistence. Hydro's governed reads,
+evidence-dependent RCA and explicit write approvals favor bounded coordination.
+
+**Not yet a full enterprise-production readiness certification:** workspace-bound
+agent sets, delegated authorization, typed evidence, bounded execution, approval
+gates and checkpoint regression tests are safeguards, not proof of HA or an SLO.
+Session-local filesystem state does not establish cross-replica recovery.
+Production rollout still requires distributed checkpoint/audit and approval state,
+cross-replica admission/idempotency controls, verified telemetry export, and sustained
+load/quality/failure-recovery tests. Microsoft's
+[checkpoint guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints)
+distinguishes local file storage from production distributed storage.
 
 ## 2. What the independent Foundry setup module does
 
@@ -144,7 +171,7 @@ Consequences:
   configuration, so the agent is republished with fresh values (never copied from another target).
 - **No tracked deployment target.** `azure.yaml` uses `${AZURE_AI_PROJECT_ENDPOINT}`, not a live demo endpoint.
   Every publish uses a generated, untracked azd project under `~/.fabric-demo/hosted-agent/`, keyed by the full
-  verified endpoint. Repository-local azd environments and registry hints cannot redirect a deployment.
+  verified endpoint and hosted agent name. Repository-local azd environments and registry hints cannot redirect a deployment.
 - **Creation is opt-in and repeatable.** The new project lives in `~/.fabric-demo/foundry-project/<name>`, where the name
   is derived from tenant, subscription, workspace and the requested project name, plus the
   account name when supplied. The exact requested project name is passed as
@@ -159,9 +186,14 @@ Consequences:
   an arbitrary existing account in another resource group for a missing project.
   Retain this state for reruns; on another machine explicitly
   select the existing endpoint instead of opting into another project. No tenant-specific name is embedded in source.
-- **One target per hosted coordinator.** The stable `hydro-*` names are application contracts, not tenant identities.
-  Deploying another workspace into the same explicitly selected Foundry project rebinds that coordinator and its
-  connections. Use a separate target-specific project for each concurrently deployed Fabric workspace.
+- **One workspace per agent set, not per project.** Stable workspace-GUID suffixes
+  separate each workspace's specialists, connections/toolbox and hosted coordinator.
+  Multiple workspace sets can coexist in one explicitly selected shared project;
+  setup does not retarget another workspace's set. This shared-project layout was
+  live-tested for FEATURE/DEV and is recommended. Separate-project provisioning exists
+  in code but is not end-to-end verified. Creating another project did not resolve
+  the earlier hosted-routing 404; it is not a 404 repair.
+  Shared-project naming is logical separation, not a separate project/RBAC boundary.
 - **Production writes are preserved.** The live agent's `production_writes_enabled` is kept. Set
   process-local `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` before the canonical combined CLI deployment to change it deliberately. A
   brand-new agent defaults to `false`. An unreadable or non-boolean live policy stops deployment unless you explicitly
@@ -196,8 +228,10 @@ Consequences:
 - A compatible ready OpenAI chat model deployment (tool calling and structured output required), **exactly one**
   linked Application Insights resource, and an Azure
   Container Registry connected to the project as a `ContainerRegistry` connection.
-  There is no hardcoded model/version/SKU/capacity. For new projects, supply project and model
-  deployment names and explicitly approve resource creation. Existing deployment aliases are resolved
+  There is no hardcoded model/version/SKU/capacity. A new project in an existing account
+  reuses its selected ready model deployment without new allocation. If the account
+  is also missing, supply project and model names and explicitly approve billable
+  account/model bootstrap. Existing deployment aliases are resolved
   in the selected subscription to their underlying model/version; catalog chat model names also work.
   The live regional catalog supplies a unique default version when no reference version is selected,
   and a best-effort 75,000 TPM allocation using that model/SKU's token units and available regional quota.
@@ -222,17 +256,27 @@ Consequences:
 | Path | Input |
 |---|---|
 | Reuse resources | Confirm Azure subscription |
-| Reuse a specific project/model | Enter its name under **Project and model choices**; otherwise use saved or automatic selection |
-| Create a new project | Project name + model deployment name + explicit resource-creation approval |
+| Fresh workspace, shared existing project | Same existing account/project/model; creation **unchecked** |
+| Separate project, shared model | Not end-to-end verified; not the recommended multi-workspace path |
+| Update existing agents | Same account/project/model; creation **unchecked**; updates still run |
 
-The new-project form contains just those two name fields. Region, version, SKU,
+The shared form exposes subscription, optional account, project and model deployment.
+Creation approval permits missing resources; it never forces recreation and is not
+saved. A blank project uses saved target identity or a stable workspace-GUID project;
+enter the exact existing name to share one project. Region, version, SKU,
 capacity, supporting resource names, connections, monitoring and agent deployment
 are automatic. No model-settings questionnaire is shown. Existing-project reuse
 is unchanged. **Fabric App authentication** retains the optional pre-created SPA
 choice; endpoint, registry, graph and write-policy overrides are not exposed in
 the form. See [environment variables](#6-settings) for specialist overrides.
 
-On a fresh workspace, run **Full Deploy**. Graph materialization does not gate
+On a fresh workspace, run **Full Deploy**: it includes Foundry setup using these same
+fields; no standalone Foundry run is required first. Full Deploy repeats Git sync
+and Core setup. Use **Set up Foundry agents** for routine agent changes and
+**Deploy app** for website changes. Reuse the same verified working account/project/model
+for multiple workspaces; leave creation unchecked. Model TPM/RPM remains shared.
+See the [creation decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+Graph materialization does not gate
 Foundry setup or app deployment. `FOUNDRY_SETUP_SUCCESS` verifies configuration, not business
 execution. Final publication requires `SUCCESS` and `DEPLOYED_APP_URL`.
 

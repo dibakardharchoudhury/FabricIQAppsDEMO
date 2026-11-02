@@ -34,6 +34,32 @@ redirect preservation and the bounded static-upload HTTP 401 refresh/retry remai
 enabled; other failures still propagate. Do not reset deployment state or repeat
 Core setup just to repair local dependencies or app publication.
 
+Microsoft Graph can reject a still-unexpired CLI token with a Continuous Access
+Evaluation claims challenge. The local launcher, Sign in/Switch, server (including
+direct startup), and deployer use a shared Azure CLI browser-authentication policy
+on Windows, macOS and Linux. Platform brokers are disabled for these processes;
+Graph recovery and subsequent commands use the same non-broker cache.
+This is process-scoped: it does not change
+global CLI configuration, remove credentials, or disable tenant security policies.
+Graph recovery reads the resource's actual
+`WWW-Authenticate` challenge and requests Graph-scoped sign-in with those claims,
+rather than repeating an ARM-only login. It reuses the existing CLI cache:
+if Graph accepts its cached token, no sign-in opens. A genuine claims challenge
+allows at most one interactive Graph sign-in per deployment process; subsequent
+challenges stop with an explicit error instead of opening repeated account pickers.
+Complete that Microsoft sign-in prompt when required by tenant policy.
+Graph reads allow up to 37 seconds of bounded claims propagation after that single
+login; permission denials and other errors are not retried.
+Browser sign-in setup uses this same Graph recovery path, not a second generic login.
+This does not bypass Conditional Access: a repeated rejection stops deployment.
+After recovery, retry the failed final deployment stage; do not repeat successful
+Git sync/Core setup. Account metadata alone does not verify Graph authorization.
+Non-Graph stale-session recovery creates a new owner-only CLI session directory;
+it never renames or deletes an active cache
+that Windows or another process may hold open. Only after successful login and
+tenant verification is the active-session pointer atomically updated for later
+deployments. Failed login leaves the previous session selection intact.
+
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.
@@ -131,6 +157,10 @@ Power BI and the verified Kusto cluster. First-use consent is serial and
 audience-specific; tokens are revalidated before an agent request is sent.
 Do not combine all four audiences into one consent request: this can produce
 Entra `AADSTS28004`. Cancellation or failed authorization sends no agent request.
+The shared MSAL boundary also rejects mixed-resource scopes before network access;
+it has no aggregated `extraScopesToConsent` path. Verify the published build in
+each workspace: an already-open older SPA continues running its old authorization
+code until reloaded. Cached-token acceptance does not certify first-use consent.
 
 ## 2. Start the local app
 
@@ -288,7 +318,7 @@ These are the same shared fields in **Full Deploy** and **Set up Foundry agents*
 | **Foundry account name (optional)** | For example `hydro-demo-account` | Parent Azure AI Services resource containing the project. Scopes existing-project selection to this account and sets the exact account name when creating missing resources. Blank preserves automatic naming/discovery. |
 | **Foundry project name** | For example `hydro-demo-project` | Existing project to reuse, or the exact project name to create with approval below. For duplicate names/scoped access, a full project ARM ID can identify an existing project. |
 | **Model deployment name** | For example `hydro-chat` if that deployment already exists, or a supported catalog chat model name for creation | Not an agent name or API endpoint. An existing alias must resolve to a model/version in the selected subscription; an arbitrary invented alias is not a catalog model. |
-| **Check this box if you want to create a new Foundry project with the multi-agent setup.** | Leave off for reuse; check only to approve creating missing resources | Existing projects are still reused. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
+| **Allow project creation (billable)** | Leave off for an existing project, even in a fresh Fabric workspace; check only to approve missing resources | Existing projects are still reused when checked. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
 | **Use a pre-created app registration** | Leave off for automatic discovery/reuse or creation | Enable only to select a specific administrator-prepared SPA in the target tenant. |
 | **Application (client) ID**, shown when that option is enabled | The SPA's full Application/client GUID | Not its object ID, tenant ID, or the notebook SPN secret. The registration is verified; redirects, permissions and consent setup remain automated. |
 
@@ -306,6 +336,39 @@ automatically. You do **not** enter catalog version, deployment type, model capa
 Fabric region, endpoint URLs, registry URLs, or individual agent definitions.
 Missing permissions, ambiguous selections and unavailable quota are reported as
 prerequisites, not silently replaced with another target.
+
+#### Choosing project sharing and creation
+
+A **Foundry account** contains model deployments and projects. A **Fabric workspace**
+is separate: it does not automatically require a new Foundry account or project.
+
+| Layout | Select for each Fabric workspace |
+|---|---|
+| **Recommended: one verified working shared project** | Same exact existing account, project and model deployment. FEATURE and DEV were live-tested in this layout. Each workspace gets distinct workspace-suffixed agents, connections and hosted configuration. This is logical separation, not separate project/RBAC boundaries. |
+| **Separate projects: not end-to-end verified** | Provisioning exists in the code, but this is not a verified deployment recommendation. Creating another project did not resolve the earlier hosted-routing 404. Separate projects do not add model TPM/RPM. |
+
+**Verified deployment evidence, not universal defaults:** FEATURE and DEV used
+account `ai-hydro-feature-c7da7c28`, project `hydro-feature-c7da7c28`, and model
+deployment `gpt-5.6-sol`. The earlier account `ai-hydroIQ` had a hosted-routing
+404; its recovery has not been verified. Do not select it merely because it
+remains in saved form values, and do not treat project creation as a 404 repair.
+These results do not certify a fresh live Full Deploy or separate-project deployment.
+
+| Situation | **Allow project creation (billable)** |
+|---|---|
+| Fresh Fabric workspace using an existing Foundry project | **Unchecked** |
+| New, missing project under an existing account | **Checked** permits creation, but separate-project runtime remains unverified; not the recommended multi-workspace path |
+| Subsequent update using the same account/project/model | **Unchecked**; agent updates still run |
+| Missing account and project | **Checked**; billable account/model bootstrap also requires permissions, availability and quota |
+
+Approval permits creation; it does not force recreation. To share a project, enter
+its exact existing name. A blank project uses saved target identity or a stable
+workspace-GUID project; it is not an explicit shared-project selection.
+
+**Full Deploy includes Foundry setup using these same fields**; do not run the
+standalone Foundry action first. Full Deploy repeats Git sync and Core setup.
+For routine updates, use **Set up Foundry agents** for agent changes and **Deploy app**
+for website changes. Resource selection alone does not certify deployment or runtime success.
 
 ### Run, confirm success, and keep settings
 
@@ -494,7 +557,10 @@ missing source-fingerprinted images, and republishes the hosted coordinator only
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
 
-**Separate project lifecycles while sharing one model allocation:** select the same
+**Implementation details only: separate-project runtime is not end-to-end verified.**
+Use the shared-project path above for the verified multi-workspace layout.
+Creating another project did not resolve the earlier hosted-routing 404.
+For project-only provisioning, the code selects the same
 existing Foundry account and ready model deployment for each single-workspace run.
 Leave the project name blank for `hydro-workspace-<full-workspace-GUID-without-hyphens>`,
 or enter an exact project name. Enable **Allow project creation (billable)** only
@@ -518,8 +584,10 @@ Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
 not its instrumentation key. It is validated before project changes and rechecked
 on retry; credential values are not saved in the preflight plan.
 
-An explicitly selected existing project remains supported, including the former
-shared-project arrangement. Same-target saved project identities are preserved;
+An explicitly selected existing project supports multiple concurrent workspace-scoped
+agent sets in one shared project. This is the live-tested FEATURE/DEV layout;
+separate projects remain unverified end-to-end.
+Same-target saved project identities are preserved;
 blanking the field does not migrate or delete an existing deployment. New targets
 with an explicit account and no project selection use the stable workspace project.
 Only a genuinely missing account with creation approval uses the original

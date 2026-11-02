@@ -368,9 +368,9 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>Full Deploy</h2>
       </div>
-      <p class="hint">For a new workspace. Syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure.</p>
+      <p class="hint">For a new workspace. Includes Foundry setup: syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure. No separate Foundry run is needed first.</p>
       <aside class="notice">
-        <strong>Updating an existing app?</strong> Use <strong>Deploy app</strong>, not Full Deploy.
+        <strong>Updating?</strong> Use <strong>Deploy app</strong> for website changes or <strong>Set up Foundry agents</strong> for agent changes. Full Deploy repeats Git sync and Core setup.
         <a href="/deploy-guide" target="_blank" rel="noopener">Prerequisites &amp; guide</a>
       </aside>
       <div class="workflow-config">
@@ -589,15 +589,18 @@ function renderFoundryFields(prefix, clientId) {
     </div>
     <label class="check"><input id="${prefix}FoundryCreate" type="checkbox" aria-describedby="${prefix}FoundryCreateHelp" />
       <span>Allow project creation (billable)</span></label>
-    <p id="${prefix}FoundryCreateHelp" class="hint">New project: check. Redeploy: leave unchecked. Agent updates still run.</p>
-    <p class="hint">Existing account: shared model TPM. New account: quota checks. Global inference may apply.</p>
+    <p id="${prefix}FoundryCreateHelp" class="hint">Existing project (even for a new Fabric workspace): unchecked. Missing project: check. Agent updates still run.</p>
+    <p class="hint">Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked. Each workspace gets its own agent set. Model TPM/RPM remains shared. Global inference may apply.</p>
+    <p class="hint">Separate projects are not end-to-end verified. Creating another project did not resolve the earlier hosted-routing 404; do not use project creation as a 404 fix.</p>
     <p id="${prefix}FoundryCreationStatus" class="phelp" role="status"></p>
     <details class="form-details">
       <summary>Setup details</summary>
       <p id="${prefix}FoundryModeSummary" class="phelp">Automatic multi-agent setup.</p>
-      <p class="phelp">A Foundry account is the parent Azure resource; projects live inside it. Blank uses automatic discovery.</p>
-      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents and a hosted orchestrator. Stable workspace suffixes isolate agents, connections and hosted state; reruns reuse that set. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
-      <p class="phelp">To separate workspace lifecycles while sharing model quota, select the same existing account and ready model deployment. Leave project name blank for a stable workspace-GUID project, or enter its exact name. Approve creation when missing; no extra model deployment is allocated. All projects share its TPM/RPM limits.</p>
+      <p class="phelp">A Foundry account is the parent Azure resource; it contains the model deployment and projects. A Fabric workspace is a separate resource. Each workspace gets its own agents and source bindings, even in one shared project; names are not a security boundary.</p>
+      <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents and a hosted orchestrator. Stable workspace suffixes separate agents, connections and hosted state; reruns reuse that set. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
+      <p class="phelp">Enter the same exact verified working account, project and model for each workspace; leave creation unchecked. FEATURE and DEV were live-tested with this shared-project layout, not separate projects. Blank project uses a saved identity or a stable workspace-GUID project, not a request to share.</p>
+      <p class="phelp">Separate-project provisioning exists in the code but is not a verified deployment recommendation. No extra model deployment is allocated on the existing-account path; all projects share its TPM/RPM limits. A saved selection or successful resource creation does not prove hosted invocation works.</p>
+      <p class="phelp">Creation approval permits missing resources; it does not force recreation. Existing projects are reused even when checked. Approval is not saved. Full Deploy uses these same settings and includes Foundry setup; permissions, source checks and runtime readiness must still pass.</p>
       <p class="phelp">Project-only setup reuses the account's connected registry and monitoring, grants scoped runtime access, and verifies the model allocation is unchanged. Account networking and model capacity remain shared. Existing explicitly selected projects remain supported; no project or model is deleted.</p>
       <p class="phelp">New models prefer 75,000 TPM where quota permits; lower allocations remain supported.</p>
     </details>
@@ -1118,7 +1121,7 @@ function foundryValid(prefix) {
   const valid = (!project || /^\/subscriptions\//i.test(project) || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(project)) &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model);
   $(prefix + "FoundryCreationStatus").textContent = valid
-    ? "Create only if missing. Existing account: reuse model TPM; new account: check quota."
+    ? "Creation is enabled. For the verified multi-workspace shared-project path, leave unchecked. Creation does not fix hosted-routing 404s."
     : "Enter a valid model deployment name above. Names use up to 64 letters, digits, dots, underscores or hyphens; start with a letter or digit.";
   return valid;
 }

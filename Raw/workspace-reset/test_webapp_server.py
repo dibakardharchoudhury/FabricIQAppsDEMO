@@ -35,6 +35,46 @@ PIPELINE_JOB_URL = (
 )
 
 
+class BrowserAuthenticationTests(unittest.TestCase):
+    def test_direct_server_startup_uses_browser_authentication(self):
+        for key, value in SERVER.CLI_BROWSER_AUTH_SETTINGS.items():
+            self.assertEqual(os.environ[key], value)
+
+    def test_browser_login_command_on_windows_macos_and_linux(self):
+        client = SERVER.app.test_client()
+        for platform, os_name, executable in (
+            ("win32", "nt", "az.cmd"), ("darwin", "posix", "az"), ("linux", "posix", "az"),
+        ):
+            with (
+                self.subTest(platform=platform),
+                patch.object(SERVER.os, "name", os_name),
+                patch.object(SERVER.shutil, "which", return_value=executable),
+                patch.object(SERVER, "_start", return_value="login-job") as start,
+                patch.object(SERVER, "job_response", return_value=({"jobId": "login-job"}, 200)),
+            ):
+                response = client.post("/api/login", json={"tenant": "tenant.example"})
+                self.assertEqual(response.status_code, 200)
+                expected = (["cmd", "/c", executable] if os_name == "nt" else [executable])
+                self.assertEqual(start.call_args.args[0], expected + ["login", "--tenant", "tenant.example"])
+                self.assertFalse(start.call_args.kwargs["python"])
+
+    def test_login_and_deployment_children_inherit_browser_policy_and_existing_cache(self):
+        for python in (False, True):
+            with self.subTest(python=python), patch.dict(os.environ, {"AZURE_CONFIG_DIR": "existing-cache"}):
+                job = SERVER.Job(["Queued", "Done"])
+                process = Mock(stdout=io.StringIO(""), returncode=0)
+                with (
+                    patch.object(SERVER.subprocess, "Popen", return_value=process) as start,
+                    patch.object(SERVER.threading, "Timer"),
+                ):
+                    SERVER._worker(job, ["example"], None, 60, [], python=python)
+                environment = start.call_args.kwargs["env"]
+                for key, value in SERVER.CLI_BROWSER_AUTH_SETTINGS.items():
+                    self.assertEqual(environment[key], value)
+                self.assertEqual(environment["AZURE_CONFIG_DIR"], "existing-cache")
+                self.assertEqual(job.status, "succeeded")
+
+
 class FullWorkflowResumeTests(unittest.TestCase):
     def setUp(self):
         self.client = SERVER.app.test_client()
@@ -2407,17 +2447,29 @@ console.log(JSON.stringify([
             self.assertIn("Allow project creation (billable)", form)
             self.assertIn(f'aria-describedby="{prefix}FoundryCreateHelp"', form)
             self.assertIn(f'id="{prefix}FoundryCreateHelp"', form)
-            self.assertIn("New project: check. Redeploy: leave unchecked. Agent updates still run.", form)
+            self.assertIn("Existing project (even for a new Fabric workspace): unchecked.", form)
+            self.assertIn("Missing project: check. Agent updates still run.", form)
             help_text = re.search(rf'<p id="{prefix}FoundryCreateHelp" class="hint">(.*?)</p>', form).group(1)
-            self.assertLessEqual(len(help_text.split()), 14)
-            self.assertIn("Existing account: shared model TPM.", form)
+            self.assertLessEqual(len(help_text.split()), 20)
+            self.assertIn("Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked.", normal_fields)
+            self.assertIn("Model TPM/RPM remains shared.", normal_fields)
+            self.assertIn("Separate projects are not end-to-end verified.", normal_fields)
+            self.assertIn("Creating another project did not resolve the earlier hosted-routing 404", normal_fields)
+            self.assertNotIn("or use separate projects in one account", form)
+            self.assertNotIn("Separate projects: keep the account/model", form)
             self.assertIn("stable workspace-GUID project", form)
             self.assertIn("all projects share", form.lower())
-            self.assertIn("Stable workspace suffixes isolate agents, connections and hosted state", form)
-            self.assertIn("no extra model deployment is allocated", form)
+            self.assertIn("Stable workspace suffixes separate agents, connections and hosted state", form)
+            self.assertIn("no extra model deployment is allocated", form.lower())
+            self.assertIn("names are not a security boundary", form)
+            self.assertIn("Creation approval permits missing resources; it does not force recreation.", form)
+            self.assertIn("Full Deploy uses these same settings and includes Foundry setup", form)
+            self.assertIn("Approval is not saved.", form)
             self.assertNotIn("Leave blank unless", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
             self.assertEqual(len(identifiers), len(set(identifiers)))
+        self.assertIn("No separate Foundry run is needed first.", page)
+        self.assertIn("Full Deploy repeats Git sync and Core setup.", page)
         self.assertIn("Allow project creation (billable)", page)
         self.assertNotIn("Allow creating a missing Foundry project", page)
         self.assertNotIn('placeholder="gpt-5.6-sol"', page)
@@ -2563,6 +2615,8 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal($(prefix+"FoundryProjectName").value, "existing-project-name");
   assert.equal($(prefix+"FoundryModel").value, "existing-model");
   assert.match($(prefix+"FoundryModeSummary").textContent, /Create only if missing/);
+  assert.match($(prefix+"FoundryCreationStatus").textContent, /verified multi-workspace shared-project path, leave unchecked/);
+  assert.match($(prefix+"FoundryCreationStatus").textContent, /Creation does not fix hosted-routing 404s/);
   assert.equal(foundryValid(prefix), true);
   const creating = foundryPayload(prefix);
   assert.equal(creating.createFoundry, true);

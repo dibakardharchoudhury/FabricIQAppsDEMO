@@ -61,6 +61,8 @@ class ExistingServerTests(unittest.TestCase):
                 self.assertEqual(LAUNCH.main(), 0)
             self.assertEqual(urlopen.call_count, 4)
             self.assertEqual(start.call_args.args[0], [LAUNCH.sys.executable, str(server)])
+            for key, value in LAUNCH.CLI_BROWSER_AUTH_SETTINGS.items():
+                self.assertEqual(start.call_args.kwargs["env"][key], value)
             self.assertEqual(run.call_args.args[0][-1], str(server.parent.parent / "requirements.txt"))
             self.assertEqual(
                 start.call_args.kwargs["env"]["FABRIC_UI_PIPELINE_DEFAULTS_FILE"],
@@ -97,7 +99,7 @@ class ExistingServerTests(unittest.TestCase):
             ), self.assertRaisesRegex(ValueError, "modified tracked files"):
                 LAUNCH.server_path()
 
-    def test_configured_checkout_retains_generated_redirects_but_rejects_other_edits(self):
+    def test_configured_checkout_retains_generated_rayfin_changes_but_rejects_other_edits(self):
         with tempfile.TemporaryDirectory() as root:
             here = Path(root)
             checkout = here / "release"
@@ -115,6 +117,16 @@ class ExistingServerTests(unittest.TestCase):
                 "      - http://localhost:5173\n"
                 "  staticHosting:\n"
                 "    enabled: true\n"
+                "connectors:\n"
+                "  - name: hydrogeo\n"
+                "    type: fabric-sqlanalytics\n"
+                "    config:\n"
+                "      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}\n"
+                "      itemId: ${RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID}\n"
+                "    auth:\n"
+                "      type: delegated\n"
+                "    operations:\n"
+                "      - name: read\n"
             )
             config.write_text(original, encoding="utf-8")
             (here / "launcher.local.json").write_text(json.dumps({"checkout": str(checkout)}), encoding="utf-8")
@@ -144,11 +156,39 @@ class ExistingServerTests(unittest.TestCase):
                 self.assertEqual(LAUNCH.server_path(), server)
             self.assertEqual(config.read_bytes(), windows_content)
 
+            reordered = generated.replace(
+                "      - https://existing.webapp.fabricapps.net\n", "",
+            ).replace(
+                "    allowedRedirectUris:\n",
+                "    allowedRedirectUris:\n      - https://existing.webapp.fabricapps.net\n",
+            ).replace(
+                "      - http://localhost:5173\n      - https://new-origin.webapp.fabricapps.net\n",
+                "      - https://new-origin.webapp.fabricapps.net\n      - http://localhost:5173\n",
+            )
+            without_geo = reordered[:reordered.index("  - name: hydrogeo\n")]
+            config.write_text(reordered, encoding="utf-8")
+            with patch.object(
+                LAUNCH.subprocess, "run",
+                return_value=subprocess.CompletedProcess([], 0, stdout=without_geo),
+            ):
+                self.assertTrue(LAUNCH.only_generated_rayfin_changes(
+                    checkout, " M HydroOperationsApp/rayfin/rayfin.yml\n",
+                ))
+            for changed in (reordered, without_geo):
+                with self.subTest(generated=changed):
+                    config.write_text(changed, encoding="utf-8")
+                    with patch.object(LAUNCH, "HERE", here):
+                        self.assertEqual(LAUNCH.server_path(), server)
+                    self.assertEqual(config.read_text(encoding="utf-8"), changed)
+
             for changed in (
                 generated.replace("    enabled: true", "    enabled: false", 1),
                 generated.replace("      - https://existing.webapp.fabricapps.net\n", ""),
                 generated.replace("new-origin.webapp.fabricapps.net", "untrusted.example"),
                 original + "      - https://new-origin.webapp.fabricapps.net\n",
+                generated.replace("      - name: read\n", "      - name: write\n"),
+                generated + generated[generated.index("  - name: hydrogeo\n"):],
+                without_geo.replace("    enabled: true", "    enabled: false", 1),
             ):
                 with self.subTest(changed=changed):
                     config.write_text(changed, encoding="utf-8")

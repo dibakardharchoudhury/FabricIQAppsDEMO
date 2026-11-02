@@ -96,8 +96,12 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 
 All launcher actions target one workspace; multi-workspace fan-out remains removed.
 Foundry setup uses stable workspace-GUID suffixes for agents, connections, toolbox
-and hosted state. Select the same existing account and ready model deployment,
-leaving the project field blank to use `hydro-workspace-<full-workspace-GUID-hex>`.
+and hosted state. To share one project, select the same existing account, exact
+project name and ready model deployment for each workspace. This shared-project
+layout was live-tested for FEATURE/DEV and is the recommended path.
+Separate-project provisioning exists in code but is **not end-to-end verified**;
+creating another project did not resolve the earlier hosted-routing 404. A blank
+project uses saved target identity or `hydro-workspace-<full-workspace-GUID-hex>`.
 Approve creation of a missing project: setup creates only that project and its
 scoped access/shared-infrastructure connections, not another model allocation.
 Explicit existing project selections and same-target saved identities remain supported. Reruns
@@ -203,9 +207,26 @@ This choice is shared across Foundry, full workflow and app publication, scoped 
 the tenant/workspace. Registration verification and automated auth setup remain required.
 The launcher preserves the target's existing work-order write policy; it does not
 offer or submit a write-permission override. Enabled writes still require human approval.
-**Allow project creation (billable):** check only for a missing project. For redeployments,
-leave unchecked and keep the same workspace/account/project/model. Agent updates still
-run; a missing project stops deployment. Approval is never remembered. It does not discard or
+**Allow project creation (billable)** depends on missing Foundry resources, not whether
+the Fabric workspace is new:
+
+| Target | Creation checkbox |
+|---|---|
+| Fresh Fabric workspace, existing shared Foundry project | **Unchecked**; enter the existing account/project/model |
+| Missing separate project, existing account/model | **Checked** permits creation; runtime is not end-to-end verified, so this is not the recommended multi-workspace path |
+| Subsequent update, same account/project/model | **Unchecked**; agent updates still run |
+| Missing account/project | **Checked**; billable bootstrap also needs permissions and quota |
+
+Full Deploy includes Foundry setup with these same fields; no standalone Foundry
+run is needed first. It repeats Git sync and Core setup. Use **Set up Foundry agents**
+for routine agent updates and **Deploy app** for website updates.
+The account owns the model deployment and projects; a Fabric workspace is separate.
+Shared-project agents have distinct workspace bindings, not separate project/RBAC
+boundaries. Separate projects remain unverified end-to-end and do not add model
+TPM/RPM. See the [project-sharing decision guide](../../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+
+A missing project without approval stops deployment. Approval is never remembered.
+It permits missing resources, not forced recreation. It does not discard or
 disable either shared name; existing projects
 are reused even with approval enabled. With an existing account, a missing project
 uses the exact name entered above, or the stable full workspace-GUID project name.
@@ -227,14 +248,24 @@ Regional Standard is preferred, followed by DataZoneStandard and GlobalStandard;
 the form discloses global inference. Provisioned capacity is never automatic.
 Quota, access and unresolved/ambiguous model identities fail explicitly, not by guessing.
 
+Authentication is cross-platform Azure CLI browser sign-in, not Windows-only
+authentication. The launcher, server's Sign in/Switch buttons, deployment engine
+and their children share a process-local policy disabling Windows/macOS brokers.
+Existing CLI sessions are reused; recovery opens the browser only when required.
+No global CLI settings or existing credentials are removed. A desktop browser is
+required for interactive sign-in; headless/device-code deployment is not provided
+by the local app.
+
 The launcher can use a separate clean deployment checkout without overwriting local
 development edits. Set `checkout` in gitignored `launcher.local.json` beside
 `launch.py`. The configured checkout must have no tracked source modifications.
-The launcher permits only unstaged additions of Fabric hosting origins inside
-`HydroOperationsApp/rayfin/rayfin.yml`'s existing `allowedRedirectUris` list, so
-generated redirects from a prior deployment do not block startup. It preserves
-that file; staged edits, redirect removals and other configuration changes still
-block startup, with the modified paths included in the error. This startup check
+The launcher permits unstaged deployment-managed changes in
+`HydroOperationsApp/rayfin/rayfin.yml`: additions/reordering of Fabric hosting
+redirects (retaining every existing URI), and enabling/disabling the exact
+managed read-only `hydrogeo` connector. These generated changes do not block
+the next startup. It preserves that file; staged edits, redirect removals,
+modified connector definitions and unrelated changes still block startup,
+with the modified paths included in the error. This startup check
 does not verify a hosting origin or bypass deployment/authentication checks. The
 launcher retains the original local pipeline settings file; restarting the server
 preserves that settings path. The version API reports the actual source checkout.

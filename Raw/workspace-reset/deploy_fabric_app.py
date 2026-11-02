@@ -30,6 +30,7 @@ from typing import Any, Callable, Generator, TypeVar
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
+from azure_cli_auth import CLI_BROWSER_AUTH_SETTINGS
 from http_retries import get_with_read_retry
 
 
@@ -83,6 +84,7 @@ RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
 AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
 _FABRIC_TOKEN_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+_GRAPH_INTERACTIVE_ATTEMPTS: set[str] = set()
 
 
 class DeploymentTimings:
@@ -625,6 +627,18 @@ def ensure_azure_tenant(tenant: str) -> str:
 def isolated_azure_cli_config(tenant: str) -> Path:
     """Return the tenant-scoped cache used only for CAE reauthentication."""
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    pointer = AZURE_CLI_SESSION_ROOT / f"{safe_tenant}.active"
+    if pointer.exists():
+        try:
+            name = pointer.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise DeployError("Could not read the active tenant-scoped CLI session.") from exc
+        if not re.fullmatch(re.escape(safe_tenant) + r"\.session-[a-z0-9_]+", name):
+            raise DeployError("Active tenant-scoped CLI session has an invalid directory name.")
+        directory = AZURE_CLI_SESSION_ROOT / name
+        if not directory.is_dir():
+            raise DeployError("The active tenant-scoped CLI session directory is missing.")
+        return directory
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
 
@@ -696,48 +710,156 @@ def secure_private_directory(directory: Path, *, recursive: bool = False) -> Non
         ) from exc
 
 
-def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
+@contextmanager
+def azure_cli_authentication_environment() -> Generator[None, None, None]:
+    """Keep browser login and child commands on the same cache on every OS."""
+    settings = CLI_BROWSER_AUTH_SETTINGS
+    previous = {key: os.environ.get(key) for key in settings}
+    os.environ.update(settings)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def graph_claims_challenge(tenant: str) -> str | None:
+    """Read Graph's actual CAE challenge using the CLI command's resource."""
+    try:
+        payload = json.loads(run_capture(az(
+            "account", "get-access-token", "--tenant", tenant,
+            "--resource", "https://graph.microsoft.com/", "-o", "json",
+        )))
+    except DeployError as exc:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            raise
+        print("Graph token acquisition requires sign-in; requesting Graph-scoped login.", flush=True)
+        return None
+    except ValueError as exc:
+        raise DeployError("Azure CLI returned invalid Microsoft Graph token metadata.") from exc
+    token = payload.get("accessToken") if isinstance(payload, dict) else None
+    if not isinstance(token, str) or not token.strip():
+        raise DeployError("Azure CLI returned an empty Microsoft Graph token.")
+    try:
+        response = requests.get(
+            "https://graph.microsoft.com/v1.0/applications?$top=1&$select=appId",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise DeployError("Could not read the Microsoft Graph authentication challenge.") from exc
+    if response.status_code == 200:
+        print("Microsoft Graph accepts the cached token; reusing the existing CLI session without sign-in.", flush=True)
+        return ""
+    header = response.headers.get("WWW-Authenticate", "")
+    match = re.search(r'\bclaims="([A-Za-z0-9_+/=-]+)"', header)
+    if response.status_code != 401 or 'error="insufficient_claims"' not in header or not match:
+        raise DeployError(
+            f"Microsoft Graph challenge probe returned HTTP {response.status_code} "
+            "without a usable CAE claims challenge."
+        )
+    encoded = match[1]
+    try:
+        claims = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise DeployError("Microsoft Graph returned an invalid CAE claims challenge.") from exc
+    if not isinstance(claims, dict) or not isinstance(claims.get("access_token"), dict):
+        raise DeployError("Microsoft Graph CAE challenge is missing access_token claims.")
+    print("Microsoft Graph requires a claims-aware sign-in; retaining its resource challenge.", flush=True)
+    return encoded
+
+
+def reauthenticate_azure_cli(tenant: str, operation: str, *, graph: bool = False) -> None:
+    challenge = graph_claims_challenge(tenant) if graph else None
+    if graph:
+        if challenge == "":
+            return
+        identity = tenant.casefold()
+        if identity in _GRAPH_INTERACTIVE_ATTEMPTS:
+            raise DeployError(
+                "Microsoft Graph still requires interaction after the deployment's sign-in attempt. "
+                "No further sign-in popup will be opened; verify the resource sign-in policy before retrying."
+            )
+        ensure_azure_tenant(tenant)
+        _GRAPH_INTERACTIVE_ATTEMPTS.add(identity)
+        print(
+            f"Microsoft Graph requires sign-in before {operation}; reusing the existing CLI cache. "
+            "One interactive Graph sign-in is allowed per deployment process.",
+            flush=True,
+        )
+        # Match CLI resource_to_scopes("https://graph.microsoft.com/"), including its slash.
+        run_stream(az(
+            "login", "--tenant", tenant, "--allow-no-subscriptions",
+            "--scope", "https://graph.microsoft.com//.default",
+            *(("--claims-challenge", challenge) if challenge else ()),
+            "--only-show-errors", "--output", "none",
+        ))
+        ensure_azure_tenant(tenant)
+        return
     print(
         f"Azure CLI authentication needs to be refreshed before {operation}. "
         f"Opening Microsoft sign-in for tenant {tenant}...",
         flush=True,
     )
-    config_dir = isolated_azure_cli_config(tenant)
-    secure_private_directory(config_dir.parent)
-    if config_dir.exists():
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        backup_dir = config_dir.with_name(f"{config_dir.name}.stale-{timestamp}")
-        try:
-            config_dir.rename(backup_dir)
-        except OSError as exc:
-            raise DeployError(
-                f"Could not preserve the stale tenant-scoped Azure CLI cache at {config_dir}. "
-                "No Azure CLI login state was changed. Close processes using that directory and retry."
-            ) from exc
-        secure_private_directory(backup_dir, recursive=True)
-        print(f"Preserved stale Azure CLI session at {backup_dir}.", flush=True)
+    safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    secure_private_directory(AZURE_CLI_SESSION_ROOT)
+    try:
+        config_dir = Path(tempfile.mkdtemp(prefix=f"{safe_tenant}.session-", dir=AZURE_CLI_SESSION_ROOT))
+    except OSError as exc:
+        raise DeployError("Could not create a fresh tenant-scoped CLI session; existing sessions are unchanged.") from exc
     secure_private_directory(config_dir)
+    previous_config = os.environ.get("AZURE_CONFIG_DIR")
     os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
-    run_stream(
-        az(
-            "login",
-            "--tenant",
-            tenant,
-            "--allow-no-subscriptions",
-            "--only-show-errors",
-            "--output",
-            "none",
+    print(f"Using fresh Azure CLI session at {config_dir}; existing sessions remain untouched.", flush=True)
+    try:
+        run_stream(
+            az(
+                "login",
+                "--tenant",
+                tenant,
+                "--allow-no-subscriptions",
+                "--only-show-errors",
+                "--output",
+                "none",
+            )
         )
-    )
-    ensure_azure_tenant(tenant)
+        ensure_azure_tenant(tenant)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=f"{safe_tenant}.active-",
+            dir=AZURE_CLI_SESSION_ROOT, delete=False,
+        ) as stream:
+            stream.write(config_dir.name)
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = Path(stream.name)
+        try:
+            temporary.replace(AZURE_CLI_SESSION_ROOT / f"{safe_tenant}.active")
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    except (OSError, DeployError) as exc:
+        if previous_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = previous_config
+        raise DeployError(
+            "Fresh Azure CLI sign-in or session activation failed; previous sessions were preserved. "
+            f"Underlying error: {exc}"
+        ) from exc
 
 
 def run_with_azure_cli_reauthentication(
     tenant: str,
     operation: str,
     action: Callable[[], T],
+    *,
+    graph: bool = False,
 ) -> T:
-    """Retry one stale-token failure with a new tenant-isolated Azure CLI cache."""
+    """Recover a stale token once, preserving Graph's resource claims."""
     try:
         return action()
     except DeployError as exc:
@@ -746,20 +868,30 @@ def run_with_azure_cli_reauthentication(
 
     try:
         _FABRIC_TOKEN_CACHE.clear()
-        reauthenticate_azure_cli(tenant, operation)
+        if graph:
+            reauthenticate_azure_cli(tenant, operation, graph=True)
+        else:
+            reauthenticate_azure_cli(tenant, operation)
     except DeployError as exc:
         raise AzureCliReauthenticationError(str(exc)) from exc
-    try:
-        return action()
-    except DeployError as exc:
-        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
-            raise AzureCliReauthenticationError(str(exc)) from exc
-        raise AzureCliReauthenticationError(
-            f"Azure CLI authentication was still rejected by Continuous Access Evaluation while "
-            f"{operation}, even after a clean tenant-scoped login. Upgrade Azure CLI to the current "
-            "version and retry; if the challenge continues, ask the tenant administrator to verify "
-            "the applicable Conditional Access policy."
-        ) from exc
+    delays = (0, 2, 5, 10, 20) if graph else (0,)
+    for attempt, delay in enumerate(delays):
+        if delay:
+            print(f"Waiting {delay}s for Microsoft Graph claims propagation before {operation}.", flush=True)
+            time.sleep(delay)
+        try:
+            return action()
+        except DeployError as exc:
+            if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+                raise AzureCliReauthenticationError(str(exc)) from exc
+            if attempt + 1 == len(delays):
+                raise AzureCliReauthenticationError(
+                    f"Azure CLI authentication was still rejected by Continuous Access Evaluation while "
+                    f"{operation}, even after a resource-aware tenant-scoped login. "
+                    "Deployment stopped without bypassing Conditional Access. "
+                    "The resource still rejects the CLI credential; deployment is not verified."
+                ) from exc
+    raise AssertionError("Authentication retry schedule must not be empty.")
 
 
 def fabric_headers(tenant: str) -> dict[str, str]:
@@ -939,7 +1071,11 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
         if not GUID_RE.fullmatch(client_id):
             raise DeployError("SPA client id must be a GUID.")
         try:
-            run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none"))
+            run_with_azure_cli_reauthentication(
+                tenant, "verifying the requested tenant SPA app registration",
+                lambda: run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none")),
+                graph=True,
+            )
             print(f"Using requested SPA app registration: {client_id}", flush=True)
         except DeployError as exc:
             raise DeployError(
@@ -966,6 +1102,7 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
             tenant,
             "discovering the tenant SPA app registration",
             lambda: run_capture(discovery_command),
+            graph=True,
         )
     except AzureCliReauthenticationError:
         raise
@@ -1892,6 +2029,7 @@ def validate_entra_live_auth_with_reauth(
         tenant,
         "validating browser sign-in readiness",
         lambda: validate_entra_live_auth(client_id, hosting_url),
+        graph=True,
     )
 
 
@@ -2112,6 +2250,7 @@ def read_entra_spa_redirects_with_reauth(client_id: str, tenant: str) -> list[st
         tenant,
         "reading the existing SPA redirects",
         lambda: read_entra_spa_redirects(client_id),
+        graph=True,
     )
 
 
@@ -2539,7 +2678,8 @@ def deploy(args: argparse.Namespace) -> None:
     timings = DeploymentTimings()
     succeeded = False
     try:
-        _deploy(args, timings)
+        with azure_cli_authentication_environment():
+            _deploy(args, timings)
         succeeded = True
     finally:
         _FABRIC_TOKEN_CACHE.clear()
@@ -2755,6 +2895,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
                     cwd=APP_DIR,
                     env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
                 ),
+               graph=True,
             )
         except DeployError as exc:
             if feature_workspace:

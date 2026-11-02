@@ -1,5 +1,23 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Multi-workspace deployment
+
+One Foundry account owns model deployments and projects. Multiple Fabric workspaces
+should reuse one verified working project/model for the live-tested FEATURE/DEV
+layout, with distinct workspace-suffixed agents, connections and hosted configuration.
+Separate-project provisioning exists in code but is **not end-to-end verified**.
+Creating another project did not resolve the earlier hosted-routing 404.
+Shared-project naming is logical separation, not separate project/RBAC boundaries.
+Separate projects would not add model TPM/RPM or isolate account networking.
+
+The local app's **Full Deploy** includes Foundry setup; no standalone Foundry run
+is needed first. Leave **Allow project creation (billable)** unchecked for an
+existing project, even in a fresh Fabric workspace. Check only for missing
+resources; subsequent updates normally leave it unchecked. Use **Set up Foundry
+agents** for routine agent updates and **Deploy app** for website updates, rather
+than repeating Full Deploy's Git sync/Core setup.
+See the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+
 ## Multi-agent responsibilities and selective execution
 
 The operational pattern is a **bounded, checkpointed supervisor workflow**:
@@ -135,6 +153,15 @@ Verified prose-only answers are native evidence too; the workflow does not requi
 or invent a business-record table to accept them.
 Independent source tables and explicitly
 requested charts retain their existing presentation and exact source values.
+Facility-scoped equipment and signal inventories use verified equipment focus,
+not a workspace-wide population fallback. Focus tables retain only records whose
+returned or captured row identity belongs to that selection; missing membership
+evidence fails explicitly. Population history and immutable source receipts remain
+unchanged.
+Dataset-specific presentation validation runs inside the bounded semantic-planning
+correction step, before any source or specialist execution, and is shared with
+orchestration compilation. Unsupported grouping cannot become a committed plan
+that fails only after planning has finished.
 Work-order views bound to a coverage requirement show only open work under the
 same closed-status policy as maintenance review. Historical source receipts remain
 immutable; factual history views retain completed work. Missing status evidence
@@ -1213,6 +1240,28 @@ An already committed terminal business outcome can be recovered from its atomic
 SQLite receipt without replaying the workflow; this recovery is explicitly journalled.
 The checkpoint decoder allows only the explicit Hydro contract classes.
 Checkpoint files must remain in a trusted, access-controlled local directory.
+
+The supervisor rebuilds the same named graph and executor IDs, validates every
+checkpoint file in the run's isolated directory, and supplies the authoritative
+latest `checkpoint_id` to Agent Framework. It does not restart the graph and treat
+cached model/source receipts as checkpoint recovery. The checkpointed turn carries
+the grounded equipment selection alongside its plan, evidence and pinned specialist
+versions; restored turns must match the immutable run request and source identity.
+If verification committed just before checkpoint saving failed, the resumed verifier
+uses that immutable verified-turn receipt without reentering completed delegations.
+Likewise, a prepared presentation can complete without rerunning models or sources.
+The SDK does not re-emit historical outputs from an already terminal checkpoint:
+Hydro recovers its immutable prepared answer only when the terminal checkpoint's
+workflow-state answer digest matches it. Missing or corrupt checkpoints cannot be
+replaced by an older snapshot or a prepared-answer shortcut.
+
+This is restart recovery of unfinished execution within the existing local filesystem
+boundary, not an automatic retry policy for source outages, model refusals, invalid
+input, or evidence/contract validation failures. Those failures remain explicit and
+are not classified as checkpoint corruption. A journaled terminal supervisor failure
+cannot replay execution; a new request needs a new run identity. Approval remains a
+separate explicit human decision and checkpoint recovery does not submit SQL writes.
+See Microsoft's [checkpoint capture, resume and rehydration guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints).
 
 ### Deliberately local
 

@@ -52,6 +52,10 @@ from flask import Flask, jsonify, request, send_from_directory
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+from azure_cli_auth import CLI_BROWSER_AUTH_SETTINGS
+
+# Covers direct server startup, Sign in/Switch, restarts and every CLI child.
+os.environ.update(CLI_BROWSER_AUTH_SETTINGS)
 SYNC_SCRIPT = SCRIPT_DIR / "sync_workspace_from_git.py"
 DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
 PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
@@ -448,8 +452,8 @@ def _workflow_source_keys() -> dict[str, str]:
         "http_retries.py", "sync_workspace_from_git.py", "key_vault_preflight.py",
     )]
     core.extend([PIPELINE_SCRIPT, *shared_reads])
-    energy.extend((DEPLOY_SCRIPT, SCRIPT_DIR / "feature_workspace.py"))
-    foundry = [DEPLOY_SCRIPT, SCRIPT_DIR / "provision_foundry_agents.py",
+    energy.extend((DEPLOY_SCRIPT, SCRIPT_DIR / "feature_workspace.py", SCRIPT_DIR / "azure_cli_auth.py"))
+    foundry = [DEPLOY_SCRIPT, SCRIPT_DIR / "azure_cli_auth.py", SCRIPT_DIR / "provision_foundry_agents.py",
                SCRIPT_DIR / "deploy_foundry_project.py", SCRIPT_DIR / "deploy_hosted_agent.py",
                SCRIPT_DIR / "shared_foundry_project.py", SCRIPT_DIR / "foundry_resource_names.py"]
     if (REPO_ROOT / "HydroOperationsService" / "Dockerfile").exists():

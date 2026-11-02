@@ -33,6 +33,16 @@ They explain prerequisites, example entries, defaults, Foundry project/model set
 saved settings, progress, and what remains manual. You do not need to assemble
 individual notebook, Rayfin, or agent-provisioning commands.
 
+**Foundry sharing:** the recommended, live-tested FEATURE/DEV layout reuses one
+verified working account, project and model deployment with workspace-scoped agent
+sets. Separate-project provisioning exists in code but is **not end-to-end verified**;
+creating another project did not resolve the earlier hosted-routing 404.
+Model TPM/RPM remains shared. **Full Deploy includes
+Foundry setup.** Leave **Allow project creation (billable)** unchecked when reusing
+an existing project, even for a fresh Fabric workspace; check only for missing
+resources. Subsequent updates normally leave it unchecked.
+See the [project-sharing and creation decision table](HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+
 ## Ontology generations and optional agents
 
 The canonical `RTI_004`, `RTI_005`, and `RTI_006` notebook names remain unchanged, including their
@@ -410,8 +420,10 @@ publication, see
 [`docs/foundry-deployment-and-multi-agent-setup.md`](docs/foundry-deployment-and-multi-agent-setup.md). Manual portal work
 is limited to documented access/setup prerequisites and ontology-managed graph materialization.
 Deployment targets are not pinned to the original demo: select the tenant/workspace and Azure subscription,
-then supply or discover the target's Foundry project/model/registry. New project creation requires explicit
-model/version/SKU/capacity inputs; the Foundry and full-workflow forms expose them.
+then supply or discover the target's Foundry project/model/registry. The Foundry
+and full-workflow forms expose subscription, optional account, project and model
+names; model version/SKU/capacity resolve automatically when bootstrap is approved.
+Creating a project under an existing account reuses the selected model allocation.
 Energy-source setup is also explicit, without requiring a hidden bootstrap profile.
 Routine app publication preserves the target's energy setting and verifies prepared
 agents without provisioning them. Generated endpoints, item GUIDs and azd state

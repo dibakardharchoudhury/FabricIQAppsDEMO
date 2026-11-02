@@ -3,6 +3,7 @@ import test from 'node:test'
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { readFileSync } from 'node:fs'
 import { createEntraTokens } from '../src/services/entraTokens.ts'
+import { createHostedSourceAccess } from '../src/services/hostedSourceAccess.ts'
 
 const account = { homeAccountId: 'operator', tenantId: 'target-tenant' }
 function fixture() {
@@ -62,18 +63,54 @@ test('concurrent requests for the same resource coalesce into one interaction', 
   assert.equal(await tokens.silent(['foundry']), 'token-foundry')
 })
 
-test('upfront consent keeps token scopes audience-specific and coalesces matching consent requests', async () => {
+test('mixed-resource scopes are rejected before MSAL or initialization can send a request', async () => {
   const { state, tokens } = fixture()
-  await Promise.all([
-    tokens.popup(['foundry'], ['fabric', 'kusto']),
-    tokens.popup(['foundry'], ['kusto', 'fabric']),
-  ])
-  assert.equal(state.popups.length, 1)
-  assert.deepEqual(state.popups[0].scopes, ['foundry'])
-  assert.deepEqual(state.popups[0].extraScopesToConsent, ['fabric', 'kusto'])
-  assert.equal(state.popups[0].prompt, undefined)
-  await tokens.popup(['foundry'], ['sql'])
-  assert.deepEqual(state.popups[1].extraScopesToConsent, ['sql'])
+  const mixed = ['https://api.fabric.microsoft.com/Item.Read.All', 'https://ai.azure.com/user_impersonation']
+  await assert.rejects(tokens.popup(mixed), /one resource at a time/)
+  await assert.rejects(tokens.silent(mixed), /one resource at a time/)
+  assert.equal(state.popups.length, 0)
+  assert.equal(state.silent.length, 0)
+})
+
+test('cold hosted authorization reaches the MSAL boundary as four separate audience requests', async () => {
+  const { state, tokens } = fixture()
+  state.expiresOn = new Date(Date.now() + 60 * 60_000)
+  const requirements = [
+    { kind: 'fabric', label: 'Fabric', scopes: [
+      'https://api.fabric.microsoft.com/Workspace.Read.All',
+      'https://api.fabric.microsoft.com/Item.Read.All',
+      'https://api.fabric.microsoft.com/Item.Execute.All',
+      'https://api.fabric.microsoft.com/DataAgent.Execute.All',
+    ] },
+    { kind: 'foundry', label: 'Foundry', scopes: ['https://ai.azure.com/user_impersonation'] },
+    { kind: 'graphql', label: 'Lakehouse/SQL', scopes: [
+      'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All',
+      'https://analysis.windows.net/powerbi/api/Item.Execute.All',
+    ] },
+    { kind: 'kusto', label: 'Eventhouse', scopes: ['https://trd-hu7um09mfguk87jh2m.z0.kusto.fabric.microsoft.com/user_impersonation'] },
+  ]
+  const access = createHostedSourceAccess(requirements, {
+    silent: scopes => tokens.silent(scopes, false, 12 * 60_000),
+    popup: tokens.popup,
+  })
+  const result = await access.acquire(true)
+  assert.deepEqual(state.popups.map(request => request.scopes), requirements.map(item => item.scopes))
+  assert.ok(state.popups.every(request => !Object.hasOwn(request, 'extraScopesToConsent')))
+  assert.equal(state.maxPopups, 1)
+  assert.deepEqual(Object.keys(result), ['fabric', 'foundry', 'graphql', 'kusto'])
+  await access.acquire(true)
+  assert.equal(state.popups.length, 4)
+})
+
+test('empty authorization cannot be silently submitted and same-audience scopes remain supported', async () => {
+  const { state, tokens } = fixture()
+  for (const scopes of [[], [' '], ['openid', 'profile'], ['https://ai.azure.com/user_impersonation ']]) {
+    await assert.rejects(tokens.popup(scopes), /requires non-empty|one resource/)
+  }
+  const scopes = ['https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All',
+    'https://analysis.windows.net/powerbi/api/Item.Execute.All']
+  await tokens.popup([...scopes, scopes[0]])
+  assert.deepEqual(state.popups[0].scopes, scopes)
 })
 
 test('different resources serialize their required interactions and retry silently after waiting', async () => {

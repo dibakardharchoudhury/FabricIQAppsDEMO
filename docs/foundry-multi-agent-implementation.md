@@ -1318,11 +1318,18 @@ GUIDs before deployment. Saved endpoint/model hints are target-scoped and verifi
 cannot select a registry outside the project's live connections.
 
 The demo model name/version/SKU/capacity defaults were removed. Existing projects select a verified deployment
-or discover one ready chat-capable deployment; creation requires explicit catalog/version/SKU/capacity values.
-Both local deployment forms expose these values, subscription selection and operator-verified graph-binding JSON.
-Unchecking creation explicitly overrides inherited opt-in; opting in without selecting an endpoint provisions a
-target-specific project rather than rebinding an unrelated existing project. Stable `hydro-*` role names remain
-application contracts; each concurrently hosted Fabric workspace needs a separate Foundry project.
+or discover one ready chat-capable deployment. The current launcher exposes subscription, optional account,
+project and model names, not catalog/version/SKU/capacity or graph-binding JSON controls.
+Unchecking creation explicitly overrides inherited opt-in. Creation approval permits missing resources,
+not forced recreation: a fresh Fabric workspace can reuse an existing project with creation unchecked.
+Workspace-GUID suffixes allow concurrent workspace agent sets in one shared project.
+This shared-project layout was live-tested for FEATURE/DEV and is recommended.
+Separate-project provisioning exists in code but is not end-to-end verified;
+creating another project did not resolve the earlier hosted-routing 404.
+Sharing the existing model allocation does not add TPM/RPM.
+Full Deploy includes Foundry setup; no standalone Foundry run is required first.
+See the [current sharing and creation guide](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation);
+the earlier separate-project requirement no longer applies.
 
 Environment validation now precedes fresh AppBackend bootstrap as well as image/app publication.
 The manual guide documents the same inputs and canonical engine, including Python dependency restore and the

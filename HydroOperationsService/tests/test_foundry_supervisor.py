@@ -1,6 +1,7 @@
 import copy
 import asyncio
 import json
+import shutil
 import tempfile
 import unittest
 from datetime import timedelta
@@ -13,7 +14,7 @@ import httpx
 from azure.core.credentials import AccessToken
 from azure.identity.aio import AzureCliCredential
 from openai import APITimeoutError, AsyncOpenAI, BadRequestError, InternalServerError
-from agent_framework import AgentFrameworkException, FileCheckpointStorage
+from agent_framework import AgentFrameworkException, FileCheckpointStorage, WorkflowCheckpointException
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
@@ -465,10 +466,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(answer.analysis)
             restarted = self.make_owner(native_binding=binding, analysis_model="test-model")
             restarted.root = self.root / "restart-toolbox"
-            self.seed(request, root=restarted.root)
-            journal = RunJournal(self.root / str(request.run_id) / "receipts")
-            recovered = RunJournal(restarted.root / str(request.run_id) / "receipts")
-            recovered.save("prepared_answer", journal.read("prepared_answer"))
+            shutil.copytree(
+                self.root / str(request.run_id), restarted.root / str(request.run_id),
+                ignore=shutil.ignore_patterns(f"{sha256(b'answer').hexdigest()}.json"),
+            )
             self.assertEqual(await restarted.run(request), answer)
             self.assertEqual(invoke.call_count, 1)
 
@@ -869,9 +870,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     source=SOURCE, connections={"data-agent": "native-data"},
                 ), analysis_model="test-model")
                 restarted.root = self.root / f"restart-{mode}"
-                self.seed(request, root=restarted.root)
-                recovered = RunJournal(restarted.root / str(request.run_id) / "receipts")
-                recovered.save("prepared_answer", journal.read("prepared_answer"))
+                shutil.copytree(
+                    self.root / str(request.run_id), restarted.root / str(request.run_id),
+                    ignore=shutil.ignore_patterns(f"{sha256(b'answer').hexdigest()}.json"),
+                )
                 self.assertEqual(await restarted.run(request), answer)
                 self.assertEqual(self.calls, {"hydro-fabric-iq-agent": 1})
 
@@ -1358,6 +1360,84 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         })
         history = self.owner.contract_answer_plan(self.request)
         self.assertEqual(len(history.tables[0].rows), len(rows))
+
+    def test_focus_instrument_view_preserves_equipment_boundary_and_source_paths(self):
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T005"}
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "instruments_focus_direct", "purpose": "verification",
+            }],
+            "views": [{
+                "id": "signals", "title": "Selected signals", "kind": "instruments",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        rows = [
+            {"instrument_id": "I-other", "equipment_id": "EQUIP_RTI_T014"},
+            {"instrument_id": "I-selected", "equipment_id": "EQUIP_RTI_T005"},
+            {"instrument_id": "I-projected"},
+        ]
+        receipt = ToolEvidence(
+            id="instrument-read", source=SOURCE, tool="query_assets",
+            arguments={"entity": "instruments"}, completed_at=utc_now(),
+            result={"rows": rows, "truncated": False},
+            row_identities={"/rows/2": {"equipment_id": "EQUIP_RTI_T005"}},
+            datasets=(EvidenceDataset(
+                kind="instruments", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("instrument_id",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+
+        plan = self.owner.contract_answer_plan(self.request)
+
+        self.assertEqual(len(plan.tables[0].rows), 2)
+        self.assertEqual(
+            [row.cells[0].source.path for row in plan.tables[0].rows],
+            ["/rows/1/instrument_id", "/rows/2/instrument_id"],
+        )
+        self.assertEqual(self.owner.evidence[receipt.id].result["rows"], rows)
+
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "instruments_population_direct", "purpose": "facts",
+            }],
+            "views": [{
+                "id": "signals", "title": "All signals", "kind": "instruments",
+                "scope": "population", "presentation": "direct_records_table",
+            }],
+        })
+        self.owner.evidence = {receipt.id: receipt.model_copy(update={
+            "datasets": (receipt.datasets[0].model_copy(update={"scope": "population"}),),
+        })}
+        self.assertEqual(len(self.owner.contract_answer_plan(self.request).tables[0].rows), 3)
+
+    def test_focus_instrument_view_requires_equipment_identity(self):
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T005"}
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "instruments_focus_direct", "purpose": "verification",
+            }],
+            "views": [{
+                "id": "signals", "title": "Selected signals", "kind": "instruments",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        receipt = ToolEvidence(
+            id="unbound-instrument", source=SOURCE, tool="query_assets",
+            arguments={"entity": "instruments"}, completed_at=utc_now(),
+            result={"rows": [{"instrument_id": "I-unknown"}]},
+            datasets=(EvidenceDataset(
+                kind="instruments", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("instrument_id",),
+            ),),
+        )
+        self.owner.evidence = {receipt.id: receipt}
+        with self.assertRaisesRegex(SourceFailure, "equipment identity"):
+            self.owner.contract_answer_plan(self.request)
 
     def test_work_coverage_view_requires_status_evidence(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
@@ -3794,6 +3874,144 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(self.calls, before)
         self.assertEqual(self.tools.calls, 1)
+
+    async def test_verified_turn_checkpoint_recovery_does_not_reenter_completed_delegations(self):
+        save = FileCheckpointStorage.save
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+
+        async def fail_after_verification(storage, checkpoint):
+            if journal.read("verified_supervisor_turn") is not None and journal.read("prepared_answer") is None:
+                raise OSError("Injected post-verification checkpoint outage")
+            return await save(storage, checkpoint)
+
+        with patch.object(FileCheckpointStorage, "save", fail_after_verification):
+            with self.assertRaisesRegex(RuntimeError, "checkpoint failed"):
+                await self.owner.run(self.request)
+        self.assertIsNotNone(journal.read("verified_supervisor_turn"))
+        self.assertIsNone(journal.read("prepared_answer"))
+        before = dict(self.calls)
+        receipts = {path.name: path.read_bytes() for path in journal.root.glob("*.json")}
+        recovered = self.make_owner()
+        with patch.object(recovered, "handoff", new=AsyncMock(side_effect=AssertionError("Completed delegation replayed"))):
+            answer = await recovered.run(self.request)
+        self.assertEqual(answer.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(self.calls, before)
+        self.assertEqual(self.tools.calls, 1)
+        for name, content in receipts.items():
+            self.assertEqual((journal.root / name).read_bytes(), content)
+        self.assertFalse(answer.production_write_executed)
+
+    async def test_corrupt_supervisor_checkpoint_blocks_prepared_answer_recovery(self):
+        save = FileCheckpointStorage.save
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+
+        async def fail_after_answer(storage, checkpoint):
+            if journal.read("prepared_answer") is not None:
+                raise OSError("Injected final-checkpoint outage")
+            return await save(storage, checkpoint)
+
+        with patch.object(FileCheckpointStorage, "save", fail_after_answer):
+            with self.assertRaisesRegex(RuntimeError, "checkpoint failed"):
+                await self.owner.run(self.request)
+        checkpoints = list((self.root / str(self.request.run_id) / "checkpoints").glob("*.json"))
+        self.assertTrue(checkpoints)
+        checkpoints[0].write_text("{invalid", encoding="utf-8")
+        before = dict(self.calls)
+        with self.assertRaises(WorkflowCheckpointException):
+            await self.make_owner().run(self.request)
+        self.assertIsNone(journal.read("answer"))
+        self.assertEqual(self.calls, before)
+        self.assertEqual(self.tools.calls, 1)
+
+    async def test_completed_handoff_checkpoint_restores_selection_without_recompiling(self):
+        self.tools.include_identity = True
+        save = FileCheckpointStorage.save
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+
+        async def fail_after_handoff(storage, checkpoint):
+            identifier = await save(storage, checkpoint)
+            if journal.read("specialist_stage:1") is not None and journal.read("specialist_stage:2") is None:
+                raise OSError("Injected interruption after committed handoff checkpoint")
+            return identifier
+
+        with patch.object(FileCheckpointStorage, "save", fail_after_handoff):
+            with self.assertRaisesRegex(RuntimeError, "checkpoint failed"):
+                await self.owner.run(self.request)
+        selected = self.owner.selected_equipment_ids.copy()
+        self.assertEqual(selected, {"TEST_T005"})
+        recovered = self.make_owner()
+        handoff = recovered.handoff
+        selections = []
+
+        async def inspect_selection(*args, **kwargs):
+            selections.append(recovered.selected_equipment_ids.copy())
+            return await handoff(*args, **kwargs)
+
+        with (
+            patch.object(recovered, "compile_orchestration_plan",
+                         new=AsyncMock(side_effect=AssertionError("Completed chief replayed"))),
+            patch.object(recovered, "handoff", side_effect=inspect_selection),
+        ):
+            answer = await recovered.run(self.request)
+        self.assertEqual(selections[0], selected)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(answer.tables[0].rows[0].values["value"], 75.0)
+
+    async def test_final_supervisor_checkpoint_recovers_audit_without_executor_replay(self):
+        save = RunJournal.save
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+
+        def fail_before_audit(storage, key, value):
+            if key == "evidence":
+                raise OSError("Injected interruption after final checkpoint before audit commit")
+            return save(storage, key, value)
+
+        with patch.object(RunJournal, "save", fail_before_audit):
+            with self.assertRaises(OSError):
+                await self.owner.run(self.request)
+        self.assertIsNone(journal.read("answer"))
+        before = dict(self.calls)
+        recovered = self.make_owner()
+        with patch.object(recovered, "handoff", new=AsyncMock(side_effect=AssertionError("Executor replayed"))):
+            answer = await recovered.run(self.request)
+        self.assertEqual(self.calls, before)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertTrue(journal.read("evidence")["receipts"])
+        self.assertEqual(journal.read("answer"), answer.model_dump(mode="json"))
+
+    async def test_terminal_supervisor_failure_cannot_replay_execution(self):
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        journal.save("failure", {"category": "SourceFailure", "message": "Synthetic source outage"})
+        with self.assertRaisesRegex(SourceFailure, "terminal failure"):
+            await self.owner.run(self.request)
+        self.assertEqual(self.calls, {})
+        self.assertEqual(self.tools.calls, 0)
+        self.assertIsNone(journal.read("answer"))
+
+    async def test_checkpoint_from_another_run_cannot_resume_before_any_handoff(self):
+        save = FileCheckpointStorage.save
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+
+        async def fail_after_verification(storage, checkpoint):
+            if journal.read("verified_supervisor_turn") is not None:
+                raise OSError("Injected post-verification checkpoint outage")
+            return await save(storage, checkpoint)
+
+        with patch.object(FileCheckpointStorage, "save", fail_after_verification):
+            with self.assertRaisesRegex(RuntimeError, "checkpoint failed"):
+                await self.owner.run(self.request)
+        other = self.request.model_copy(update={"run_id": uuid4()})
+        self.seed(other)
+        target = self.root / str(other.run_id) / "checkpoints"
+        target.mkdir()
+        for path in (self.root / str(self.request.run_id) / "checkpoints").glob("*.json"):
+            (target / path.name).write_bytes(path.read_bytes())
+        before = dict(self.calls)
+        with self.assertRaisesRegex(SourceFailure, "different immutable run request"):
+            await self.make_owner().run(other)
+        self.assertEqual(self.calls, before)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertIsNone(RunJournal(self.root / str(other.run_id) / "receipts").read("answer"))
 
     async def test_cached_handoff_cannot_replace_an_immutable_evidence_receipt(self):
         evidence = ToolEvidence(

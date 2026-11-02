@@ -3,6 +3,20 @@ import { InteractionRequiredAuthError, type PublicClientApplication } from '@azu
 type TokenClient = Pick<PublicClientApplication,
   'getActiveAccount' | 'getAllAccounts' | 'setActiveAccount' | 'acquireTokenSilent' | 'acquireTokenPopup'>
 
+function audienceScopes(scopes: string[]): string[] {
+  if (!Array.isArray(scopes) || !scopes.length
+    || scopes.some(scope => typeof scope !== 'string' || !scope.trim() || scope !== scope.trim())) {
+    throw new Error('Entra authorization requires non-empty scopes for exactly one resource. No request was sent.')
+  }
+  const unique = [...new Set(scopes)]
+  const resources = new Set(unique.filter(scope => !['openid', 'profile', 'offline_access'].includes(scope))
+    .map(scope => scope.includes('://') ? scope.slice(0, scope.lastIndexOf('/')).toLowerCase() : 'https://graph.microsoft.com'))
+  if (resources.size !== 1) {
+    throw new Error('Entra authorization must request one resource at a time. Mixed-resource consent is not supported. No request was sent.')
+  }
+  return unique
+}
+
 export function createEntraTokens(client: TokenClient, initialize: () => Promise<void>, tenantId: string) {
   const selectAccount = () => {
     const active = client.getActiveAccount()
@@ -12,6 +26,7 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
   }
 
   const silent = async (scopes: string[], forceRefresh = false, minimumLifetimeMs = 0): Promise<string | null> => {
+    scopes = audienceScopes(scopes)
     await initialize()
     const account = selectAccount()
     if (!account) return null
@@ -36,18 +51,18 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
 
   const pending = new Map<string, Promise<string>>()
   let interactiveQueue: Promise<void> = Promise.resolve()
-  const popup = async (scopes: string[], extraScopesToConsent: string[] = []): Promise<string> => {
+  const popup = async (scopes: string[]): Promise<string> => {
+    scopes = audienceScopes(scopes)
     await initialize()
-    const key = JSON.stringify([selectAccount()?.homeAccountId, [...new Set(scopes)].sort(), [...new Set(extraScopesToConsent)].sort()])
+    const key = JSON.stringify([selectAccount()?.homeAccountId, [...scopes].sort()])
     const existing = pending.get(key)
     if (existing) return existing
     const current = interactiveQueue.then(async () => {
       const cached = await silent(scopes)
-      if (cached && !extraScopesToConsent.length) return cached
+      if (cached) return cached
       const account = selectAccount()
       const result = await client.acquireTokenPopup({
         scopes, account,
-        ...(extraScopesToConsent.length ? { extraScopesToConsent: [...new Set(extraScopesToConsent)] } : {}),
         ...(!account && client.getAllAccounts().filter(item => item.tenantId === tenantId).length > 1
           ? { prompt: 'select_account' } : {}),
       })

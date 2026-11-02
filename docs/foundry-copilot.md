@@ -5,9 +5,17 @@ agent roles, tests and remaining gates](foundry-multi-agent-implementation.md).
 For current automated and manual-operator deployment steps, use
 [Foundry deployment and multi-agent setup](foundry-deployment-and-multi-agent-setup.md).
 
+The recommended, live-tested FEATURE/DEV layout shares one verified working Foundry
+account/project/model with workspace-scoped agent sets. Separate-project provisioning
+exists in code but is **not end-to-end verified**; creating another project did not
+resolve the earlier hosted-routing 404.
+Full Deploy includes Foundry setup. Creation approval is for missing resources,
+not every fresh Fabric workspace; see the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+
 > Current implementation: the SPA invokes the `hydro-orchestrator` Foundry Hosted Agent.
-> Its Microsoft Agent Framework runtime plans bounded serial calls to five persistent specialist
-> Prompt Agents and executes source tools through the Node bridge under the user's delegated identity.
+> Its Microsoft Agent Framework runtime selects from five persistent specialist
+> Prompt Agents, runs independent governed readers concurrently and evidence-dependent
+> specialist steps in order, and executes source tools through the Node bridge under the user's delegated identity.
 > This is not native A2A transport or Foundry Workflows. Only the Fabric IQ specialist uses Fabric IQ;
 > Q&A/RCA do not use the Data Agent as an intermediary. See the
 > [role/routing and ten-flow acceptance report](../HydroOperationsApp/AGENT-ACCEPTANCE.md),
