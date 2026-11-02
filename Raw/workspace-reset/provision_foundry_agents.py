@@ -222,6 +222,58 @@ def definition_matches(actual: dict, expected: dict) -> bool:
     return all(actual.get(key) == value for key, value in expected.items())
 
 
+def ensure_specialist_version(deploy, url: str, headers: dict, definition: dict) -> dict:
+    """Reconcile the explicit project-identity conflict without replaying other writes."""
+    for attempt in range(3):
+        response = request_with_read_retry(
+            "POST", url + "/versions?api-version=v1", headers=headers,
+            json={"definition": definition}, timeout=180,
+        )
+        identity_conflict = False
+        if response.status_code == 409:
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            error = body.get("error", {}) if isinstance(body, dict) else {}
+            identity_conflict = (
+                isinstance(error, dict) and error.get("code") == "conflict"
+                and isinstance(error.get("message"), str)
+                and error["message"].startswith(
+                    "The project workspace identity changed during version creation. Read the current agent and retry."
+                )
+            )
+        if not response.ok and not identity_conflict:
+            raise deploy.DeployError(
+                f"Foundry provisioning failed: POST {url}/versions: "
+                f"HTTP {response.status_code}: {response.text[:800]}"
+            )
+        readback = request_with_read_retry(
+            "GET", url + "?api-version=v1", headers=headers, timeout=60,
+        )
+        if not readback.ok:
+            raise deploy.DeployError(
+                f"Foundry agent readback failed: GET {url}: HTTP {readback.status_code}: {readback.text[:800]}"
+            )
+        live = readback.json().get("versions", {}).get("latest", {})
+        if definition_matches(live.get("definition", {}), definition) and live.get("version"):
+            return live
+        if not identity_conflict:
+            raise deploy.DeployError(f"Foundry definition readback failed for {url}.")
+        if attempt == 2:
+            raise deploy.DeployError(
+                f"Foundry project workspace identity conflict persisted after 3 attempts for {url}. "
+                f"Latest service response: {response.text[:800]}"
+            )
+        print(
+            f"Foundry: project identity changed while creating {url.rsplit('/', 1)[-1]}; "
+            f"current agent read back, retrying version creation ({attempt + 2}/3).",
+            flush=True,
+        )
+        time.sleep(2 * (attempt + 1))
+    raise AssertionError("Specialist version retry schedule must not be empty.")
+
+
 def source_configuration_digest(tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> str:
     config = {
         "tenant_id": tenant,
@@ -1049,10 +1101,7 @@ def provision(deploy, tenant: str, workspace: str, *, selection: FoundrySelectio
             updated += 1
         else:
             created += 1
-        request("POST", url + "/versions?api-version=v1", agent_headers, json={"definition": definition})
-        live = request("GET", url + "?api-version=v1", agent_headers).json()["versions"]["latest"]
-        if not definition_matches(live["definition"], definition):
-            raise deploy.DeployError(f"Foundry definition readback failed for {name}.")
+        live = ensure_specialist_version(deploy, url, agent_headers, definition)
         print(f"Verified persistent Foundry agent {name}:{live['version']}", flush=True)
     print(f"Foundry: specialists current={reused}, updated={updated}, created={created}.", flush=True)
     ensure_native_toolbox(

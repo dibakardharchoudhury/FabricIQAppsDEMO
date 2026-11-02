@@ -37,6 +37,74 @@ def admission_response(status=422, body=None):
     return response
 
 
+class SpecialistVersionConflictTests(unittest.TestCase):
+    def setUp(self):
+        self.deploy = Mock(DeployError=RuntimeError)
+        self.url = "https://account.services.ai.azure.com/api/projects/project/agents/dev-iq"
+        self.expected = {"kind": "prompt", "model": "model", "tools": [{"type": "fabric_dataagent"}]}
+        self.conflict = admission_response(409, {"error": {
+            "code": "conflict",
+            "message": "The project workspace identity changed during version creation. Read the current agent and retry. [Request ID: test]",
+        }})
+        self.old = admission_response(200, {"versions": {"latest": {
+            "version": "1", "definition": {"kind": "prompt", "tools": []},
+        }}})
+        self.current = admission_response(200, {"versions": {"latest": {
+            "version": "2", "definition": self.expected,
+        }}})
+
+    def test_explicit_identity_conflict_reads_current_agent_before_retry_and_verifies(self):
+        with (
+            patch.object(module, "request_with_read_retry", side_effect=[
+                self.conflict, self.old, admission_response(200, {}), self.current,
+            ]) as request,
+            patch.object(module.time, "sleep") as sleep,
+        ):
+            result = module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)
+        self.assertEqual(result["version"], "2")
+        self.assertEqual([entry.args[0] for entry in request.call_args_list], ["POST", "GET", "POST", "GET"])
+        for entry in request.call_args_list:
+            self.assertTrue(entry.args[1].startswith(self.url))
+        sleep.assert_called_once_with(2)
+
+    def test_conflict_already_converged_never_creates_duplicate_version(self):
+        with patch.object(module, "request_with_read_retry", side_effect=[
+            self.conflict, self.current,
+        ]) as request:
+            self.assertEqual(module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)["version"], "2")
+        self.assertEqual(request.call_count, 2)
+
+    def test_persistent_identity_conflict_is_bounded(self):
+        with (
+            patch.object(module, "request_with_read_retry", side_effect=[self.conflict, self.old] * 3) as request,
+            patch.object(module.time, "sleep") as sleep,
+            self.assertRaisesRegex(RuntimeError, "persisted after 3 attempts"),
+        ):
+            module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)
+        self.assertEqual(request.call_count, 6)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_other_errors_never_replay_version_write(self):
+        for status, body in (
+            (409, {"error": {"code": "conflict", "message": "Another conflict"}}),
+            (409, []), (403, {"error": {"code": "Forbidden"}}),
+            (500, {"error": {"code": "InternalError"}}),
+        ):
+            with self.subTest(status=status, body=body), patch.object(
+                module, "request_with_read_retry", return_value=admission_response(status, body),
+            ) as request, self.assertRaisesRegex(RuntimeError, f"HTTP {status}"):
+                module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)
+            request.assert_called_once()
+
+    def test_successful_write_requires_matching_readback(self):
+        for readback in (self.old, admission_response(403, {})):
+            with self.subTest(readback=readback.status_code), patch.object(
+                module, "request_with_read_retry", side_effect=[admission_response(200, {}), readback],
+            ) as request, self.assertRaisesRegex(RuntimeError, "readback failed"):
+                module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)
+            self.assertEqual(request.call_count, 2)
+
+
 class FabricIQConnectionTests(unittest.TestCase):
     def test_native_names_include_project_and_workspace_and_preserve_owned_legacy(self):
         workspace = "20000000-0000-0000-0000-000000000001"

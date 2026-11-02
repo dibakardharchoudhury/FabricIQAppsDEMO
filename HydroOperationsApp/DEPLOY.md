@@ -54,6 +54,11 @@ Browser sign-in setup uses this same Graph recovery path, not a second generic l
 This does not bypass Conditional Access: a repeated rejection stops deployment.
 After recovery, retry the failed final deployment stage; do not repeat successful
 Git sync/Core setup. Account metadata alone does not verify Graph authorization.
+Foundry specialist version creation handles only the explicit HTTP 409
+`The project workspace identity changed during version creation. Read the current agent and retry.`
+by reading the current agent before retrying (at most three writes). Matching
+readback completes without another version. Other conflicts, authorization errors,
+transport failures and mismatched successful readbacks still fail explicitly.
 Non-Graph stale-session recovery creates a new owner-only CLI session directory;
 it never renames or deletes an active cache
 that Windows or another process may hold open. Only after successful login and
