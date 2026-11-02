@@ -384,12 +384,19 @@ def _registry_digest(deploy, registry: str, subscription: str, tag: str) -> str 
 
 
 def ensure_azd_ready(deploy, tenant: str) -> None:
-    """azd must be signed in and carry the Foundry extensions azure.yaml requires; install what is missing."""
+    """Verify target-tenant publishing credentials before any azd mutation."""
+    def check_credentials() -> None:
+        for scope in ("https://management.azure.com/.default", "https://ai.azure.com/.default"):
+            deploy.run_capture(deploy.command_argv(
+                "azd", "auth", "token", "--tenant-id", tenant, "--scope", scope,
+            ))
+
     try:
-        deploy.run_capture(deploy.command_argv("azd", "auth", "login", "--check-status"))
+        check_credentials()
     except deploy.DeployError:
-        print("azd is not signed in; opening sign-in for the target tenant.", flush=True)
+        print("azd publishing credentials are unavailable; opening sign-in for the target tenant.", flush=True)
         deploy.run_stream(deploy.command_argv("azd", "auth", "login", "--tenant-id", tenant))
+        check_credentials()
     listing = json.loads(deploy.run_capture(
         deploy.command_argv("azd", "extension", "list", "--installed", "--output", "json"),
     ) or "[]")

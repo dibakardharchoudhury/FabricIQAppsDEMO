@@ -65,6 +65,12 @@ that Windows or another process may hold open. Only after successful login and
 tenant verification is the active-session pointer atomically updated for later
 deployments. Failed login leaves the previous session selection intact.
 
+Foundry provisioning and hosted publication verify azd token acquisition for both
+ARM and Foundry in the selected tenant, rather than relying on generic signed-in
+status. A failed credential check permits one target-tenant browser sign-in and
+rechecks both audiences before proceeding. Persistent failures stop explicitly;
+agent publication is not automatically replayed after an ambiguous failure.
+
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.

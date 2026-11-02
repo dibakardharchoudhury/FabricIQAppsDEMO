@@ -124,7 +124,7 @@ class FakeDeploy:
             if tag not in self.tags:
                 raise self.DeployError("ERROR: The requested data does not exist.")
             return self.tags[tag]
-        if argv[:4] == ["azd", "auth", "login", "--check-status"] and not self.azd_signed_in:
+        if argv[:3] == ["azd", "auth", "token"] and not self.azd_signed_in:
             raise self.DeployError("Not logged in")
         if argv[:3] == ["azd", "extension", "list"]:
             return json.dumps([{"id": item} for item in self.extensions])
@@ -144,6 +144,8 @@ class FakeDeploy:
 
     def run_stream(self, argv, cwd=None, env=None):
         self.log.append(argv)
+        if argv[:3] == ["azd", "auth", "login"]:
+            self.azd_signed_in = True
         if argv[:3] == ["az", "acr", "build"]:
             self.build_cwd = cwd
             self.build_context = Path(argv[-1])
@@ -593,6 +595,41 @@ class ProjectRoutingTests(unittest.TestCase):
         hosted.ensure_azd_ready(both, "tenant")
         self.assertEqual(both.commands("azd", "extension", "install"), [])
         self.assertEqual(set(hosted.REQUIRED_EXTENSIONS), {"azure.ai.agents", "microsoft.foundry"})
+
+    def test_publishing_checks_both_token_audiences_in_the_selected_tenant(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        hosted.ensure_azd_ready(fake, "selected-tenant")
+        self.assertEqual(fake.commands("azd", "auth", "token"), [
+            ["azd", "auth", "token", "--tenant-id", "selected-tenant", "--scope", scope]
+            for scope in ("https://management.azure.com/.default", "https://ai.azure.com/.default")
+        ])
+        self.assertEqual(fake.commands("azd", "auth", "login"), [])
+
+    def test_stale_publishing_credential_allows_one_login_then_rechecks(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        original = fake.run_capture
+        failures = iter([True, False, False])
+
+        def capture(argv, **kwargs):
+            if argv[:3] == ["azd", "auth", "token"] and next(failures):
+                raise fake.DeployError("AzureDeveloperCLICredential: exit status 1")
+            return original(argv, **kwargs)
+
+        with patch.object(fake, "run_capture", side_effect=capture):
+            hosted.ensure_azd_ready(fake, "selected-tenant")
+        self.assertEqual(fake.commands("azd", "auth", "login"), [
+            ["azd", "auth", "login", "--tenant-id", "selected-tenant"],
+        ])
+        self.assertEqual(len(fake.commands("azd", "auth", "token")), 2)
+
+    def test_failed_credential_recovery_stops_without_installing_or_publishing(self):
+        fake = FakeDeploy(azd_signed_in=False)
+        with patch.object(fake, "run_stream", side_effect=lambda argv: fake.log.append(argv)), \
+                self.assertRaisesRegex(fake.DeployError, "Not logged in"):
+            hosted.ensure_azd_ready(fake, "selected-tenant")
+        self.assertEqual(len(fake.commands("azd", "auth", "login")), 1)
+        self.assertEqual(fake.commands("azd", "extension", "install"), [])
+        self.assertEqual(fake.commands("azd", "deploy"), [])
 
 
 class ProjectCreationTests(unittest.TestCase):
