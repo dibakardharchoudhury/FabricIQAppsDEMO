@@ -1,7 +1,8 @@
 import type { AgentAnswer, AgentArtifact } from './assistantStream'
 
 export type NativeCitation = { title: string; url?: string; fileId?: string }
-export type DirectAnswer = AgentAnswer & { citations?: NativeCitation[]; nativeResponseId?: string }
+export type DirectAnswer = AgentAnswer & { citations?: NativeCitation[]; nativeResponseId?: string; nativeTextSha256?: string; continuationSupported?: false }
+export { DirectFabricMcpConversation as DirectFabricConversation } from './directFabricMcp'
 export type DirectAccess = {
   key: string
   workspaceId: string
@@ -93,7 +94,7 @@ export async function readNativeResponse(response: Response, progress?: (text: s
   } finally { await reader.cancel().catch(() => undefined) }
 }
 
-export class DirectFabricConversation {
+export class DirectResponsesConversation {
   private key?: string
   private previousResponseId?: string
   private running = false
@@ -139,7 +140,11 @@ export class DirectFabricConversation {
               ...init?.headers } })
         } catch (error) {
           if (bounded.aborted) throw bounded.reason
-          throw new Error(`Direct Fabric browser request failed at ${new URL(url).origin}. Browser CORS/network access or delegated authentication is blocked; no Foundry fallback was used.`, { cause: error })
+          const target = new URL(url)
+          const routing = target.pathname.endsWith('/metadata/v201606/generatemwctokenv2')
+          throw new Error(`Direct Fabric ${routing ? 'regional ML routing' : 'browser request'} failed (${init?.method ?? 'GET'} ${target.origin}${target.pathname}). `
+            + 'Browser CORS/network access is blocked; a valid delegated token cannot bypass provider CORS. '
+            + 'No answer was obtained; no Foundry fallback or proxy was used.', { cause: error })
         }
         if (!response.ok) throw new Error(`Direct Fabric request failed (HTTP ${response.status}) at ${new URL(url).origin}. Check delegated read/execute access; no fallback was used.`)
         return response

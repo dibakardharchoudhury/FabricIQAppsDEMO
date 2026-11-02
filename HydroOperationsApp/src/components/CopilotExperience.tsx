@@ -35,6 +35,8 @@ export type CopilotMessage = {
   readOnly?: boolean
   citations?: NativeCitation[]
   nativeResponseId?: string
+  nativeTextSha256?: string
+  continuationSupported?: false
   workflowText?: string
   sourceAnswers?: Array<{ evidence_id: string; text: string; content_sha256: string }>
   rcaReports?: Record<string, unknown>[]
@@ -109,6 +111,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, l
         <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         <button className="v2-icon-action" type="button" title="New chat" aria-label="New chat" disabled={busy || !messages.length} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>
+      {direct && <p className="v2-direct-limit" role="note">Direct Fabric IQ sends each question unchanged and independently. The published MCP tool does not declare native conversation or previous-response continuation; earlier questions and answers are not sent as context. Native result files and evidence remain available.</p>}
       {conversationEvents.length > 0 && <aside className="v2-conversation-crew" aria-label="Conversation agent flow">
         {flowExpanded && <label className="v2-flow-resize">Panel width<input aria-label="Agent panel width" type="range" min="280" max="420" step="20" value={flowWidth} onChange={event => setFlowWidth(Number(event.target.value))} /></label>}
         <AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} expanded={flowExpanded} onExpandedChange={setFlowExpanded} />
@@ -209,6 +212,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
       ? <a href={citation.url} target="_blank" rel="noreferrer">{citation.title}</a>
       : <span>{citation.title} — result file available below</span>}</li>)}</ul></details>}
     {message.nativeResponseId && <small>Fabric response: {message.nativeResponseId}</small>}
+    {message.nativeTextSha256 && <small>Native answer SHA-256: {message.nativeTextSha256}</small>}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
@@ -271,6 +275,7 @@ function buildTranscript(question: string | undefined, message: CopilotMessage):
   if (message.text) parts.push(`## Answer\n\n${message.backendOwned ? message.text : stripOptionsMarker(message.text)}`)
   if (message.citations?.length) parts.push(`## Native citations\n\n${message.citations.map(citation => `- ${citation.title}: ${citation.url ?? citation.fileId ?? ''}`).join('\n')}`)
   if (message.nativeResponseId) parts.push(`Fabric response: ${message.nativeResponseId}`)
+  if (message.nativeTextSha256) parts.push(`Native answer SHA-256: ${message.nativeTextSha256}`)
   if (message.sourceAnswers?.length) parts.push(`## Native evidence digests\n\n${message.sourceAnswers.map(source => `${source.evidence_id}: ${source.content_sha256}`).join('\n')}`)
   for (const visualization of message.visualizations ?? []) {
     parts.push(`### Chart: ${visualization.title} (${visualization.chartType})\n\n${block('csv', visualization.inlineCsvData)}`)

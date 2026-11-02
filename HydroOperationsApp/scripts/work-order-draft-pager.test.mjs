@@ -67,6 +67,7 @@ test('Hydro Intelligence has accessible Fabric IQ, default Multi Agent and read-
   assert.match(html, />Battle of the Agents<\/button>/)
   assert.match(html, /Review and approval are available only in Multi Agent/)
   assert.match(html, /Ask about connected Fabric data/)
+  assert.match(html, /published MCP tool does not declare native conversation or previous-response continuation/)
 })
 
 test('team capabilities include all roles without pretending unused specialists executed', () => {
