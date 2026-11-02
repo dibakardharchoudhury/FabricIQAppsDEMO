@@ -2421,6 +2421,8 @@ console.log(JSON.stringify([
             self.assertLess(form.index(f'id="{prefix}AzureSubscriptionId"'), form.index(f'id="{prefix}FoundryProjectName"'))
             self.assertIn("FoundryCreate", normal_fields)
             self.assertIn("Automatic multi-agent setup", form)
+            self.assertIn("live project incarnation and complete agent inventory", form)
+            self.assertIn("Creation approval never authorizes deleting agents", form)
             self.assertIn("billable", normal_fields)
             self.assertNotIn("FoundryOverrides", form)
             self.assertNotIn("FoundryNewProjectOptions", form)

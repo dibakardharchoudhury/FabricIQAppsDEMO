@@ -246,6 +246,15 @@ Project managed identities receive scoped registry/model/project
 access; the operator receives project access. Shared account/model/registry/monitoring
 resources are outside project-only cleanup ownership. Project agent access is verified
 after bounded endpoint/RBAC propagation waits, not inferred from project creation.
+Readiness also checks the live ARM project incarnation and creation time against the
+complete, paginated agent inventory. A newly created project must expose no agents;
+existing-project reruns reject agents whose latest version predates that project.
+Malformed/incomplete inventory or a project identity change during readback stops
+setup before backend/image preparation. This also applies to app-only verification.
+Creation approval is not permission to adopt or delete retained agents. If same-name
+recreation exposes old agents, stop other deployments and review explicit cleanup
+before deleting/recreating the project; persistent identity conflicts require Azure
+support. This guard does not certify service-side ownership or agent execution.
 
 Only an approved genuinely missing account uses full infrastructure/model bootstrap.
 On that bootstrap path a deployment alias is resolved to its underlying

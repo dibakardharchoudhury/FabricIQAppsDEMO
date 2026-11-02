@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime
 import json
 import os
 import unittest
@@ -28,6 +29,7 @@ class SharedProjectTests(unittest.TestCase):
         self.connections = {}
         self.deployment_history = []
         self.calls = []
+        self.agent_page = {"data": [], "has_more": False}
         self.instrumentation_key = "40000000-0000-0000-0000-000000000001"
         self.connection_string = (
             f"InstrumentationKey={self.instrumentation_key};"
@@ -83,7 +85,7 @@ class SharedProjectTests(unittest.TestCase):
     def response(self, method, url, **kwargs):
         if ".services.ai.azure.com/" in url:
             self.calls.append((method, url))
-            return Mock(status_code=200, ok=True, json=lambda: {"value": []})
+            return Mock(status_code=200, ok=True, json=lambda: copy.deepcopy(self.agent_page))
         path = url.split("management.azure.com", 1)[1].split("?", 1)[0]
         self.calls.append((method, path))
         if "/deployments/" in path:
@@ -150,7 +152,9 @@ class SharedProjectTests(unittest.TestCase):
                 self.projects[path] = {"id": path, "identity": {
                     "type": "SystemAssigned", "principalId": str(uuid.uuid5(uuid.NAMESPACE_URL, path)),
                 },
-                                       "properties": {"provisioningState": "Succeeded", "endpoints": {
+                                       "systemData": {"createdAt": "2026-11-02T18:25:42.8764902Z"},
+                                       "properties": {"internalId": uuid.uuid4().hex,
+                                                      "provisioningState": "Succeeded", "endpoints": {
                                            "AI Foundry API": f"https://shared.services.ai.azure.com/api/projects/{name}",
                                        }}}
             if path not in self.projects:
@@ -660,6 +664,22 @@ class SharedProjectTests(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         sleep.assert_called_once_with(15)
 
+    def test_recreated_project_rejects_retained_agents_on_creation_and_rerun(self):
+        self.agent_page = {"data": [{
+            "name": "hydro-qa-agent-old-workspace", "versions": {"latest": {"created_at": 1793634885}},
+        }], "has_more": False}
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            plan = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="new", model="shared-model",
+            )
+            for attempt in range(2):
+                with self.subTest(attempt=attempt), self.assertRaisesRegex(RuntimeError, "project lifecycle"):
+                    shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+            self.assertEqual(len(self.projects), 1)
+            self.assertFalse(self.connections)
+            self.assertTrue(all(method != "DELETE" for method, _ in self.calls))
+
     def test_role_assignment_failure_preserves_partial_project_without_connections(self):
         with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
             plan = shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
@@ -670,6 +690,146 @@ class SharedProjectTests(unittest.TestCase):
         self.assertEqual(len(self.projects), 1)
         self.assertFalse(self.connections)
         self.assertTrue(all("/projects/" in path for method, path in self.calls if method != "GET"))
+
+
+class ProjectLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.deploy = Mock(DeployError=RuntimeError)
+        self.deploy.run_capture.return_value = "token"
+        self.project_id = (
+            "/subscriptions/10000000-0000-0000-0000-000000000001/resourceGroups/rg/"
+            "providers/Microsoft.CognitiveServices/accounts/shared/projects/recreated"
+        )
+        self.endpoint = "https://shared.services.ai.azure.com/api/projects/recreated"
+        self.project = {
+            "id": self.project_id, "systemData": {"createdAt": "2026-11-02T18:25:42.8764902Z"},
+            "properties": {"internalId": uuid.uuid4().hex, "provisioningState": "Succeeded",
+                           "endpoints": {"AI Foundry API": self.endpoint}},
+        }
+        self.created_second = int(datetime.fromisoformat(self.project["systemData"]["createdAt"]).timestamp())
+        self.pages = [{"data": [], "has_more": False}]
+        self.agent_reads = []
+        self.readback = None
+        self.arm_reads = 0
+        self.request = self.enterContext(patch.object(foundry, "request_with_read_retry", side_effect=self.response))
+
+    def agent(self, *, name="hydro-qa-agent-workspace", timestamp=None):
+        return {"name": name, "versions": {"latest": {
+            "created_at": self.created_second if timestamp is None else timestamp,
+        }}}
+
+    def response(self, method, url, **kwargs):
+        self.assertEqual(method, "GET")
+        if ".services.ai.azure.com/" in url:
+            self.agent_reads.append(url)
+            body = self.pages.pop(0)
+        else:
+            self.arm_reads += 1
+            body = self.readback if self.arm_reads > 1 and self.readback is not None else self.project
+        return Mock(status_code=200, ok=True, content=b"json", json=lambda: copy.deepcopy(body))
+
+    def verify(self, **kwargs):
+        return shared.verify_project_lifecycle(
+            self.deploy, tenant="tenant", project_id=self.project_id, endpoint=self.endpoint, **kwargs,
+        )
+
+    def test_existing_empty_and_current_shared_workspace_agents_are_valid(self):
+        for data in ([], [self.agent(), self.agent(name="hydro-qa-agent-another-workspace")]):
+            with self.subTest(data=data):
+                self.pages = [{"data": data, "has_more": False}]
+                self.verify()
+
+    def test_new_project_requires_empty_inventory_even_with_current_timestamps(self):
+        self.pages = [{"data": [self.agent()], "has_more": False}]
+        with self.assertRaisesRegex(RuntimeError, "project lifecycle mismatch"):
+            self.verify(require_empty=True)
+
+    def test_retained_agent_on_later_page_is_rejected_and_cursor_is_encoded(self):
+        self.pages = [
+            {"data": [self.agent()], "has_more": True, "last_id": "cursor/&?"},
+            {"data": [self.agent(name="old", timestamp=self.created_second - 1)], "has_more": False},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "agent 'old'"):
+            self.verify()
+        self.assertEqual(self.agent_reads[-1], self.endpoint + "/agents?api-version=v1&limit=100&after=cursor%2F%26%3F")
+
+    def test_valid_complete_pagination_is_read_only(self):
+        self.pages = [
+            {"data": [self.agent()], "has_more": True, "last_id": "first"},
+            {"data": [self.agent(name="second")], "has_more": False},
+        ]
+        self.verify()
+        self.assertEqual(len(self.agent_reads), 2)
+        self.assertEqual(self.arm_reads, 2)
+
+    def test_invalid_inventory_never_counts_as_ready(self):
+        for page in (
+            None, {"value": []}, {"data": [], "has_more": "false"},
+            {"data": None, "has_more": False}, {"data": [], "has_more": True},
+            {"data": [self.agent()], "has_more": True},
+            {"data": [self.agent(), self.agent()], "has_more": False},
+            {"data": [{}], "has_more": False},
+            *({"data": [self.agent(timestamp=value)], "has_more": False}
+              for value in (True, "1793643942", float("nan"), float("inf"), 0, -1)),
+        ):
+            with self.subTest(page=page):
+                self.pages = [page]
+                with self.assertRaisesRegex(RuntimeError, "project lifecycle"):
+                    self.verify()
+
+    def test_cyclic_pagination_is_rejected(self):
+        self.pages = [
+            {"data": [self.agent(name="first")], "has_more": True, "last_id": "cursor"},
+            {"data": [self.agent(name="second")], "has_more": True, "last_id": "cursor"},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "pagination"):
+            self.verify()
+        self.assertEqual(len(self.agent_reads), 2)
+
+    def test_missing_or_untrusted_arm_incarnation_is_rejected_before_agent_read(self):
+        for created, incarnation in (
+            (None, "id"), ("invalid", "id"), ("2026-11-02T18:25:42", "id"),
+            ("2026-11-02T18:25:42Z", ""),
+        ):
+            with self.subTest(created=created, incarnation=incarnation):
+                self.project["systemData"]["createdAt"] = created
+                self.project["properties"]["internalId"] = incarnation
+                with self.assertRaisesRegex(RuntimeError, "project lifecycle"):
+                    self.verify()
+        self.assertFalse(self.agent_reads)
+
+    def test_project_identity_endpoint_or_incarnation_change_fails_closed(self):
+        for field in ("internalId", "createdAt", "endpoint", "id", "state"):
+            with self.subTest(field=field):
+                self.pages = [{"data": [], "has_more": False}]
+                self.arm_reads = 0
+                self.readback = copy.deepcopy(self.project)
+                if field == "createdAt":
+                    self.readback["systemData"][field] = "2026-11-03T18:25:42Z"
+                elif field == "endpoint":
+                    self.readback["properties"]["endpoints"]["AI Foundry API"] += "-other"
+                elif field == "id":
+                    self.readback["id"] += "-other"
+                elif field == "state":
+                    self.readback["properties"]["provisioningState"] = "Deleting"
+                else:
+                    self.readback["properties"][field] = uuid.uuid4().hex
+                with self.assertRaisesRegex(RuntimeError, "changed during"):
+                    self.verify()
+
+    def test_access_denied_or_project_missing_is_not_success(self):
+        for status in (403, 404, 500):
+            with self.subTest(status=status):
+                self.request.side_effect = None
+                self.request.return_value = Mock(ok=False, status_code=status, text="denied")
+                with self.assertRaises(RuntimeError):
+                    self.verify()
+        self.request.side_effect = self.response
+        with patch.object(foundry, "request_with_read_retry", side_effect=[
+            self.response("GET", "https://management.azure.com/project"),
+            Mock(ok=False, status_code=403),
+        ]), self.assertRaisesRegex(RuntimeError, "inventory failed"):
+            self.verify()
 
 
 if __name__ == "__main__":

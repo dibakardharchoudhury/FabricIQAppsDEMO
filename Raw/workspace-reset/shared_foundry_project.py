@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 import json
+import math
 import os
 import re
 import time
@@ -71,6 +73,89 @@ def _model_fingerprint(deploy, settings, headers):
         "rateLimits": model.get("properties", {}).get("rateLimits"),
         "sku": model.get("sku"),
     }, sort_keys=True).encode()).hexdigest()
+
+
+def verify_project_lifecycle(
+    deploy, *, tenant, project_id, endpoint, project=None, first_page=None,
+    require_empty=False, agent_headers=None,
+):
+    """Reject retained agents; this does not certify service-side ownership or execution."""
+    from provision_foundry_agents import request_with_read_retry
+
+    account, separator, name = project_id.rpartition("/projects/")
+    if not separator or not ACCOUNT_RE.fullmatch(account) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        raise deploy.DeployError("Foundry project lifecycle requires a verified project ARM identity.")
+    headers = _headers(deploy, tenant)
+    if project is None:
+        project = _request(deploy, "GET", project_id, headers)
+    if (not isinstance(project, dict) or str(project.get("id", "")).casefold() != project_id.casefold()
+            or project.get("properties", {}).get("provisioningState") != "Succeeded"
+            or project.get("properties", {}).get("endpoints", {}).get("AI Foundry API", "").rstrip("/")
+            != endpoint.rstrip("/")):
+        raise deploy.DeployError("Foundry project lifecycle ARM identity/state/endpoint does not match.")
+    incarnation = project.get("properties", {}).get("internalId")
+    created_at = project.get("systemData", {}).get("createdAt")
+    try:
+        created = datetime.fromisoformat(created_at)
+    except (TypeError, ValueError) as error:
+        raise deploy.DeployError("Foundry project lifecycle creation timestamp is missing or invalid.") from error
+    if not isinstance(incarnation, str) or not incarnation or created.utcoffset() is None:
+        raise deploy.DeployError("Foundry project lifecycle incarnation/timestamp is unverifiable.")
+    if agent_headers is None:
+        agent_headers = _headers(deploy, tenant, "https://ai.azure.com")
+    page = first_page
+    cursor = ""
+    seen_cursors = set()
+    seen_names = set()
+    while True:
+        if page is None:
+            response = request_with_read_retry(
+                "GET", endpoint.rstrip("/") + "/agents?api-version=v1&limit=100"
+                + ("&after=" + quote(cursor, safe="") if cursor else ""),
+                headers=agent_headers, timeout=60,
+            )
+            if not response.ok:
+                raise deploy.DeployError(f"Foundry project lifecycle inventory failed: HTTP {response.status_code}.")
+            page = response.json()
+        if (not isinstance(page, dict) or not isinstance(page.get("data"), list)
+                or type(page.get("has_more")) is not bool):
+            raise deploy.DeployError("Foundry project lifecycle inventory is malformed or incomplete.")
+        for agent in page["data"]:
+            name = agent.get("name") if isinstance(agent, dict) else None
+            versions = agent.get("versions") if isinstance(agent, dict) else None
+            latest = versions.get("latest") if isinstance(versions, dict) else None
+            timestamp = latest.get("created_at") if isinstance(latest, dict) else None
+            if (not isinstance(name, str) or not name or name in seen_names
+                    or not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool)
+                    or not math.isfinite(timestamp) or timestamp <= 0):
+                raise deploy.DeployError("Foundry project lifecycle agent identity/timestamp is unverifiable.")
+            seen_names.add(name)
+            # Agent timestamps have second precision; ARM creation timestamps have fractional seconds.
+            if require_empty or timestamp < math.floor(created.timestamp()):
+                raise deploy.DeployError(
+                    f"Foundry project lifecycle mismatch: agent '{name}' is retained from before project "
+                    f"creation or appeared in a newly created project (createdAt={created_at}, "
+                    f"internalId={incarnation}). Refusing to reuse or update retained agents. "
+                    "Stop concurrent deployments and explicitly review/clean up retained agents before "
+                    "project recreation; if the identity conflict persists, contact Azure support. "
+                    "No agents were deleted by this check."
+                )
+        if not page["has_more"]:
+            break
+        cursor = page.get("last_id")
+        if (not page["data"] or not isinstance(cursor, str) or not cursor
+                or cursor in seen_cursors or len(seen_cursors) >= 1000):
+            raise deploy.DeployError("Foundry project lifecycle inventory pagination is incomplete or cyclic.")
+        seen_cursors.add(cursor)
+        page = None
+    readback = _request(deploy, "GET", project_id, headers)
+    if (readback.get("properties", {}).get("internalId") != incarnation
+            or readback.get("systemData", {}).get("createdAt") != created_at
+            or str(readback.get("id", "")).casefold() != project_id.casefold()
+            or readback.get("properties", {}).get("provisioningState") != "Succeeded"
+            or readback.get("properties", {}).get("endpoints", {}).get("AI Foundry API", "").rstrip("/")
+            != endpoint.rstrip("/")):
+        raise deploy.DeployError("Foundry project lifecycle changed during inventory verification; stop deployment.")
 
 
 def _monitoring_connection_string(deploy, resource_id, headers):
@@ -244,7 +329,8 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
     project_id = settings["account_id"] + "/projects/" + settings["project_name"]
     url = f"https://management.azure.com{project_id}?api-version=2025-06-01"
     response = request_with_read_retry("GET", url, headers=headers, timeout=60)
-    if response.status_code == 404:
+    newly_created = response.status_code == 404
+    if newly_created:
         print(f"Foundry: creating only project '{settings['project_name']}' in the existing account.", flush=True)
         _request(deploy, "PUT", project_id, headers, json={
             "location": settings["location"], "identity": {"type": "SystemAssigned"}, "properties": {},
@@ -271,6 +357,22 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
     _assign_role(deploy, project_id, principal, FOUNDRY_USER, "ServicePrincipal")
     operator = deploy.run_capture(deploy.az("ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"))
     _assign_role(deploy, project_id, operator, FOUNDRY_USER, "User")
+    agent_headers = _headers(deploy, tenant, "https://ai.azure.com")
+    deadline = time.monotonic() + 600
+    while True:
+        response = request_with_read_retry(
+            "GET", endpoint.rstrip("/") + "/agents?api-version=v1", headers=agent_headers, timeout=60,
+        )
+        if response.ok:
+            verify_project_lifecycle(
+                deploy, tenant=tenant, project_id=project_id, endpoint=endpoint, project=project,
+                first_page=response.json(), require_empty=newly_created, agent_headers=agent_headers,
+            )
+            break
+        if response.status_code not in (401, 403, 404) or time.monotonic() >= deadline:
+            raise deploy.DeployError(f"Project agent access did not become ready: HTTP {response.status_code}.")
+        print(f"Foundry: waiting for project endpoint/scoped access propagation (HTTP {response.status_code}).", flush=True)
+        sleep(15)
     connected = owned_infrastructure_connections(
         deploy, project_id, read_project_connections(deploy, project_id, headers),
     )
@@ -316,18 +418,6 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
         if (str(readback.get("id", "")).casefold() != path.casefold()
                 or not definition_matches(readback.get("properties", {}), expected)):
             raise deploy.DeployError("Project infrastructure connection readback does not match; refusing replacement.")
-    agent_headers = _headers(deploy, tenant, "https://ai.azure.com")
-    deadline = time.monotonic() + 600
-    while True:
-        response = request_with_read_retry(
-            "GET", endpoint.rstrip("/") + "/agents?api-version=v1", headers=agent_headers, timeout=60,
-        )
-        if response.ok:
-            break
-        if response.status_code not in (401, 403, 404) or time.monotonic() >= deadline:
-            raise deploy.DeployError(f"Project agent access did not become ready: HTTP {response.status_code}.")
-        print(f"Foundry: waiting for project endpoint/scoped access propagation (HTTP {response.status_code}).", flush=True)
-        sleep(15)
     if _model_fingerprint(deploy, settings, headers) != settings["model_fingerprint"]:
         raise deploy.DeployError("The shared model allocation changed during project-only setup.")
     print("Foundry: project and infrastructure verified; shared model allocation unchanged.", flush=True)

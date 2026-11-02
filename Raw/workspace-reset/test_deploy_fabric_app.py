@@ -694,23 +694,25 @@ class FoundryOntologyPrerequisiteTests(unittest.TestCase):
             DEPLOY, "tenant", "workspace", selection=foundry.resolve_project.return_value,
         )
 
-    def test_ambiguous_project_stops_before_backend_creation(self):
-        foundry = Mock()
-        foundry.resolve_project.side_effect = DEPLOY.DeployError("Choose one project")
-        with (
-            patch.object(DEPLOY, "current_rayfin_target", return_value=(
-                {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
-            )),
-            patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
-            patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
-            patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
-            patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
-            patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
-        ):
-            with self.assertRaisesRegex(DEPLOY.DeployError, "Choose one project"):
-                DEPLOY.provision_foundry_agents("tenant", "workspace")
-        backend.assert_not_called()
-        sources.assert_not_called()
+    def test_ambiguous_or_lifecycle_invalid_project_stops_before_backend_creation(self):
+        for error in ("Choose one project", "Foundry project lifecycle mismatch"):
+            foundry = Mock()
+            foundry.resolve_project.side_effect = DEPLOY.DeployError(error)
+            with (
+                self.subTest(error=error),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                    {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
+                )),
+                patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
+                patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
+                patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
+                patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
+                patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
+            ):
+                with self.assertRaisesRegex(DEPLOY.DeployError, error):
+                    DEPLOY.provision_foundry_agents("tenant", "workspace")
+            backend.assert_not_called()
+            sources.assert_not_called()
         foundry.provision.assert_not_called()
 
 

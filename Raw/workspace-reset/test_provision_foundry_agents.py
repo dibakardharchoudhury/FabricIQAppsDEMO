@@ -531,6 +531,9 @@ class IncrementalProvisionTests(unittest.TestCase):
 
 
 class PreparedFoundryTests(unittest.TestCase):
+    def setUp(self):
+        self.lifecycle = self.enterContext(patch("shared_foundry_project.verify_project_lifecycle"))
+
     def test_ten_workspace_project_resolutions_reuse_existing_model_without_creation_or_quota_queries(self):
         subscription = str(uuid.uuid4())
         project_id = (f"/subscriptions/{subscription}/resourceGroups/rg/providers/"
@@ -570,9 +573,16 @@ class PreparedFoundryTests(unittest.TestCase):
                 workspace = f"20000000-0000-0000-0000-{index:012x}"
                 selection = module.resolve_project(deploy, "tenant", workspace, allow_create=True)
                 self.assertEqual((selection.project_id, selection.model), (project_id, "shared-model"))
+            self.lifecycle.side_effect = RuntimeError("project lifecycle mismatch")
+            with self.assertRaisesRegex(RuntimeError, "project lifecycle mismatch"):
+                module.resolve_project(deploy, "tenant", "20000000-0000-0000-0000-00000000000a", allow_create=True)
         creation.model_defaults.assert_not_called()
         creation.ensure_foundry_project.assert_not_called()
         self.assertEqual(request.call_count, 10)
+        self.assertEqual(self.lifecycle.call_count, 11)
+        self.lifecycle.assert_called_with(
+            deploy, tenant="tenant", project_id=project_id, endpoint=endpoint,
+        )
         self.assertTrue(all(item.args[0] == "GET" for item in request.call_args_list))
         self.assertFalse(any("usage" in item.args[0] for item in deploy.run_capture.call_args_list))
         deploy.run_stream.assert_not_called()
@@ -982,6 +992,17 @@ class PreparedFoundryTests(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs["json"], {})
         self.assertEqual([call.args[:2] for call in deploy.az.call_args_list], [("account", "get-access-token")])
         self.assertNotIn("WARNING", str(output.call_args_list))
+
+    def test_app_stops_on_lifecycle_mismatch_before_source_or_agent_verification(self):
+        deploy, _, _, tenant, workspace = self.prepared()
+        self.lifecycle.side_effect = RuntimeError("project lifecycle mismatch")
+        with patch.object(module, "request_with_read_retry") as request, \
+                self.assertRaisesRegex(RuntimeError, "project lifecycle mismatch"):
+            module.verify_existing(deploy, tenant, workspace)
+        request.assert_not_called()
+        deploy.fabric_get.assert_not_called()
+        deploy.run_capture.assert_not_called()
+        deploy.run_stream.assert_not_called()
 
     def test_app_reuses_compatible_runtime_with_older_or_unknown_packaged_code(self):
         for code_digest in ("old", ""):

@@ -553,6 +553,11 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     suffix = saved_resource_suffix(deploy, values, workspace)
     if not re.fullmatch(r"https://[a-z0-9-]+\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_.-]+", endpoint) or not model:
         raise deploy.DeployError(f"Verified Foundry project/model configuration is missing. {guidance}")
+    from shared_foundry_project import verify_project_lifecycle
+
+    verify_project_lifecycle(
+        deploy, tenant=tenant, project_id=value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID"), endpoint=endpoint,
+    )
     try:
         ontology = value("RAYFIN_PUBLIC_ONTOLOGY_ID")
         public_values = {key: deploy._public_config_value(values, key) for key in (
@@ -883,6 +888,9 @@ def resolve_project(
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".services.ai.azure.com"):
         raise deploy.DeployError("Foundry project metadata returned an invalid endpoint.")
+    from shared_foundry_project import verify_project_lifecycle
+
+    verify_project_lifecycle(deploy, tenant=tenant, project_id=project_id, endpoint=endpoint)
     model = read_model_selection(deploy, tenant, project_id, model)
     print(f"Foundry: project and model verified before backend provisioning ({project_id.rsplit('/', 1)[-1]}, {model}).", flush=True)
     return FoundrySelection(subscription, project_id, endpoint, model)
