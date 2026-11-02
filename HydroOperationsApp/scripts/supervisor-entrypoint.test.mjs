@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import ts from 'typescript'
 
@@ -25,6 +25,9 @@ test('Hydro Intelligence always enters Supervisor without forcing a native bypas
   const result = {
     text: 'Original Fabric answer\r\n',
     visualizations: [], proposals: [], executionEvents: events,
+    workflowText: 'Pending approval. Source limitations remain unresolved.',
+    sourceAnswers: [{ evidence_id: 'native-1', text: 'Original Fabric answer\r\n', content_sha256: 'a'.repeat(64) }],
+    rcaReports: [{ evidence_ids: ['native-1'], status: 'untested' }],
   }
   class Transport {
     constructor(...args) { instances.push(args) }
@@ -52,6 +55,9 @@ test('Hydro Intelligence always enters Supervisor without forcing a native bypas
   assert.equal(Object.hasOwn(calls[0].body, 'native_sources'), false)
   assert.equal(answer.text, result.text)
   assert.equal(answer.backendOwned, true)
+  assert.equal(answer.workflowText, result.workflowText)
+  assert.deepEqual(answer.sourceAnswers, result.sourceAnswers)
+  assert.deepEqual(answer.rcaReports, result.rcaReports)
   assert.deepEqual(progress, [result.text])
   assert.equal(instances.length, 1)
   assert.equal(instances[0][2].ontology_id, '22222222-2222-2222-2222-222222222222')
@@ -62,16 +68,15 @@ test('Hydro Intelligence always enters Supervisor without forcing a native bypas
   assert.deepEqual(calls.slice(1), [{ warm: true }, { clear: true }])
 })
 
-test('legacy comparison settings cannot restore a direct-agent entry on Hydro Intelligence', () => {
+test('both layouts expose the same explicit modes independently of legacy settings', () => {
   const page = readFileSync(new URL('../src/ui-shared/pages/CopilotPage.tsx', import.meta.url), 'utf8')
-  const settings = readFileSync(new URL('../src/components/CopilotSettingsPanel.tsx', import.meta.url), 'utf8')
-  assert.doesNotMatch(page, /AgentBattleExperience|isAgentBattleEnabled|copilotEngine|onEngineChange/)
-  assert.doesNotMatch(settings, /battleEnabled|Battle of the Agents|agent comparison/i)
-  for (const path of ['components/AgentBattleExperience.tsx', 'services/copilot/agentBattle.ts']) {
-    assert.equal(existsSync(new URL(`../src/${path}`, import.meta.url)), false)
+  assert.match(page, /IntelligenceExperience/)
+  assert.match(page, /DirectFabricConversation/)
+  assert.doesNotMatch(page, /isAgentBattleEnabled|loadCopilotSettings|native_sources/)
+  for (const layout of ['ui-v1', 'ui-v2']) {
+    const source = readFileSync(new URL(`../src/${layout}/pages/CopilotPage.tsx`, import.meta.url), 'utf8')
+    assert.match(source, /ui-shared\/pages\/CopilotPage/)
   }
-  const styles = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
-  assert.doesNotMatch(styles, /agent-battle-/)
 })
 
 test('Hydro Intelligence does not require routing through starter sample prompts', () => {

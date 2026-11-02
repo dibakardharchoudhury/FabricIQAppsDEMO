@@ -118,15 +118,24 @@ Item creation and agent/configuration readback are not end-to-end execution test
 
 ## Native answer fidelity
 
-Hydro Intelligence has one **Supervisor-led multi-agent** entry point, not
-separate Direct Data Agent and Foundry modes. The browser does not force the
-legacy native-only bypass. The Supervisor selects Sparky / Fabric IQ for native
-business questions; that capability forwards the exact original question once
-to the published Fabric Data Agent and returns its answer unchanged.
-There is no intervening Sparky prompt-wrapper or answer-writing model. The same
-workflow retains its semantic planner, evidence checks, source artifacts and
-other scoped specialists. Explicit draft requests remain guarded and cannot
-write without a separate authenticated approval.
+Hydro Intelligence separates **Fabric IQ**, **Multi Agent** and **Battle of the
+Agents**. Fabric IQ calls the verified published Data Agent directly with the
+signed-in user's Fabric authorization; it is not a Foundry proxy or a rewritten
+Supervisor answer. Multi Agent is the default Supervisor-led workflow. Battle
+compares the same question through independent direct and multi-agent sessions,
+shows each result/error and duration, and exposes no approval actions. Histories
+and in-flight requests stay isolated between modes and source identities.
+Browser authorization or CORS failures are reported, never disguised by switching
+the direct path to Foundry.
+
+Within Multi Agent, the Supervisor selects Sparky / Fabric IQ automatically for
+ontology-backed business correlations; the operator need not name an agent.
+Native-answer-only requests forward the exact original question once and return
+the native answer unchanged. Mixed RCA/work-order requests instead retain the
+Supervisor's read-only evidence assignment, with the original request included
+as context. Sleuth handles RCA and Fixer handles pending approval drafts.
+Neither path inserts a Sparky answer-writing model. Explicit draft requests
+remain guarded and cannot write without a separate authenticated approval.
 
 Native transport timeouts retain HTTP 504 (`native_timeout`), rather than being
 masked as generic HTTP 500 failures. Other native HTTP transport errors retain
@@ -136,17 +145,25 @@ The Responses transport consumes server-sent events incrementally and returns
 on the terminal Fabric response, closing its HTTP stream immediately. It never
 waits for the provider to close a keep-alive connection after completing an answer.
 
-The hosted semantic workflow sends the original user question unchanged through
-the native Fabric Data Agent Responses transport. The selected Foundry toolbox
+The hosted semantic workflow sends native-answer-only questions unchanged and
+mixed workflows as scoped read-only evidence tasks through the native Fabric
+Data Agent Responses transport. The selected Foundry toolbox
 version and connection remain verified and pinned, but production does not invoke
 the Fabric IQ prompt wrapper. It displays the original source answer without table
 reconstruction or an additional briefing model. The audit retains the native
 provider response, usage and a SHA-256 digest of the original answer. Multiple
 source text blocks are concatenated in provider order without inserting characters.
 
-Mixed retrieval and work-order workflows also display that original Markdown
-unchanged and fully expanded after the editable approval cards. The cards alone
-are paginated, with one numbered draft visible at a time; edits, decisions and
+Mixed retrieval and work-order workflows retain that original Markdown unchanged
+as separately accessible source detail, rather than duplicating it in the
+operator-facing workflow summary. `presentation.workflow_text` contains the
+concise workflow, `source_answers` retains each exact source text and SHA-256,
+and `rca_reports` retains checked hypotheses and their full evidence references.
+The backward-compatible `presentation.text` still includes the complete source
+answer and workflow. Compact RCA prose distinguishes unconfirmed explanations,
+evidence gaps and repair readiness; it does not repeat citation ledgers for
+every hypothesis. The approval cards are paginated, with one numbered draft
+visible at a time; edits, decisions and
 in-flight reconciliation state survive navigation. Native prose without structured
 canonical IDs can reach Fixer for guarded identity resolution and a fresh complete
 open-work check, but cannot itself authorize a proposal. Explicit ranking/selection
@@ -785,8 +802,9 @@ The Data Agent's notebook-owned cross-source guidance distinguishes all-parent
 count rollups from unmatched-population queries. Zero-inclusive counts require
 left-outer aggregation and distinct child keys, not an anti-join. Federation
 questions express that positive aggregation intent; source-specific status
-filters remain in their sub-questions. The app still sends the original user
-question and preserves the native answer unchanged.
+filters remain in their sub-questions. Native-answer-only requests still send
+the original user question; mixed workflows include it as context for the
+read-only evidence assignment. Both preserve the native answer unchanged.
 The standalone Fabric IQ prompt agent is retained for compatibility but
 is not an extra model hop in the app. Setup converges the toolbox onto the stable
 connection, preserves existing policies/skills/metadata, and verifies publication.

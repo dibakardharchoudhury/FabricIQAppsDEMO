@@ -39,7 +39,7 @@ export const WORK_REVIEW_TOOL = {
   parameters: {
     type: 'object', properties: {
       decision: { type: 'string', enum: ['no_draft', 'needs_clarification'], description: 'Use no_draft only with complete work coverage for all affected targets. Use needs_clarification for missing identity or evidence required for the assigned purpose. Missing current telemetry or causal proof alone does not block a historical data-quality investigation draft.' },
-      reason: { type: 'string', maxLength: 1000, description: 'Concise evidence-backed reason within 1000 characters. State missing-data or identity blockers explicitly; do not infer healthy equipment from absent telemetry.' },
+      reason: { type: 'string', minLength: 1, maxLength: 1000, description: 'Concise evidence-backed reason within 1000 characters. State missing-data or identity blockers explicitly; do not infer healthy equipment from absent telemetry.' },
     }, required: ['decision', 'reason'], additionalProperties: false,
   }, strict: true,
 }
@@ -80,7 +80,7 @@ export function agentDefinition(
     }, strict: false,
   }]
   return {
-    kind: 'prompt', model, instructions: usesFabricIq ? AGENT_INSTRUCTIONS[role] : `${AGENT_INSTRUCTIONS[role]}\n\n${role === 'work-order' ? 'A draft exists only after propose_work_order succeeds. No-save instructions do not forbid this in-memory staging tool. When multiple targets are requested, resolve their canonical identities through query_assets, check complete open-work coverage for every target, and call propose_work_order separately for every justified uncovered gap; do not stop after the first draft or substitute a prose list. Native prose is context, not verified canonical identity or complete work coverage. Diagnostic drafts investigate observed quality without claiming an established mechanical fault. If no draft is justified or identity requires clarification, call complete_work_order_review with that decision and its evidence-backed reason. Never describe a prose-only proposal as an editable card.' : ''}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`,
+    kind: 'prompt', model, instructions: usesFabricIq ? AGENT_INSTRUCTIONS[role] : `${AGENT_INSTRUCTIONS[role]}\n\n${role === 'work-order' ? 'A draft exists only after propose_work_order succeeds. No-save instructions do not forbid this in-memory staging tool. When multiple targets are requested, resolve their canonical identities through query_assets, check complete open-work coverage for every target, and call propose_work_order separately for every justified uncovered gap; do not stop after the first draft or substitute a prose list. Native prose is context, not verified canonical identity or complete work coverage. Diagnostic drafts investigate observed quality without claiming an established mechanical fault. If no draft is justified or identity requires clarification, call complete_work_order_review with that decision and its evidence-backed reason. Never describe a prose-only proposal as an editable card.' : ''}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}${role === 'qa' || role === 'weather' ? `\n\n${ANSWER_PRESENTATION_CONTRACT}` : ''}`,
     tools: [...tools, ...(role === 'rca' ? [RCA_REPORT_TOOL] : []), ...(role === 'work-order' ? [WORK_REVIEW_TOOL] : [])],
     reasoning: { effort: REASONING_EFFORT[role] },
   }
@@ -128,15 +128,9 @@ export function requestedNativeSources(question: string): NativeSource[] {
   return new RegExp(`${action}data[\\s-]+agent\\b`, 'i').test(positive) ? ['data-agent'] : []
 }
 
-export function nativeSourceError(question: string, source: unknown, priorUserQuestions: readonly string[] = []): string | undefined {
+export function nativeSourceError(_question: string, source: unknown, _priorUserQuestions: readonly string[] = []): string | undefined {
   if (source === 'ontology') return 'Direct ontology-native chat execution is disabled. Use the published Data Agent or governed direct sources.'
   if (source !== 'data-agent') return 'fabric-iq requires native_source data-agent. Sparky has one published Data Agent tool.'
-  const requestedContext = [question, ...[...priorUserQuestions].reverse()]
-    .find(text => /\b(?:data[\s-]+agent|ontology|fabric[\s-]+iq)\b/i.test(text))
-  if (!requestedContext) return 'The operator has not requested the published Data Agent or Fabric IQ in this conversation. Use Gauge for ordinary inventory, telemetry, SQL work and charts; do not add an unnecessary native delegation.'
-  const dataAgent = /\bdata[\s-]+agent\b/i.test(requestedContext)
-  const ontology = /\bontology\b/i.test(requestedContext)
-  if (ontology && !dataAgent) return 'Direct ontology-native chat execution is disabled. Use the published Data Agent or governed direct sources.'
   return undefined
 }
 

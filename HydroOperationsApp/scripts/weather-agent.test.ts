@@ -41,7 +41,9 @@ test('every specialist shares one explicit least-privilege model and runtime all
     assert.deepEqual(query.parameters.properties.tool_name.enum, [...allowed])
     for (const tool of ['query_weather', 'query_operations', 'run_kql', 'show_3d_model', 'propose_work_order']) {
       const request = { action: 'validate_hydro_query', role,
-        report: JSON.stringify({ tool_name: tool, arguments: {} }) }
+        report: JSON.stringify({
+          tool_name: tool, arguments: tool === 'run_kql' ? { query: 'OPCUAEvents | take 1' } : {},
+        }) }
       if (allowed.includes(tool)) assert.equal((await handle(request)).toolName, tool)
       else await assert.rejects(handle(request), /not permitted/)
     }
