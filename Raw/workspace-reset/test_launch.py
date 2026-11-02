@@ -61,6 +61,8 @@ class ExistingServerTests(unittest.TestCase):
                 self.assertEqual(LAUNCH.main(), 0)
             self.assertEqual(urlopen.call_count, 4)
             self.assertEqual(start.call_args.args[0], [LAUNCH.sys.executable, str(server)])
+            for key, value in LAUNCH.CLI_BROWSER_AUTH_SETTINGS.items():
+                self.assertEqual(start.call_args.kwargs["env"][key], value)
             self.assertEqual(run.call_args.args[0][-1], str(server.parent.parent / "requirements.txt"))
             self.assertEqual(
                 start.call_args.kwargs["env"]["FABRIC_UI_PIPELINE_DEFAULTS_FILE"],

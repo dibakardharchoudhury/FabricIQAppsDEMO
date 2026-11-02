@@ -40,12 +40,21 @@ class GraphClaimsChallengeTests(unittest.TestCase):
             self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "true")
             self.assertNotIn("AZURE_CORE_LOGIN_EXPERIENCE_V2", os.environ)
 
-    def test_non_windows_authentication_preserves_operator_configuration(self):
-        with patch.object(DEPLOY.sys, "platform", "linux"), patch.dict(os.environ, {
-            "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "true",
-        }):
-            with DEPLOY.azure_cli_authentication_environment():
+    def test_browser_authentication_is_consistent_across_platforms_and_preserves_cache(self):
+        for platform in ("win32", "darwin", "linux"):
+            with self.subTest(platform=platform), patch.object(DEPLOY.sys, "platform", platform), patch.dict(
+                os.environ, {
+                    "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "true",
+                    "AZURE_CORE_ENABLE_BROKER_ON_MAC": "true",
+                    "AZURE_CONFIG_DIR": "existing-tenant-session",
+                },
+            ):
+                with DEPLOY.azure_cli_authentication_environment():
+                    for key, value in DEPLOY.CLI_BROWSER_AUTH_SETTINGS.items():
+                        self.assertEqual(os.environ[key], value)
+                    self.assertEqual(os.environ["AZURE_CONFIG_DIR"], "existing-tenant-session")
                 self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "true")
+                self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_MAC"], "true")
 
     def test_graph_accepted_cached_token_never_opens_sign_in_or_creates_session(self):
         with (

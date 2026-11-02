@@ -30,6 +30,7 @@ from typing import Any, Callable, Generator, TypeVar
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
+from azure_cli_auth import CLI_BROWSER_AUTH_SETTINGS
 from http_retries import get_with_read_retry
 
 
@@ -711,11 +712,8 @@ def secure_private_directory(directory: Path, *, recursive: bool = False) -> Non
 
 @contextmanager
 def azure_cli_authentication_environment() -> Generator[None, None, None]:
-    """Keep Windows login and child commands on the same non-broker cache."""
-    settings = {
-        "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "false",
-        "AZURE_CORE_LOGIN_EXPERIENCE_V2": "off",
-    } if sys.platform == "win32" else {}
+    """Keep browser login and child commands on the same cache on every OS."""
+    settings = CLI_BROWSER_AUTH_SETTINGS
     previous = {key: os.environ.get(key) for key in settings}
     os.environ.update(settings)
     try:

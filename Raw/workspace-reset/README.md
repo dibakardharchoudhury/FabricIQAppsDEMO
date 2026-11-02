@@ -248,6 +248,14 @@ Regional Standard is preferred, followed by DataZoneStandard and GlobalStandard;
 the form discloses global inference. Provisioned capacity is never automatic.
 Quota, access and unresolved/ambiguous model identities fail explicitly, not by guessing.
 
+Authentication is cross-platform Azure CLI browser sign-in, not Windows-only
+authentication. The launcher, server's Sign in/Switch buttons, deployment engine
+and their children share a process-local policy disabling Windows/macOS brokers.
+Existing CLI sessions are reused; recovery opens the browser only when required.
+No global CLI settings or existing credentials are removed. A desktop browser is
+required for interactive sign-in; headless/device-code deployment is not provided
+by the local app.
+
 The launcher can use a separate clean deployment checkout without overwriting local
 development edits. Set `checkout` in gitignored `launcher.local.json` beside
 `launch.py`. The configured checkout must have no tracked source modifications.

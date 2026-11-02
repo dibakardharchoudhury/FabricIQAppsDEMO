@@ -35,9 +35,11 @@ enabled; other failures still propagate. Do not reset deployment state or repeat
 Core setup just to repair local dependencies or app publication.
 
 Microsoft Graph can reject a still-unexpired CLI token with a Continuous Access
-Evaluation claims challenge. On Windows, the deployer uses Azure CLI's documented
-browser login mode for itself and its children, so Graph recovery and subsequent
-commands use the same non-broker cache. This is process-scoped: it does not change
+Evaluation claims challenge. The local launcher, Sign in/Switch, server (including
+direct startup), and deployer use a shared Azure CLI browser-authentication policy
+on Windows, macOS and Linux. Platform brokers are disabled for these processes;
+Graph recovery and subsequent commands use the same non-broker cache.
+This is process-scoped: it does not change
 global CLI configuration, remove credentials, or disable tenant security policies.
 Graph recovery reads the resource's actual
 `WWW-Authenticate` challenge and requests Graph-scoped sign-in with those claims,

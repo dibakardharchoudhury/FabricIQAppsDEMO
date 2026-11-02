@@ -35,6 +35,46 @@ PIPELINE_JOB_URL = (
 )
 
 
+class BrowserAuthenticationTests(unittest.TestCase):
+    def test_direct_server_startup_uses_browser_authentication(self):
+        for key, value in SERVER.CLI_BROWSER_AUTH_SETTINGS.items():
+            self.assertEqual(os.environ[key], value)
+
+    def test_browser_login_command_on_windows_macos_and_linux(self):
+        client = SERVER.app.test_client()
+        for platform, os_name, executable in (
+            ("win32", "nt", "az.cmd"), ("darwin", "posix", "az"), ("linux", "posix", "az"),
+        ):
+            with (
+                self.subTest(platform=platform),
+                patch.object(SERVER.os, "name", os_name),
+                patch.object(SERVER.shutil, "which", return_value=executable),
+                patch.object(SERVER, "_start", return_value="login-job") as start,
+                patch.object(SERVER, "job_response", return_value=({"jobId": "login-job"}, 200)),
+            ):
+                response = client.post("/api/login", json={"tenant": "tenant.example"})
+                self.assertEqual(response.status_code, 200)
+                expected = (["cmd", "/c", executable] if os_name == "nt" else [executable])
+                self.assertEqual(start.call_args.args[0], expected + ["login", "--tenant", "tenant.example"])
+                self.assertFalse(start.call_args.kwargs["python"])
+
+    def test_login_and_deployment_children_inherit_browser_policy_and_existing_cache(self):
+        for python in (False, True):
+            with self.subTest(python=python), patch.dict(os.environ, {"AZURE_CONFIG_DIR": "existing-cache"}):
+                job = SERVER.Job(["Queued", "Done"])
+                process = Mock(stdout=io.StringIO(""), returncode=0)
+                with (
+                    patch.object(SERVER.subprocess, "Popen", return_value=process) as start,
+                    patch.object(SERVER.threading, "Timer"),
+                ):
+                    SERVER._worker(job, ["example"], None, 60, [], python=python)
+                environment = start.call_args.kwargs["env"]
+                for key, value in SERVER.CLI_BROWSER_AUTH_SETTINGS.items():
+                    self.assertEqual(environment[key], value)
+                self.assertEqual(environment["AZURE_CONFIG_DIR"], "existing-cache")
+                self.assertEqual(job.status, "succeeded")
+
+
 class FullWorkflowResumeTests(unittest.TestCase):
     def setUp(self):
         self.client = SERVER.app.test_client()
