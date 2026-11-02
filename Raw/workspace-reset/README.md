@@ -233,9 +233,16 @@ uses the exact name entered above, or the stable full workspace-GUID project nam
 The existing ready account-level model deployment is verified before project-only
 creation. Its model/version/SKU/capacity fingerprint is checked again during setup;
 no model catalog, quota allocation or model resize runs on this path.
-The existing account's region, connected registry and monitoring are reused;
+The existing account's region, connected registry and monitoring are reused.
+If a removed project left no infrastructure connections, setup can recover missing
+selections from a successful ARM deployment in the account's resource group only
+when its output resource IDs include that exact account and the supporting resources.
+It then verifies the live registry identity and full monitoring connection string.
+Names, matching tags, a sole resource in the group and cached azd values are not proof.
+Creation approval is still required; existing connections take precedence, and
 ambiguous/missing infrastructure, invalid model identity, access denial or allocation
-drift fails explicitly. Project managed identities receive scoped registry/model/project
+drift fails explicitly. No supporting resource is recreated by this recovery path.
+Project managed identities receive scoped registry/model/project
 access; the operator receives project access. Shared account/model/registry/monitoring
 resources are outside project-only cleanup ownership. Project agent access is verified
 after bounded endpoint/RBAC propagation waits, not inferred from project creation.

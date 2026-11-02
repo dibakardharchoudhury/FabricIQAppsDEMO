@@ -26,6 +26,7 @@ class SharedProjectTests(unittest.TestCase):
         self.deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
         self.projects = {}
         self.connections = {}
+        self.deployment_history = []
         self.calls = []
         self.instrumentation_key = "40000000-0000-0000-0000-000000000001"
         self.connection_string = (
@@ -56,6 +57,10 @@ class SharedProjectTests(unittest.TestCase):
         self.deploy.run_capture.side_effect = self.capture
 
     def capture(self, argv, **kwargs):
+        if argv[:3] == ["deployment", "group", "list"]:
+            self.assertEqual(argv[argv.index("--subscription") + 1], self.subscription)
+            self.assertEqual(argv[argv.index("--resource-group") + 1], "rg")
+            return json.dumps(self.deployment_history)
         if argv[:2] == ["resource", "list"]:
             if argv[argv.index("--resource-type") + 1].endswith("/projects"):
                 return json.dumps([{"id": identity} for identity in self.projects])
@@ -162,6 +167,137 @@ class SharedProjectTests(unittest.TestCase):
             "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "", "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": "",
             "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "", "HYDRO_FOUNDRY_LOCATION": "", "HYDRO_ACR_NAME": "",
         })
+
+    def deployment_record(self, resources, *, state="Succeeded", name="bootstrap"):
+        return {
+            "id": self.account.split("/providers/")[0] + "/providers/Microsoft.Resources/deployments/" + name,
+            "state": state, "resources": [{"id": identity} for identity in resources],
+        }
+
+    def test_deleted_project_recovers_infrastructure_from_account_deployment_without_mutation(self):
+        self.infrastructure = []
+        record = self.deployment_record([self.account, self.registry, self.monitor])
+        self.deployment_history = [record, copy.deepcopy(record)]
+        before = copy.deepcopy(self.allocation)
+        with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            selection = foundry.resolve_project(
+                self.deploy, "tenant", "20000000-0000-0000-0000-000000000001",
+            )
+        self.assertFalse(selection.project_id)
+        settings = selection.creation_settings
+        assert settings is not None
+        self.assertEqual(settings["registry_id"], self.registry)
+        self.assertEqual(settings["insights_id"], self.monitor)
+        self.assertEqual(self.allocation, before)
+        self.assertFalse(self.projects)
+        self.assertFalse(self.connections)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+        self.deploy.run_stream.assert_not_called()
+
+    def test_recovery_only_creates_approved_project_and_owned_connections(self):
+        self.infrastructure = []
+        self.deployment_history = [self.deployment_record([self.account, self.registry, self.monitor])]
+        workspace = "20000000-0000-0000-0000-000000000001"
+        project = self.account + "/projects/" + workspace_project_name(workspace)
+        before = copy.deepcopy(self.allocation)
+        with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "false"}):
+                with self.assertRaisesRegex(RuntimeError, "was not found"):
+                    foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
+            preflight = foundry.resolve_project(self.deploy, "tenant", workspace)
+            selected = foundry.resolve_project(
+                self.deploy, "tenant", workspace, allow_create=True, creation_settings=preflight.creation_settings,
+            )
+        self.assertEqual(selected.project_id, project)
+        self.assertEqual(self.allocation, before)
+        writes = [path for method, path in self.calls if method != "GET"]
+        self.assertEqual(len(writes), 3)
+        self.assertTrue(all(path == project or path.startswith(project + "/connections/") for path in writes))
+
+    def test_deployment_recovery_only_fills_missing_infrastructure(self):
+        self.infrastructure = self.infrastructure[:1]
+        self.deployment_history = [self.deployment_record([self.account, self.registry + "other", self.monitor])]
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            settings = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="new", model="shared-model",
+            )
+        assert settings is not None
+        self.assertEqual(settings["registry_id"], self.registry)
+        self.assertEqual(settings["insights_id"], self.monitor)
+
+    def test_deployment_inventory_denial_and_malformed_payload_are_not_ignored(self):
+        self.infrastructure = []
+        for inventory in (None, [{"state": "Succeeded", "id": self.deployment_record([])["id"],
+                                  "resources": "invalid"}], RuntimeError("deployment inventory access denied")):
+            def capture(argv, **kwargs):
+                if argv[:3] == ["deployment", "group", "list"]:
+                    if isinstance(inventory, RuntimeError):
+                        raise inventory
+                    return json.dumps(inventory)
+                return self.capture(argv, **kwargs)
+            with self.subTest(inventory=inventory), self.environment(), \
+                    patch.object(self.deploy, "run_capture", side_effect=capture), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                with self.assertRaisesRegex(RuntimeError, "inventory is invalid|access denied"):
+                    shared.prepare_shared_project(
+                        self.deploy, tenant="tenant", subscription=self.subscription,
+                        account_name="shared", project_name="new", model="shared-model",
+                    )
+        self.assertFalse(self.projects)
+        self.assertFalse(self.connections)
+
+    def test_deployment_recovery_requires_success_exact_account_and_scoped_deployment_identity(self):
+        self.infrastructure = []
+        unrelated = self.account + "-other"
+        records = [
+            self.deployment_record([self.account, self.registry, self.monitor], state="Failed"),
+            self.deployment_record([unrelated, self.registry, self.monitor]),
+            self.deployment_record([self.account, self.registry, self.monitor]),
+        ]
+        records[-1]["id"] = records[-1]["id"].replace("/resourceGroups/rg/", "/resourceGroups/other/")
+        for record in records:
+            with self.subTest(record=record), self.environment(), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                self.deployment_history = [record]
+                with self.assertRaisesRegex(RuntimeError, "incomplete or ambiguous"):
+                    shared.prepare_shared_project(
+                        self.deploy, tenant="tenant", subscription=self.subscription,
+                        account_name="shared", project_name="new", model="shared-model",
+                    )
+        self.assertFalse(self.projects)
+        self.assertFalse(self.connections)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+
+    def test_deployment_recovery_rejects_ambiguous_or_unavailable_infrastructure(self):
+        self.infrastructure = []
+        records = [
+            self.deployment_record([self.account, self.registry, self.monitor, self.registry + "other"]),
+            self.deployment_record([self.account, self.registry, self.monitor, self.monitor + "other"]),
+            self.deployment_record([self.account, self.registry + "other", self.monitor]),
+        ]
+        for record in records:
+            with self.subTest(record=record), self.environment(), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                self.deployment_history = [record]
+                with self.assertRaisesRegex(RuntimeError, "incomplete or ambiguous|identity/readback"):
+                    shared.prepare_shared_project(
+                        self.deploy, tenant="tenant", subscription=self.subscription,
+                        account_name="shared", project_name="new", model="shared-model",
+                    )
+        self.assertFalse(self.projects)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+
+    def test_connected_infrastructure_does_not_read_deployment_history(self):
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="new", model="shared-model",
+            )
+        self.assertFalse(any(call.args[0][:3] == ["deployment", "group", "list"]
+                             for call in self.deploy.run_capture.call_args_list))
 
     def test_ten_workspaces_create_ten_projects_without_model_or_account_mutation(self):
         before = copy.deepcopy(self.allocation)

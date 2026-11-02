@@ -262,7 +262,13 @@ Consequences:
 
 The shared form exposes subscription, optional account, project and model deployment.
 Creation approval permits missing resources; it never forces recreation and is not
-saved. A blank project uses saved target identity or a stable workspace-GUID project;
+saved. If the selected project was removed but its account/model/registry/monitoring
+survive, approved project-only setup can recover missing infrastructure selections
+from successful ARM deployment output resource IDs anchored to that exact account.
+Live registry and monitoring readback is mandatory; names, tags and cached values
+are not sufficient. Existing connections are retained, ambiguous or unavailable
+infrastructure fails, and no replacement account/model/registry/monitoring is created.
+A blank project uses saved target identity or a stable workspace-GUID project;
 enter the exact existing name to share one project. Region, version, SKU,
 capacity, supporting resource names, connections, monitoring and agent deployment
 are automatic. No model-settings questionnaire is shown. Existing-project reuse
@@ -370,7 +376,7 @@ including the independent `operational_sql_database_id`,
 | `…must have one linked Application Insights resource` | Link exactly one; it is never inferred by name. |
 | `Live numeric Ontology generation 2 is required…` | The selected ontology is not a live v2 item. No fallback exists. |
 | `Exactly one published Data Agent must match the verified v2 ontology.` | Publish `RTI_Demo_Agent_*` against the selected ontology; remove stale ones. |
-| `Could not determine the container registry…` | Project has zero or several registry connections. Set `HYDRO_ACR_NAME`. |
+| `Could not determine the container registry…` | Run approved Foundry setup for missing connections. A removed project's surviving infrastructure can be recovered only from successful ARM deployment resource IDs anchored to the exact account, followed by live readback. `HYDRO_ACR_NAME` selects among verified candidates; it cannot establish a missing connection by itself. Ambiguous or unverified infrastructure stops setup. |
 | `Required command 'azd' was not found on PATH.` | Install `azd`, then the two extensions (Section 3). |
 | `az acr build` fails with authorization | Your identity cannot run builds in the registry. Grant the role, then rerun. |
 | `azd deploy` reports a missing extension | `azd extension install azure.ai.agents` and `microsoft.foundry`. |

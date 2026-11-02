@@ -88,6 +88,54 @@ def _monitoring_connection_string(deploy, resource_id, headers):
     return connection_string
 
 
+def _deployed_infrastructure(deploy, account_id: str, missing: set[str]) -> list[dict]:
+    identity = ACCOUNT_RE.fullmatch(account_id)
+    if not identity:
+        raise deploy.DeployError("Infrastructure recovery requires a verified Foundry account ARM identity.")
+    scope = account_id.rsplit("/providers/", 1)[0]
+    deployments = json.loads(deploy.run_capture(deploy.az(
+        "deployment", "group", "list", "--subscription", identity[1], "--resource-group", identity[2],
+        "--query", "[?properties.provisioningState=='Succeeded']."
+        "{id:id,state:properties.provisioningState,resources:properties.outputResources}", "-o", "json",
+    )))
+    if not isinstance(deployments, list) or any(not isinstance(item, dict) for item in deployments):
+        raise deploy.DeployError("Shared infrastructure deployment inventory is invalid.")
+    recovered = {}
+    types = {"ContainerRegistry": "Microsoft.ContainerRegistry/registries",
+             "AppInsights": "Microsoft.Insights/components"}
+    for deployment in deployments:
+        if (deployment.get("state") != "Succeeded" or not re.fullmatch(
+                re.escape(scope) + r"/providers/Microsoft\.Resources/deployments/[^/?#]+",
+                str(deployment.get("id", "")), re.IGNORECASE,
+        )):
+            continue
+        resources = deployment.get("resources")
+        if resources is None:
+            continue
+        if not isinstance(resources, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("id"), str) for item in resources
+        ):
+            raise deploy.DeployError("Shared infrastructure deployment resource inventory is invalid.")
+        if not any(item["id"].casefold() == account_id.casefold() for item in resources):
+            continue
+        for item in resources:
+            resource_id = item["id"]
+            for kind in missing:
+                if re.fullmatch(
+                    rf"/subscriptions/{re.escape(identity[1])}/resourceGroups/[^/?#]+/providers/"
+                    + re.escape(types[kind]) + r"/[^/?#]+", resource_id, re.IGNORECASE,
+                ):
+                    target = (resource_id.rsplit("/", 1)[-1] + ".azurecr.io"
+                              if kind == "ContainerRegistry" else resource_id)
+                    recovered.setdefault((kind, resource_id.casefold()), {
+                        "properties": {"category": kind, "target": target, "metadata": {"ResourceId": resource_id}},
+                    })
+    if recovered:
+        print("Foundry: recovered shared infrastructure candidates from successful ARM deployment resource IDs; "
+              "verifying live registry and monitoring readback.", flush=True)
+    return list(recovered.values())
+
+
 def prepare_shared_project(deploy, *, tenant, subscription, account_name, project_name, model):
     from deploy_hosted_agent import registry_name
     from provision_foundry_agents import read_model_selection, read_project_connections, linked_application_insights
@@ -133,13 +181,19 @@ def prepare_shared_project(deploy, *, tenant, subscription, account_name, projec
             connections.extend(read_project_connections(deploy, identity, headers))
     infrastructure = [item for item in connections
                       if item.get("properties", {}).get("category") in ("ContainerRegistry", "AppInsights")]
+    missing = {"ContainerRegistry", "AppInsights"} - {
+        item["properties"]["category"] for item in infrastructure
+    }
+    if missing:
+        infrastructure.extend(_deployed_infrastructure(deploy, account_id, missing))
     try:
         registry = registry_name(infrastructure, os.environ.get("HYDRO_ACR_NAME", ""))
         insights_id = linked_application_insights(infrastructure)
     except RuntimeError as error:
         raise deploy.DeployError(
-            f"Shared account infrastructure is incomplete or ambiguous: {error}. "
-            "Prepare its connected registry and monitoring before project-only creation; no model was allocated."
+            f"Shared account infrastructure is incomplete or ambiguous: {str(error).rstrip('.')}. "
+            "Verify its connected registry/monitoring or a successful ARM deployment recording this exact account "
+            "and its supporting resource IDs before project-only creation; no model was allocated."
         ) from error
     registry_detail = json.loads(deploy.run_capture(deploy.az(
         "acr", "show", "--name", registry, "--subscription", subscription, "-o", "json",
