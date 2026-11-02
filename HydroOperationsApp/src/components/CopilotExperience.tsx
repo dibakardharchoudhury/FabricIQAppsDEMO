@@ -42,14 +42,6 @@ type CopilotExperienceProps = {
 }
 
 const TEAM_LABEL = 'Supervisor-led multi-agent team'
-const PROMPTS = [
-    'List every facility with its identifier and name.',
-    'Investigate turbine telemetry-quality issues in the last 6 hours. Compare competing explanations and state the missing evidence; do not assume a mechanical fault.',
-    'Independently verify the open-work backlog by facility using governed source reads and show a ranked chart.',
-    'Compare the latest UKMet forecasts with observations for the same facilities. Keep vendors, forecast issues, valid times and units separate.',
-    'Review existing work coverage for turbine T005 and prepare an editable diagnostic draft only for a verified uncovered gap. Do not save or approve work.',
-    'Use the Fabric Data Agent for the facts, then investigate telemetry-quality gaps and review maintenance coverage separately. Preserve the Fabric answer unchanged; do not prepare or save work orders.',
-]
 
 export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
@@ -120,7 +112,6 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
             {message.role === 'agent' && last && !busy && !message.failed && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
           </div>
         })}
-        {messages.length === 1 && <div className="v2-suggestions">{PROMPTS.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
       </div>
       <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
         <button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>

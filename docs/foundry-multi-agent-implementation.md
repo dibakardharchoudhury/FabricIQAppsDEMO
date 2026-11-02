@@ -1,5 +1,34 @@
 # Foundry and multi-agent implementation record
 
+## November 2 automatic ontology context and Fixer evidence handoff
+
+Complex correlations and contextual investigations use **Supervisor -> Sparky/Fabric IQ ->
+dependent specialists** without requiring agent names in the operator's question.
+The semantic decision explicitly declares `ontology_context_required`; governed validation
+also rejects cross-source factual plans and RCA investigations that omit native grounding,
+or schedule it after dependent RCA/maintenance review. Rejected decisions get the existing
+bounded planning correction before any source execution. Missing native connections fail
+explicitly; Gauge is not a fallback for ontology context. Gauge remains available for exact
+single-source queries and independent verification. Fresh maintenance identity/duplicate
+checks remain governed direct reads, not a second factual-answer writer.
+
+The telemetry-quality investigation exception that encouraged Gauge-first routing is removed.
+The verified v2 ontology's attached Lakehouse, Eventhouse and SQL sources provide the
+context; this does not certify that any particular native query or combined answer succeeds.
+The original native answer remains unchanged.
+
+Fixer's scoped evidence projection now retains signal rows through exact verified
+equipment/node bindings across receipts, preserving original citation indices. Established
+equipment scope survives an RCA handoff. If a relevant receipt cannot be safely narrowed,
+its rows are retained rather than reducing it to population counts without the evidence.
+No signal identity is inferred from names, exclusions or summary prose. Draft staging still
+requires verified identity, fresh work coverage and separate human approval before SQL creation.
+
+The chat's hardcoded starter sample cards are removed. Users ask their own operational
+questions; routing is the orchestration service's responsibility. Local regressions cover
+automatic grounding, rejected Gauge-first plans, signal-row preservation and draft-card
+rendering. These code changes do not constitute deployment or signed-in runtime acceptance.
+
 ## October 30 scope-corruption and dependent-review correction
 
 SQL schema metadata could become equipment scope: recursively inspecting the raw

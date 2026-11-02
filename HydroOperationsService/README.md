@@ -30,10 +30,14 @@ that the built-in Magentic manager is in use.
 
 An explicit independent-verification requirement must include a direct-source
 verification receipt. A native answer alone cannot independently verify itself.
-Raw telemetry-quality investigations use scoped governed Eventhouse evidence
-and authoritative asset identity before RCA. When native facts are also requested,
-retain the original native answer unchanged and plan independent reads up front;
-never substitute them as a fallback after native failure.
+Complex correlations and contextual investigations always start with Sparky/Fabric IQ,
+using the verified v2 ontology and its attached Lakehouse, Eventhouse and SQL sources.
+Operators do not need to name an agent. The semantic decision declares
+`ontology_context_required`; validation also rejects cross-source factual plans or
+RCA investigations that omit native grounding, and native execution after dependent
+RCA/maintenance review. Gauge remains available for exact single-source queries and
+independent verification, not as the default context provider or a native-failure fallback.
+Fresh draft identity and duplicate-work checks remain governed reads.
 
 The chat represents the **Supervisor-led multi-agent team**, not just Sparky.
 Its **Team** menu lists available capabilities; the execution flow lists only
@@ -54,8 +58,11 @@ native answer. Simple facts do not need the whole team. Native execution still
 has its own service/model costs; avoiding a wrapper does not make it model-free.
 The chat memoizes trace inputs and the trace component so composer edits do not
 recompute an unchanged execution flow. Team descriptions add no model calls.
-The facility-list starter no longer forces Sparky: simple governed retrieval can
-use Gauge's reader path, while the explicit Fabric Data Agent starter remains.
+There are no hardcoded starter sample cards or user-authored routing instructions.
+Simple governed retrieval can still use Gauge's reader path.
+Fixer receives per-signal evidence with original citation indices across dependent
+handoffs. Relevant receipts without a safe row mapping retain their rows, not just
+counts; an RCA citation subset cannot narrow established maintenance scope.
 
 ## Model throughput and runtime failures
 
@@ -200,8 +207,9 @@ Consent or an expired sign-in can still require the identity provider's
 interaction; there is no separate per-agent connection workflow. A failed
 source preflight never invokes the agent or replays an approval.
 
-The semantic planner selects ontology-backed Fabric Data Agent execution for
-cross-source business questions and explicit native requests. Exact governed
+The semantic planner requires ontology-backed Fabric Data Agent execution for
+complex correlations, contextual investigations, cross-source business questions
+and explicit native requests. Exact single-source governed
 reads and independent checks use direct tools. Native source failure never
 silently changes authority. Historical matching ("had BAD") retains matching
 samples separately from the latest state.

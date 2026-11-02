@@ -73,3 +73,9 @@ test('legacy comparison settings cannot restore a direct-agent entry on Hydro In
   const styles = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
   assert.doesNotMatch(styles, /agent-battle-/)
 })
+
+test('Hydro Intelligence does not require routing through starter sample prompts', () => {
+  const experience = readFileSync(new URL('../src/components/CopilotExperience.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(experience, /const PROMPTS|PROMPTS\.map|Use the Fabric Data Agent for the facts/)
+  assert.match(experience, /onSend\(value\)/)
+})

@@ -75,13 +75,12 @@ test('team capabilities include all roles without pretending unused specialists 
   assert.doesNotMatch(html, /Conversation agent flow|On the job|Finished/)
 })
 
-test('simple factual starter does not force a native model call', () => {
+test('new conversations have no sample prompt cards or agent-routing instructions', () => {
   const html = renderToStaticMarkup(createElement(CopilotExperience, {
     messages: [{ role: 'agent', text: 'Ready.' }], busy: false, onSend: Empty, onReset: Empty,
   }))
-  assert.match(html, /<button[^>]*>List every facility with its identifier and name\.<\/button>/)
-  assert.doesNotMatch(html, /Ask Sparky \(Fabric IQ\) to list every facility/)
-  assert.match(html, /Use the Fabric Data Agent for the facts/)
+  assert.doesNotMatch(html, /v2-suggestions|List every facility with its identifier|Use the Fabric Data Agent for the facts/)
+  assert.match(html, /<textarea placeholder="Ask about connected Fabric data"/)
 })
 
 test('no drafts render no pager; one draft needs no page controls', () => {
