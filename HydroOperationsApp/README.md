@@ -9,7 +9,8 @@ Hydro Intelligence has the same three accessible tabs in `ui=v1` and `ui=v2`:
   conversations, showing measured durations, citations and failures independently. It is
   comparison-only: no approval/rejection/creation controls, judge, winner or silent fallback.
 
-Histories and native continuation IDs stay in memory and are isolated by mode. Switching tabs
+Histories and Multi Agent continuation IDs stay in memory and are isolated by mode. Direct
+MCP questions are independent; its visible history is not sent as conversational context. Switching tabs
 does not submit requests. Authoritative workspace/source/user changes clear histories and
 invalidate approvals; cancellation stops local waiting, not necessarily remote execution.
 No starter/sample prompts are inserted. Optional backend workflow summaries remain visible;
@@ -211,11 +212,13 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   five-minute source polling work independently of STID connectivity. Work-order mutations
   invalidate the source snapshot immediately.
 
-These read capabilities do **not** imply Data Agent semantic runtime or Operations Agent playbook
-execution succeeds. The latest live attempt accepted source publication and stopped-agent
-configuration, but the real ontology MCP question failed inside `analyze_ontology` with an
-unsupported API version despite `isError: false`. A SQL-only question correctly returned 12 work
-orders; it does not validate ontology reasoning or resolve the external playbook-runtime issue.
+These read capabilities do **not** imply every Data Agent semantic query or Operations Agent playbook
+execution succeeds. An earlier live attempt accepted source publication and stopped-agent
+configuration, but its ontology MCP question failed inside `analyze_ontology` with an
+unsupported API version despite `isError: false`. A later first question through the official
+published MCP endpoint succeeded against the verified ontology-backed agent and returned three
+facilities with a CSV resource, as detailed below. This does not certify every cross-source
+question or resolve the separate playbook-runtime issue.
 The app does not fabricate success for either service.
 Guided setup marks only SQL/GraphQL and app data connection steps complete. It does not read
 notebook capability statuses or treat a completed notebook as agent readiness: review
@@ -226,31 +229,70 @@ configuration the app reads the candidate's real `getDefinition` response and ve
 `artifactId` and `workspaceId` against the selected, verified generation-2 Ontology. Draft sources,
 agent names, and notebook completion are insufficient. A different/legacy ontology source, an
 unreadable or malformed definition, or no matching published source blocks invocation explicitly.
-Direct execution discovers the current workspace capacity and Fabric ML workload routing on
-each request, using the existing delegated token acquisition. It selects exactly one agent
+Direct execution uses the official published MCP endpoint with existing delegated Fabric
+token acquisition. It selects exactly one agent
 whose **published** definition matches the selected live numeric generation-2 ontology, not
 an agent name or a sole-item guess. It does not read a Foundry connection or require Foundry
 configuration. Zero or multiple matching agents are an explicit configuration blocker.
 
-The native Responses endpoint receives only the unchanged operator input, compatibility model
-and (for follow-ups) the same conversation's `previous_response_id`. No selected facility,
-context envelope, clock hint or answer-format instruction is prepended. SSE is consumed
-incrementally and finishes on `response.completed` even if the connection stays open; queued
-responses poll the same ID. The entire Direct operation has a five-minute deadline and no
-automatic question replay. Native citations and authenticated query-result files are retained;
-files are bounded to 20 artifacts of at most 5 MB each and use revocable in-memory object URLs.
-Provider errors, refused/incomplete answers, invalid identities and artifact failures fail closed.
+Each request initializes a fresh MCP client, discovers the single tool and question argument,
+then sends that argument the exact operator question. No selected facility, context envelope,
+clock hint or answer-format instruction is prepended. The native text is retained unchanged;
+embedded result resources are downloadable with their original bytes and MIME types, and a
+downloadable native MCP envelope preserves returned resource/citation metadata. The answer's
+SHA-256 is displayed. The operation has a five-minute deadline, bounded evidence/artifacts,
+local cancellation and no automatic question replay. Provider errors, invalid identities and
+artifact failures fail closed.
 
-Browser prerequisites are delegated Fabric workspace/item read and Data Agent execute access,
-Power BI `Item.Execute.All`, published Data Agent access, and CORS support from Fabric discovery,
-regional routing and the generated native workload endpoint to the current app origin.
+**Continuation limitation:** the published tool currently declares only `userQuestion: string`,
+not `previous_response_id` or `conversation`. Direct supports first and subsequent independent
+questions, but does not claim that a referential follow-up inherits earlier context. This is
+disclosed above the Direct transcript and in Battle. No context wrapper, hidden answer writer
+or undeclared continuation argument is substituted.
+
+Browser prerequisites are delegated Fabric `Workspace.Read.All`, `Item.Read.All`,
+`DataAgent.Execute.All`, published Data Agent access, and CORS support from Fabric discovery
+and the official published MCP endpoint to the current app origin. Direct MCP does not request
+Power BI, Foundry, regional routing or generated workload-endpoint access.
 Missing consent/RBAC or browser CORS/network support is surfaced as a real blocker, never
 worked around through Foundry and labelled Direct. Live hosting/browser acceptance remains
 necessary; unit tests do not certify these product/tenant prerequisites. Entra token caching
-for this SPA is in memory, not local/session storage. The existing MCP helpers remain for
-other callers but do not implement these Hydro Intelligence modes.
-Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
-`type: ontology`, `artifactId`, and `workspaceId` fields used by the notebook publishers.
+for this SPA is in memory, not local/session storage. The older `askDataAgent` helper remains for
+other callers but its prompt rewriting is not used by these Hydro Intelligence modes.
+
+**Why regional Responses is not the active browser entry:** the regional ML
+`POST /metadata/v201606/generatemwctokenv2` preflight was rejected without
+`Access-Control-Allow-Origin` for the deployed Fabric App origin, despite valid SPA-issued
+delegated tokens and successful workspace/cluster discovery. That Responses route cannot
+execute from the inspected hosted browser. More consent or a different model does not repair
+provider CORS. It is not called before MCP, retried through MCP, or used as a fallback.
+
+Microsoft's [SDK documentation](https://learn.microsoft.com/en-us/fabric/data-science/fabric-data-agent-sdk)
+identifies the published [MCP endpoint](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-mcp-server)
+as the runtime consumption surface:
+`https://api.fabric.microsoft.com/v1/mcp/workspaces/{WorkspaceId}/dataagents/{DataAgentId}/agent`.
+Its documented flow is `initialize`, `tools/list`, then `tools/call` with the discovered question
+argument. An MCP transport session alone does not prove native conversational continuation.
+The [official Responses sample](https://github.com/microsoft/fabric-samples/blob/main/docs-samples/data-science/data-agent-sdk/responses-api/responses-api-notebook.ipynb)
+demonstrates Python `previous_response_id`/`conversation`, not a browser API contract.
+Inspection of SDK `0.1.34a0` confirmed headless Responses uses the same regional routing request;
+notebook execution consumes Fabric runtime workload-host context, not a SPA-provided equivalent.
+Read-only live MCP metadata checks from the hosted browser succeeded (`initialize` HTTP 200,
+`notifications/initialized` HTTP 202, `tools/list` HTTP 200). Both listed published agents
+advertised only `userQuestion: string`, no declared native continuation argument, and no
+`outputSchema`. Tasks/list/cancel capabilities were advertised, but tasks are execution handles,
+not proof of conversation memory. A browser-readable MCP session header was not present.
+A subsequent first read-only `tools/call` against the verified ontology-backed agent succeeded
+with HTTP 200 and `isError: false`, returning three actual facility IDs/names in unchanged native
+text and an embedded CSV resource. This verifies that first-question route, not native
+continuation or every cross-source question.
+
+Verification recognizes the dedicated v2
+`Files/Config/published/ontologies/{name}/ontology.json` part's exact `artifactId` and `workspaceId`,
+as well as typed ontology `Files/Config/published/{source}/datasource.json` bindings.
+The dedicated ontology record need not contain a `type` property. A SQL/custom datasource
+beside that record does not make the agent SQL-only. Both formats fail closed on mismatched
+identity, malformed content, draft-only bindings or a conflicting explicit type.
 Matching published identity plus the selected item's authoritative live generation `2` proves
 **configured source identity only**, not runtime readiness. It permits the real native attempt;
 backend/product failures propagate unchanged, and onboarding may still be unavailable.

@@ -55,7 +55,7 @@ function BattlePanel({ conversations, snapshot, busy }: {
     setQuestion('')
   }
   return <div className="v2-battle-panel">
-    <p>Identical question, independent conversations. Durations include authentication, source verification and retrieval. No judge or automatic winner. Review and approval are available only in Multi Agent.</p>
+    <p>Identical question, independent sessions. Direct Fabric IQ questions do not inherit earlier context; Multi Agent maintains its own conversation. Durations include authentication, source verification and retrieval. No judge or automatic winner. Review and approval are available only in Multi Agent.</p>
     <div className="v2-battle-columns">
       {(['battleDirect', 'battleMulti'] as const).map(lane => <section key={lane} aria-label={lane === 'battleDirect' ? 'Fabric IQ comparison answer' : 'Multi Agent comparison answer'}>
         <h2>{lane === 'battleDirect' ? 'Fabric IQ — Direct' : 'Multi Agent — Foundry'}</h2>

@@ -35,7 +35,9 @@ export function requireDataAgentEndpoint(endpoint: string | undefined, generatio
 }
 
 export function verifyPublishedAgentOntology(definition: OntologyDefinition, workspaceId: string, ontologyId: string): void {
-  const parts = definition.definition?.parts?.filter(part => /^Files\/Config\/published\/[^/]+\/datasource\.json$/.test(part.path)) ?? []
+  const dedicatedOntologyPart = /^Files\/Config\/published\/ontologies\/[^/]+\/ontology\.json$/
+  const parts = definition.definition?.parts?.filter(part =>
+    /^Files\/Config\/published\/[^/]+\/datasource\.json$/.test(part.path) || dedicatedOntologyPart.test(part.path)) ?? []
   let matched = false
   for (const part of parts) {
     let source: Record<string, unknown>
@@ -46,8 +48,12 @@ export function verifyPublishedAgentOntology(definition: OntologyDefinition, wor
     } catch {
       throw new Error(`Data Agent source verification failed: ${part.path} is not a valid published datasource definition.`)
     }
-    if (typeof source.type !== 'string') throw new Error('Data Agent source verification failed: a published source has no type.')
-    if (source.type.toLowerCase() !== 'ontology') continue
+    if (dedicatedOntologyPart.test(part.path)) {
+      if (source.type !== undefined && source.type !== 'ontology') throw new Error('Data Agent source verification failed: a dedicated published ontology part has a conflicting type.')
+    } else {
+      if (typeof source.type !== 'string') throw new Error('Data Agent source verification failed: a published source has no type.')
+      if (source.type.toLowerCase() !== 'ontology') continue
+    }
     if (typeof source.artifactId !== 'string' || source.artifactId.toLowerCase() !== ontologyId.toLowerCase()
       || typeof source.workspaceId !== 'string' || source.workspaceId.toLowerCase() !== workspaceId.toLowerCase()) {
       throw new Error('The published Data Agent references a different or unverified Ontology. Replace legacy sources with the selected Ontology v2 and republish before using this app.')
