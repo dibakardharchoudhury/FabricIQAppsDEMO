@@ -18,8 +18,6 @@ services:
     allowedRedirectUris:
       - http://localhost:5173
       - https://solar-dew-0ad1824bab-norwayeast.webapp.fabricapps.net
-      - https://free-coral-b7b89aadbb-swedencentral.webapp.fabricapps.net
-      - https://snowy-flint-5e51887339-swedencentral.webapp.fabricapps.net
       - https://savvy-coast-6cc7d37cc3-norwayeast.webapp.fabricapps.net
   staticHosting:
     enabled: true
