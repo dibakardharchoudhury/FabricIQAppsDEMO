@@ -15,7 +15,6 @@ or double-click one of the thin shims that just call this file:
 
 from __future__ import annotations
 
-import difflib
 import json
 import os
 import re
@@ -36,7 +35,7 @@ APP_URL = "http://127.0.0.1:5000/"
 PORT_PROBE_TIMEOUT = 3
 
 
-def only_generated_redirect_additions(checkout: Path, status: str) -> bool:
+def only_generated_rayfin_changes(checkout: Path, status: str) -> bool:
     relative = "HydroOperationsApp/rayfin/rayfin.yml"
     if status.rstrip("\r\n") != f" M {relative}":
         return False
@@ -45,29 +44,59 @@ def only_generated_redirect_additions(checkout: Path, status: str) -> bool:
         capture_output=True, text=True, encoding="utf-8", timeout=30, check=True,
     ).stdout.splitlines()
     current = (checkout / "HydroOperationsApp" / "rayfin" / "rayfin.yml").read_text(encoding="utf-8").splitlines()
-    keys = [index for index, line in enumerate(committed) if line.strip() == "allowedRedirectUris:"]
-    if len(keys) != 1:
+    def redirect_block(lines: list[str]) -> tuple[list[str], list[str]] | None:
+        keys = [index for index, line in enumerate(lines) if line.strip() == "allowedRedirectUris:"]
+        if len(keys) != 1:
+            return None
+        start = keys[0]
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = start + 1
+        while end < len(lines):
+            line = lines[end]
+            if line.strip() and len(line) - len(line.lstrip()) <= indent:
+                break
+            end += 1
+        prefix = " " * (indent + 2) + "- "
+        entries = lines[start + 1:end]
+        if not entries or any(not line.startswith(prefix) for line in entries):
+            return None
+        return lines[:start + 1] + lines[end:], [line[len(prefix):] for line in entries]
+
+    before = redirect_block(committed)
+    after = redirect_block(current)
+    if before is None or after is None:
         return False
-    start = keys[0]
-    indent = len(committed[start]) - len(committed[start].lstrip())
-    end = start + 1
-    while end < len(committed):
-        line = committed[end]
-        if line.strip() and len(line) - len(line.lstrip()) <= indent:
-            break
-        end += 1
-    origin = re.compile(r" {" + str(indent + 2) + r"}- https://[a-z0-9][a-z0-9-]*\.webapp\.fabricapps\.net")
-    added = False
-    for tag, old_start, _old_end, new_start, new_end in difflib.SequenceMatcher(
-        a=committed, b=current, autojunk=False,
-    ).get_opcodes():
-        if tag == "equal":
-            continue
-        if (tag != "insert" or not start < old_start <= end
-                or not all(origin.fullmatch(line) for line in current[new_start:new_end])):
+    old_lines, old_redirects = before
+    new_lines, new_redirects = after
+    if not set(old_redirects).issubset(new_redirects):
+        return False
+    if any(not re.fullmatch(r"https://[a-z0-9][a-z0-9-]*\.webapp\.fabricapps\.net", uri)
+           for uri in set(new_redirects) - set(old_redirects)):
+        return False
+
+    # configure_geo_connector owns only this exact read-only declaration.
+    geo = (
+        "  - name: hydrogeo\n"
+        "    type: fabric-sqlanalytics\n"
+        "    config:\n"
+        "      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}\n"
+        "      itemId: ${RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID}\n"
+        "    auth:\n"
+        "      type: delegated\n"
+        "    operations:\n"
+        "      - name: read\n"
+    )
+    normalized = []
+    for lines in (old_lines, new_lines):
+        text = "\n".join(lines) + "\n"
+        if text.count("  - name: hydrogeo\n") > 1:
             return False
-        added = True
-    return added
+        if geo in text:
+            if lines.count("connectors:") != 1 or text.index(geo) < text.index("connectors:\n"):
+                return False
+            text = text.replace(geo, "", 1)
+        normalized.append(text)
+    return normalized[0] == normalized[1]
 
 
 def server_path() -> Path:
@@ -86,12 +115,12 @@ def server_path() -> Path:
         capture_output=True, text=True, timeout=30, check=True,
     )
     if status.stdout.strip():
-        if not only_generated_redirect_additions(checkout, status.stdout):
+        if not only_generated_rayfin_changes(checkout, status.stdout):
             raise ValueError(
                 f"The configured deployment checkout has modified tracked files: {checkout}.\n"
                 f"{status.stdout.rstrip()}"
             )
-        print("  Retaining generated Rayfin hosting redirects; tracked source files are unchanged.")
+        print("  Retaining generated Rayfin redirects/energy connector configuration; tracked source files are unchanged.")
     return server
 
 
