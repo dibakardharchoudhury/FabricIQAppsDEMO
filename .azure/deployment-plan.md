@@ -1,6 +1,44 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Prose-only native evidence follow-up
+> **Status:** Validated - Feature ontology-grounding release 02a163a
+
+## November 2 Feature-only release
+
+Target: tenant `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace
+`ws-FabricIQAppsDemoFEATURE` (`c7da7c28-0dee-4f45-bc9e-5628bb882732`).
+Reuse the existing `ai-hydroact/ai-project-hydroIQ` Foundry project and
+`gpt-5.6-sol` model. The successful Feature deployment receipt confirms this
+selection. Preserve the separate Dev workspace agent set and all SPA redirects.
+
+Recipe: repository-owned Fabric Python orchestrator. Do not execute standalone
+azd/Rayfin/Entra provisioning or scaffold an alternative infrastructure deployment.
+
+All validation checks pass:
+- [x] Core validation: existing Feature environment, app build, current source
+  regression tests, clean tracked release branch and matching remote upstream.
+- [x] Container context: unchanged Dockerfile/locks; all declared COPY inputs
+  resolve and 60 hosted packaging/deployment contracts pass. The orchestrator owns
+  Node 24, ACR image reuse/build and active hosted-agent readback.
+- [x] Policy/RBAC: no infrastructure template, role assignment, permissions,
+  model quota, region or operational data-write change requested. Reuse existing
+  resources; native identity and approval gates remain unchanged.
+
+### Section 7: Validation Proof - November 2 release
+
+Validation date: 2026-11-02. Source commit: `02a163a`.
+`npm run validate-env` and `npm run build` passed in this isolated Feature
+checkout, with existing bundle warnings. Prior checks on the identical source
+passed 207 supervisor/native tests, 55 routing/handoff tests (one additional
+optional live test skipped), 16 frontend tests, TypeScript and scoped ESLint.
+`python -m unittest test_deploy_hosted_agent` passed all 60 tests in this checkout.
+The source fingerprint is
+`a1732859b3c18bc91111ecf52e81885c0f60b702e69508efae83b53f93fd30e8`.
+The shared model/project already exist, as verified by successful Feature and
+Dev deployment receipts. There is no new IaC/RBAC delta to compile or preview.
+The canonical deployment must still verify live tenant, workspace, SPA, capacity,
+ontology generation 2, native connections, active source-fingerprinted image,
+AppBackend endpoints/CORS and publication before success is reported.
+The signed-in chat/card flow is a separate runtime acceptance check.
 
 ## Scoped native Data Agent passthrough
 
