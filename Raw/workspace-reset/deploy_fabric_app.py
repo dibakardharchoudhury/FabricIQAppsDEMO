@@ -2596,6 +2596,9 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
         raise DeployError("Foundry provisioning module is unavailable.")
     foundry = importlib.util.module_from_spec(foundry_spec)
     foundry_spec.loader.exec_module(foundry)
+    with timed_operation("Foundry publishing-tool preflight"):
+        hosted = foundry._load_sibling("deploy_hosted_agent")
+        hosted.ensure_azd_ready(sys.modules[__name__], tenant)
     with timed_operation("Foundry project/model preflight"):
         selection = foundry.resolve_project(sys.modules[__name__], tenant, workspace_id)
 

@@ -342,6 +342,33 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
 
 
 class FoundryBackendGatewayTests(unittest.TestCase):
+    def test_tooling_failure_blocks_all_workspace_and_backend_paths_before_cloud_setup(self):
+        for workspace in ("338df5b1-20df-43f7-b1ea-ddd7326125e4", "c7da7c28-0dee-4f45-bc9e-5628bb882732"):
+            for existing_backend in (False, True):
+                with self.subTest(workspace=workspace, existing_backend=existing_backend):
+                    foundry = Mock()
+                    foundry._load_sibling.return_value.ensure_azd_ready.side_effect = DEPLOY.DeployError(
+                        "agent extension did not start",
+                    )
+                    with (
+                        patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                            {"RAYFIN_PUBLIC_ONTOLOGY_ID": "99999999-9999-9999-9999-999999999999"}, None,
+                        )),
+                        patch.object(DEPLOY, "appbackend_identity_present", return_value=existing_backend),
+                        patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
+                        patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
+                        patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
+                        patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
+                        patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
+                        self.assertRaisesRegex(DEPLOY.DeployError, "extension did not start"),
+                    ):
+                        DEPLOY.provision_foundry_agents("tenant", workspace)
+                    backend.assert_not_called()
+                    sources.assert_not_called()
+                    foundry.resolve_project.assert_not_called()
+                    foundry.prepare_hosted_image.assert_not_called()
+                    foundry.provision.assert_not_called()
+
     def test_app_agents_deployment_orders_agent_setup_before_website_and_blocks_on_any_failure(self):
         for reuse in (False, True):
             for failure in ("", "agents", "AppBackend", "website", "CORS"):

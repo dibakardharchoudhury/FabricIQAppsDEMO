@@ -70,6 +70,15 @@ ARM and Foundry in the selected tenant, rather than relying on generic signed-in
 status. A failed credential check permits one target-tenant browser sign-in and
 rechecks both audiences before proceeding. Persistent failures stop explicitly;
 agent publication is not automatically replayed after an ambiguous failure.
+The shared Foundry entry point checks publishing tools before project, AppBackend,
+image or specialist provisioning, for both Full Deploy and Deploy app & agents.
+It requires azd 1.37.0 or newer, agent extension 1.0.0-beta.23 or newer and Foundry
+bundle 1.0.0-beta.4 or newer. Missing/older extensions are installed/updated to those
+minimums, then actual `installedVersion` readback and the running agent-extension
+version are verified. Catalog version or installed extension names alone are not
+readiness. Compatible newer versions are retained. A startup/readback failure stops
+before cloud setup; no deployment write is replayed. These local checks do not certify
+hosted activation, source execution or final endpoint/CORS readiness.
 
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
