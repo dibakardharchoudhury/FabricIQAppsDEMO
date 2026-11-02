@@ -342,6 +342,76 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
 
 
 class FoundryBackendGatewayTests(unittest.TestCase):
+    def test_app_agents_deployment_orders_agent_setup_before_website_and_blocks_on_any_failure(self):
+        for reuse in (False, True):
+            for failure in ("", "agents", "AppBackend", "website", "CORS"):
+                with self.subTest(reuse=reuse, failure=failure), ExitStack() as stack:
+                    energy, events = Mock(), []
+                    mocks = {}
+                    for name, result in {
+                        "prefer_tenant_scoped_azure_cli_config": None, "ensure_azure_tenant": "tenant",
+                        "resolve_workspace": ("workspace", "Demo", "capacity"),
+                        "resolve_spa": "11111111-1111-1111-1111-111111111111",
+                        "read_entra_spa_redirects_with_reauth": [], "write_rayfin_redirects": [],
+                        "prepare_rayfin_env": reuse, "current_rayfin_target": (
+                            {"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true"}, None,
+                        ),
+                        "configure_geo_connector": None, "ensure_deploy_dependencies": None,
+                        "run_stream": "validated", "energy_workspace": energy,
+                        "appbackend_identity_present": failure != "AppBackend",
+                        "ensure_rayfin_login": None, "export_frontend_env": None,
+                        "validate_lakehouse_connector_apply": None, "validate_fabric_app": "backend",
+                        "validate_hosted_page": "app-shell", "validate_rayfin_endpoint_contract": "https://api.test",
+                        "validate_rayfin_publishable_key": "pk-test", "validate_appbackend_cors": None,
+                        "validate_spa_redirect_preservation": None, "validate_entra_live_auth_with_reauth": None,
+                        "verify_foundry_agents": None,
+                    }.items():
+                        mocks[name] = stack.enter_context(patch.object(DEPLOY, name, return_value=result))
+
+                    def provision(*args):
+                        events.append("agents")
+                        if failure == "agents":
+                            raise DEPLOY.DeployError("agents failed")
+
+                    def publish(*args):
+                        self.assertEqual(events[0], "agents")
+                        events.append("website")
+                        if failure == "website":
+                            raise DEPLOY.DeployError("website failed")
+                        return "Hosting URL: https://combined.webapp.fabricapps.net"
+
+                    provision_mock = stack.enter_context(patch.object(DEPLOY, "provision_foundry_agents", side_effect=provision))
+                    publication = stack.enter_context(patch.object(DEPLOY, "run_rayfin_deployment", side_effect=publish))
+                    command = stack.enter_context(patch.object(DEPLOY, "rayfin24", side_effect=lambda *args: list(args)))
+                    stack.enter_context(patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": ""}))
+                    output = stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
+                    if failure == "CORS":
+                        mocks["validate_appbackend_cors"].side_effect = DEPLOY.DeployError("CORS failed")
+                    args = argparse.Namespace(
+                        tenant="tenant", workspace="workspace", client_id=None, push_config=False,
+                        stage="app-agents", energy_map="keep", energy_read_models_only=False,
+                    )
+                    if failure:
+                        with self.assertRaisesRegex(DEPLOY.DeployError, failure):
+                            DEPLOY._deploy(args, Mock())
+                        self.assertNotIn("DEPLOYED_APP_URL=", output.getvalue())
+                        if failure in ("agents", "AppBackend"):
+                            publication.assert_not_called()
+                    else:
+                        DEPLOY._deploy(args, Mock())
+                        self.assertEqual(command.call_args_list[0].args, ("up", "staticapp", "deploy"))
+                        mocks["validate_appbackend_cors"].assert_called_once()
+                        self.assertIn("DEPLOYED_APP_URL=", output.getvalue())
+                    provision_mock.assert_called_once_with("tenant", "workspace")
+                    mocks["verify_foundry_agents"].assert_not_called()
+                    energy.prepare.assert_not_called()
+                    energy.prepare_energy.assert_not_called()
+                    energy.publish_energy.assert_not_called()
+                    if failure in ("agents", "AppBackend"):
+                        energy.verify_energy.assert_not_called()
+                    else:
+                        energy.verify_energy.assert_called_once_with()
+
     def test_energy_and_foundry_overlap_and_either_failure_blocks_completion(self):
         from feature_workspace import FeatureWorkspaceError
 

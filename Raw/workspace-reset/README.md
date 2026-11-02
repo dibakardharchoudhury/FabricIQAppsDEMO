@@ -148,11 +148,12 @@ running, you can close its window; the server keeps running. Use the sidebar's
 
 For the simplest deployment, choose the target tenant/workspace, then use **Refresh
 subscriptions** instead of copying a subscription GUID. The list shows tenant IDs and does
-not switch Azure subscriptions. Use **Deploy app** for an existing prepared workspace; only
+not switch Azure subscriptions. Use **Deploy app & agents** for an existing prepared workspace; only
 use **Full Deploy** when Git sync and data setup are actually needed.
-**Set up Foundry agents** is a separate module before final app publication;
-it owns project/model/registry settings and explicitly billable first-time
-provisioning. Blank overrides use verified discovery, never another tenant's saved target.
+The combined action owns project/model/registry settings, explicitly billable first-time
+provisioning and website publication in one orchestrator run. Agent failure blocks
+publication; unchanged agents/images/backend are reused. **Advanced → Website only**
+is retained for an already verified deployment. Blank overrides use verified discovery.
 
 The **Core setup** and **Full Deploy** setup forms share non-secret parameter
 values and remember workspace overrides in this browser. Reusable defaults from
@@ -218,8 +219,9 @@ the Fabric workspace is new:
 | Missing account/project | **Checked**; billable bootstrap also needs permissions and quota |
 
 Full Deploy includes Foundry setup with these same fields; no standalone Foundry
-run is needed first. It repeats Git sync and Core setup. Use **Set up Foundry agents**
-for routine agent updates and **Deploy app** for website updates.
+run is needed first. It repeats Git sync and Core setup. Use **Deploy app & agents**
+for routine updates without repeating Core/Energy, or **Advanced → Website only**
+to skip agent updates against an already verified deployment.
 The account owns the model deployment and projects; a Fabric workspace is separate.
 Shared-project agents have distinct workspace bindings, not separate project/RBAC
 boundaries. Separate projects remain unverified end-to-end and do not add model
@@ -231,8 +233,8 @@ create-only: it requires a missing project and an empty new agent inventory.
 If the selected name already exists, setup stops without reusing, deleting or
 replacing it. Uncheck creation to update that project, or choose an unused name.
 A blank checked project uses the stable workspace-GUID name, not saved project hints.
-App-only publication rejects checked creation; use Full Deploy or standalone Foundry
-setup first. A failed create that left a project behind counts as existing: reuse
+App-only publication rejects checked creation; use Full Deploy or Deploy app & agents.
+A failed create that left a project behind counts as existing: reuse
 unchecked only after its infrastructure/lifecycle checks pass; incomplete infrastructure
 needs repair, not another fresh creation. With an existing account, a missing project
 uses the exact name entered above, or the stable full workspace-GUID project name.
@@ -883,8 +885,8 @@ Reloading such a run displays **Previous deployment history**, including its rec
 outcome and completed stages, without a new failure, live progress, or any deployment
 being started. Explicit resume still refuses the incompatible checkpoint.
 Older runs have no durable checkpoint. For an older
-Energy failure, use **Refresh energy sources**, then **Set up Foundry agents** and
-**Deploy app**, rather than repeating successful Core setup. Energy setup now compares
+Energy failure, use **Refresh energy sources**, then **Deploy app & agents**,
+rather than repeating successful Core setup. Energy setup now compares
 the Git-managed Geo notebooks with this checkout and updates changed code only,
 preserving their live bindings, before retrying. Missing/corrupt checkpoints
 explicitly refuse resume, never silently start a new deployment.
@@ -984,8 +986,10 @@ Flags: `--tenant --workspace --yes --dry-run`.
 
 ## Deploy the Hydro Operations Fabric app
 
-The **Deploy app** tab runs the complete Rayfin application deployment against the
-tenant and workspace selected in the sidebar:
+The normal **Deploy app & agents** action runs the existing deployment orchestrator
+against the selected target: agent setup first, then website publication and final
+checks in one job. Hosted Agent readiness alone is not final success.
+**Advanced → Website only** keeps the read-only prepared-agent verification path.
 
 Energy ingestion and map-agent publication belong to **Refresh energy sources**.
 The app-publication phase checks existing serving data without running `Geo_001` or
@@ -1009,8 +1013,8 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
   current capacity. A workspace/capacity/tenant mismatch moves only the three Rayfin state files
   into a unique temporary backup, then generates and validates a fresh ignored `rayfin/.env`.
   Existing state is not deleted.
-   In the independent **Set up Foundry agents** module (or the combined CLI flow),
-   the deployer converges the **Foundry** side: the
+   In **Deploy app & agents** (and the combined CLI flow),
+   the deployer converges the **Foundry** side before website publication: the
    Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
@@ -1025,7 +1029,8 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
    Requires `azd`; missing
    `azure.ai.agents` and `microsoft.foundry` extensions are installed
    by the deployer. Foundry uses the verified `RAYFIN_PUBLIC_ONTOLOGY_ID` independently of
-   graph binding; native graph materialization does not gate **Set up Foundry agents** or **Deploy app**.
+   graph binding; native graph materialization does not gate **Deploy app & agents**
+   or **Advanced → Website only**.
    New models prefer 75,000 TPM within the selected model/SKU's available regional quota, falling back
    to a supported lower allocation. Existing positive allocations are accepted without automatic resizing.
    The final app module only reads prepared Foundry definitions/runtime identities;

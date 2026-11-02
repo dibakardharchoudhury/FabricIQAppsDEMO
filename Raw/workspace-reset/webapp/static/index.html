@@ -342,8 +342,10 @@
         <button id="tabSync" class="tab" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
         <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Core setup</button>
         <button id="tabEnergy" class="tab run" data-tab="energy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z"/></svg> Refresh energy sources</button>
-        <button id="tabFoundry" class="tab run" data-tab="foundry" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="8" rx="2"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="12" cy="21" r="2"/><path d="m6 6 3 3m9-3-3 3m-3 7v3"/></svg> Set up Foundry agents</button>
-        <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Deploy app</button>
+        <button id="tabFoundry" class="tab run" data-tab="foundry" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="8" rx="2"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="12" cy="21" r="2"/><path d="m6 6 3 3m9-3-3 3m-3 7v3"/></svg> Deploy app &amp; agents</button>
+        <details class="deployment-actions"><summary class="nav-group">Advanced</summary>
+        <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Website only</button>
+        </details>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
         </details>
       </nav>
@@ -370,7 +372,7 @@
       </div>
       <p class="hint">For a new workspace. Includes Foundry setup: syncs Git, runs Core setup, then finishes Energy and Foundry concurrently before app publication; stops on failure. No separate Foundry run is needed first.</p>
       <aside class="notice">
-        <strong>Updating?</strong> Use <strong>Deploy app</strong> for website changes or <strong>Set up Foundry agents</strong> for agent changes. Full Deploy repeats Git sync and Core setup.
+        <strong>Updating?</strong> Use <strong>Deploy app &amp; agents</strong> to update agents and publish the app in one run. Advanced <strong>Website only</strong> skips agent updates for an already verified deployment. Full Deploy repeats Git sync and Core setup.
         <a href="/deploy-guide" target="_blank" rel="noopener">Prerequisites &amp; guide</a>
       </aside>
       <div class="workflow-config">
@@ -472,24 +474,24 @@
     <div class="card">
       <div class="card-head">
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
-        <h2>Set up Foundry agents</h2>
+        <h2>Deploy app &amp; agents</h2>
       </div>
-      <p class="hint">Run Core setup first. Creates or reuses AppBackend with SQL/GraphQL dependencies for the Hosted Agent, then configures Foundry agents. Native graph materialization is not required. Does not publish the website.</p>
+      <p class="hint">Run Core setup first. Creates or reuses AppBackend with SQL/GraphQL dependencies, updates Foundry agents, then publishes the website and verifies sign-in, connectors and CORS. Agent failure blocks website publication. Does not repeat Core or Energy setup; native graph materialization is not required.</p>
       <div id="deployFoundryFields"></div>
-      <button id="foundryBtn" class="primary" disabled>Set up Foundry agents</button>
-      <p class="hint">After Foundry setup succeeds, <strong>Deploy app</strong> publishes the website using the prepared backend. A Fabric App item can already appear during backend setup. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
-      <div id="foundryPanel"><pre class="output muted">Foundry setup output will appear here.</pre></div>
+      <button id="foundryBtn" class="primary" disabled>Deploy app &amp; agents</button>
+      <p class="hint">One run, one final result. Unchanged agents and the prepared backend are reused. Success requires agent publication/readback and website checks, but does not certify agent execution or delivery. <a href="/deploy-guide" target="_blank" rel="noopener">Setup guide</a></p>
+      <div id="foundryPanel"><pre class="output muted">Agent and app deployment output will appear here.</pre></div>
     </div>
   </section>
 
   <section id="paneDeploy" class="pane">
     <div class="card">
-      <div class="card-head"><h2>Deploy Fabric app last</h2></div>
+      <div class="card-head"><h2>Advanced: website-only publication</h2></div>
       <p class="hint">Publishes the prepared app and verifies authentication, CORS and connectors. Does not rerun data or agent setup.</p>
-      <p class="phelp">For graph views, materialize the ontology graph first: Manage graph &rarr; select eligible entities/relationships &rarr; Continue &rarr; Materialize. Then bind the selected graph explicitly.</p>
+      <p class="phelp">Requires verified existing agents and backend configuration. Use Deploy app &amp; agents for a fresh target or agent changes. Configuration checks do not certify agent execution or delivery.</p>
       <div id="deployAuthenticationFields"></div>
       <p class="hint">Uses the energy-map setting already prepared for this target. Run Energy setup to prepare map data before publication.</p>
-      <button id="deployBtn" class="primary" disabled>Deploy Fabric app</button>
+      <button id="deployBtn" class="primary" disabled>Publish website only</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
   </section>
@@ -599,7 +601,7 @@ function renderFoundryFields(prefix, clientId) {
       <p class="phelp">Setup prepares AppBackend, five Foundry specialist agents and a hosted orchestrator. Stable workspace suffixes separate agents, connections and hosted state; unchecked reruns reuse that set. Missing backends create Fabric App/SQL/GraphQL resources, not the website.</p>
       <p class="phelp">Enter the same exact verified working account, project and model for each workspace; leave creation unchecked. FEATURE and DEV were live-tested with this shared-project layout, not separate projects. Blank project uses a saved identity or a stable workspace-GUID project, not a request to share.</p>
       <p class="phelp">Separate-project provisioning exists in the code but is not a verified deployment recommendation. No extra model deployment is allocated on the existing-account path; all projects share its TPM/RPM limits. A saved selection or successful resource creation does not prove hosted invocation works.</p>
-      <p class="phelp">Checked means create-only: the selected project must be missing and its new agent inventory must be empty. Existing project names stop setup; uncheck creation to reuse/update agents or enter an unused name. No existing project is automatically deleted or replaced. Approval is not saved. Full Deploy and standalone Foundry setup use the same rule; app-only publication cannot create projects.</p>
+      <p class="phelp">Checked means create-only: the selected project must be missing and its new agent inventory must be empty. Existing project names stop setup; uncheck creation to reuse/update agents or enter an unused name. No existing project is automatically deleted or replaced. Approval is not saved. Full Deploy and Deploy app &amp; agents use the same rule; website-only publication cannot create projects.</p>
       <p class="phelp">Recreating the same project name is not proof of a clean agent endpoint. Setup and app-only verification check the live project incarnation and complete agent inventory; retained pre-creation agents stop deployment. Creation approval never authorizes deleting agents, including other workspaces' sets. Review explicit cleanup before project deletion/recreation; persistent identity conflicts require Azure support.</p>
       <p class="phelp">Project-only setup reuses the account's connected registry and monitoring. If a removed project left no connections, missing selections can be recovered from successful ARM deployment resource IDs anchored to that exact account, followed by live readback. Names and tags are not proof; ambiguous or missing infrastructure stops setup. Creation approval is still required. Setup grants scoped runtime access and verifies the model allocation is unchanged. Account networking and model capacity remain shared; no project or model is deleted.</p>
       <p class="phelp">New models prefer 75,000 TPM where quota permits; lower allocations remain supported.</p>
@@ -1154,7 +1156,7 @@ $("deployBtn").addEventListener("click", async () => {
 
 $("foundryBtn").addEventListener("click", async () => {
   $("foundryBtn").disabled = true;
-  await runJob("/api/setup-foundry", {
+  await runJob("/api/deploy-app-agents", {
     tenant: $("tenant").value, workspace: $("workspace").value,
     clientId: spaClientValue("foundryClientId"), ...foundryPayload("deploy"),
   }, $("foundryPanel"), () => refresh());

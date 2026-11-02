@@ -11,6 +11,10 @@ exists in code but is **not end-to-end verified**; creating another project did 
 resolve the earlier hosted-routing 404.
 Full Deploy includes Foundry setup. Creation unchecked reuses/updates existing agents;
 checked requires a fresh, missing project and never reuses or deletes an existing one.
+For routine updates, **Deploy app & agents** runs agent setup and website publication
+in one orchestrator job without repeating Core/Energy setup. Agent failure blocks
+publication; website/auth/CORS failure fails the combined job. **Advanced → Website
+only** is retained for verified deployments requiring no agent update.
 A fresh Fabric workspace can use an existing project with creation unchecked; see
 the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 

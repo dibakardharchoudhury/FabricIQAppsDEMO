@@ -548,12 +548,12 @@ def verify_existing(deploy, tenant: str, workspace: str) -> None:
     if enabled():
         raise deploy.DeployError(
             "App-only publication cannot create a fresh Foundry project. "
-            "Use Full Deploy or Set up Foundry agents with creation checked, "
+            "Use Full Deploy or Deploy app & agents with creation checked, "
             "then uncheck it for app-only publication or existing-agent updates."
         )
     values, _ = deploy.current_rayfin_target()
     value = lambda key: deploy._public_config_value(values, key)
-    guidance = "Run the local Foundry multi-agent setup module, then publish the Fabric app again."
+    guidance = "Run Deploy app & agents to prepare/update the agents and publish the app together."
     if value("RAYFIN_PUBLIC_TENANT_ID") != tenant or value("RAYFIN_PUBLIC_WORKSPACE_ID") != workspace:
         raise deploy.DeployError(f"Foundry configuration belongs to a different target. {guidance}")
     endpoint = value("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT").rstrip("/")

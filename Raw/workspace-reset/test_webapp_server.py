@@ -690,7 +690,8 @@ class WorkspaceActionTests(unittest.TestCase):
     def test_setup_modules_are_separate_from_app_publication(self):
         target = {"tenant": "tenant.example", "workspace": "Demo"}
         for endpoint, stage in (
-            ("/api/setup-energy", "energy"), ("/api/setup-foundry", "foundry"), ("/api/deploy-app", "app"),
+            ("/api/setup-energy", "energy"), ("/api/setup-foundry", "foundry"),
+            ("/api/deploy-app", "app"), ("/api/deploy-app-agents", "app-agents"),
         ):
             with self.subTest(stage=stage), patch.object(SERVER, "_start", return_value="job") as start:
                 response = self.client.post(endpoint, json=target)
@@ -701,7 +702,7 @@ class WorkspaceActionTests(unittest.TestCase):
         with patch.object(SERVER, "_start") as start:
             response = self.client.post("/api/deploy-app", json={**target, "createFoundry": True})
             self.assertEqual(response.status_code, 400)
-            self.assertIn("Foundry multi-agent setup module", response.get_json()["error"])
+            self.assertIn("Deploy app & agents", response.get_json()["error"])
             start.assert_not_called()
 
     def test_foundry_page_discloses_backend_creation_before_website_publication(self):
@@ -712,9 +713,13 @@ class WorkspaceActionTests(unittest.TestCase):
             response.close()
         foundry_pane = html.split('<section id="paneFoundry"', 1)[1].split("</section>", 1)[0]
         self.assertIn("AppBackend with SQL/GraphQL dependencies", foundry_pane)
-        self.assertIn("Does not publish the website.", foundry_pane)
-        self.assertIn("A Fabric App item can already appear during backend setup.", foundry_pane)
-        self.assertIn("After Foundry setup succeeds", foundry_pane)
+        self.assertIn("then publishes the website", foundry_pane)
+        self.assertIn("Agent failure blocks website publication.", foundry_pane)
+        self.assertIn("One run, one final result.", foundry_pane)
+        self.assertIn("Does not repeat Core or Energy setup", foundry_pane)
+        self.assertIn('runJob("/api/deploy-app-agents"', html)
+        self.assertNotIn('runJob("/api/setup-foundry"', html)
+        self.assertIn("Advanced: website-only publication", html)
         self.assertNotIn("Updates agents only", html)
         self.assertIn("five Foundry specialist agents", html)
         self.assertIn("Foundry account is the parent Azure resource", html)
@@ -1171,7 +1176,7 @@ async function evaluate(expression) {
     def test_full_deploy_is_outside_collapsible_actions_and_all_actions_have_icons(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         navigation = page[page.index('<nav class="nav"'):page.index("</nav>")]
-        group = navigation[navigation.index('<details id="deploymentActions"'):navigation.index("</details>")]
+        group = navigation[navigation.index('<details id="deploymentActions"'):navigation.rindex("</details>")]
         self.assertIn("Deployment Actions", group)
         self.assertNotIn('id="tabWorkflow"', group)
         self.assertIn("> Full Deploy</button>", navigation)
@@ -1181,6 +1186,10 @@ async function evaluate(expression) {
             button = button[:button.index("</button>")]
             self.assertIn("<svg", button)
         self.assertIn("Refresh energy sources", group)
+        advanced = group[group.index('<details class="deployment-actions">'):group.index("</details>")]
+        self.assertIn('id="tabDeploy"', advanced)
+        self.assertNotIn('id="tabFoundry"', advanced)
+        self.assertIn("Deploy app &amp; agents", group)
         self.assertNotIn("workflowEnableEnergy", page)
 
     def test_sidebar_toggle_is_accessible_and_remembers_state(self):
@@ -2173,6 +2182,48 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
     def test_deploy_job_limit_covers_project_creation_build_and_publish(self):
         self.assertGreaterEqual(SERVER.FOUNDRY_TIMEOUT_S, 75 * 60)
         self.assertLess(SERVER.DEPLOY_TIMEOUT_S, SERVER.FOUNDRY_TIMEOUT_S)
+        self.assertEqual(SERVER.APP_AGENTS_TIMEOUT_S, SERVER.FOUNDRY_TIMEOUT_S + SERVER.DEPLOY_TIMEOUT_S)
+
+    def test_combined_app_agents_route_uses_one_orchestrator_and_forwards_create_or_reuse(self):
+        for creating in (False, True):
+            payload = {
+                "tenant": "tenant.example", "workspace": "Demo", "createFoundry": creating,
+                "foundryAccountName": "account", "foundryProjectName": "project", "foundryModel": "model",
+            }
+            with self.subTest(creating=creating), patch.object(SERVER, "_start", return_value="job") as start, \
+                    patch.object(SERVER, "_start_workflow") as workflow:
+                response = self.client.post("/api/deploy-app-agents", json=payload)
+                self.assertEqual(response.status_code, 200, response.get_json())
+                start.assert_called_once()
+                argv, env, timeout, phases, markers = start.call_args.args
+                self.assertEqual(argv[argv.index("--stage") + 1], "app-agents")
+                self.assertEqual(env["HYDRO_FOUNDRY_CREATE"], str(creating).lower())
+                self.assertEqual(env["HYDRO_FOUNDRY_EXISTING_PROJECT_NAME"], "project")
+                self.assertEqual(timeout, SERVER.APP_AGENTS_TIMEOUT_S)
+                self.assertIs(phases, SERVER.APP_AGENTS_PHASES)
+                self.assertIs(markers, SERVER.APP_AGENTS_MARKERS)
+                self.assertTrue(start.call_args.kwargs["exclusive"])
+                workflow.assert_not_called()
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/deploy-app-agents", json={**payload, "energyMap": "enabled"})
+            self.assertEqual(response.status_code, 400)
+            start.assert_not_called()
+
+    def test_combined_app_agents_progress_does_not_finish_after_hosted_agent(self):
+        lines = [
+            "[1/8] Checking", "[2/8] Resolving", "[3/8] Preparing",
+            "Foundry: project", "Foundry: backend gateway", "Foundry: agents", "Foundry: Hosted Agent",
+            "[4/8] Signing in", "[5/8] Publishing", "[6/8] Settings", "[7/8] Auth", "[8/8] Checking",
+        ]
+        job = SERVER.Job(SERVER.APP_AGENTS_PHASES)
+        for line in lines:
+            previous = job.phase_index
+            for index, markers in SERVER.APP_AGENTS_MARKERS:
+                if index > job.phase_index and any(marker in line for marker in markers):
+                    job.phase_index = index
+            self.assertGreater(job.phase_index, previous)
+            self.assertLess(job.phase_index, len(SERVER.APP_AGENTS_PHASES) - 1)
+        self.assertEqual(SERVER.APP_AGENTS_PHASES[job.phase_index], "Checking endpoint and CORS readiness")
 
     def test_deploy_environment_forwards_only_validated_foundry_settings(self):
         env = SERVER._deploy_environment({
@@ -2202,7 +2253,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             ("foundryEndpoint", "https://res.services.ai.azure.com/api/projects/proj"),
             ("foundryProjectResourceId", project_id),
         ):
-            for route in ("/api/setup-foundry", "/api/full-workflow"):
+            for route in ("/api/setup-foundry", "/api/deploy-app-agents", "/api/full-workflow"):
                 with self.subTest(field=field, route=route), patch.object(SERVER, "_start") as job, \
                         patch.object(SERVER, "_start_workflow") as workflow:
                     response = self.client.post(route, json={
@@ -2484,7 +2535,7 @@ console.log(JSON.stringify([
             self.assertIn("no extra model deployment is allocated", form.lower())
             self.assertIn("names are not a security boundary", form)
             self.assertIn("Checked means create-only", form)
-            self.assertIn("Full Deploy and standalone Foundry setup use the same rule", form)
+            self.assertIn("Full Deploy and Deploy app &amp; agents use the same rule", form)
             self.assertIn("Approval is not saved.", form)
             self.assertNotIn("Leave blank unless", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
@@ -2507,7 +2558,8 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(spec["help"].split()), 12, spec["name"])
         self.assertIn("Allow project creation (billable)", page)
         self.assertIn("Deletes every workspace item.", page)
-        self.assertIn("materialize the ontology graph first", page)
+        self.assertIn("Requires verified existing agents and backend configuration.", page)
+        self.assertNotIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
 
     def test_precreated_spa_is_explicit_validated_and_used_by_each_submission(self):
