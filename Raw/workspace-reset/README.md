@@ -858,8 +858,12 @@ Completed component/subphase timings remain visible; the overall timer measures
 the current retry attempt.
 
 Related deployment REST clients share bounded GET/HEAD recovery: up to six attempts for
-connection resets, timeouts and transient HTTP errors. Ambiguous start/write requests are
-never replayed; permanent authorization, certificate and terminal job failures propagate.
+connection resets, typed TLS EOF interruptions, timeouts and transient HTTP errors.
+Certificate verification remains enabled; unknown SSL failures are not retried.
+Ambiguous start/write requests are never replayed; permanent authorization, certificate
+and terminal job failures propagate. An accepted agent-version write whose readback
+disconnects retries only the GET, not version creation. After an exhausted read, retain
+the partial project and use unchecked reuse/update so live definitions are compared first.
 Dependent stages require verified success, never an interrupted monitor or cancelled run.
 The Setup runner prints its accepted job URL. `--resume-job-url <url>` validates the
 workspace/pipeline and monitors that existing job without starting another one.

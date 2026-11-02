@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import re
+import ssl
 import tempfile
 from pathlib import Path
 import unittest
@@ -12,6 +13,7 @@ import uuid
 from unittest.mock import Mock, call, patch
 
 import requests
+import http_retries
 
 spec = importlib.util.spec_from_file_location("provision_foundry_agents", Path(__file__).with_name("provision_foundry_agents.py"))
 module = importlib.util.module_from_spec(spec)
@@ -103,6 +105,36 @@ class SpecialistVersionConflictTests(unittest.TestCase):
             ) as request, self.assertRaisesRegex(RuntimeError, "readback failed"):
                 module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)
             self.assertEqual(request.call_count, 2)
+
+    def test_tls_eof_after_accepted_version_retries_only_readback(self):
+        failure = requests.exceptions.SSLError(
+            ssl.SSLEOFError(ssl.SSL_ERROR_EOF, "TLS readback closed"),
+        )
+        with (
+            patch.object(http_retries.requests, "request", side_effect=[
+                admission_response(200, {}), failure, self.current,
+            ]) as request,
+            patch.object(http_retries.time, "sleep"),
+        ):
+            result = module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)
+        self.assertEqual(result["version"], "2")
+        self.assertEqual([entry.args[0] for entry in request.call_args_list], ["POST", "GET", "GET"])
+        self.assertEqual(request.call_args_list[0].kwargs["json"], {"definition": self.expected})
+        self.assertEqual(request.call_args_list[1], request.call_args_list[2])
+
+    def test_ambiguous_tls_version_write_is_not_replayed(self):
+        failure = requests.exceptions.SSLError(
+            ssl.SSLEOFError(ssl.SSL_ERROR_EOF, "TLS write outcome unknown"),
+        )
+        with (
+            patch.object(http_retries.requests, "request", side_effect=failure) as request,
+            patch.object(http_retries.time, "sleep") as sleep,
+            self.assertRaises(requests.exceptions.SSLError),
+        ):
+            module.ensure_specialist_version(self.deploy, self.url, {}, self.expected)
+        self.assertEqual(request.call_args.args[0], "POST")
+        request.assert_called_once()
+        sleep.assert_not_called()
 
 
 class FabricIQConnectionTests(unittest.TestCase):
