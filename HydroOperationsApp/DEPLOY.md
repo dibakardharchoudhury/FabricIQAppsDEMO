@@ -281,7 +281,7 @@ These are the same shared fields in **Full Deploy** and **Set up Foundry agents*
 | **Foundry account name (optional)** | For example `hydro-demo-account` | Parent Azure AI Services resource containing the project. Scopes existing-project selection to this account and sets the exact account name when creating missing resources. Blank preserves automatic naming/discovery. |
 | **Foundry project name** | For example `hydro-demo-project` | Existing project to reuse, or the exact project name to create with approval below. For duplicate names/scoped access, a full project ARM ID can identify an existing project. |
 | **Model deployment name** | For example `hydro-chat` if that deployment already exists, or a supported catalog chat model name for creation | Not an agent name or API endpoint. An existing alias must resolve to a model/version in the selected subscription; an arbitrary invented alias is not a catalog model. |
-| **Check this box if you want to create a new Foundry project with the multi-agent setup.** | Leave off for reuse; check only to approve creating missing resources | Existing projects are still reused. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
+| **Allow project creation (billable)** | Leave off for an existing project, even in a fresh Fabric workspace; check only to approve missing resources | Existing projects are still reused when checked. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
 | **Use a pre-created app registration** | Leave off for automatic discovery/reuse or creation | Enable only to select a specific administrator-prepared SPA in the target tenant. |
 | **Application (client) ID**, shown when that option is enabled | The SPA's full Application/client GUID | Not its object ID, tenant ID, or the notebook SPN secret. The registration is verified; redirects, permissions and consent setup remain automated. |
 
@@ -299,6 +299,32 @@ automatically. You do **not** enter catalog version, deployment type, model capa
 Fabric region, endpoint URLs, registry URLs, or individual agent definitions.
 Missing permissions, ambiguous selections and unavailable quota are reported as
 prerequisites, not silently replaced with another target.
+
+#### Choosing project sharing and creation
+
+A **Foundry account** contains model deployments and projects. A **Fabric workspace**
+is separate: it does not automatically require a new Foundry account or project.
+
+| Layout | Select for each Fabric workspace |
+|---|---|
+| One shared Foundry project | Same existing account, project and model deployment. Each workspace gets distinct workspace-suffixed agents, connections and hosted configuration. This is logical separation, not separate project/RBAC boundaries. |
+| Separate Foundry projects, shared model | Same existing account/model deployment, different project names. Projects support separately scoped permissions and agent lifecycles, but share account networking and model TPM/RPM. No extra model allocation is created. |
+
+| Situation | **Allow project creation (billable)** |
+|---|---|
+| Fresh Fabric workspace using an existing Foundry project | **Unchecked** |
+| New, missing project under an existing account | **Checked** for initial creation; reuse the existing model deployment |
+| Subsequent update using the same account/project/model | **Unchecked**; agent updates still run |
+| Missing account and project | **Checked**; billable account/model bootstrap also requires permissions, availability and quota |
+
+Approval permits creation; it does not force recreation. To share a project, enter
+its exact existing name. A blank project uses saved target identity or a stable
+workspace-GUID project; it is not an explicit shared-project selection.
+
+**Full Deploy includes Foundry setup using these same fields**; do not run the
+standalone Foundry action first. Full Deploy repeats Git sync and Core setup.
+For routine updates, use **Set up Foundry agents** for agent changes and **Deploy app**
+for website changes. Resource selection alone does not certify deployment or runtime success.
 
 ### Run, confirm success, and keep settings
 
@@ -511,8 +537,9 @@ Monitoring uses the full ARM-provided Application Insights `ConnectionString`,
 not its instrumentation key. It is validated before project changes and rechecked
 on retry; credential values are not saved in the preflight plan.
 
-An explicitly selected existing project remains supported, including the former
-shared-project arrangement. Same-target saved project identities are preserved;
+An explicitly selected existing project supports multiple concurrent workspace-scoped
+agent sets in one shared project. Separate projects are optional, not required.
+Same-target saved project identities are preserved;
 blanking the field does not migrate or delete an existing deployment. New targets
 with an explicit account and no project selection use the stable workspace project.
 Only a genuinely missing account with creation approval uses the original

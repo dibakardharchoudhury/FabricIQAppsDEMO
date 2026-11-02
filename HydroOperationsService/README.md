@@ -1,5 +1,21 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Multi-workspace deployment
+
+One Foundry account owns model deployments and projects. Multiple Fabric workspaces
+can share one project with distinct workspace-suffixed agents, connections and
+hosted configuration, or use separate projects in that account with the same model.
+Shared-project naming is logical separation, not separate project/RBAC boundaries.
+Separate projects do not add model TPM/RPM or isolate account networking.
+
+The local app's **Full Deploy** includes Foundry setup; no standalone Foundry run
+is needed first. Leave **Allow project creation (billable)** unchecked for an
+existing project, even in a fresh Fabric workspace. Check only for missing
+resources; subsequent updates normally leave it unchecked. Use **Set up Foundry
+agents** for routine agent updates and **Deploy app** for website updates, rather
+than repeating Full Deploy's Git sync/Core setup.
+See the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+
 ## Multi-agent responsibilities and selective execution
 
 The operational pattern is a **bounded, checkpointed supervisor workflow**:
