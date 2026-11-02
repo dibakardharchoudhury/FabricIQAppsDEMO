@@ -18,6 +18,41 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
 
+test('optional concise workflow preserves and verifies full native answer evidence without replacing legacy text', async () => {
+  const text = '  Full original native answer\r\n[Source](https://example.com)\n'
+  const digest = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))).toString('hex')
+  const body = reply()
+  Object.assign(body.presentation, { workflow_text: 'Pending approval. No diagnosis is established.',
+    source_answers: [{ evidence_id: 'native-1', text, content_sha256: digest }],
+    rca_reports: [{ evidence_ids: ['native-1'], status: 'untested' }] })
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+  const answer = await client.run({ question: 'Investigate' })
+  assert.equal(answer.text, body.presentation.text)
+  assert.equal(answer.workflowText, 'Pending approval. No diagnosis is established.')
+  assert.equal(answer.sourceAnswers?.[0].text, text)
+  assert.equal(answer.sourceAnswers?.[0].content_sha256, digest)
+  assert.deepEqual(answer.rcaReports, [{ evidence_ids: ['native-1'], status: 'untested' }])
+})
+
+test('modified native source text fails digest verification instead of rendering a rephrased source', async () => {
+  const body = reply()
+  Object.assign(body.presentation, { source_answers: [{ evidence_id: 'native-1', text: 'modified', content_sha256: 'a'.repeat(64) }] })
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+  await assert.rejects(client.run({ question: 'Investigate' }), /digest does not match/)
+})
+
+test('cancelled hosted request is not recovered or silently resubmitted', async () => {
+  const controller = new AbortController()
+  const operations: string[] = []
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_url, init) => {
+    operations.push(JSON.parse(String(init?.body)).operation)
+    controller.abort()
+    throw new DOMException('Aborted', 'AbortError')
+  })
+  await assert.rejects(client.run({ question: 'Investigate' }, undefined, controller.signal), { name: 'AbortError' })
+  assert.deepEqual(operations, ['run'])
+})
+
 test('Foundry subdomain routing failures are explicit and never replay a question or source read', async () => {
   const operations: string[] = []
   const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
@@ -221,7 +256,8 @@ test('thin transport preserves backend output, renews leases and keeps session a
     calls.push({ url: new URL(String(input)), body: JSON.parse(String(init?.body)) })
     assert.equal(init?.cache, 'no-store')
     assert.equal(init?.redirect, 'error')
-    assert.equal(init?.signal, undefined)
+    if (calls.at(-1)?.body.operation === 'run') assert.ok(init?.signal instanceof AbortSignal)
+    else assert.equal(init?.signal, undefined)
     return response(calls.at(-1)?.body.operation === 'decide'
       ? { run_id: 'run-1', proposal_id: 'draft-1', status: 'rejected', production_write_executed: false }
       : reply())

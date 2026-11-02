@@ -3,6 +3,7 @@ import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Ma
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
+import type { NativeCitation } from '../services/directFabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
 import { AGENT_CAPABILITIES, AGENT_DISPLAY_NAMES, isWorkOrderRequest, type OrchestrationEvent, type WorkOrderProposal, type WorkOrderReview } from '../services/copilot/orchestration'
@@ -31,6 +32,12 @@ export type CopilotMessage = {
   proposals?: WorkOrderProposal[]
   workOrderReview?: WorkOrderReview
   backendOwned?: boolean
+  readOnly?: boolean
+  citations?: NativeCitation[]
+  nativeResponseId?: string
+  workflowText?: string
+  sourceAnswers?: Array<{ evidence_id: string; text: string; content_sha256: string }>
+  rcaReports?: Record<string, unknown>[]
   meta?: { elapsedMs: number; tokens?: number }
 }
 
@@ -39,11 +46,15 @@ type CopilotExperienceProps = {
   busy: boolean
   onSend: (question: string) => void
   onReset: () => void
+  onCancel?: () => void
+  label?: string
+  direct?: boolean
+  embedded?: boolean
 }
 
 const TEAM_LABEL = 'Supervisor-led multi-agent team'
 
-export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotExperienceProps) {
+export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, label = TEAM_LABEL, direct = false, embedded = false }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
   const [flowExpanded, setFlowExpanded] = useState(false)
   const [flowWidth, setFlowWidth] = useState(320)
@@ -79,11 +90,11 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
   }
 
   return <div className="v2-domain-page v2-copilot-page">
-    <section className="v2-page-head"><div><span className="v2-eyebrow">{TEAM_LABEL}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
+    {!embedded && <section className="v2-page-head"><div><span className="v2-eyebrow">{label}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>}
     <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
-      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{TEAM_LABEL}</small></span>
+      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{label}</small></span>
       <span className="v2-copilot-actions">
-        <details className="v2-copilot-team" onKeyDown={event => { if (event.key === 'Escape') event.currentTarget.open = false }}>
+        {!direct && <details className="v2-copilot-team" onKeyDown={event => { if (event.key === 'Escape') event.currentTarget.open = false }}>
           <summary aria-label="Team capabilities" title="Team capabilities"><Users size={15} />Team</summary>
           <div className="v2-copilot-team-card">
             <h2>Multi-agent team capabilities</h2>
@@ -94,9 +105,9 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
             </li>)}</ul>
             <p>Simple questions do not need the whole team. Source readers are application code, not additional model calls.</p>
           </div>
-        </details>
+        </details>}
         <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-        <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
+        <button className="v2-icon-action" type="button" title="New chat" aria-label="New chat" disabled={busy || !messages.length} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>
       {conversationEvents.length > 0 && <aside className="v2-conversation-crew" aria-label="Conversation agent flow">
         {flowExpanded && <label className="v2-flow-resize">Panel width<input aria-label="Agent panel width" type="range" min="280" max="420" step="20" value={flowWidth} onChange={event => setFlowWidth(Number(event.target.value))} /></label>}
@@ -109,12 +120,13 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
             {message.role === 'agent'
               ? <CopilotResponse message={message} streaming={busy && last} showCrew={false} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />
               : <p>{message.text}</p>}
-            {message.role === 'agent' && last && !busy && !message.failed && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
+            {!direct && message.role === 'agent' && last && !busy && !message.failed && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
           </div>
         })}
       </div>
-      <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
-        <button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
+      <footer><textarea aria-label={`${direct ? 'Fabric IQ' : 'Multi Agent'} question`} ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
+        {busy && onCancel && <button type="button" onClick={onCancel}>Cancel</button>}
+        <button type="button" title="Send" aria-label="Send question" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>
 }
@@ -138,20 +150,22 @@ export const CopilotResponse = memo(function CopilotResponse({ message, streamin
 
 function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
   const receiptPrefix = useId()
-  const draftOutcome = !streaming && !message.failed && !message.proposals?.length && Boolean(question && isWorkOrderRequest(question))
-  const hasBody = Boolean(draftOutcome || message.text || message.proposals?.length || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
+  const draftOutcome = !message.readOnly && !streaming && !message.failed && !message.proposals?.length && Boolean(question && isWorkOrderRequest(question))
+  const hasBody = Boolean(draftOutcome || message.text || message.workflowText || message.proposals?.length || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
   // A running tool already shows its own progress, so only flag the gap where the model itself
   // is working and nothing is being echoed yet.
   const waitingOnModel = streaming && !steps.some(step => step.status === 'running')
-  const draftReady = !streaming && Boolean(message.proposals?.length)
+  const draftReady = !message.readOnly && !streaming && Boolean(message.proposals?.length)
   const checkedText = message.orchestrationEvents?.some(event => event.trace?.some(entry =>
     entry.source === 'application' && entry.activity === 'checked-presentation' && !entry.failed)) ?? false
-  const presentedText = message.text && (
-    message.backendOwned ? message.text : stripOptionsMarker(streaming ? '' : operatorNarrative(message.text))
+  const responseText = message.workflowText ?? message.text
+  const presentedText = responseText && (
+    message.backendOwned ? responseText : stripOptionsMarker(streaming ? '' : operatorNarrative(responseText))
   )
-  const draftParts = draftReady && presentedText ? draftAnswerParts(presentedText, message.backendOwned) : undefined
+  const useDraftPresentation = draftReady && !message.workflowText
+  const draftParts = useDraftPresentation && presentedText ? draftAnswerParts(presentedText, message.backendOwned) : undefined
   const answer = presentedText && (message.failed
     ? <p className="v2-agent-failure" role="alert">{presentedText}</p>
     : message.backendOwned
@@ -178,10 +192,23 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
-    {draftReady && draftSummary}
-    {draftReady
+    {useDraftPresentation && draftSummary}
+    {useDraftPresentation
       ? draftDetails
       : answer}
+    {!!message.workflowText && message.sourceAnswers?.map(source => <details className="v2-answer-support" key={source.evidence_id}>
+      <summary>Full native source answer — {source.evidence_id}</summary>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{source.text}</ReactMarkdown>
+      <small>SHA-256: {source.content_sha256}</small>
+    </details>)}
+    {!!message.rcaReports?.length && <details className="v2-answer-support"><summary>RCA detail and evidence references</summary>
+      {message.rcaReports.map((report, index) => <pre key={index}>{JSON.stringify(report, null, 2)}</pre>)}
+    </details>}
+    {message.readOnly && !!message.proposals?.length && <p>Comparison only. Review or request drafts in Multi Agent; no decisions can be submitted here.</p>}
+    {!!message.citations?.length && <details className="v2-answer-support"><summary>Native citations ({message.citations.length})</summary><ul>{message.citations.map((citation, index) => <li key={index}>{citation.url
+      ? <a href={citation.url} target="_blank" rel="noreferrer">{citation.title}</a>
+      : <span>{citation.title} — result file available below</span>}</li>)}</ul></details>}
+    {message.nativeResponseId && <small>Fabric response: {message.nativeResponseId}</small>}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
@@ -241,7 +268,10 @@ function buildTranscript(question: string | undefined, message: CopilotMessage):
   if (message.orchestrationEvents?.length) {
     parts.push(`## Agent flow\n\n${message.orchestrationEvents.map(event => `- ${event.label}: ${event.status} — ${event.detail}`).join('\n')}`)
   }
-  if (message.text) parts.push(`## Answer\n\n${stripOptionsMarker(message.text)}`)
+  if (message.text) parts.push(`## Answer\n\n${message.backendOwned ? message.text : stripOptionsMarker(message.text)}`)
+  if (message.citations?.length) parts.push(`## Native citations\n\n${message.citations.map(citation => `- ${citation.title}: ${citation.url ?? citation.fileId ?? ''}`).join('\n')}`)
+  if (message.nativeResponseId) parts.push(`Fabric response: ${message.nativeResponseId}`)
+  if (message.sourceAnswers?.length) parts.push(`## Native evidence digests\n\n${message.sourceAnswers.map(source => `${source.evidence_id}: ${source.content_sha256}`).join('\n')}`)
   for (const visualization of message.visualizations ?? []) {
     parts.push(`### Chart: ${visualization.title} (${visualization.chartType})\n\n${block('csv', visualization.inlineCsvData)}`)
   }

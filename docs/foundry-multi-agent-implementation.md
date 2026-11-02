@@ -1,5 +1,59 @@
 # Foundry and multi-agent implementation record
 
+## November 2 chat separation and role-completion contracts
+
+The current UX deliberately supersedes the October 29 single-entry design:
+Fabric IQ is a direct, delegated browser-to-Data-Agent chat; Multi Agent is the
+default Supervisor workflow; Battle of the Agents compares independent direct
+and multi-agent requests with the same question and no approval actions. Source
+identity, histories, cancellation and errors are isolated. A direct-source
+authorization/CORS failure must remain visible, not turn into a Foundry fallback.
+
+The native-source tool no longer requires the operator to mention Fabric IQ or
+the Data Agent. Its allowed-source validation remains enforced. General
+human-readable answer instructions apply to QA and Weather only; RCA and Fixer
+must finish through their structured terminal tools, without a contradictory
+prose completion instruction. A no-draft review requires a nonempty reason.
+
+Mixed-workflow presentation now separates concise `workflow_text` from exact,
+hash-attested `source_answers` and validated `rca_reports`. Full native prose and
+the detailed RCA evidence ledger remain available; the compact operator summary
+does not restate native source prose or repeat every evidence pointer. The
+backward-compatible `text` field retains the full source answer and workflow.
+This is a wire/presentation change, not permission to hide source limitations or
+turn hypotheses into verified mechanical causes.
+
+Local validation completed with 423 service tests (zero failures, one skipped),
+184 integrated frontend/agent-contract tests under Node 24, zero Python
+type-check errors, and a successful production frontend build. The RCA suite
+now distinguishes legacy unstructured briefing coverage from structured RCA,
+which must not invoke a redundant briefing model. Live deployment and
+authenticated browser source execution remain separate acceptance gates.
+
+## November 2 read-only native evidence handoff
+
+The combined BAD-telemetry/RCA/work-order request was being forwarded verbatim to
+the read-only Data Agent, even when Supervisor had assigned a narrower evidence
+task. Fabric's own test page reproduced a refusal after confirming ontology
+context injection and automatic attachment of the associated Lakehouse and Kusto
+sources. Published Preview Runtime was already enabled in both Feature and Dev.
+Changing agent/stage query parameters was not established as a repair: the
+existing API-version-only transport successfully queried the Lakehouse.
+
+A read-only evidence subtask using the unchanged published agent and deployed
+request format queried Lakehouse, Eventhouse and operational SQL. It returned
+15 turbines with historical BAD events, 90 canonical signal mappings, 10 open
+work orders and an explicit missing-current-telemetry limitation. This is native
+source-execution evidence, not proof of deployed application acceptance.
+
+Mixed workflows now retain Supervisor's evidence assignment, scope Sparky to
+read-only correlation, and include the complete original request as context.
+Sleuth handles RCA and Fixer handles recommendations and pending approval drafts.
+Native-answer-only requests still pass the original question unchanged. Native
+responses are never rewritten, and handoff caching keys the actual submitted
+assignment so an old unscoped result cannot satisfy the corrected task. This
+does not bypass provider refusals or certify that every native prompt succeeds.
+
 ## November 2 Fixer function-budget incident
 
 The failed Dev browser invocation was traced to its original hosting session,
@@ -113,8 +167,8 @@ A post-publication RCA variant still returned the Fabric provider's content refu
 with no cited result tables. Runtime republication is therefore not a demonstrated
 fix for every failing prompt. End-to-end signed-in card verification remains open.
 
-Keep the execution minimal: Supervisor selects capabilities, Sparky calls the
-original Fabric question without a wrapper-model round, and Fixer reviews requested
+Keep the execution minimal: Supervisor selects capabilities, Sparky retrieves
+native evidence without a wrapper-model round, and Fixer reviews requested
 drafts. Gauge is a separate governed-read/verification capability, not a mandatory
 second factual-answer writer. Sleuth is only needed for requested investigation;
 Gale is only needed for weather work. Do not remove those capabilities merely to
@@ -122,6 +176,9 @@ conceal a handoff or source failure. An investigation does not veto an otherwise
 supported diagnostic draft, and no production work order is saved without approval.
 
 ## October 29 single Hydro Intelligence entry point
+
+Historical deployment record; superseded by the November 2 explicit request for
+separate Fabric IQ, Multi Agent and Battle of the Agents tabs above.
 
 The separate Direct Data Agent mode was a UI design mistake and has been
 removed. Both layouts render the same single Supervisor-led experience.

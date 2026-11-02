@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, draftAnswerParts, draftDetailParts, operatorNarrative, operatorDatasets, showRequestedCharts, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
-import { agentDefinition, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
+import { agentDefinition, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal, delegationOrderError, failedExecutionEvents, isWorkOrderRequest, missingRequestedSpecialists, uncertifiedFailureMessage } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
@@ -37,7 +37,8 @@ test('agent definitions use role-specific reasoning and least-privilege tools', 
   assert.match(gauge.instructions, /Complete every requested factual dataset and relationship/)
   assert.match(gauge.instructions, /bridge inventory is not evidence/)
   assert.match(gauge.instructions, /read all requested open work orders/)
-  assert.match(fixer.instructions, /Before a no_draft decision, call query_operations/)
+  assert.match(fixer.instructions, /Reuse backend-attested verified_work_coverage/)
+  assert.match(fixer.instructions, /If coverage is missing, call query_operations once/)
   assert.match(fixer.instructions, /omit limit/)
   assert.deepEqual(gauge.tools.map(tool => tool.name), ['hydro_query'])
   assert.deepEqual(sleuth.tools.map(tool => tool.name), ['hydro_query', 'complete_rca_assessment'])
@@ -237,19 +238,35 @@ test('inline-unit charts do not zero-fill missing values or interpret prose as m
   }
 })
 
-test('ordinary parts queries cannot invent a native-source request; follow-ups retain explicit user source scope', () => {
-  assert.match(nativeSourceError('List spare parts at or below reorder level and related open maintenance work.', 'data-agent') ?? '', /not requested/)
+test('verified native source selection does not require the operator to name an agent', () => {
+  assert.equal(nativeSourceError('List spare parts at or below reorder level and related open maintenance work.', 'data-agent'), undefined)
   assert.equal(nativeSourceError('Use Fabric IQ to retrieve inventory.', 'data-agent'), undefined)
   assert.equal(nativeSourceError('Recheck that source discrepancy.', 'data-agent', ['Ask the published Data Agent for open work.']), undefined)
   assert.match(nativeSourceError('Recheck that source discrepancy.', 'ontology', ['Ask the published Data Agent for open work.']) ?? '', /ontology-native chat execution is disabled/)
   assert.match(nativeSourceError('Now use the selected ontology.', 'ontology', ['Ask the Data Agent for open work.']) ?? '', /ontology-native chat execution is disabled/)
-  assert.match(nativeSourceError('Now use the selected ontology.', 'data-agent', ['Ask the Data Agent for open work.']) ?? '', /ontology-native chat execution is disabled/)
+  assert.equal(nativeSourceError('Now use the selected ontology.', 'data-agent', ['Ask the Data Agent for open work.']), undefined)
+  assert.match(nativeSourceError('Show current work.', 'unknown') ?? '', /requires native_source data-agent/)
   assert.throws(
     () => requestedNativeSources('Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work.'),
     /ontology-native chat execution is not supported/,
   )
   assert.deepEqual(requestedNativeSources('Ask the Data Agent for open work. Do not use the ontology.'), ['data-agent'])
   assert.deepEqual(requestedNativeSources('What is the Data Agent?'), [])
+})
+
+test('structured specialists are not instructed to replace terminal tool results with a prose answer', () => {
+  for (const role of ['rca', 'work-order'] as const) {
+    const definition = agentDefinition(role, 'test-model')
+    assert.doesNotMatch(definition.instructions, /Response presentation contract:/)
+    assert.match(definition.instructions, role === 'rca' ? /complete_rca_assessment/ : /propose_work_order/)
+  }
+  for (const role of ['qa', 'weather'] as const) {
+    assert.match(agentDefinition(role, 'test-model').instructions, /Response presentation contract:/)
+  }
+  const native = agentDefinition('fabric-iq', 'test-model', 'verified-connection')
+  assert.match(native.instructions, /Return the response field verbatim/)
+  assert.doesNotMatch(native.instructions, /Response presentation contract:/)
+  assert.equal(WORK_REVIEW_TOOL.parameters.properties.reason.minLength, 1)
 })
 
 test('Responses stream surfaces native tool errors and incomplete reasons instead of a generic failure', async () => {
