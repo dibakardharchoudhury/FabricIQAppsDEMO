@@ -22,6 +22,101 @@ DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
 
 
+class GraphClaimsChallengeTests(unittest.TestCase):
+    def test_graph_claims_propagation_retries_reads_without_repeating_login(self):
+        stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
+        action = Mock(side_effect=[stale, stale, "verified"])
+        with (
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as login,
+            patch.object(DEPLOY.time, "sleep") as sleep,
+        ):
+            self.assertEqual(DEPLOY.run_with_azure_cli_reauthentication(
+                "tenant", "reading Graph", action, graph=True,
+            ), "verified")
+        login.assert_called_once_with("tenant", "reading Graph", graph=True)
+        sleep.assert_called_once_with(2)
+        self.assertEqual(action.call_count, 3)
+
+    def test_graph_persistent_challenge_is_bounded_and_permission_denial_is_not_retried(self):
+        for error, expected_calls, waits in (
+            (DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies"), 6, 4),
+            (DEPLOY.DeployError("Authorization_RequestDenied"), 2, 0),
+        ):
+            action = Mock(side_effect=[DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")] + [error] * 5)
+            with (
+                self.subTest(error=str(error)),
+                patch.object(DEPLOY, "reauthenticate_azure_cli") as login,
+                patch.object(DEPLOY.time, "sleep") as sleep,
+            ):
+                with self.assertRaises(DEPLOY.AzureCliReauthenticationError):
+                    DEPLOY.run_with_azure_cli_reauthentication("tenant", "reading Graph", action, graph=True)
+            self.assertEqual(action.call_count, expected_calls)
+            self.assertEqual(sleep.call_count, waits)
+            login.assert_called_once()
+
+    def test_graph_challenge_is_preserved_without_logging_token_or_claims(self):
+        challenge = base64.b64encode(json.dumps({
+            "access_token": {"nbf": {"essential": True, "value": "123"}},
+        }).encode()).decode()
+        response = Mock(status_code=401, headers={
+            "WWW-Authenticate": f'Bearer error="insufficient_claims", claims="{challenge}"',
+        })
+        output = io.StringIO()
+        with (
+            patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"private-token"}') as capture,
+            patch.object(DEPLOY.requests, "get", return_value=response) as get,
+            patch("sys.stdout", output),
+        ):
+            self.assertEqual(DEPLOY.graph_claims_challenge("tenant"), challenge)
+        self.assertIn("https://graph.microsoft.com/", capture.call_args.args[0])
+        self.assertEqual(get.call_args.kwargs["headers"], {"Authorization": "Bearer private-token"})
+        self.assertEqual(get.call_args.kwargs["timeout"], 30)
+        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+        self.assertNotIn("private-token", output.getvalue())
+        self.assertNotIn(challenge, output.getvalue())
+
+    def test_graph_probe_rejects_non_challenges_and_invalid_claims(self):
+        for status, header in (
+            (403, ""),
+            (302, ""),
+            (401, 'Bearer error="insufficient_claims"'),
+            (401, 'Bearer error="insufficient_claims", claims="not-json"'),
+            (401, 'Bearer error="insufficient_claims", claims="e30="'),
+        ):
+            with (
+                self.subTest(status=status, header=header),
+                patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"token"}'),
+                patch.object(DEPLOY.requests, "get", return_value=Mock(
+                    status_code=status, headers={"WWW-Authenticate": header},
+                )),
+            ):
+                with self.assertRaises(DEPLOY.DeployError):
+                    DEPLOY.graph_claims_challenge("tenant")
+
+    def test_missing_graph_token_requires_scoped_login_but_other_failures_propagate(self):
+        with (
+            patch.object(DEPLOY, "run_capture", side_effect=DEPLOY.DeployError("Run 'az login'")),
+            patch.object(DEPLOY.requests, "get") as get,
+        ):
+            self.assertIsNone(DEPLOY.graph_claims_challenge("tenant"))
+            get.assert_not_called()
+        with patch.object(DEPLOY, "run_capture", side_effect=DEPLOY.DeployError("Forbidden")):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Forbidden"):
+                DEPLOY.graph_claims_challenge("tenant")
+
+    def test_invalid_token_metadata_and_transport_errors_fail_explicitly(self):
+        for payload in ("not-json", "{}", "[]", '{"accessToken":""}'):
+            with self.subTest(payload=payload), patch.object(DEPLOY, "run_capture", return_value=payload):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "Graph token"):
+                    DEPLOY.graph_claims_challenge("tenant")
+        with (
+            patch.object(DEPLOY, "run_capture", return_value='{"accessToken":"token"}'),
+            patch.object(DEPLOY.requests, "get", side_effect=DEPLOY.requests.Timeout()),
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Could not read"):
+                DEPLOY.graph_claims_challenge("tenant")
+
+
 class CommandEncodingTests(unittest.TestCase):
     def test_node_commands_pin_child_runtime_in_capture_and_stream(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1207,6 +1302,7 @@ class DeployOrderTests(unittest.TestCase):
                 patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
                 patch.object(DEPLOY, "run_stream") as run_stream,
                 patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
+                patch.object(DEPLOY, "graph_claims_challenge", return_value="verified-claims"),
             ):
                 redirects = DEPLOY.read_entra_spa_redirects_with_reauth("client-id", "tenant-id")
 
@@ -1215,6 +1311,8 @@ class DeployOrderTests(unittest.TestCase):
         run_stream.assert_called_once_with(
             [
                 "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
+                "--scope", "https://graph.microsoft.com/.default",
+                "--claims-challenge", "verified-claims",
                 "--only-show-errors", "--output", "none",
             ]
         )
@@ -1241,6 +1339,7 @@ class DeployOrderTests(unittest.TestCase):
         reauthenticate.assert_called_once_with(
             "tenant-id",
             "discovering the tenant SPA app registration",
+            graph=True,
         )
         ensure_service_principal.assert_called_once_with(client_id)
 
@@ -1583,7 +1682,7 @@ class DeployOrderTests(unittest.TestCase):
         with patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate:
             with self.assertRaisesRegex(
                 DEPLOY.DeployError,
-                "even after a clean tenant-scoped login",
+                "even after a resource-aware tenant-scoped login",
             ):
                 DEPLOY.run_with_azure_cli_reauthentication(
                     "tenant-id",

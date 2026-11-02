@@ -34,6 +34,16 @@ redirect preservation and the bounded static-upload HTTP 401 refresh/retry remai
 enabled; other failures still propagate. Do not reset deployment state or repeat
 Core setup just to repair local dependencies or app publication.
 
+Microsoft Graph can reject a still-unexpired CLI token with a Continuous Access
+Evaluation claims challenge. Graph recovery now reads the resource's actual
+`WWW-Authenticate` challenge and requests Graph-scoped sign-in with those claims,
+rather than repeating an ARM-only login. Complete the Microsoft sign-in prompt.
+Graph reads allow up to 37 seconds of bounded claims propagation after that single
+login; permission denials and other errors are not retried.
+This does not bypass Conditional Access: a repeated rejection stops deployment.
+After recovery, retry the failed final deployment stage; do not repeat successful
+Git sync/Core setup. Account metadata alone does not verify Graph authorization.
+
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
 continue**. Completed stages are checkpointed locally across reloads/server restarts.
