@@ -27,6 +27,26 @@ class GraphClaimsChallengeTests(unittest.TestCase):
         DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear()
         self.addCleanup(DEPLOY._GRAPH_INTERACTIVE_ATTEMPTS.clear)
 
+    def test_windows_authentication_uses_one_cache_mode_and_restores_environment(self):
+        with patch.object(DEPLOY.sys, "platform", "win32"), patch.dict(os.environ, {
+            "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "true",
+        }):
+            os.environ.pop("AZURE_CORE_LOGIN_EXPERIENCE_V2", None)
+            with self.assertRaisesRegex(RuntimeError, "child failed"):
+                with DEPLOY.azure_cli_authentication_environment():
+                    self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "false")
+                    self.assertEqual(os.environ["AZURE_CORE_LOGIN_EXPERIENCE_V2"], "off")
+                    raise RuntimeError("child failed")
+            self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "true")
+            self.assertNotIn("AZURE_CORE_LOGIN_EXPERIENCE_V2", os.environ)
+
+    def test_non_windows_authentication_preserves_operator_configuration(self):
+        with patch.object(DEPLOY.sys, "platform", "linux"), patch.dict(os.environ, {
+            "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "true",
+        }):
+            with DEPLOY.azure_cli_authentication_environment():
+                self.assertEqual(os.environ["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "true")
+
     def test_graph_accepted_cached_token_never_opens_sign_in_or_creates_session(self):
         with (
             patch.object(DEPLOY, "graph_claims_challenge", return_value=""),
@@ -51,6 +71,7 @@ class GraphClaimsChallengeTests(unittest.TestCase):
                 DEPLOY.reauthenticate_azure_cli("tenant", "reading Graph again", graph=True)
         login.assert_called_once()
         self.assertIn("--claims-challenge", login.call_args.args[0])
+        self.assertIn("https://graph.microsoft.com//.default", login.call_args.args[0])
         create.assert_not_called()
 
     def test_successful_graph_probe_reports_cached_token_accepted(self):
@@ -1350,7 +1371,7 @@ class DeployOrderTests(unittest.TestCase):
         run_stream.assert_called_once_with(
             [
                 "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
-                "--scope", "https://graph.microsoft.com/.default",
+                "--scope", "https://graph.microsoft.com//.default",
                 "--claims-challenge", "verified-claims",
                 "--only-show-errors", "--output", "none",
             ]

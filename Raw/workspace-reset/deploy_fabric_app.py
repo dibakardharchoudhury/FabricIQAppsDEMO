@@ -709,8 +709,27 @@ def secure_private_directory(directory: Path, *, recursive: bool = False) -> Non
         ) from exc
 
 
+@contextmanager
+def azure_cli_authentication_environment() -> Generator[None, None, None]:
+    """Keep Windows login and child commands on the same non-broker cache."""
+    settings = {
+        "AZURE_CORE_ENABLE_BROKER_ON_WINDOWS": "false",
+        "AZURE_CORE_LOGIN_EXPERIENCE_V2": "off",
+    } if sys.platform == "win32" else {}
+    previous = {key: os.environ.get(key) for key in settings}
+    os.environ.update(settings)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def graph_claims_challenge(tenant: str) -> str | None:
-    """Read Graph's actual CAE challenge before replacing the rejected CLI cache."""
+    """Read Graph's actual CAE challenge using the CLI command's resource."""
     try:
         payload = json.loads(run_capture(az(
             "account", "get-access-token", "--tenant", tenant,
@@ -774,9 +793,10 @@ def reauthenticate_azure_cli(tenant: str, operation: str, *, graph: bool = False
             "One interactive Graph sign-in is allowed per deployment process.",
             flush=True,
         )
+        # Match CLI resource_to_scopes("https://graph.microsoft.com/"), including its slash.
         run_stream(az(
             "login", "--tenant", tenant, "--allow-no-subscriptions",
-            "--scope", "https://graph.microsoft.com/.default",
+            "--scope", "https://graph.microsoft.com//.default",
             *(("--claims-challenge", challenge) if challenge else ()),
             "--only-show-errors", "--output", "none",
         ))
@@ -841,7 +861,7 @@ def run_with_azure_cli_reauthentication(
     *,
     graph: bool = False,
 ) -> T:
-    """Retry one stale-token failure with a new tenant-isolated Azure CLI cache."""
+    """Recover a stale token once, preserving Graph's resource claims."""
     try:
         return action()
     except DeployError as exc:
@@ -870,8 +890,8 @@ def run_with_azure_cli_reauthentication(
                 raise AzureCliReauthenticationError(
                     f"Azure CLI authentication was still rejected by Continuous Access Evaluation while "
                     f"{operation}, even after a resource-aware tenant-scoped login. "
-                    "Deployment stopped without bypassing Conditional Access. Ask the tenant "
-                    "administrator to inspect the failed resource sign-in and applicable policy."
+                    "Deployment stopped without bypassing Conditional Access. "
+                    "The resource still rejects the CLI credential; deployment is not verified."
                 ) from exc
     raise AssertionError("Authentication retry schedule must not be empty.")
 
@@ -2660,7 +2680,8 @@ def deploy(args: argparse.Namespace) -> None:
     timings = DeploymentTimings()
     succeeded = False
     try:
-        _deploy(args, timings)
+        with azure_cli_authentication_environment():
+            _deploy(args, timings)
         succeeded = True
     finally:
         _FABRIC_TOKEN_CACHE.clear()
@@ -2876,6 +2897,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
                     cwd=APP_DIR,
                     env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
                 ),
+               graph=True,
             )
         except DeployError as exc:
             if feature_workspace:

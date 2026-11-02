@@ -35,7 +35,11 @@ enabled; other failures still propagate. Do not reset deployment state or repeat
 Core setup just to repair local dependencies or app publication.
 
 Microsoft Graph can reject a still-unexpired CLI token with a Continuous Access
-Evaluation claims challenge. Graph recovery now reads the resource's actual
+Evaluation claims challenge. On Windows, the deployer uses Azure CLI's documented
+browser login mode for itself and its children, so Graph recovery and subsequent
+commands use the same non-broker cache. This is process-scoped: it does not change
+global CLI configuration, remove credentials, or disable tenant security policies.
+Graph recovery reads the resource's actual
 `WWW-Authenticate` challenge and requests Graph-scoped sign-in with those claims,
 rather than repeating an ARM-only login. It reuses the existing CLI cache:
 if Graph accepts its cached token, no sign-in opens. A genuine claims challenge
@@ -44,6 +48,7 @@ challenges stop with an explicit error instead of opening repeated account picke
 Complete that Microsoft sign-in prompt when required by tenant policy.
 Graph reads allow up to 37 seconds of bounded claims propagation after that single
 login; permission denials and other errors are not retried.
+Browser sign-in setup uses this same Graph recovery path, not a second generic login.
 This does not bypass Conditional Access: a repeated rejection stops deployment.
 After recovery, retry the failed final deployment stage; do not repeat successful
 Git sync/Core setup. Account metadata alone does not verify Graph authorization.
