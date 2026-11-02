@@ -9,7 +9,9 @@ from uuid import uuid4
 from datetime import timedelta
 from time import perf_counter
 
+import httpx
 from azure.identity.aio import AzureCliCredential
+from openai import BadRequestError
 from pydantic import ValidationError
 from jsonschema import Draft202012Validator
 
@@ -20,6 +22,16 @@ from hydro_orchestrator.foundry_supervisor import (
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from test_durable_service import SOURCE
+
+
+def bad_request(*, code="unsupported_value", param="reasoning.effort"):
+    return BadRequestError(
+        "Rejected model parameter.",
+        response=httpx.Response(
+            400, request=httpx.Request("POST", "https://test.services.ai.azure.com/openai/v1/responses"),
+        ),
+        body={"code": code, "param": param, "type": "invalid_request_error"},
+    )
 
 
 def decision(role="qa", kind="facilities", reader=True):
@@ -187,6 +199,35 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
         api.__aexit__.assert_awaited_once()
         self.assertEqual(self.journal.read("semantic_decision")["response_id"], "resp_plan")
         self.assertFalse(api.responses.create.call_args.kwargs["store"])
+
+    async def test_reasoning_effort_rejection_retries_once_without_the_unsupported_parameter(self):
+        response = SimpleNamespace(status="completed", id="resp_plan", output_text=json.dumps(decision()))
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        api.responses.create.side_effect = [bad_request(), response]
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            planned = await self.owner.plan_semantically(self.request, self.journal)
+        self.assertEqual(planned.required_evidence_kinds, ("facilities",))
+        self.assertEqual(api.responses.create.await_count, 2)
+        self.assertEqual(api.responses.create.call_args_list[0].kwargs["reasoning"], {"effort": "low"})
+        self.assertNotIn("reasoning", api.responses.create.call_args_list[1].kwargs)
+        self.assertEqual(self.journal.read("semantic_decision")["response_id"], "resp_plan")
+
+    async def test_unrelated_bad_request_is_not_retried(self):
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        error = bad_request(param="text.format.schema")
+        api.responses.create.side_effect = error
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            with self.assertRaises(BadRequestError) as raised:
+                await self.owner.plan_semantically(self.request, self.journal)
+        self.assertIs(raised.exception, error)
+        api.responses.create.assert_awaited_once()
+        self.assertIsNone(self.journal.read("semantic_decision"))
 
     async def test_sparky_alias_does_not_require_literal_data_agent_in_question(self):
         self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})

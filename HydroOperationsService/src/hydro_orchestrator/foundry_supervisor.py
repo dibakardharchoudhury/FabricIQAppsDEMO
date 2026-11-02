@@ -1787,6 +1787,30 @@ class FoundrySupervisor:
         self.invocation_inputs: dict[str, str] = {}
         self.event_sink: Callable[[dict[str, object]], None] | None = None
         self.chief_trace: list[dict[str, object]] = []
+        self._supports_reasoning_effort: bool | None = None
+
+    async def _create_non_stored_model_response(self, openai_client: Any, **kwargs: Any) -> Any:
+        if kwargs.get("store") is not False:
+            raise ValueError("Reasoning compatibility retries are allowed only for non-stored model calls.")
+        if self._supports_reasoning_effort is False:
+            return await openai_client.responses.create(**kwargs)
+        try:
+            response = await openai_client.responses.create(**kwargs, reasoning={"effort": "low"})
+        except APIStatusError as error:
+            if not (
+                error.status_code == 400
+                and getattr(error, "code", None) == "unsupported_value"
+                and getattr(error, "param", None) == "reasoning.effort"
+            ):
+                raise
+            self._supports_reasoning_effort = False
+            logger.warning(
+                "Foundry model %s rejected reasoning.effort; retrying the non-stored request once without it.",
+                kwargs.get("model"),
+            )
+            return await openai_client.responses.create(**kwargs)
+        self._supports_reasoning_effort = True
+        return response
 
     def set_event_sink(self, sink: Callable[[dict[str, object]], None]) -> None:
         if self.run_id is not None or self.event_sink is not None:
@@ -2492,10 +2516,11 @@ class FoundrySupervisor:
                         receipt = journal.read(key)
                         if receipt is None:
                             started = perf_counter()
-                            response = await openai_client.responses.create(
+                            response = await self._create_non_stored_model_response(
+                                openai_client,
                                 model=model, instructions=SEMANTIC_PLANNER_INSTRUCTIONS,
                                 input=_encoded(context).decode(), store=False,
-                                reasoning={"effort": "low"}, max_output_tokens=PLANNING_MAX_OUTPUT_TOKENS,
+                                max_output_tokens=PLANNING_MAX_OUTPUT_TOKENS,
                                 text={"format": {
                                     "type": "json_schema", "name": "hydro_semantic_decision", "strict": True,
                                     "schema": semantic_output_schema(catalog),
@@ -4408,13 +4433,14 @@ class FoundrySupervisor:
                 ):
                     for _attempt in range(ANALYSIS_ATTEMPTS):
                         self.healthy(request)
-                        response = await openai_client.responses.create(
+                        response = await self._create_non_stored_model_response(
+                            openai_client,
                             model=model, instructions=instructions,
                             input=context_text if feedback is None else (
                                 f"{context_text}\n\nYour previous briefing was rejected: {feedback}. "
                                 "Rewrite it using only values present in the input, and keep every other part "
                                 "of the briefing."),
-                            max_output_tokens=REPORT_MAX_OUTPUT_TOKENS, reasoning={"effort": "low"}, store=False,
+                            max_output_tokens=REPORT_MAX_OUTPUT_TOKENS, store=False,
                             text={"format": {"type": "json_schema", "name": schema_name,
                                              "schema": schema, "strict": True}},
                         )

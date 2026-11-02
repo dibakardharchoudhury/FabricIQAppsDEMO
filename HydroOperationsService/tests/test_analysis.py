@@ -157,6 +157,21 @@ class AnalysisTests(AnalysisHarness):
         self.assertEqual(again, report)
         self.assertEqual(len(self.inputs), 1)
 
+    async def test_briefing_retries_without_reasoning_effort_when_the_model_rejects_it(self):
+        self.replies = [
+            httpx.Response(400, json={"error": {
+                "message": "Unsupported value: 'low' is not supported with this model.",
+                "code": "unsupported_value", "param": "reasoning.effort", "type": "invalid_request_error",
+            }}),
+            briefing(),
+        ]
+        report = await self.owner.analysis_for(self.request, self.answer, self.journal)
+        self.assertIsInstance(report, AnalysisReport)
+        self.assertEqual(len(self.inputs), 2)
+        self.assertEqual(self.inputs[0]["reasoning"], {"effort": "low"})
+        self.assertNotIn("reasoning", self.inputs[1])
+        self.assertEqual(self.journal.read("answer_analysis")["analysis"]["answer"], report.answer)
+
     async def test_invented_identifiers_and_numbers_are_rejected_then_corrected_once(self):
         self.replies = [
             briefing(answer="EQUIP_RTI_T099 needs WO-9999 at 91.5.", findings=[]),
