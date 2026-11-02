@@ -3,10 +3,12 @@
 ## Multi-workspace deployment
 
 One Foundry account owns model deployments and projects. Multiple Fabric workspaces
-can share one project with distinct workspace-suffixed agents, connections and
-hosted configuration, or use separate projects in that account with the same model.
+should reuse one verified working project/model for the live-tested FEATURE/DEV
+layout, with distinct workspace-suffixed agents, connections and hosted configuration.
+Separate-project provisioning exists in code but is **not end-to-end verified**.
+Creating another project did not resolve the earlier hosted-routing 404.
 Shared-project naming is logical separation, not separate project/RBAC boundaries.
-Separate projects do not add model TPM/RPM or isolate account networking.
+Separate projects would not add model TPM/RPM or isolate account networking.
 
 The local app's **Full Deploy** includes Foundry setup; no standalone Foundry run
 is needed first. Leave **Allow project creation (billable)** unchecked for an

@@ -307,13 +307,20 @@ is separate: it does not automatically require a new Foundry account or project.
 
 | Layout | Select for each Fabric workspace |
 |---|---|
-| One shared Foundry project | Same existing account, project and model deployment. Each workspace gets distinct workspace-suffixed agents, connections and hosted configuration. This is logical separation, not separate project/RBAC boundaries. |
-| Separate Foundry projects, shared model | Same existing account/model deployment, different project names. Projects support separately scoped permissions and agent lifecycles, but share account networking and model TPM/RPM. No extra model allocation is created. |
+| **Recommended: one verified working shared project** | Same exact existing account, project and model deployment. FEATURE and DEV were live-tested in this layout. Each workspace gets distinct workspace-suffixed agents, connections and hosted configuration. This is logical separation, not separate project/RBAC boundaries. |
+| **Separate projects: not end-to-end verified** | Provisioning exists in the code, but this is not a verified deployment recommendation. Creating another project did not resolve the earlier hosted-routing 404. Separate projects do not add model TPM/RPM. |
+
+**Verified deployment evidence, not universal defaults:** FEATURE and DEV used
+account `ai-hydro-feature-c7da7c28`, project `hydro-feature-c7da7c28`, and model
+deployment `gpt-5.6-sol`. The earlier account `ai-hydroIQ` had a hosted-routing
+404; its recovery has not been verified. Do not select it merely because it
+remains in saved form values, and do not treat project creation as a 404 repair.
+These results do not certify a fresh live Full Deploy or separate-project deployment.
 
 | Situation | **Allow project creation (billable)** |
 |---|---|
 | Fresh Fabric workspace using an existing Foundry project | **Unchecked** |
-| New, missing project under an existing account | **Checked** for initial creation; reuse the existing model deployment |
+| New, missing project under an existing account | **Checked** permits creation, but separate-project runtime remains unverified; not the recommended multi-workspace path |
 | Subsequent update using the same account/project/model | **Unchecked**; agent updates still run |
 | Missing account and project | **Checked**; billable account/model bootstrap also requires permissions, availability and quota |
 
@@ -513,7 +520,10 @@ missing source-fingerprinted images, and republishes the hosted coordinator only
 image or runtime configuration differs. Each reuse/update is logged, with specialist
 `current / updated / created` counts. It does not publish the website.
 
-**Separate project lifecycles while sharing one model allocation:** select the same
+**Implementation details only: separate-project runtime is not end-to-end verified.**
+Use the shared-project path above for the verified multi-workspace layout.
+Creating another project did not resolve the earlier hosted-routing 404.
+For project-only provisioning, the code selects the same
 existing Foundry account and ready model deployment for each single-workspace run.
 Leave the project name blank for `hydro-workspace-<full-workspace-GUID-without-hyphens>`,
 or enter an exact project name. Enable **Allow project creation (billable)** only
@@ -538,7 +548,8 @@ not its instrumentation key. It is validated before project changes and rechecke
 on retry; credential values are not saved in the preflight plan.
 
 An explicitly selected existing project supports multiple concurrent workspace-scoped
-agent sets in one shared project. Separate projects are optional, not required.
+agent sets in one shared project. This is the live-tested FEATURE/DEV layout;
+separate projects remain unverified end-to-end.
 Same-target saved project identities are preserved;
 blanking the field does not migrate or delete an existing deployment. New targets
 with an explicit account and no project selection use the stable workspace project.

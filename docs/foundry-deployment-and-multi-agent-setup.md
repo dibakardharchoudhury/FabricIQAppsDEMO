@@ -189,8 +189,10 @@ Consequences:
 - **One workspace per agent set, not per project.** Stable workspace-GUID suffixes
   separate each workspace's specialists, connections/toolbox and hosted coordinator.
   Multiple workspace sets can coexist in one explicitly selected shared project;
-  setup does not retarget another workspace's set. Separate projects under the same
-  account are optional and can use the same account-level model deployment.
+  setup does not retarget another workspace's set. This shared-project layout was
+  live-tested for FEATURE/DEV and is recommended. Separate-project provisioning exists
+  in code but is not end-to-end verified. Creating another project did not resolve
+  the earlier hosted-routing 404; it is not a 404 repair.
   Shared-project naming is logical separation, not a separate project/RBAC boundary.
 - **Production writes are preserved.** The live agent's `production_writes_enabled` is kept. Set
   process-local `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` before the canonical combined CLI deployment to change it deliberately. A
@@ -255,7 +257,7 @@ Consequences:
 |---|---|
 | Reuse resources | Confirm Azure subscription |
 | Fresh workspace, shared existing project | Same existing account/project/model; creation **unchecked** |
-| Separate project, shared model | Existing account/model + different project name; creation **checked** only if the project is missing |
+| Separate project, shared model | Not end-to-end verified; not the recommended multi-workspace path |
 | Update existing agents | Same account/project/model; creation **unchecked**; updates still run |
 
 The shared form exposes subscription, optional account, project and model deployment.
@@ -271,8 +273,8 @@ the form. See [environment variables](#6-settings) for specialist overrides.
 On a fresh workspace, run **Full Deploy**: it includes Foundry setup using these same
 fields; no standalone Foundry run is required first. Full Deploy repeats Git sync
 and Core setup. Use **Set up Foundry agents** for routine agent changes and
-**Deploy app** for website changes. Both sharing layouts use the selected model's
-shared TPM/RPM; separate projects do not create more throughput.
+**Deploy app** for website changes. Reuse the same verified working account/project/model
+for multiple workspaces; leave creation unchecked. Model TPM/RPM remains shared.
 See the [creation decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 Graph materialization does not gate
 Foundry setup or app deployment. `FOUNDRY_SETUP_SUCCESS` verifies configuration, not business

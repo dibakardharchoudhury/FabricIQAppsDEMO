@@ -5,8 +5,10 @@ agent roles, tests and remaining gates](foundry-multi-agent-implementation.md).
 For current automated and manual-operator deployment steps, use
 [Foundry deployment and multi-agent setup](foundry-deployment-and-multi-agent-setup.md).
 
-Multiple Fabric workspaces can share a Foundry project with workspace-scoped agent
-sets, or use separate projects under one account and share its model deployment.
+The recommended, live-tested FEATURE/DEV layout shares one verified working Foundry
+account/project/model with workspace-scoped agent sets. Separate-project provisioning
+exists in code but is **not end-to-end verified**; creating another project did not
+resolve the earlier hosted-routing 404.
 Full Deploy includes Foundry setup. Creation approval is for missing resources,
 not every fresh Fabric workspace; see the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 

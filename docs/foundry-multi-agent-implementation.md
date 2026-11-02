@@ -1322,8 +1322,11 @@ or discover one ready chat-capable deployment. The current launcher exposes subs
 project and model names, not catalog/version/SKU/capacity or graph-binding JSON controls.
 Unchecking creation explicitly overrides inherited opt-in. Creation approval permits missing resources,
 not forced recreation: a fresh Fabric workspace can reuse an existing project with creation unchecked.
-Workspace-GUID suffixes allow concurrent workspace agent sets in one shared project; separate projects
-under one account are optional and can share its existing model allocation. Neither layout adds TPM/RPM.
+Workspace-GUID suffixes allow concurrent workspace agent sets in one shared project.
+This shared-project layout was live-tested for FEATURE/DEV and is recommended.
+Separate-project provisioning exists in code but is not end-to-end verified;
+creating another project did not resolve the earlier hosted-routing 404.
+Sharing the existing model allocation does not add TPM/RPM.
 Full Deploy includes Foundry setup; no standalone Foundry run is required first.
 See the [current sharing and creation guide](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation);
 the earlier separate-project requirement no longer applies.

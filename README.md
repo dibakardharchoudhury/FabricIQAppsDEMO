@@ -33,9 +33,11 @@ They explain prerequisites, example entries, defaults, Foundry project/model set
 saved settings, progress, and what remains manual. You do not need to assemble
 individual notebook, Rayfin, or agent-provisioning commands.
 
-**Foundry sharing:** multiple Fabric workspaces can use one shared Foundry project
-with workspace-scoped agent sets, or separate projects under one account using the
-same model deployment. Neither layout adds model TPM/RPM. **Full Deploy includes
+**Foundry sharing:** the recommended, live-tested FEATURE/DEV layout reuses one
+verified working account, project and model deployment with workspace-scoped agent
+sets. Separate-project provisioning exists in code but is **not end-to-end verified**;
+creating another project did not resolve the earlier hosted-routing 404.
+Model TPM/RPM remains shared. **Full Deploy includes
 Foundry setup.** Leave **Allow project creation (billable)** unchecked when reusing
 an existing project, even for a fresh Fabric workspace; check only for missing
 resources. Subsequent updates normally leave it unchecked.

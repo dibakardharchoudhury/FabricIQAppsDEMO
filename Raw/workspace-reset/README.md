@@ -97,8 +97,10 @@ as blocked and ontology graph materialization remain explicit operator prerequis
 All launcher actions target one workspace; multi-workspace fan-out remains removed.
 Foundry setup uses stable workspace-GUID suffixes for agents, connections, toolbox
 and hosted state. To share one project, select the same existing account, exact
-project name and ready model deployment for each workspace. To use separate projects
-with the same model, select different project names under that account; a blank
+project name and ready model deployment for each workspace. This shared-project
+layout was live-tested for FEATURE/DEV and is the recommended path.
+Separate-project provisioning exists in code but is **not end-to-end verified**;
+creating another project did not resolve the earlier hosted-routing 404. A blank
 project uses saved target identity or `hydro-workspace-<full-workspace-GUID-hex>`.
 Approve creation of a missing project: setup creates only that project and its
 scoped access/shared-infrastructure connections, not another model allocation.
@@ -211,7 +213,7 @@ the Fabric workspace is new:
 | Target | Creation checkbox |
 |---|---|
 | Fresh Fabric workspace, existing shared Foundry project | **Unchecked**; enter the existing account/project/model |
-| Missing separate project, existing account/model | **Checked** for first creation |
+| Missing separate project, existing account/model | **Checked** permits creation; runtime is not end-to-end verified, so this is not the recommended multi-workspace path |
 | Subsequent update, same account/project/model | **Unchecked**; agent updates still run |
 | Missing account/project | **Checked**; billable bootstrap also needs permissions and quota |
 
@@ -220,7 +222,7 @@ run is needed first. It repeats Git sync and Core setup. Use **Set up Foundry ag
 for routine agent updates and **Deploy app** for website updates.
 The account owns the model deployment and projects; a Fabric workspace is separate.
 Shared-project agents have distinct workspace bindings, not separate project/RBAC
-boundaries. Separate projects can scope permissions/lifecycles but do not add model
+boundaries. Separate projects remain unverified end-to-end and do not add model
 TPM/RPM. See the [project-sharing decision guide](../../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 
 A missing project without approval stops deployment. Approval is never remembered.
