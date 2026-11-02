@@ -319,7 +319,10 @@ class SharedProjectTests(unittest.TestCase):
                 self.assertEqual(selected.project_id, self.account + "/projects/" + workspace_project_name(workspace))
                 self.assertEqual(selected.model, "shared-model")
                 writes_before = len([method for method, _ in self.calls if method != "GET"])
-                rerun = foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
+                with self.assertRaisesRegex(RuntimeError, "already exists"):
+                    foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
+                with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "false"}):
+                    rerun = foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
                 self.assertEqual(rerun.project_id, selected.project_id)
                 self.assertEqual(len([method for method, _ in self.calls if method != "GET"]), writes_before)
             quota.assert_not_called()
@@ -427,10 +430,11 @@ class SharedProjectTests(unittest.TestCase):
             self.response("PUT", "https://management.azure.com" + test, json={
                 "identity": {"type": "SystemAssigned"}, "properties": {},
             })
-            selection = foundry.resolve_project(
-                self.deploy, "tenant", "20000000-0000-0000-0000-000000000001", allow_create=True,
+            plan = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="test", model="shared-model",
             )
-            self.assertEqual(selection.project_id, test)
+            shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
         self.assertEqual(sum(owner == test for owner, _ in self.connections), 2)
         self.assertTrue(all(owner == test for owner, _ in self.connections))
 
@@ -464,7 +468,9 @@ class SharedProjectTests(unittest.TestCase):
             for connection in self.infrastructure[:2]:
                 self.connections[(feature, connection["name"])] = copy.deepcopy(connection["properties"])
             start = len(self.calls)
-            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "feature"}):
+            with patch.dict(os.environ, {
+                "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "feature", "HYDRO_FOUNDRY_CREATE": "false",
+            }):
                 selected = foundry.resolve_project(
                     self.deploy, "tenant", "20000000-0000-0000-0000-000000000001", allow_create=True,
                 )
@@ -485,6 +491,86 @@ class SharedProjectTests(unittest.TestCase):
         })
         self.assertNotEqual(self.projects[selected.project_id]["identity"]["principalId"],
                             self.projects[feature]["identity"]["principalId"])
+
+    def test_create_checked_rejects_existing_projects_in_both_preflight_and_provisioning(self):
+        project_id = self.account + "/projects/existing"
+        self.response("PUT", "https://management.azure.com" + project_id, json={
+            "identity": {"type": "SystemAssigned"}, "properties": {},
+        })
+        before = copy.deepcopy(self.projects)
+        with self.environment(), patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "existing"}), \
+                patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            for allow_create in (False, True):
+                start = len(self.calls)
+                with self.subTest(allow_create=allow_create), self.assertRaisesRegex(RuntimeError, "already exists"):
+                    foundry.resolve_project(
+                        self.deploy, "tenant", "20000000-0000-0000-0000-000000000001", allow_create=allow_create,
+                    )
+                self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+        self.assertEqual(self.projects, before)
+        self.assertFalse(self.connections)
+
+    def test_create_checked_checks_live_arm_absence_even_if_discovery_omits_project(self):
+        project_id = self.account + "/projects/existing"
+        self.response("PUT", "https://management.azure.com" + project_id, json={
+            "identity": {"type": "SystemAssigned"}, "properties": {},
+        })
+        start = len(self.calls)
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response), \
+                self.assertRaisesRegex(RuntimeError, "already exists"):
+            shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription, account_name="shared",
+                project_name="existing", model="shared-model", require_new=True,
+            )
+        self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+
+    def test_create_checked_rechecks_absence_after_preflight_without_adopting_partial_project(self):
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            plan = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription, account_name="shared",
+                project_name="new", model="shared-model", require_new=True,
+            )
+            self.response("PUT", "https://management.azure.com" + self.account + "/projects/new", json={
+                "identity": {"type": "SystemAssigned"}, "properties": {},
+            })
+            start = len(self.calls)
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan, require_new=True)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+        self.assertFalse(self.connections)
+
+    def test_checked_blank_project_ignores_saved_project_and_uses_workspace_guid_name(self):
+        workspace = "20000000-0000-0000-0000-000000000001"
+        old = self.account + "/projects/old"
+        self.response("PUT", "https://management.azure.com" + old, json={
+            "identity": {"type": "SystemAssigned"}, "properties": {},
+        })
+        self.deploy.current_rayfin_target.return_value = ({
+            "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": workspace,
+            "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": self.subscription,
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": old,
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://shared.services.ai.azure.com/api/projects/old",
+        }, None)
+        start = len(self.calls)
+        with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            selection = foundry.resolve_project(self.deploy, "tenant", workspace)
+        settings = selection.creation_settings
+        assert settings is not None
+        self.assertEqual(settings["project_name"], workspace_project_name(workspace))
+        self.assertFalse(selection.project_id)
+        self.assertEqual(list(self.projects), [old])
+        self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+
+    def test_absence_check_denial_is_not_treated_as_missing(self):
+        for status in (403, 500):
+            with self.subTest(status=status), patch.object(foundry, "request_with_read_retry", return_value=Mock(
+                ok=False, status_code=status,
+            )) as request, self.assertRaisesRegex(RuntimeError, "Cannot verify"):
+                shared._require_missing_project(self.deploy, self.account + "/projects/new", {})
+            request.assert_called_once()
+            self.assertEqual(request.call_args.args[0], "GET")
 
     def test_original_missing_registry_credentials_are_rejected_without_connection_mutation(self):
         path = self.account + "/projects/dev/connections/hydro-shared-registry"

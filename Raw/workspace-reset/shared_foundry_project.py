@@ -221,7 +221,7 @@ def _deployed_infrastructure(deploy, account_id: str, missing: set[str]) -> list
     return list(recovered.values())
 
 
-def prepare_shared_project(deploy, *, tenant, subscription, account_name, project_name, model):
+def prepare_shared_project(deploy, *, tenant, subscription, account_name, project_name, model, require_new=False):
     from deploy_hosted_agent import registry_name
     from provision_foundry_agents import read_model_selection, read_project_connections, linked_application_insights
 
@@ -254,6 +254,8 @@ def prepare_shared_project(deploy, *, tenant, subscription, account_name, projec
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", project_name):
         raise deploy.DeployError("Project-only creation requires a valid project name.")
     project_id = account_id + "/projects/" + project_name
+    if require_new:
+        _require_missing_project(deploy, project_id, headers)
     model = read_model_selection(deploy, tenant, project_id, model)
     connections = read_project_connections(deploy, account_id, headers)
     projects = json.loads(deploy.run_capture(deploy.az(
@@ -319,7 +321,24 @@ def _assign_role(deploy, scope, principal, role, principal_type):
         ))
 
 
-def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
+def _require_missing_project(deploy, project_id, headers):
+    from provision_foundry_agents import request_with_read_retry
+
+    response = request_with_read_retry(
+        "GET", f"https://management.azure.com{project_id}?api-version=2025-06-01", headers=headers, timeout=60,
+    )
+    if response.ok:
+        raise deploy.DeployError(
+            "Create a fresh Foundry project was selected, but the requested project already exists. "
+            "Uncheck 'Allow project creation' to reuse/update its agents, or enter an unused project name. "
+            "No existing project or agents were deleted or reused."
+        )
+    if response.status_code != 404:
+        raise deploy.DeployError(f"Cannot verify the fresh Foundry project is absent: HTTP {response.status_code}.")
+    return response
+
+
+def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep, require_new=False):
     from provision_foundry_agents import request_with_read_retry, definition_matches, read_project_connections
 
     headers = _headers(deploy, tenant)
@@ -328,7 +347,8 @@ def ensure_shared_project(deploy, *, tenant, settings, sleep=time.sleep):
     connection_string = _monitoring_connection_string(deploy, settings["insights_id"], headers)
     project_id = settings["account_id"] + "/projects/" + settings["project_name"]
     url = f"https://management.azure.com{project_id}?api-version=2025-06-01"
-    response = request_with_read_retry("GET", url, headers=headers, timeout=60)
+    response = (_require_missing_project(deploy, project_id, headers) if require_new
+                else request_with_read_retry("GET", url, headers=headers, timeout=60))
     newly_created = response.status_code == 404
     if newly_created:
         print(f"Foundry: creating only project '{settings['project_name']}' in the existing account.", flush=True)

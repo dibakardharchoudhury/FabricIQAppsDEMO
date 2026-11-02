@@ -581,7 +581,7 @@ class PreparedFoundryTests(unittest.TestCase):
         self.assertEqual(request.call_count, 10)
         self.assertEqual(self.lifecycle.call_count, 11)
         self.lifecycle.assert_called_with(
-            deploy, tenant="tenant", project_id=project_id, endpoint=endpoint,
+            deploy, tenant="tenant", project_id=project_id, endpoint=endpoint, require_empty=False,
         )
         self.assertTrue(all(item.args[0] == "GET" for item in request.call_args_list))
         self.assertFalse(any("usage" in item.args[0] for item in deploy.run_capture.call_args_list))
@@ -682,7 +682,7 @@ class PreparedFoundryTests(unittest.TestCase):
                     module.resolve_project(deploy, "tenant", "workspace")
         deploy.run_stream.assert_not_called()
 
-    def test_named_creation_ignores_saved_target_then_reuses_only_the_named_project(self):
+    def test_named_creation_ignores_saved_target_and_reuse_requires_unchecking_creation(self):
         subscription = str(uuid.uuid4())
         base = f"/subscriptions/{subscription}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/account/projects/"
         endpoint = "https://account.services.ai.azure.com/api/projects/new-project"
@@ -736,8 +736,18 @@ class PreparedFoundryTests(unittest.TestCase):
                 deploy, "tenant", "workspace", allow_create=True, creation_settings=preflight.creation_settings,
             )
             self.assertEqual((selected.project_id, selected.endpoint), (base + "new-project", endpoint))
-            rerun = module.resolve_project(deploy, "tenant", "workspace", allow_create=True)
-            self.assertEqual(rerun.project_id, selected.project_id)
+            self.lifecycle.assert_called_with(
+                deploy, tenant="tenant", project_id=selected.project_id, endpoint=endpoint, require_empty=True,
+            )
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                module.resolve_project(deploy, "tenant", "workspace", allow_create=True)
+            with patch.dict(os.environ, {
+                "HYDRO_FOUNDRY_CREATE": "false", "HYDRO_FOUNDRY_NEW_PROJECT_NAME": "",
+                "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "new-project",
+                "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID": "", "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "",
+            }):
+                rerun = module.resolve_project(deploy, "tenant", "workspace", allow_create=True)
+                self.assertEqual(rerun.project_id, selected.project_id)
         creation.ensure_foundry_project.assert_called_once()
         deploy.run_stream.assert_not_called()
 
@@ -1003,6 +1013,14 @@ class PreparedFoundryTests(unittest.TestCase):
         deploy.fabric_get.assert_not_called()
         deploy.run_capture.assert_not_called()
         deploy.run_stream.assert_not_called()
+
+    def test_app_only_does_not_silently_ignore_create_fresh_project_mode(self):
+        deploy, _, _, tenant, workspace = self.prepared()
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "true"}), \
+                self.assertRaisesRegex(RuntimeError, "App-only publication cannot create"):
+            module.verify_existing(deploy, tenant, workspace)
+        self.lifecycle.assert_not_called()
+        deploy.run_capture.assert_not_called()
 
     def test_app_reuses_compatible_runtime_with_older_or_unknown_packaged_code(self):
         for code_digest in ("old", ""):

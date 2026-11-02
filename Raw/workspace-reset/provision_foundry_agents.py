@@ -543,6 +543,14 @@ def verify_prepared_connections(
 
 def verify_existing(deploy, tenant: str, workspace: str) -> None:
     """Read back prepared agents without project discovery, builds, or publication."""
+    from deploy_foundry_project import enabled
+
+    if enabled():
+        raise deploy.DeployError(
+            "App-only publication cannot create a fresh Foundry project. "
+            "Use Full Deploy or Set up Foundry agents with creation checked, "
+            "then uncheck it for app-only publication or existing-agent updates."
+        )
     values, _ = deploy.current_rayfin_target()
     value = lambda key: deploy._public_config_value(values, key)
     guidance = "Run the local Foundry multi-agent setup module, then publish the Fabric app again."
@@ -680,6 +688,15 @@ def resolve_project(
     try:
         account_name = requested_account_name()
         new_project_name = requested_project_name()
+        if enabled() and not new_project_name:
+            if any(os.environ.get(key, "").strip() for key in (
+                "HYDRO_FOUNDRY_PROJECT_RESOURCE_ID", "HYDRO_FOUNDRY_PROJECT_ENDPOINT",
+            )):
+                raise deploy.DeployError(
+                    "Fresh-project creation requires a new project name, not an existing endpoint/resource ID; "
+                    "refusing to create a different project from those selectors."
+                )
+            new_project_name = workspace_project_name(workspace)
     except ValueError as error:
         raise deploy.DeployError(str(error)) from error
     if new_project_name and not enabled():
@@ -707,7 +724,8 @@ def resolve_project(
         saved_project_id = ""
     saved_endpoint = (
         deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT")
-        if same_target and (not explicit_project_id or explicit_project_id.casefold() == saved_project_id.casefold())
+        if same_target and not new_project_name
+        and (not explicit_project_id or explicit_project_id.casefold() == saved_project_id.casefold())
         else ""
     )
     if account_name and saved_identity and saved_identity["account"].casefold() != account_name.casefold():
@@ -808,38 +826,29 @@ def resolve_project(
             f"Existing Foundry project '{project_name}' was not found in the selected subscription. "
             "Check the project name or approve creating a missing project; no replacement was created."
         )
-    shared_setup_needed = not candidates
-    if len(candidates) == 1 and enabled() and account_name:
-        from shared_foundry_project import owned_infrastructure_connections
-
-        access = deploy.run_capture(deploy.az(
-            "account", "get-access-token", "--tenant", tenant, "--resource", "https://management.azure.com/",
-            "--query", "accessToken", "-o", "tsv",
-        ))
-        if not access:
-            raise deploy.DeployError("No delegated Azure management token was returned.")
-        connected = owned_infrastructure_connections(
-            deploy, candidates[0][0],
-            read_project_connections(deploy, candidates[0][0], {"Authorization": f"Bearer {access}"}),
+    if enabled() and candidates:
+        raise deploy.DeployError(
+            "Create a fresh Foundry project was selected, but the requested project already exists. "
+            "Uncheck 'Allow project creation' to reuse/update its agents, or enter an unused project name. "
+            "No existing project or agents were deleted or reused."
         )
-        shared_setup_needed = not {"ContainerRegistry", "AppInsights"}.issubset({
-            item.get("properties", {}).get("category") for item in connected
-        })
-    if shared_setup_needed and enabled() and account_name:
+    created_project = False
+    if not candidates and enabled() and account_name:
         from shared_foundry_project import prepare_shared_project, ensure_shared_project
 
         prepared = prepare_shared_project(
             deploy, tenant=tenant, subscription=subscription, account_name=account_name,
             project_name=project_name or (
                 candidates[0][0].rsplit("/", 1)[-1] if candidates else workspace_project_name(workspace)
-            ), model=model,
+            ), model=model, require_new=True,
         )
         if prepared is not None:
             if creation_settings and creation_settings != prepared:
                 raise deploy.DeployError("The shared Foundry account/model/infrastructure changed after preflight.")
             if not allow_create:
                 return FoundrySelection(subscription, "", "", prepared["model"], prepared)
-            ensure_shared_project(deploy, tenant=tenant, settings=prepared)
+            ensure_shared_project(deploy, tenant=tenant, settings=prepared, require_new=True)
+            created_project = True
             candidates = discover("")
     if not candidates and project_module.enabled() and not allow_create:
         location = creation_location(deploy, tenant, workspace, project_module)
@@ -874,6 +883,7 @@ def resolve_project(
             location=location, model=model, check_access=agent_access, model_settings=settings,
             project_name=project_name,
         )
+        created_project = True
         candidates = discover(created)
     if len(candidates) != 1:
         choices = "\n".join(f"  - {identity.rsplit('/', 1)[-1]} ({identity})" for identity, _ in candidates)
@@ -890,7 +900,9 @@ def resolve_project(
         raise deploy.DeployError("Foundry project metadata returned an invalid endpoint.")
     from shared_foundry_project import verify_project_lifecycle
 
-    verify_project_lifecycle(deploy, tenant=tenant, project_id=project_id, endpoint=endpoint)
+    verify_project_lifecycle(
+        deploy, tenant=tenant, project_id=project_id, endpoint=endpoint, require_empty=created_project,
+    )
     model = read_model_selection(deploy, tenant, project_id, model)
     print(f"Foundry: project and model verified before backend provisioning ({project_id.rsplit('/', 1)[-1]}, {model}).", flush=True)
     return FoundrySelection(subscription, project_id, endpoint, model)

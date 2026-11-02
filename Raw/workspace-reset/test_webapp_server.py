@@ -2178,12 +2178,12 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         env = SERVER._deploy_environment({
             "foundryEndpoint": "https://res.services.ai.azure.com/api/projects/proj/",
             "foundryModel": "gpt-5.6-sol", "acrName": "myreg12345", "foundryLocation": "Sweden Central",
-            "createFoundry": True, "productionWrites": "TRUE", "unexpected": "ignored",
+            "createFoundry": False, "productionWrites": "TRUE", "unexpected": "ignored",
         })
         self.assertEqual(env, {
             "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "https://res.services.ai.azure.com/api/projects/proj/",
             "HYDRO_FOUNDRY_MODEL": "gpt-5.6-sol", "HYDRO_ACR_NAME": "myreg12345",
-            "HYDRO_FOUNDRY_LOCATION": "Sweden Central", "HYDRO_FOUNDRY_CREATE": "true",
+            "HYDRO_FOUNDRY_LOCATION": "Sweden Central", "HYDRO_FOUNDRY_CREATE": "false",
             "HYDRO_PRODUCTION_WRITES_ENABLED": "true",
         })
         self.assertEqual(SERVER._deploy_environment({}), {})
@@ -2192,6 +2192,28 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         }), {"HYDRO_FOUNDRY_CREATE": "false"})
         with self.assertRaisesRegex(ValueError, "explicit boolean"):
             SERVER._deploy_environment({"createFoundry": "true"})
+
+    def test_create_checked_rejects_reuse_selectors_without_starting_jobs(self):
+        project_id = (
+            "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg/"
+            "providers/Microsoft.CognitiveServices/accounts/account/projects/project"
+        )
+        for field, value in (
+            ("foundryEndpoint", "https://res.services.ai.azure.com/api/projects/proj"),
+            ("foundryProjectResourceId", project_id),
+        ):
+            for route in ("/api/setup-foundry", "/api/full-workflow"):
+                with self.subTest(field=field, route=route), patch.object(SERVER, "_start") as job, \
+                        patch.object(SERVER, "_start_workflow") as workflow:
+                    response = self.client.post(route, json={
+                        "tenant": "tenant.example", "workspace": "Demo", "repository": "o/r",
+                        "connectionId": "yes", "parameters": PIPELINE_PARAMS,
+                        "createFoundry": True, field: value,
+                    })
+                    self.assertEqual(response.status_code, 400, response.get_json())
+                    self.assertIn("new project name", response.get_json()["error"])
+                    job.assert_not_called()
+                    workflow.assert_not_called()
 
     def test_subscription_and_model_creation_inputs_are_forwarded_without_defaults(self):
         subscription = "11111111-2222-3333-4444-555555555555"
@@ -2361,9 +2383,6 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes",
             "parameters": PIPELINE_PARAMS, "ontologyGraphBinding": json.dumps(graph),
             "azureSubscriptionId": guid,
-            "foundryEndpoint": "https://demo.services.ai.azure.com/api/projects/project",
-            "foundryProjectResourceId": f"/subscriptions/{guid}/resourceGroups/rg/providers/"
-                                       "Microsoft.CognitiveServices/accounts/account/projects/project",
             "foundryAccountName": "account", "foundryProjectName": "project",
             "foundryNewProjectName": "new-project", "foundryModel": "deployment",
             "foundryModelName": "gpt-4.1", "foundryModelVersion": "2025-04-14",
@@ -2372,7 +2391,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             "createFoundry": True, "productionWrites": "false",
         }
         expected = SERVER._deploy_environment(payload)
-        self.assertEqual(len(expected), 16)
+        self.assertEqual(len(expected), 14)
         with patch.object(SERVER, "_start_workflow", return_value="id") as start:
             response = self.client.post("/api/full-workflow", json=payload)
         self.assertEqual(response.status_code, 200, response.get_json())
@@ -2449,8 +2468,8 @@ console.log(JSON.stringify([
             self.assertIn("Allow project creation (billable)", form)
             self.assertIn(f'aria-describedby="{prefix}FoundryCreateHelp"', form)
             self.assertIn(f'id="{prefix}FoundryCreateHelp"', form)
-            self.assertIn("Existing project (even for a new Fabric workspace): unchecked.", form)
-            self.assertIn("Missing project: check. Agent updates still run.", form)
+            self.assertIn("Unchecked: reuse/update existing agents.", form)
+            self.assertIn("Checked: fresh project and agents; existing names stop setup.", form)
             help_text = re.search(rf'<p id="{prefix}FoundryCreateHelp" class="hint">(.*?)</p>', form).group(1)
             self.assertLessEqual(len(help_text.split()), 20)
             self.assertIn("Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked.", normal_fields)
@@ -2464,8 +2483,8 @@ console.log(JSON.stringify([
             self.assertIn("Stable workspace suffixes separate agents, connections and hosted state", form)
             self.assertIn("no extra model deployment is allocated", form.lower())
             self.assertIn("names are not a security boundary", form)
-            self.assertIn("Creation approval permits missing resources; it does not force recreation.", form)
-            self.assertIn("Full Deploy uses these same settings and includes Foundry setup", form)
+            self.assertIn("Checked means create-only", form)
+            self.assertIn("Full Deploy and standalone Foundry setup use the same rule", form)
             self.assertIn("Approval is not saved.", form)
             self.assertNotIn("Leave blank unless", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
@@ -2569,6 +2588,10 @@ for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
   }
 }
 assert.equal(foundryValid("deploy"), true);
+fields.deployFoundryProjectName.value="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p";
+assert.equal(foundryValid("deploy"), false);
+fields.deployFoundryCreate.checked=false;
+assert.equal(foundryValid("deploy"), true);
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2616,7 +2639,7 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal($(prefix+"FoundryModel").disabled, false);
   assert.equal($(prefix+"FoundryProjectName").value, "existing-project-name");
   assert.equal($(prefix+"FoundryModel").value, "existing-model");
-  assert.match($(prefix+"FoundryModeSummary").textContent, /Create only if missing/);
+  assert.match($(prefix+"FoundryModeSummary").textContent, /Create a fresh project and fresh agents/);
   assert.equal($(prefix+"FoundryCreationStatus").textContent, "");
   assert.equal(foundryValid(prefix), true);
   const creating = foundryPayload(prefix);

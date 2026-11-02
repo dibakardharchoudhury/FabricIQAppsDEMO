@@ -1367,6 +1367,8 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         ):
             raise ValueError("Foundry project resource ID must be a full project ARM resource ID.")
         env["HYDRO_FOUNDRY_PROJECT_RESOURCE_ID"] = project_id
+    if data.get("createFoundry") is True and (endpoint or project_id):
+        raise ValueError("Fresh-project creation requires a new project name, not an existing endpoint/resource ID.")
     if data.get("foundryAccountName") is not None and not isinstance(data["foundryAccountName"], str):
         raise ValueError("Foundry account name must be text.")
     account_name = text("foundryAccountName")

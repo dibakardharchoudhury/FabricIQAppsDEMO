@@ -226,9 +226,15 @@ boundaries. Separate projects remain unverified end-to-end and do not add model
 TPM/RPM. See the [project-sharing decision guide](../../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 
 A missing project without approval stops deployment. Approval is never remembered.
-It permits missing resources, not forced recreation. It does not discard or
-disable either shared name; existing projects
-are reused even with approval enabled. With an existing account, a missing project
+Unchecked reuses the verified existing project and updates its agents. Checked is
+create-only: it requires a missing project and an empty new agent inventory.
+If the selected name already exists, setup stops without reusing, deleting or
+replacing it. Uncheck creation to update that project, or choose an unused name.
+A blank checked project uses the stable workspace-GUID name, not saved project hints.
+App-only publication rejects checked creation; use Full Deploy or standalone Foundry
+setup first. A failed create that left a project behind counts as existing: reuse
+unchecked only after its infrastructure/lifecycle checks pass; incomplete infrastructure
+needs repair, not another fresh creation. With an existing account, a missing project
 uses the exact name entered above, or the stable full workspace-GUID project name.
 The existing ready account-level model deployment is verified before project-only
 creation. Its model/version/SKU/capacity fingerprint is checked again during setup;

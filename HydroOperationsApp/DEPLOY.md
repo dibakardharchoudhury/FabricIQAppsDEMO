@@ -318,7 +318,7 @@ These are the same shared fields in **Full Deploy** and **Set up Foundry agents*
 | **Foundry account name (optional)** | For example `hydro-demo-account` | Parent Azure AI Services resource containing the project. Scopes existing-project selection to this account and sets the exact account name when creating missing resources. Blank preserves automatic naming/discovery. |
 | **Foundry project name** | For example `hydro-demo-project` | Existing project to reuse, or the exact project name to create with approval below. For duplicate names/scoped access, a full project ARM ID can identify an existing project. |
 | **Model deployment name** | For example `hydro-chat` if that deployment already exists, or a supported catalog chat model name for creation | Not an agent name or API endpoint. An existing alias must resolve to a model/version in the selected subscription; an arbitrary invented alias is not a catalog model. |
-| **Allow project creation (billable)** | Leave off for an existing project, even in a fresh Fabric workspace; check only to approve missing resources | Existing projects are still reused when checked. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
+| **Allow project creation (billable)** | Unchecked: reuse/update an existing project and its agents. Checked: create a fresh project with fresh agents | Checked creation stops if the selected project name already exists; it never silently reuses, deletes or replaces it. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
 | **Use a pre-created app registration** | Leave off for automatic discovery/reuse or creation | Enable only to select a specific administrator-prepared SPA in the target tenant. |
 | **Application (client) ID**, shown when that option is enabled | The SPA's full Application/client GUID | Not its object ID, tenant ID, or the notebook SPN secret. The registration is verified; redirects, permissions and consent setup remain automated. |
 
@@ -361,9 +361,15 @@ These results do not certify a fresh live Full Deploy or separate-project deploy
 | Subsequent update using the same account/project/model | **Unchecked**; agent updates still run |
 | Missing account and project | **Checked**; billable account/model bootstrap also requires permissions, availability and quota |
 
-Approval permits creation; it does not force recreation. To share a project, enter
-its exact existing name. A blank project uses saved target identity or a stable
-workspace-GUID project; it is not an explicit shared-project selection.
+Checked means create-only, not delete-and-recreate. The selected project must be
+absent and the new agent inventory empty; an existing name is a hard stop. To share
+or update a project, uncheck creation and enter its exact existing name.
+A blank unchecked project can use saved target identity; a blank checked project
+uses the stable workspace-GUID name and ignores saved project hints. A failed create
+that left a project behind counts as existing: unchecked reuse requires verified
+infrastructure/lifecycle; incomplete infrastructure needs repair, not another fresh creation.
+App-only publication rejects checked
+creation: use Full Deploy or standalone Foundry setup first.
 
 **Full Deploy includes Foundry setup using these same fields**; do not run the
 standalone Foundry action first. Full Deploy repeats Git sync and Core setup.

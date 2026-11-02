@@ -1376,8 +1376,10 @@ cannot select a registry outside the project's live connections.
 The demo model name/version/SKU/capacity defaults were removed. Existing projects select a verified deployment
 or discover one ready chat-capable deployment. The current launcher exposes subscription, optional account,
 project and model names, not catalog/version/SKU/capacity or graph-binding JSON controls.
-Unchecking creation explicitly overrides inherited opt-in. Creation approval permits missing resources,
-not forced recreation: a fresh Fabric workspace can reuse an existing project with creation unchecked.
+Unchecking creation explicitly overrides inherited opt-in and reuses/updates existing agents.
+Checked creation requires a fresh, missing project with an empty agent inventory; an existing name
+stops setup without reuse or automatic deletion/replacement. A fresh Fabric workspace can reuse
+an existing project with creation unchecked. App-only publication cannot create a fresh project.
 Workspace-GUID suffixes allow concurrent workspace agent sets in one shared project.
 This shared-project layout was live-tested for FEATURE/DEV and is recommended.
 Separate-project provisioning exists in code but is not end-to-end verified;

@@ -261,14 +261,19 @@ Consequences:
 | Update existing agents | Same account/project/model; creation **unchecked**; updates still run |
 
 The shared form exposes subscription, optional account, project and model deployment.
-Creation approval permits missing resources; it never forces recreation and is not
-saved. If the selected project was removed but its account/model/registry/monitoring
+Unchecked reuses the verified project and updates its agents. Checked is create-only:
+the selected project must be absent and its new agent inventory empty. Existing
+names stop setup without reuse, deletion or replacement; uncheck creation to update
+that project, or choose an unused name. Approval is not saved. App-only publication
+rejects checked creation; use Full Deploy or standalone Foundry setup first.
+If the selected project was removed but its account/model/registry/monitoring
 survive, approved project-only setup can recover missing infrastructure selections
 from successful ARM deployment output resource IDs anchored to that exact account.
 Live registry and monitoring readback is mandatory; names, tags and cached values
 are not sufficient. Existing connections are retained, ambiguous or unavailable
 infrastructure fails, and no replacement account/model/registry/monitoring is created.
-A blank project uses saved target identity or a stable workspace-GUID project;
+A blank unchecked project can use saved target identity; a blank checked project
+uses the stable workspace-GUID name, ignoring saved project hints.
 enter the exact existing name to share one project. Region, version, SKU,
 capacity, supporting resource names, connections, monitoring and agent deployment
 are automatic. No model-settings questionnaire is shown. Existing-project reuse
@@ -372,6 +377,8 @@ including the independent `operational_sql_database_id`,
 | `Set HYDRO_FOUNDRY_LOCATION to the Azure region…` | Creating a project, but the Fabric capacity region could not be read. Enter the region (for example `swedencentral`). |
 | `azd provision` fails on the model deployment | The model, version, SKU or quota is unavailable in that region. Set `HYDRO_FOUNDRY_MODEL_VERSION`, `_SKU` or `_CAPACITY`, or another region, then rerun; the same azd environment is reused. |
 | `The new Foundry project … is not yet usable by the signed-in user…` | Role assignments are still propagating. Wait a few minutes and rerun. |
+| `Create a fresh Foundry project was selected, but the requested project already exists.` | Checked is create-only. Uncheck creation to reuse/update the verified project and its agents, or enter an unused name. A partially completed create also counts as existing; nothing is automatically deleted or replaced. |
+| `App-only publication cannot create a fresh Foundry project.` | Use Full Deploy or Set up Foundry agents with creation checked first. Uncheck creation for app-only publication and subsequent existing-agent updates. |
 | `Foundry project lifecycle mismatch…` | The agent endpoint exposed objects predating the current ARM project, or a newly created project was not empty. Full Deploy, standalone Foundry setup and app-only verification stop rather than adopt these agents. Stop concurrent deployments, review explicitly authorized agent cleanup before project deletion/recreation, and contact Azure support if the identity conflict persists. Creation approval does not authorize purging other workspaces' agents. |
 | `Foundry project lifecycle … unverifiable` / `…malformed or incomplete` / `…changed during…` | Live project identity/creation metadata or the complete paginated agent inventory could not be verified. No readiness is inferred from HTTP 200. Resolve the readback/access problem and retry; do not bypass the guard. This check is not execution certification. |
 | `The selected Foundry model deployment is not ready.` | Fix the model deployment or set `HYDRO_FOUNDRY_MODEL`. |
