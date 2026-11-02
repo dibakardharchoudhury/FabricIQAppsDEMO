@@ -1588,7 +1588,7 @@ class DeployOrderTests(unittest.TestCase):
                     with self.assertRaises(DEPLOY.DeployError):
                         DEPLOY.prefer_tenant_scoped_azure_cli_config("tenant-id")
 
-    def test_fresh_reauthentication_preserves_and_replaces_stale_cache(self):
+    def test_fresh_reauthentication_preserves_locked_stale_cache_in_place(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir) / "tenant-id"
@@ -1598,22 +1598,26 @@ class DeployOrderTests(unittest.TestCase):
 
             def assert_clean_cache(_command):
                 self.assertTrue(config_dir.is_dir())
-                self.assertFalse((config_dir / "msal_token_cache.bin").exists())
+                fresh = Path(os.environ["AZURE_CONFIG_DIR"])
+                self.assertNotEqual(fresh, config_dir)
+                self.assertFalse((fresh / "msal_token_cache.bin").exists())
 
             with (
                 patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
                 patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
                 patch.object(DEPLOY, "run_stream", side_effect=assert_clean_cache),
                 patch.object(DEPLOY, "ensure_azure_tenant"),
+                patch.object(DEPLOY.Path, "rename", side_effect=OSError("locked")),
             ):
                 DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
-            backups = list(Path(temp_dir).glob("tenant-id.stale-*"))
-            self.assertEqual(len(backups), 1)
+            self.assertEqual(list(Path(temp_dir).glob("tenant-id.stale-*")), [])
             self.assertEqual(
-                (backups[0] / "msal_token_cache.bin").read_text(encoding="utf-8"),
+                (config_dir / "msal_token_cache.bin").read_text(encoding="utf-8"),
                 "stale-token",
             )
+            with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
+                self.assertEqual(str(DEPLOY.isolated_azure_cli_config("tenant-id")), os.environ["AZURE_CONFIG_DIR"])
 
         if shared_config is None:
             os.environ.pop("AZURE_CONFIG_DIR", None)
@@ -1647,7 +1651,8 @@ class DeployOrderTests(unittest.TestCase):
                 DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
             isolated_config = os.environ.get("AZURE_CONFIG_DIR")
-            self.assertEqual(isolated_config, str(Path(temp_dir) / "tenant-id"))
+            self.assertEqual(Path(isolated_config).parent, Path(temp_dir))
+            self.assertTrue(Path(isolated_config).name.startswith("tenant-id.session-"))
             self.assertNotEqual(isolated_config, shared_config)
 
         if shared_config is None:
@@ -1661,19 +1666,44 @@ class DeployOrderTests(unittest.TestCase):
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
 
-    def test_reauthentication_does_not_login_when_cache_rotation_fails(self):
+    def test_reauthentication_does_not_login_when_new_session_creation_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir) / "tenant-id"
             config_dir.mkdir()
             with (
                 patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
-                patch.object(DEPLOY.Path, "rename", side_effect=OSError("locked")),
+                patch.object(DEPLOY.tempfile, "mkdtemp", side_effect=OSError("disk full")),
                 patch.object(DEPLOY, "run_stream") as run_stream,
             ):
-                with self.assertRaisesRegex(DEPLOY.DeployError, "No Azure CLI login state was changed"):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "existing sessions are unchanged"):
                     DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
         run_stream.assert_not_called()
+
+    def test_failed_fresh_login_keeps_active_pointer_and_process_identity(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"AZURE_CONFIG_DIR": "previous"}):
+            root = Path(temp_dir)
+            old = root / "tenant-id.session-old"
+            old.mkdir()
+            pointer = root / "tenant-id.active"
+            pointer.write_text(old.name, encoding="utf-8")
+            with (
+                patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", root),
+                patch.object(DEPLOY, "run_stream", side_effect=DEPLOY.DeployError("login cancelled")),
+            ):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "login cancelled"):
+                    DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+            self.assertEqual(pointer.read_text(encoding="utf-8"), old.name)
+            self.assertEqual(os.environ["AZURE_CONFIG_DIR"], "previous")
+
+    def test_active_session_pointer_cannot_escape_tenant_root(self):
+        for value in ("../outside", r"C:\outside", "other-tenant.session-abc"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "tenant-id.active").write_text(value, encoding="utf-8")
+                with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", root):
+                    with self.assertRaisesRegex(DEPLOY.DeployError, "invalid directory"):
+                        DEPLOY.isolated_azure_cli_config("tenant-id")
 
     def test_reauthentication_stops_after_second_stale_token_challenge(self):
         stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")

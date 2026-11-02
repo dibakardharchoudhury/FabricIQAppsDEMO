@@ -625,6 +625,18 @@ def ensure_azure_tenant(tenant: str) -> str:
 def isolated_azure_cli_config(tenant: str) -> Path:
     """Return the tenant-scoped cache used only for CAE reauthentication."""
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    pointer = AZURE_CLI_SESSION_ROOT / f"{safe_tenant}.active"
+    if pointer.exists():
+        try:
+            name = pointer.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise DeployError("Could not read the active tenant-scoped CLI session.") from exc
+        if not re.fullmatch(re.escape(safe_tenant) + r"\.session-[a-z0-9_]+", name):
+            raise DeployError("Active tenant-scoped CLI session has an invalid directory name.")
+        directory = AZURE_CLI_SESSION_ROOT / name
+        if not directory.is_dir():
+            raise DeployError("The active tenant-scoped CLI session directory is missing.")
+        return directory
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
 
@@ -750,36 +762,53 @@ def reauthenticate_azure_cli(tenant: str, operation: str, *, graph: bool = False
         f"Opening Microsoft sign-in for tenant {tenant}...",
         flush=True,
     )
-    config_dir = isolated_azure_cli_config(tenant)
-    secure_private_directory(config_dir.parent)
-    if config_dir.exists():
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        backup_dir = config_dir.with_name(f"{config_dir.name}.stale-{timestamp}")
-        try:
-            config_dir.rename(backup_dir)
-        except OSError as exc:
-            raise DeployError(
-                f"Could not preserve the stale tenant-scoped Azure CLI cache at {config_dir}. "
-                "No Azure CLI login state was changed. Close processes using that directory and retry."
-            ) from exc
-        secure_private_directory(backup_dir, recursive=True)
-        print(f"Preserved stale Azure CLI session at {backup_dir}.", flush=True)
+    safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    secure_private_directory(AZURE_CLI_SESSION_ROOT)
+    try:
+        config_dir = Path(tempfile.mkdtemp(prefix=f"{safe_tenant}.session-", dir=AZURE_CLI_SESSION_ROOT))
+    except OSError as exc:
+        raise DeployError("Could not create a fresh tenant-scoped CLI session; existing sessions are unchanged.") from exc
     secure_private_directory(config_dir)
+    previous_config = os.environ.get("AZURE_CONFIG_DIR")
     os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
-    run_stream(
-        az(
-            "login",
-            "--tenant",
-            tenant,
-            "--allow-no-subscriptions",
-            *(("--scope", "https://graph.microsoft.com/.default") if graph else ()),
-            *(("--claims-challenge", challenge) if challenge else ()),
-            "--only-show-errors",
-            "--output",
-            "none",
+    print(f"Using fresh Azure CLI session at {config_dir}; existing sessions remain untouched.", flush=True)
+    try:
+        run_stream(
+            az(
+                "login",
+                "--tenant",
+                tenant,
+                "--allow-no-subscriptions",
+                *(("--scope", "https://graph.microsoft.com/.default") if graph else ()),
+                *(("--claims-challenge", challenge) if challenge else ()),
+                "--only-show-errors",
+                "--output",
+                "none",
+            )
         )
-    )
-    ensure_azure_tenant(tenant)
+        ensure_azure_tenant(tenant)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=f"{safe_tenant}.active-",
+            dir=AZURE_CLI_SESSION_ROOT, delete=False,
+        ) as stream:
+            stream.write(config_dir.name)
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = Path(stream.name)
+        try:
+            temporary.replace(AZURE_CLI_SESSION_ROOT / f"{safe_tenant}.active")
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    except (OSError, DeployError) as exc:
+        if previous_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = previous_config
+        raise DeployError(
+            "Fresh Azure CLI sign-in or session activation failed; previous sessions were preserved. "
+            f"Underlying error: {exc}"
+        ) from exc
 
 
 def run_with_azure_cli_reauthentication(

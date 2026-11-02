@@ -42,7 +42,11 @@ Graph reads allow up to 37 seconds of bounded claims propagation after that sing
 login; permission denials and other errors are not retried.
 This does not bypass Conditional Access: a repeated rejection stops deployment.
 After recovery, retry the failed final deployment stage; do not repeat successful
-Git sync/Core setup. Account metadata alone does not verify Graph authorization.
+Git sync/Core setup. Account metadata alone does not verify Graph authorization. Recovery creates a
+new owner-only CLI session directory; it never renames or deletes an active cache
+that Windows or another process may hold open. Only after successful login and
+tenant verification is the active-session pointer atomically updated for later
+deployments. Failed login leaves the previous session selection intact.
 
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
