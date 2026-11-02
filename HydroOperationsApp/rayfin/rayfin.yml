@@ -63,6 +63,7 @@ services:
       - http://localhost:5173
       - https://free-coral-b7b89aadbb-swedencentral.webapp.fabricapps.net
       - https://snowy-flint-5e51887339-swedencentral.webapp.fabricapps.net
+      - https://honey-ford-5515776f76-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
