@@ -1432,7 +1432,9 @@ For a complete facility list/count use evidence="facilities_population_direct" a
 kind="facilities", scope="population", presentation="direct_records_table".
 For any native Data Agent answer use evidence="native_claims_population_native" and a view with
 kind="native_claims", scope="population", presentation="native_records_table".
-For a single Fabric IQ step preserve the original operator message, not a rewritten business question.
+For a native-answer-only plan preserve the original operator message, not a rewritten business question.
+When RCA or work-order specialists follow Fabric IQ, assign Sparky only the read-only evidence and
+correlation task. Those dependent specialists handle diagnosis, recommendations and approval drafts.
 The application returns the actual Data Agent answer unchanged; do not schedule QA or a second answer
 writer merely to summarize, certify or reformat that answer.
 View kind never includes the evidence suffix. Its kind/scope/authority must exactly match a requirement.
@@ -2898,8 +2900,28 @@ class FoundrySupervisor:
                 "evidence": [item.receipt() for item in self.evidence.values()],
                 "completed_specialists": [item.model_dump(mode="json") for item in self.specialists],
             }
+            question = delegation.question
+            if selected == "fabric-iq" and self.semantic_planning:
+                question = request.question
+                if (self.semantic_decision is not None and self.semantic_decision.plan is not None
+                        and any(step.specialist in ("rca", "work-order")
+                                for step in self.semantic_decision.plan.steps)):
+                    question = (
+                        "Read-only evidence task for a multi-agent maintenance workflow. "
+                        "Other specialists handle root-cause hypotheses and work-order approval drafts. "
+                        "Your task is only to retrieve and correlate observed data and existing operational "
+                        "records using the published ontology and its associated sources. "
+                        "Do not perform RCA, recommend new work, create work orders, or draft work orders. "
+                        "Report source-backed facts, canonical equipment/signal mappings, event times and "
+                        "existing open-work coverage where relevant. Preserve the original request's time "
+                        "window and scope. Disclose missing or stale evidence.\n\n"
+                        "Supervisor evidence assignment (read-only portion only):\n"
+                        + delegation.question
+                        + "\n\nOriginal user request (context for this read-only subtask):\n"
+                        + request.question
+                    )
             key = "delegate:" + _encoded({
-                "role": selected, "question": delegation.question, "native": selected_native,
+                "role": selected, "question": question, "native": selected_native,
                 "context_digest": sha256(_encoded(handoff_context)).hexdigest(),
                 "targeted_context": targeted_context,
                 "maintenance_gate_required": maintenance_gate_required,
@@ -2928,8 +2950,7 @@ class FoundrySupervisor:
                         or self.native_binding is not None and self.native_binding.toolbox is not None
                     ):
                         result = await self.invoke_data_agent(
-                            request.question if self.semantic_planning else delegation.question,
-                            request, journal, versions[selected],
+                            question, request, journal, versions[selected],
                         )
                     else:
                         response, assessment, elapsed = await self.invoke(
@@ -5353,7 +5374,11 @@ class FoundrySupervisor:
                         )
                         if (delegation.specialist == "fabric-iq"
                                 and sum(step.specialist == "fabric-iq" for step in plan.steps) == 1
-                                and request.historical_context is None):
+                                and request.historical_context is None
+                                and not (
+                                    owner.semantic_planning
+                                    and any(step.specialist in ("rca", "work-order") for step in plan.steps)
+                                )):
                             delegation = delegation.model_copy(update={"question": request.question})
                         await owner.handoff(
                             delegation, request, journal, versions,

@@ -2,7 +2,8 @@ import { PublicClientApplication } from '@azure/msal-browser'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { AgentStep } from './agentSteps'
 import { type AgentAnswer } from './assistantStream'
-import { invokeVerifiedDataAgent, mapDataAgentName, requireDataAgentEndpoint, selectDataAgent, selectNamedDataAgent } from './artifactDiscovery'
+import { invokeVerifiedDataAgent, mapDataAgentName, requireDataAgentEndpoint, selectDataAgent, selectNamedDataAgent, verifyPublishedAgentOntology } from './artifactDiscovery'
+import type { DirectAccess } from './directFabric'
 import { discoverOntology, type OntologyDiscovery } from './ontologyDiscovery'
 import { createOntologyCache, OntologyCacheInvalidatedError } from './ontologyCache'
 import { parseOntologyContract, type OntologyContract } from './ontologyContract'
@@ -46,7 +47,7 @@ const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME a
 
 const msal = clientId && tenantId ? new PublicClientApplication({
   auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}`, redirectUri: location.origin },
-  cache: { cacheLocation: 'localStorage' },
+  cache: { cacheLocation: 'memoryStorage' },
 }) : undefined
 
 const CONNECTOR_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
@@ -305,6 +306,53 @@ export async function hostedSourceTokens(interactive = false) {
   return (await hostedSourceAccess()).acquire(interactive)
 }
 
+const intelligenceIdentityListeners = new Set<() => void>()
+export function subscribeIntelligenceIdentity(listener: () => void) {
+  intelligenceIdentityListeners.add(listener)
+  return () => { intelligenceIdentityListeners.delete(listener) }
+}
+
+export function intelligenceIdentityKey(): string {
+  return JSON.stringify([tenantId, workspaceId, configuredOntologyId, configCache?.ontologyId,
+    configRevision, msal?.getActiveAccount()?.homeAccountId, ontologySourceConnectionKey()])
+}
+
+/** Resolve by verified published source identity, never an agent display name. */
+export async function directFabricAccess(signal: AbortSignal): Promise<DirectAccess> {
+  const config = await ensureConfig(true)
+  signal.throwIfAborted()
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  if (!config?.ontologyId) throw new Error('Direct Fabric IQ requires the authoritative selected Ontology v2 item.')
+  const token = await fabricToken(true, DATA_AGENT_SCOPES)
+  if (!token) throw new Error('Sign in with delegated Fabric Data Agent execute/read access.')
+  const workspace = requireWorkspaceId()
+  const metadata = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspace}/ontologies/${config.ontologyId}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal, cache: 'no-store', redirect: 'error',
+  })
+  if (!metadata.ok) throw new Error(`Direct Fabric ontology read failed (HTTP ${metadata.status}).`)
+  requireV2Generation((await metadata.json() as { properties?: { generation?: unknown } }).properties?.generation)
+  const agents = (await listItems(token, signal)).filter(item => item.type === 'DataAgent')
+  if (agents.length > 100) throw new Error('Direct Fabric source verification exceeds the bounded agent count. Configure a smaller workspace scope.')
+  const matches: string[] = []
+  for (const agent of agents) {
+    const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspace}/dataAgents/${agent.id}/getDefinition`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }, signal, cache: 'no-store', redirect: 'error',
+    })
+    if (!response.ok && response.status !== 202) throw new Error(`Direct Fabric published-source read failed (HTTP ${response.status}).`)
+    const definition = await waitForDefinitionResult(response, token, signal)
+    try { verifyPublishedAgentOntology(definition, workspace, config.ontologyId); matches.push(agent.id) }
+    catch { /* Other published agents are not this ontology's source. */ }
+  }
+  if (matches.length !== 1) throw new Error(`Direct Fabric IQ requires exactly one published Data Agent bound to the selected live generation-2 ontology; found ${matches.length}. No name-based selection or fallback was used.`)
+  return { workspaceId: workspace, dataAgentId: matches[0], fabricToken: token,
+    key: JSON.stringify([intelligenceIdentityKey(), config.ontologyId, matches[0]]),
+    token: async () => {
+      const value = await silentToken([POWER_BI_ITEM_EXECUTE_SCOPE]) ?? await popupToken([POWER_BI_ITEM_EXECUTE_SCOPE])
+      signal.throwIfAborted()
+      return value
+    } }
+}
+
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
 export function clearWorkspaceConfigCache() {
   configRevision++
@@ -316,6 +364,7 @@ export function clearWorkspaceConfigCache() {
   dataAgentUserQuestions = []
   ontologySourceGraphCache.clear()
   lastOntologySourceConnection = undefined
+  for (const listener of intelligenceIdentityListeners) listener()
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----

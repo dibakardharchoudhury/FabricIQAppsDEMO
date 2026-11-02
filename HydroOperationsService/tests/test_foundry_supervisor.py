@@ -412,7 +412,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
                    new_callable=AsyncMock, return_value=native_call) as native:
             answer = await owner.run(request)
-        self.assertEqual(native.call_args.args[3], request.question)
+        native_question = native.call_args.args[3]
+        self.assertTrue(native_question.startswith("Read-only evidence task"))
+        self.assertIn("Do not perform RCA", native_question)
+        self.assertIn(raw["plan"]["steps"][0]["question"], native_question)
+        self.assertIn(
+            "Original user request (context for this read-only subtask):\n" + request.question,
+            native_question,
+        )
         self.assertEqual([draft.equipment_id for draft in answer.proposals], list(self.multiple_proposal_ids))
         self.assertEqual(len(answer.proposal_digests), len(self.multiple_proposal_ids))
         self.assertEqual(answer.native_answers[0].text, text)
@@ -550,6 +557,59 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(native.call_args.args[3], question)
         owner.invoke.assert_not_awaited()
         self.assertEqual(client_presentation(owner.native_answer(request)).text.encode(), text.encode())
+
+    async def test_rca_handoff_scopes_native_evidence_and_does_not_replay_unscoped_cache(self):
+        from test_semantic_planning import decision
+        request = self.request.model_copy(update={
+            "question": "Investigate the root cause of today's BAD turbine telemetry.",
+            "native_sources": ("data-agent",),
+        })
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=())
+        owner = self.make_owner(
+            semantic_planning=True, analysis_model="test-model",
+            native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                         toolbox=version.name),
+        )
+        raw = decision("fabric-iq", "native_claims", False)
+        raw["plan"]["steps"][0]["question"] = "Read today's quality events and canonical turbine identities."
+        raw["plan"]["steps"].append({
+            "specialist": "rca", "question": request.question, "reason": "Investigate after grounding.",
+            "nativeSource": None, "requiresSelection": False, "requiresVerifiedIssue": False,
+            "execution": "agent", "reads": [],
+        })
+        owner.run_id = request.run_id
+        owner.semantic_decision = SemanticDecision.model_validate(raw)
+        owner.answer_contract = owner.semantic_decision.plan.answer_contract
+        delegation = owner.semantic_decision.plan.steps[0]
+        journal = RunJournal(self.root / "scoped-native")
+        old_key = "delegate:" + _encoded({
+            "role": "fabric-iq", "question": delegation.question, "native": "data-agent",
+            "context_digest": sha256(_encoded({"evidence": [], "completed_specialists": []})).hexdigest(),
+            "targeted_context": False, "maintenance_gate_required": False,
+        }).decode()
+        journal.save(old_key, CachedHandoff(specialist=SpecialistResult(
+            role="fabric-iq", agent_name=version.name, version=version.version,
+            response_id="old-unscoped", duration_ms=1, input_digest="a" * 64,
+            text="An old unscoped answer must not satisfy the evidence task.",
+        ), evidence=()).model_dump(mode="json"))
+        text = "Source-backed historical BAD observations; no physical cause has been established.\r\n"
+        call = NativeDataAgentCall("scoped-native", {"input": "read-only task"}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
+        owner.invoke = AsyncMock(side_effect=AssertionError("An unnecessary wrapper model was invoked."))
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call) as native:
+            result = await owner.handoff(delegation, request, journal, {"fabric-iq": version})
+        native.assert_awaited_once()
+        native_question = native.call_args.args[3]
+        self.assertTrue(native_question.startswith("Read-only evidence task"))
+        self.assertIn(delegation.question, native_question)
+        self.assertIn(request.question, native_question)
+        self.assertEqual(result["specialist"]["response_id"], call.request_id)
+        self.assertEqual(owner.specialists[0].text.encode(), text.encode())
+        owner.invoke.assert_not_awaited()
 
     def test_native_specialist_text_is_not_duplicated_in_downstream_model_context(self):
         text = "Original Fabric answer. " * 1000
