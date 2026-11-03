@@ -19,6 +19,13 @@ provider JSON-reference/CSV-attachment discrepancy. This transport provides
 independent questions; native conversational continuation is not established and
 must not be claimed by the UI.
 
+The actual compiled Direct adapter, publication/v2 checks and normal silent SPA
+token acquisition were then exercised together in the browser. The same facility
+question completed in 46.237 seconds with answer digest
+`f6311919678cb895ff9e8c48ae503379a8cdf5b08f6ea8e8a44d163d1ed0c489`,
+the three-row native CSV and a downloadable native envelope. Adapter traffic used
+only `api.fabric.microsoft.com`; no Foundry proxy or Power BI token was used.
+
 Separate authenticated Dev hosted passthrough run
 `dedd1fc8-e0f6-42c5-809f-2006720fc989` recorded ontology context injection and
 Lakehouse, Kusto and operational SQL analysis calls. This disproves a blanket
@@ -29,11 +36,26 @@ certifying an answer. Missing current telemetry was also explicitly disclosed.
 No approval decisions or production SQL writes were exercised.
 
 Later probes could not resolve the deployment's capacity-specific AppBackend
-hostname from either the browser or local requests, although the selected
-capacity remained Active. Do not repair this by inventing another capacity URL,
-weakening source authentication, or treating failed work reads as empty work.
-Both earlier canonical deployments completed successfully; that historical
-readiness result does not certify the current source path or agent execution.
+hostname from either the browser or local requests. Although an earlier capacity
+read showed Active, the next rollout detected Inactive and ARM confirmed Paused.
+The capacity audit records a successful suspend at `2026-11-02T23:37:45Z`.
+Following the user's explicit authorization, only that capacity was resumed;
+ARM and Fabric both read back Active before retrying the canonical rollout.
+Do not invent another capacity URL, weaken source authentication, or treat failed
+work reads as empty work. Both earlier canonical deployments completed
+successfully; that historical readiness result does not certify the current
+source path or agent execution.
+
+After resumption, a normal SPA repeat of the original mixed question
+(`41437df1-2d64-4b3d-b157-3d4f6ef62c25`) completed Sparky and Sleuth but reached
+the Foundry model throughput limit in Fixer (HTTP 429). It did not certify an
+answer or write outcome. This is not a missing Data Agent permission diagnosis.
+To reduce evidence volume without changing quota, mixed native handoffs now
+request complete canonical-key event aggregates before row limits, not unbounded
+raw-history exports. Current freshness remains separate, and the immutable
+request time anchors relative UTC dates across delayed stages or midnight.
+Direct native-only questions remain unchanged. The change passed 61 focused
+native/proposal tests and Python type checking; live acceptance remains separate.
 
 Read-only intent also now retains negation across coordinated action lists:
 `Do not perform RCA, recommend, draft, create, approve or save any work orders`
