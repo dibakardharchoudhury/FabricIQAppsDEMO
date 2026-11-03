@@ -47,7 +47,7 @@ const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME a
 
 const msal = clientId && tenantId ? new PublicClientApplication({
   auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}`, redirectUri: location.origin },
-  cache: { cacheLocation: 'memoryStorage' },
+  cache: { cacheLocation: 'sessionStorage' },
 }) : undefined
 
 const CONNECTOR_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'

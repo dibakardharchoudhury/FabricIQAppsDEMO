@@ -1,5 +1,65 @@
 # Foundry and multi-agent implementation record
 
+## November 3 final rollout and authenticated workflow results
+
+Source `42031b5` is deployed to both workspaces through the canonical
+orchestrator. Dev release `599764f` completed at `2026-11-03T00:31:24Z`;
+Feature release `f338145` completed at `2026-11-03T00:42:57Z`. Both reported
+`SUCCESS` after endpoint, browser-equivalent CORS, POST readiness, redirect
+preservation and consent checks. Hosted Dev version 3 and Feature version 4
+read back active on the same source image, `src-5722c7ed30a7c988`. Model allocation
+remains 75,000 TPM; no quota, model, source-profile or authentication bypass was
+introduced.
+
+The existing authenticated Dev SPA exercised the deployed service through its
+normal chat UI, without CLI credentials:
+
+- The unchanged original BAD-telemetry/RCA/draft question completed Sparky,
+  Sleuth and Fixer in 1 minute 52 seconds, run
+  `6c057fc4-2668-4004-bd54-776d4979c71d`. Its immutable request date was now
+  November 3 UTC. No BAD samples existed in that requested window, so no draft
+  was justified. The result did not turn missing current measurements into a
+  healthy-equipment claim.
+- An explicit November 2 historical-window follow-up completed all three roles
+  in 1 minute 55 seconds, run `18ed69ea-c9d7-43fd-86c2-cb72da964fca`. The native
+  answer reported five affected canonical signals. T011 had exact same-signal
+  open-work coverage; four uncovered signals produced pending diagnostic
+  proposal cards:
+  - T005 turbine speed.
+  - T013 turbine speed.
+  - T014 turbine temperature.
+  - T008 inlet pressure, distinct from its existing power-output work order.
+- All four card equipment/signal pairs and pager positions were inspected.
+  Title and description controls were enabled; a title edit was verified and
+  restored. The inspected T005 proposal had Medium priority, cited its native
+  receipt, disclosed the stale latest GOOD observation, and requested data-path
+  investigation without claiming a mechanical fault.
+- No approval or rejection was clicked and no production work order was saved.
+  These two serial executions completed without HTTP 429; they do not establish
+  concurrent-load readiness or unlimited throughput for the shared model.
+
+The native historical answer explicitly disclosed an unusable `BadHours`
+projection (`[[]]`) rather than inventing affected-hour values. Its scalar
+sample counts, time bounds and latest-observation facts remained separate from
+that limitation and from a confirmed physical diagnosis.
+
+The latest Feature UI was reloaded and its displayed release matched
+`f338145`. All three tabs rendered, Multi Agent was the default, Battle exposed
+no approval/rejection controls, and its question/error did not leak into the
+separate Multi Agent history. Fabric IQ displayed the native MCP independent-
+question limitation.
+
+Interactive acceptance is still incomplete: a real latest-Feature Battle
+submission returned `popup_window_error` independently in both panels before
+source execution, even with a normal trusted button click. New standalone
+hosting sessions require sign-in, and a separate Dev portal attempt did not
+finish loading the hosted frame. These are not successful comparison or Feature
+agent executions. The earlier real compiled-adapter MCP success below remains
+valid, but does not substitute for full authenticated testing of every new tab
+and layout. Complete that remaining acceptance in a browser that can finish the
+interactive SPA sign-in; do not replace it with CLI tokens, a proxy, disabled
+CORS or hosting-page success.
+
 ## November 2 published MCP repair and live acceptance findings
 
 The direct browser Responses implementation reached a regional routing-token
@@ -29,8 +89,8 @@ only `api.fabric.microsoft.com`; no Foundry proxy or Power BI token was used.
 Separate authenticated Dev hosted passthrough run
 `dedd1fc8-e0f6-42c5-809f-2006720fc989` recorded ontology context injection and
 Lakehouse, Kusto and operational SQL analysis calls. This disproves a blanket
-missing-source or missing-SPA-permission diagnosis. The original mixed question
-has not passed acceptance: a subsequent run logged failed Rayfin work-order and
+missing-source or missing-SPA-permission diagnosis. At that stage, the original
+mixed question had not passed acceptance: a subsequent run logged failed Rayfin work-order and
 Lakehouse connector GraphQL reads, and another streamed run terminated without
 certifying an answer. Missing current telemetry was also explicitly disclosed.
 No approval decisions or production SQL writes were exercised.

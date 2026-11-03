@@ -31,8 +31,26 @@ function fixture() {
       return { account: state.popupAccount ?? account, accessToken: token }
     },
   }
-  return { state, tokens: createEntraTokens(client, async () => {}, 'target-tenant') }
+  return { state, client, tokens: createEntraTokens(client, async () => {}, 'target-tenant') }
 }
+
+test('MSAL keeps only its authentication cache in the tab session across Fabric iframe remounts', () => {
+  const source = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
+  assert.match(source, /cache:\s*\{\s*cacheLocation: 'sessionStorage'\s*\}/)
+  assert.doesNotMatch(source, /cacheLocation: 'memoryStorage'|cacheLocation: 'localStorage'/)
+})
+
+test('a remounted token helper reuses the restored selected tenant account without another picker', async () => {
+  const { state, client, tokens } = fixture()
+  await tokens.popup(['foundry'])
+  for (let mount = 0; mount < 3; mount++) {
+    const restored = createEntraTokens({ ...client }, async () => {}, 'target-tenant')
+    assert.equal(await restored.silent(['foundry']), 'token-foundry')
+    assert.equal(await restored.popup(['foundry']), 'token-foundry')
+  }
+  assert.equal(state.popups.length, 1)
+  assert.ok(state.silent.every(request => request.account === account))
+})
 
 test('repeated requests and explicit connection actions reuse the cached token without a popup', async () => {
   const { state, tokens } = fixture()
