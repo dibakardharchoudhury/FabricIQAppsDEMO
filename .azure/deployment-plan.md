@@ -1,6 +1,49 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Expanded composer follow-up
+> **Status:** Validated - Prepared map preservation and expanded composer
+
+## Prepared Norwegian Energy Map preservation
+
+Retain the approved Dev/Feature targets and full canonical deployment flow.
+Feature's isolated checkout had a false build flag despite a completed,
+workspace-scoped energy setup checkpoint. Restore the prepared setting only
+after matching the checkpoint Lakehouse to live target metadata and verifying
+the existing read models. Do not rerun ingestion, change map source bindings,
+recreate the map agent, or change any infrastructure, role, model or quota.
+Explicit disable selections remain durable across isolated checkouts.
+
+All validation checks pass:
+- [x] 1. Core Validation (CLI, auth, build, validate, what-if): deployment and
+  energy regressions, app environment, existing approved Azure identity.
+  No ARM/template change exists, so build/what-if are inapplicable.
+- [x] 2. Docker Build: inapplicable; no hosted source/image/dependency delta.
+- [x] 3. Azure Policy Validation: verify existing inherited policy; no ARM,
+  permissions, region, network or role delta.
+
+### Section 7: Validation Proof - prepared map
+
+The regression reproduced `ENABLE_ENERGY_MAP=false` after routine preparation
+even with a completed target checkpoint. Read-only live Feature verification
+on November 3, 2026 confirms all 12 source layers, 9 area polygons and 75
+asset-message links. No ingestion or map-agent publication was performed.
+`python -m unittest test_deploy_fabric_app test_feature_workspace` passes all
+209 deployment/energy regressions (220.966s). Node 24 `node --import tsx --test
+scripts\map-data-refresh-service.test.mjs scripts\work-order-draft-pager.test.mjs`
+passes all 25 map-control and composer contracts.
+Pylance reports no Python syntax errors. Node 24
+`validate-env` passes; the already validated final CSS production build is
+unchanged. Azure CLI confirms the approved Enabled subscription and tenant;
+live assignment readback confirms unchanged security/governance controls.
+The Feature deployment fixture now supplies its own target feature flag and
+mocks connector configuration instead of reading/writing private checkout state.
+The final supported Node 24 TypeScript/Vite production build also passes
+(Vite 1m51s; existing chunk warnings only).
+No ARM, hosted-image, dependency, role or policy changes are present.
+Role Assignment Verification: no generated/modified assignments or changed
+managed-identity operations. The restored map uses its existing delegated
+GeoContext connector; canonical deployment must verify its protected transport
+and existing SPA permissions without adding or broadening ARM roles.
+Full publication and fresh-bundle browser acceptance remain pending.
 
 ## Expanded composer follow-up
 

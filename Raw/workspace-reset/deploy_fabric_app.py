@@ -1776,6 +1776,55 @@ def configure_app_feature_flags(env_path: Path, *, enable_energy_map: bool) -> N
     env_path.write_text(content, encoding="utf-8", newline="\n")
 
 
+def energy_state_path(tenant: str, workspace_id: str) -> Path:
+    return Path(tempfile.gettempdir()) / "fabric-demo-energy" / tenant / f"{workspace_id}.json"
+
+
+def resolve_energy_map_setting(
+    tenant: str,
+    workspace_id: str,
+    values: dict[str, str],
+    public_artifacts: dict[str, str],
+    selection: bool | None,
+) -> bool:
+    same_scope = (
+        _public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
+        and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace_id.casefold()
+    )
+    local_enabled = same_scope and _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
+    checkpoint = energy_state_path(tenant, workspace_id)
+    if not checkpoint.exists():
+        return local_enabled if selection is None else selection
+    try:
+        state = json.loads(checkpoint.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise DeployError("Cannot read the target's energy setup checkpoint; refusing to change map visibility.") from exc
+    if not isinstance(state, dict) or state.get("workspace_id") != workspace_id:
+        raise DeployError("Energy setup checkpoint does not belong to the selected workspace.")
+    saved = state.get("energy_map_enabled")
+    if saved is not None and type(saved) is not bool:
+        raise DeployError("Energy setup checkpoint contains an invalid map visibility setting.")
+    if selection is not None:
+        state["energy_map_enabled"] = selection
+        pending = checkpoint.with_suffix(".tmp")
+        pending.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        pending.replace(checkpoint)
+        return selection
+    prepared = isinstance(state.get("energy_map_verification"), dict) and bool(state["energy_map_verification"])
+    enabled = saved if saved is not None else prepared or local_enabled
+    if enabled and (prepared or saved is True):
+        if not state.get("energy_lakehouse_id") or state["energy_lakehouse_id"] != public_artifacts.get("RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID"):
+            raise DeployError("Prepared energy map does not match the live target GeoContext Lakehouse.")
+        from feature_workspace import FeatureWorkspaceError
+
+        try:
+            energy_workspace(tenant, workspace_id).verify_energy()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(f"Prepared energy map readback failed; refusing to hide or publish a broken map: {exc}") from exc
+        print("Preserving the target's prepared energy map after live read-model verification.", flush=True)
+    return enabled
+
+
 def prepare_rayfin_env(
     tenant: str,
     workspace_id: str,
@@ -1800,13 +1849,10 @@ def prepare_rayfin_env(
         )
         if same_workspace and _public_config_value(values, key)
     }
-    if enable_energy_map is None:
-        same_scope = (
-            _public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
-            and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace_id.casefold()
-        )
-        enable_energy_map = same_scope and _public_config_value(values, "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP") == "true"
     public_artifacts = resolve_public_artifact_config(workspace_id, tenant, values)
+    enable_energy_map = resolve_energy_map_setting(
+        tenant, workspace_id, values, public_artifacts, enable_energy_map,
+    )
     same_target = deployment and all(
         (
             values.get("FABRIC_WORKSPACE_NAME") == workspace_name,
@@ -2669,10 +2715,10 @@ def energy_workspace(tenant: str, workspace_id: str):
     if len(matches) != 1:
         raise DeployError("Run Fabric setup first: energy setup requires one unambiguous RTI Eventhouse.")
     suffix = matches[0]["displayName"].removeprefix("RTI_Demo_Eventhouse_")
-    state_dir = Path(tempfile.gettempdir()) / "fabric-demo-energy" / tenant
-    state_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = energy_state_path(tenant, workspace_id)
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
     return FeatureWorkspace(EnergyConfig(
-        tenant, workspace_id, state_dir / f"{workspace_id}.json", suffix,
+        tenant, workspace_id, checkpoint, suffix,
     ), REPO_ROOT)
 
 
@@ -2721,6 +2767,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
         values, _ = current_rayfin_target()
+        resolve_energy_map_setting(tenant_id, workspace_id, values, {}, True)
         if (_public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID") == tenant_id
                 and _public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID") == workspace_id):
             configure_app_feature_flags(RAYFIN_DIR / ".env", enable_energy_map=True)

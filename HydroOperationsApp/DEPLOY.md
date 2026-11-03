@@ -788,6 +788,12 @@ are reused. **Advanced → Website only** verifies prepared agents without updat
 The launcher preserves the target's prepared energy-map setting; app publication
 does not offer a second enable/disable selector. Run **Energy setup** first to
 prepare map data and enable its navigation.
+Isolated release checkouts recover this setting from the tenant/workspace-scoped
+energy setup checkpoint, not another checkout's default `.env` flag. Recovery
+requires the checkpoint's Lakehouse to match live workspace metadata and a
+successful read-only energy read-model verification. A failed verification stops
+publication rather than silently removing the tab. Explicit disable selections
+are retained in that same checkpoint; existing checkpoint content is preserved.
 Readiness requires browser-equivalent preflights and POST checks for `/graphql`
 and `/api/auth/v1/token`, plus `/connectors/hydrolakehouse/graphql`,
 `/connectors/hydrooperations/graphql` and, with energy enabled,
