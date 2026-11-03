@@ -16,7 +16,6 @@ services:
       enabled: true
       externalEntraExchange: true
     allowedRedirectUris:
-      - https://lofty-oasis-f52839c00b-swedencentral.webapp.fabricapps.net
       - https://glad-hover-68cb866cd0-swedencentral.webapp.fabricapps.net
       - https://warm-edge-ac3b1903d6-swedencentral.webapp.fabricapps.net
       - https://honey-ford-5515776f76-swedencentral.webapp.fabricapps.net
@@ -72,6 +71,7 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
+      - https://lofty-oasis-f52839c00b-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
