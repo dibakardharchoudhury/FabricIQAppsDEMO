@@ -1,4 +1,5 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { IntelligenceConversationsProvider } from './useIntelligenceConversations'
 import {
   beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isStidConfigured,
   queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks,
@@ -940,7 +941,8 @@ const HydroOperationsDataContext = createContext<HydroOperationsData | null>(nul
 
 export function HydroOperationsDataProvider({ children }: { children: ReactNode }) {
   const value = useHydroOperationsDataController()
-  return createElement(HydroOperationsDataContext.Provider, { value }, children)
+  return createElement(HydroOperationsDataContext.Provider, { value },
+    createElement(IntelligenceConversationsProvider, { userId: value.user?.id }, children))
 }
 
 export function useHydroOperationsData() {

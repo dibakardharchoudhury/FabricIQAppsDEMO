@@ -19,7 +19,7 @@ import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
-import { connectedLakehouse, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin, subscribeWorkOrdersChanged } from './rayfin'
+import { connectedLakehouse, currentUser, lakehouseConnectionKey, ontologySourceConnectionKey, ontologySourceReaders, signInToRayfin, subscribeWorkOrdersChanged } from './rayfin'
 import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
   requireLakehouseNumber, requireLakehouseText } from './lakehouseConnector'
 
@@ -119,6 +119,7 @@ type ResolvedConfig = OntologyDiscovery & { pipelineId?: string; postseedNoteboo
 let configCache: ResolvedConfig | null = null
 let configPromise: Promise<ResolvedConfig | null> | undefined
 let configRevision = 0
+let intelligenceOntologyId = configuredOntologyId
 
 function requireWorkspaceId(): string {
   if (!workspaceId) throw new Error('Fabric workspace configuration is missing. Rebuild the app with Rayfin environment injection.')
@@ -244,6 +245,11 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
       kqlDashboardId: dashboard?.id ?? env.kqlDashboardId,
       ...semantic,
     }
+    if (semantic.ontologyGeneration === 2 && !semantic.ontologyError && semantic.ontologyId &&
+        intelligenceOntologyId !== semantic.ontologyId) {
+      intelligenceOntologyId = semantic.ontologyId
+      for (const listener of intelligenceIdentityListeners) listener()
+    }
     return configCache
   } catch (error) {
     if (revision !== configRevision) return null
@@ -313,8 +319,10 @@ export function subscribeIntelligenceIdentity(listener: () => void) {
 }
 
 export function intelligenceIdentityKey(): string {
-  return JSON.stringify([tenantId, workspaceId, configuredOntologyId, configCache?.ontologyId,
-    configRevision, msal?.getActiveAccount()?.homeAccountId, ontologySourceConnectionKey()])
+  return JSON.stringify([tenantId, workspaceId, intelligenceOntologyId,
+    entraTokens?.selectedAccount()?.localAccountId ?? currentUser()?.id, currentUser()?.id,
+    import.meta.env.VITE_RAYFIN_LAKEHOUSE_ID, import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID,
+    import.meta.env.VITE_RAYFIN_OPERATIONAL_SQL_DATABASE_ID])
 }
 
 /** Resolve by verified published source identity, never an agent display name. */

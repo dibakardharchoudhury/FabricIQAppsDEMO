@@ -103,6 +103,39 @@ test('identity changes clear all histories, abort active work, release approvals
   assert.ok(Object.values(controller.getSnapshot()).every(lane => !lane.busy && !lane.messages.length))
 })
 
+test('same-identity refresh and view remount preserve active work, history and the hosted conversation scope', async () => {
+  let complete!: () => void
+  const pending = new Promise<void>(resolve => { complete = resolve })
+  const sessions: string[] = []
+  const released: string[] = []
+  let signal!: AbortSignal
+  const controller = new IntelligenceConversations(async (_question, context) => {
+    sessions.push(context.session)
+    signal = context.signal
+    if (sessions.length === 1) await pending
+    return { text: sessions.length === 1 ? 'first answer' : 'contextual follow-up' }
+  }, session => released.push(session))
+  controller.setIdentity('tenant/workspace/ontology/principal/source')
+  const unsubscribe = controller.subscribe(() => {})
+  const first = controller.send('multi', 'executing prompt')
+  const snapshot = controller.getSnapshot()
+  unsubscribe()
+  controller.setIdentity('tenant/workspace/ontology/principal/source')
+  const remounted = controller.subscribe(() => {})
+  assert.equal(controller.getSnapshot(), snapshot)
+  assert.equal(snapshot.multi.messages[0].text, 'executing prompt')
+  assert.equal(snapshot.multi.busy, true)
+  assert.equal(signal.aborted, false)
+  assert.deepEqual(released, [])
+  complete()
+  await first
+  await controller.send('multi', 'follow-up')
+  assert.equal(sessions[0], sessions[1])
+  assert.equal(controller.getSnapshot().multi.messages.length, 4)
+  assert.equal(controller.getSnapshot().multi.messages[1].text, 'first answer')
+  remounted()
+})
+
 test('reset and cancellation are mode-local and cannot promote a partial response to success', async () => {
   const controller = new IntelligenceConversations(async (_question, context) => {
     if (context.lane === 'direct') return { text: 'direct history' }

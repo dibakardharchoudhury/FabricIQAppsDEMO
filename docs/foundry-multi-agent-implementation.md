@@ -1,5 +1,31 @@
 # Foundry and multi-agent implementation record
 
+## November 3 session and native-fetch failures reproduced and repaired locally
+
+The latest Dev browser reproduced two concrete frontend failures:
+
+- Direct MCP initialization failed with native `Window.fetch` **Illegal invocation**.
+  The class called unbound fetch with the conversation instance as receiver.
+  Binding injected fetch to the global receiver fixes the regression without
+  changing Fabric endpoints, headers, questions, native answers or source checks.
+- A running read-only Multi Agent prompt and its preceding history disappeared
+  when telemetry connection/refresh called `clearWorkspaceConfigCache`; its
+  hosted invocation was aborted. Cache revision and transient cleared discovery
+  values were incorrectly treated as conversation identity.
+
+Conversation ownership now lives in the shared app data provider rather than
+the navigated chat page. Refresh and navigation retain transcripts, running
+requests and hosted conversation scope. Verified ontology/source/principal
+changes still invalidate context. State remains in the active SPA's memory,
+not browser storage; a full browser reload starts a new local session. Direct
+MCP questions remain independent rather than claiming unsupported continuation.
+
+All 50 focused contracts, TypeScript, ESLint and production build pass.
+Publication and actual refreshed-page acceptance of these fixes remain pending.
+The fresh Feature task-owned page also completed normal sign-in and now loads
+the app; the earlier popup blocker is historical, not a current certified
+failure of all Feature sign-ins.
+
 ## November 3 latest full Dev and Feature rollout completed
 
 All requested source and remaining local configuration are committed and pushed

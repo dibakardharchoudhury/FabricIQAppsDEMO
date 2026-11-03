@@ -22,7 +22,7 @@ export class DirectFabricMcpConversation {
   private artifacts: string[] = []
   constructor(access: (signal: AbortSignal) => Promise<DirectAccess>, fetcher: typeof fetch = fetch, onIdentity?: (key: string) => void) {
     this.access = access
-    this.fetcher = fetcher
+    this.fetcher = fetcher.bind(globalThis)
     this.onIdentity = onIdentity
   }
   reset() {
