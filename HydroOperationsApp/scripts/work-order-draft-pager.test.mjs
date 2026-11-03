@@ -251,7 +251,11 @@ test('expanded flow and compact crew grids reserve the intrinsic composer height
   const css = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
   assert.equal([...css.matchAll(/\.v2-copilot\.v2-expanded-view\.has-expanded-flow\s*\{/g)].length, 2)
   assert.match(css, /\.v2-copilot > footer\s*\{[^}]*min-height:\s*min-content/)
-  assert.match(css, /\.v2-copilot\.v2-expanded-view\.has-conversation-crew\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, auto\) minmax\(0, 1fr\) auto/)
+  for (const selector of ['.v2-copilot.has-conversation-crew', '.v2-copilot.v2-expanded-view.has-conversation-crew']) {
+    const rule = css.slice(css.indexOf(`${selector} {`)).split('}')[0]
+    assert.match(rule, /grid-template-rows:\s*auto minmax\(0, auto\) minmax\(0, 1fr\) max-content/)
+  }
+  assert.match(css, /\.v2-conversation-crew\s*\{[^}]*min-height:\s*0/)
   assert.match(css, /@media \(max-height: 560px\), \(max-width: 760px\)\s*\{\s*\.v2-intelligence-modes > \.v2-page-head\s*\{\s*display: none/)
 })
 
