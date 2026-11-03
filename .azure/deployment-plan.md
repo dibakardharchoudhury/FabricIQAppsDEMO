@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Selected conversation view retention
+> **Status:** Deployed - Selected conversation view retention
 
 ## Selected conversation view retention
 
@@ -36,8 +36,25 @@ scripts\agent-trace.test.ts scripts\work-order-draft-pager.test.mjs`;
 `eslint src\services\intelligenceModes.ts src\components\IntelligenceExperience.tsx`;
 `tsc -b`; `npm run validate-env`; `npm run build`.
 No ARM template or role assignment changed, so what-if and static role delta
-validation are inapplicable. Canonical publication and live remount acceptance
-remain required on both targets.
+validation are inapplicable.
+
+### Section 8: Publication and selected-view acceptance
+
+Both canonical commands completed with SUCCESS and endpoint/CORS/POST/consent
+checks, preserving all 56 SPA redirects. Actual browser builds are Dev
+1.0.1360 / e647ebc and Feature 1.0.1364 / 98358dd. Feature recovered an
+interrupted static upload through a clean, pushed generated-configuration
+checkpoint and the full canonical command; no deployment state was removed or
+redirect list hand-edited.
+
+Authenticated fresh-bundle execution verified Direct and Battle selection,
+in-flight questions and terminal answers through Overview/back navigation on
+both targets. All three modes completed: Direct and both Battle lanes showed
+the exact three facilities; ordinary Multi automatically used Sparky for Foyers'
+five turbines, 30 registered signals and three SQL work orders/statuses.
+Ordinary Multi's narrower context did not leak into Battle. App/service source
+parity differs only in generated Rayfin configuration. Full receipts and measured
+latencies are in [the implementation record](../docs/foundry-multi-agent-implementation.md).
 
 The deeper runtime test separately found disagreement on Feature's latest
 historical timestamp between native Direct and native Responses/Multi. It is

@@ -55,8 +55,46 @@ same-identity refresh/remount, and resets with history on identity changes.
 Admin visibility resolution, independent sessions, native answers, source
 bindings and approval boundaries are unchanged. No browser storage is added.
 Both new regressions failed first; all 61 focused contracts, lint, type-check,
-environment validation and production build pass. Fresh publication and
-remount acceptance will be recorded after the canonical deployments.
+environment validation and production build pass.
+
+### Selected-view publication and fresh-browser acceptance
+
+Both canonical deployments completed all endpoint/CORS/POST/consent checks,
+preserving all 56 registered SPA redirects:
+
+| Target | Actual browser build / compiled source | Canonical completion |
+| --- | --- | --- |
+| Dev | 1.0.1360 / e647ebc | 2026-11-03T22:20:21Z; 647.219s |
+| Feature | 1.0.1364 / 98358dd | 2026-11-03T22:39:14Z; 522.266s |
+
+Feature's first static upload failed with `fetch failed`. Its generated redirect
+ordering was checkpointed and pushed without changing the registered origin
+set; the complete canonical command then succeeded from clean state. No
+deployment state was deleted, no manual redirect edit was made, and no
+individual Rayfin command substituted for the orchestrator.
+
+Fresh authenticated browser execution on those exact displayed builds passed:
+
+| Scenario | Dev | Feature |
+| --- | --- | --- |
+| Ordinary Direct | 103s; exact three facilities and native CSV table | 103s; same exact rows and native CSV table |
+| Ordinary Multi, Foyers scope | 145s; automatic Sparky, five turbines, 30 signals, three SQL orders/statuses | 143s; automatic Sparky and identical scoped counts/orders/statuses |
+| Independent Battle, all facilities | Direct 44.5s / Multi 76s; both show all three facilities | Direct 83s / Multi 82s; both show all three facilities |
+
+Direct and Battle remained selected through Overview/back navigation while
+requests were executing on both targets. Questions, running requests, terminal
+answers and rendered tables remained available; completed Multi answers also
+survived navigation. The narrower ordinary Multi scope did not leak into either
+Battle lane. Norwegian Energy Map remains visible on both targets.
+The complete app/service release comparison differs only in generated
+`rayfin.yml`; a focused parity check covered 275 tracked implementation,
+script, manifest and service files. Both release worktrees and main were clean
+before recording these receipts.
+
+These are scoped passes, not a reversal of the historical-maximum failure
+above. Native latest-event correctness, latency optimization, approval writes,
+delivery, initial sign-in latency and intermittent analytical connector timeouts
+remain uncertified by this release.
 
 ## November 3 live code parity and three-mode acceptance
 
