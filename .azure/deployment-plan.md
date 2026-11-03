@@ -1,6 +1,52 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Resized composer and prepared map preservation
+> **Status:** Validated - Live parity and execution timeline follow-up
+
+## Live parity and execution timeline follow-up
+
+Retain the approved Dev/Feature targets and canonical sequential deployment.
+This frontend-only correction includes retained trace timestamps when choosing
+the execution timeline origin. Later hosted status updates must not make
+earlier recorded activity display as negative time. Audit timestamps, agent
+instructions, native answers, source bindings and permissions remain unchanged.
+The same publication also renders actual native CSV files inline in Direct
+and Battle. Preserve every source column/cell, original answer/hash and download.
+Malformed CSV/UTF-8 must show an explicit limitation, not guessed rows. Large
+tables use 50-row pages; Copy retains the complete original CSV. Exact tables
+already present in native Markdown are not repeated.
+
+All validation checks pass:
+- [x] 1. Core Validation (CLI, auth, build, validate, what-if): focused timeline,
+  answer, conversation and mode tests; supported Node 24 environment/build;
+  approved tenant/subscription readback. No ARM/template delta exists.
+- [x] 2. Docker Build (if containerized): verify the packaged source fingerprint
+  is unchanged; this browser trace helper is not copied into the hosted image.
+- [x] 3. Azure Policy Validation: existing scope and controls; no infrastructure,
+  role assignment, identity, network, model, quota or source-profile change.
+
+### Section 7: Validation Proof - execution timeline
+
+November 3, 2026: the regression reproduced a timeline origin of 86000ms
+instead of the retained first trace at 23000ms, producing -63 seconds.
+The corrected origin renders offsets of 0 and 25 seconds without rewriting
+either original event or trace timestamps. All 64 trace, answer and conversation
+tests plus seven independent-mode/session tests pass. Focused ESLint,
+`npm run validate-env`, TypeScript and the Node 24 production build pass
+(Vite 69s; existing chunk warnings only).
+The added native-file presentation passes all 59 combined native MCP/Direct,
+mode/session, trace and actual-component contracts, including quoted CSV,
+header-only results, blank cells, malformed UTF-8/CSV, inline-table deduplication,
+50-row rendering and complete copied CSV. Focused ESLint and the subsequent
+Node 24 environment/TypeScript/production build pass (Vite 18.77s).
+
+Azure CLI readback confirms the approved Enabled subscription and tenant;
+three current subscription policy assignments were retrieved successfully.
+Static Role Assignment Verification: no IaC or role assignment changed.
+No ARM template exists in this frontend delta, so template validation/what-if
+and a new container build are inapplicable. Canonical packaged-source hashing
+remains `218480810c35612191dac7ab28180d4a1959d5e7621f3fb1d8c5b8bcfaa42840`.
+Full canonical runtime/CORS, consent, redirect-preservation and publication
+readback remain mandatory for both targets.
 
 ## Resized composer follow-up
 

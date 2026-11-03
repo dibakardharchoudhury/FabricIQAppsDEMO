@@ -1,5 +1,72 @@
 # Foundry and multi-agent implementation record
 
+## November 3 live code parity and three-mode acceptance
+
+Read-only live verification confirms matching hosted image digest
+`sha256:f926a9f8b5761a4c955977b9ef2aa48b910c15b7eb1c704d86b4fea76e5aa241`
+and packaged source fingerprint
+`218480810c35612191dac7ab28180d4a1959d5e7621f3fb1d8c5b8bcfaa42840`.
+All five versioned specialist definitions match their selected release and have
+the same normalized contract hash
+`77533a1ec2bc5ea7b57224f69f69a829b03101d4f287aa8c43828f6a84f1bc4d`.
+Normalization replaces only the verified workspace-specific IQ connection.
+Generation-2 ontology ownership, source publication, native bindings and runtime
+configuration readback pass for both targets. No agent work was submitted by
+this parity probe. Hosted versions 5 (Dev) and 6 (Feature) are independent
+workspace version counters, not different code.
+
+Before the inline-table/timeline follow-up, both deployed app source trees are
+`9281ef1eac7cf86dd368a856717e7956c014959e`, and both service source trees are
+`ff8bc679cab6aee219a6f26916be80e40e844c8c`.
+The only tracked release-scope difference is generated Rayfin configuration.
+
+Authenticated browser execution on Dev `1.0.1354` / `94be620` and Feature
+`1.0.1355` / `eb9dbcc` produced these source/orchestration receipts:
+
+| Mode | Dev | Feature |
+| --- | --- | --- |
+| Direct Fabric IQ | 88s; native CSV has the three exact facility IDs/names | 109s; identical three-row native CSV |
+| Multi Agent | Foyers-only seed 217s; referential correlation 234s | Foyers-only seed 181s; referential correlation 149s |
+| Battle | Direct 52s; independent Multi 81s | Direct 54.7s; independent Multi 76s |
+
+Both contextual correlations automatically used Sparky without naming an agent
+in the prompt, retained only FACILITY_RTI_002 / Foyers, and returned five turbines
+(T006-T010) with 30 registered signals. Both explicitly describe stale telemetry
+as unknown current condition, not a mechanical fault. Dev's latest observed
+event is `2026-11-03T11:57:50.823106Z`; Feature's is
+`2026-11-02T20:38:28.938354Z`. Different workspace data/freshness is not code drift.
+Mode switching preserved the running correlation and previous Direct answer.
+Both Battle lanes returned all three facilities despite the ordinary Multi
+conversation's narrower scope. Native CSV bytes were checked against the three
+known IDs/names, and native evidence downloads remained available.
+Aborted stream-close events accompanied successful terminal responses and are
+not, by themselves, request failures. These timings do not establish that
+latency is optimized or certify arbitrary numerical completeness.
+
+### Native tables and execution timeline
+
+The user's Feature Battle screenshot exposed a presentation gap despite correct
+retrieval: native prose referenced result_0.json while the actual returned
+result_0.csv remained only a download. Direct and Battle now carry strictly
+parsed native CSV datasets into the shared response renderer. Tables retain
+source column names, strings, empty cells and identifiers; no model rewrite,
+new source request, proxy or Foundry fallback is introduced. Original prose,
+hashes and downloads remain unchanged. Actual inline Markdown tables are
+deduplicated; fenced examples and ordinary prose do not suppress a result table.
+Malformed CSV/UTF-8 produces an explicit limitation with the original download
+retained. Tables use 50-row pages, and Copy includes every original CSV row.
+All 59 focused native protocol, independent mode/session, timeline and actual
+component-rendering tests pass. Focused ESLint and the supported Node 24
+environment/TypeScript/production build pass (Vite 18.77s).
+
+The separate negative execution-time defect was reproduced as -63 seconds.
+Hosted status updates can carry trace activity recorded before their own update
+timestamp. The timeline now starts at the earliest recorded activity, preserving
+the original audit timestamps instead of clamping negative values.
+Publication and fresh-bundle inline-table/timing acceptance are recorded below.
+No operational writes, work-order approvals or Teams/email delivery were tested
+by this read-only matrix; previous maintenance receipts retain their own scope.
+
 ## November 3 operator response and composer follow-up
 
 Maintenance completion reasons now use brief operator language, not response
