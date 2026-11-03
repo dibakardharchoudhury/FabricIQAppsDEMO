@@ -1,5 +1,72 @@
 # Foundry and multi-agent implementation record
 
+## November 3 live code parity and three-mode acceptance
+
+Read-only live verification confirms matching hosted image digest
+`sha256:f926a9f8b5761a4c955977b9ef2aa48b910c15b7eb1c704d86b4fea76e5aa241`
+and packaged source fingerprint
+`218480810c35612191dac7ab28180d4a1959d5e7621f3fb1d8c5b8bcfaa42840`.
+All five versioned specialist definitions match their selected release and have
+the same normalized contract hash
+`77533a1ec2bc5ea7b57224f69f69a829b03101d4f287aa8c43828f6a84f1bc4d`.
+Normalization replaces only the verified workspace-specific IQ connection.
+Generation-2 ontology ownership, source publication, native bindings and runtime
+configuration readback pass for both targets. No agent work was submitted by
+this parity probe. Hosted versions 5 (Dev) and 6 (Feature) are independent
+workspace version counters, not different code.
+
+Before the inline-table/timeline follow-up, both deployed app source trees are
+`9281ef1eac7cf86dd368a856717e7956c014959e`, and both service source trees are
+`ff8bc679cab6aee219a6f26916be80e40e844c8c`.
+The only tracked release-scope difference is generated Rayfin configuration.
+
+Authenticated browser execution on Dev `1.0.1354` / `94be620` and Feature
+`1.0.1355` / `eb9dbcc` produced these source/orchestration receipts:
+
+| Mode | Dev | Feature |
+| --- | --- | --- |
+| Direct Fabric IQ | 88s; native CSV has the three exact facility IDs/names | 109s; identical three-row native CSV |
+| Multi Agent | Foyers-only seed 217s; referential correlation 234s | Foyers-only seed 181s; referential correlation 149s |
+| Battle | Direct 52s; independent Multi 81s | Direct 54.7s; independent Multi 76s |
+
+Both contextual correlations automatically used Sparky without naming an agent
+in the prompt, retained only FACILITY_RTI_002 / Foyers, and returned five turbines
+(T006-T010) with 30 registered signals. Both explicitly describe stale telemetry
+as unknown current condition, not a mechanical fault. Dev's latest observed
+event is `2026-11-03T11:57:50.823106Z`; Feature's is
+`2026-11-02T20:38:28.938354Z`. Different workspace data/freshness is not code drift.
+Mode switching preserved the running correlation and previous Direct answer.
+Both Battle lanes returned all three facilities despite the ordinary Multi
+conversation's narrower scope. Native CSV bytes were checked against the three
+known IDs/names, and native evidence downloads remained available.
+Aborted stream-close events accompanied successful terminal responses and are
+not, by themselves, request failures. These timings do not establish that
+latency is optimized or certify arbitrary numerical completeness.
+
+### Native tables and execution timeline
+
+The user's Feature Battle screenshot exposed a presentation gap despite correct
+retrieval: native prose referenced result_0.json while the actual returned
+result_0.csv remained only a download. Direct and Battle now carry strictly
+parsed native CSV datasets into the shared response renderer. Tables retain
+source column names, strings, empty cells and identifiers; no model rewrite,
+new source request, proxy or Foundry fallback is introduced. Original prose,
+hashes and downloads remain unchanged. Actual inline Markdown tables are
+deduplicated; fenced examples and ordinary prose do not suppress a result table.
+Malformed CSV/UTF-8 produces an explicit limitation with the original download
+retained. Tables use 50-row pages, and Copy includes every original CSV row.
+All 59 focused native protocol, independent mode/session, timeline and actual
+component-rendering tests pass. Focused ESLint and the supported Node 24
+environment/TypeScript/production build pass (Vite 18.77s).
+
+The separate negative execution-time defect was reproduced as -63 seconds.
+Hosted status updates can carry trace activity recorded before their own update
+timestamp. The timeline now starts at the earliest recorded activity, preserving
+the original audit timestamps instead of clamping negative values.
+Publication and fresh-bundle inline-table/timing acceptance are recorded below.
+No operational writes, work-order approvals or Teams/email delivery were tested
+by this read-only matrix; previous maintenance receipts retain their own scope.
+
 ## November 3 operator response and composer follow-up
 
 Maintenance completion reasons now use brief operator language, not response
@@ -87,7 +154,7 @@ An actual-browser preview of the complete updated stylesheet keeps 88px and
 655.33px, 515.33px and 575.33px respectively, with no horizontal overflow.
 Normal Direct, compact Multi (normal/maximized) and Battle also fit those three
 viewports. Narrow Direct retains both the 88px and resized 200px composer.
-Publication and actual new-bundle acceptance remain required for this follow-up.
+The final publication and actual new-bundle composer acceptance are recorded below.
 
 Fresh Feature acceptance also exposed normal compact Multi with a manually
 resized 200px input: its bottom reached 669.17px at 390x600. Every chat grid now
@@ -95,7 +162,46 @@ reserves a max-content footer track, and the crew has an explicit zero minimum.
 All 21 component tests and the Node 24 production build pass (Vite 56.24s).
 The complete-stylesheet preview passes all 24 normal/maximized, compact/side-flow
 Multi combinations, 12 Direct combinations and three Battle viewports, including
-88px/200px inputs where supported. Final publication/readback remains pending.
+88px/200px inputs where supported.
+
+### Final composer publication and runtime receipts
+
+Both final canonical deployments completed successfully on November 3:
+
+| Target | Compiled source | Displayed app | Completion (UTC) | Duration |
+| --- | --- | --- | --- | --- |
+| Feature | `eb9dbcc` | `1.0.1355` | `19:58:35Z` | 734.515s |
+| Dev | `94be620` | `1.0.1354` | `20:10:57Z` | 720.828s |
+
+Both runs reused the existing specialists and hosted image, preserved all 56
+SPA redirects, reapplied runtime/CORS and database/connector settings, and
+passed the protected endpoint, POST and consent gates. These deployment gates
+do not themselves certify authenticated source queries.
+
+Owned browser pages were reloaded onto the actual compiled sources, removing
+all injected preview styles. Each target passed 39 composer cases: 24 Multi
+combinations with real execution events, 12 Direct combinations and three
+Battle viewports. Normal/maximized and compact/side-flow layouts were exercised
+at 1200x680, 1024x540 and 390x600, with 88px and manually resized 200px inputs.
+Inputs and buttons remained visible without horizontal document overflow.
+Normal narrow Multi ends at 575.33px, with its footer at 587.33px; expanded
+desktop ends at 655.33px, with its footer at 667.33px. Running Multi retained
+the Stop icon. No preview stylesheet was used for these final measurements.
+
+Read-only Multi facility questions on the final bundles returned the same
+three facility IDs/names in concise tables (displayed durations approximately
+79s Feature and 80s Dev). Feature retained the executing conversation across
+navigation to the map and back. No drafts or operational writes were requested.
+
+Before the final CSS-only rollout, Feature `1.0.1352` also completed a genuine
+two-turn correlation: a facility question followed by "For those facilities,
+correlate turbine equipment with the latest telemetry availability. Treat missing
+data as unknown. Do not stage drafts or change any records." The follow-up
+automatically invoked Sparky without naming an agent, retained the earlier
+facility scope across chat-mode switches, and completed in 2m42s. It reported
+15 turbines and 90 active signals across those facilities, with all latest
+readings stale and zero fresh, rather than asserting current equipment health.
+Independent numerical completeness is not certified by that runtime receipt.
 
 ### Norwegian Energy Map deployment regression
 
@@ -119,6 +225,17 @@ features and nine area overlays, plus live grid frequency. Its one-day-old
 country balance remains explicitly stale, not live. Source readback verifies
 12 layers and nine polygons on both targets, with 75 Feature and 78 Dev
 asset-message links. No work orders were approved or created.
+
+The final CSS-only bundles above retain the Norwegian Energy Map navigation
+on both targets, and both deployments reverified the prepared read models.
+However, subsequent fresh-browser map acceptance encountered repeated 30-second
+AppBackend connector timeouts, including on a second owned Feature page and
+after reload/reconnect attempts. A 45-second response probe received no
+hydrogeo response. A separate live Fabric capacity read still reports Active.
+The new page also correctly requires Eventhouse consent before live frequency
+can be read. The earlier 2,161-feature browser receipt remains valid for its
+recorded build; it must not be presented as a successful final-bundle map-source
+read. Final authenticated map-source acceptance is blocked, not certified.
 
 Separate portal tests did not reach the SPA because the AppBackend extension
 worker failed to render; they do not establish a Direct-agent transport failure

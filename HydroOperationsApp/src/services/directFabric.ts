@@ -1,7 +1,11 @@
 import type { AgentAnswer, AgentArtifact } from './assistantStream'
+import type { AnswerDataset } from './copilot/answerPresentation'
 
 export type NativeCitation = { title: string; url?: string; fileId?: string }
-export type DirectAnswer = AgentAnswer & { citations?: NativeCitation[]; nativeResponseId?: string; nativeTextSha256?: string; continuationSupported?: false }
+export type DirectAnswer = AgentAnswer & {
+  citations?: NativeCitation[]; nativeResponseId?: string; nativeTextSha256?: string; continuationSupported?: false
+  nativeTables?: AnswerDataset[]; nativeTableIssues?: string[]
+}
 export { DirectFabricMcpConversation as DirectFabricConversation } from './directFabricMcp'
 export type DirectAccess = {
   key: string

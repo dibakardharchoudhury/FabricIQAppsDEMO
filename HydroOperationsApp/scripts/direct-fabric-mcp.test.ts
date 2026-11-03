@@ -59,6 +59,8 @@ test('active Direct entry uses official published MCP protocol only and preserve
   assert.equal(result.nativeResponseId, undefined)
   const hash = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(answer))).toString('hex')
   assert.equal(result.nativeTextSha256, hash)
+  assert.deepEqual(result.nativeTables, [{ format: 'csv', title: 'result_0.csv', columns: ['facility_id', 'facility_name'], rows: [['F1', 'Native facility']], csv }])
+  assert.deepEqual(result.nativeTableIssues, [])
   assert.deepEqual(calls.map(call => call.request.method).filter(Boolean), ['initialize', 'notifications/initialized', 'tools/list', 'tools/call'])
   assert.deepEqual(calls.at(-1)?.request.params, { name: 'Published_tool', arguments: { userQuestion: question } })
   assert.equal(powerBiTokenRequests(), 0)
@@ -68,6 +70,65 @@ test('active Direct entry uses official published MCP protocol only and preserve
   const evidence = result.artifacts!.find(file => file.name === 'native-mcp-evidence.json')!
   assert.deepEqual(await (await fetch(evidence.url!)).json(), nativeResult())
   client.reset()
+})
+
+test('native CSV tables preserve quoted values, blank records, leading zeroes and header-only results', async () => {
+  for (const [data, columns, rows] of [
+    ['id,label\r\n001,"A, B"\r\n,""\r\n', ['id', 'label'], [['001', 'A, B'], ['', '']]],
+    ['value\r\n""\r\n', ['value'], [['']]],
+    ['id,label\r\n', ['id', 'label'], []],
+  ] as const) {
+    const { client } = fixture(request => request.method === 'tools/call' ? { content: [
+      { type: 'text', text: answer },
+      { type: 'resource', resource: { uri: 'file:///rows.csv', mimeType: 'text/csv', blob: Buffer.from(data).toString('base64') } },
+    ] } : undefined)
+    const result = await client.ask(question, new AbortController().signal)
+    assert.deepEqual(result.nativeTables?.[0]?.columns, columns)
+    assert.deepEqual(result.nativeTables?.[0]?.rows, rows)
+    assert.equal(result.nativeTables?.[0]?.csv, data)
+    assert.deepEqual(result.nativeTableIssues, [])
+    client.reset()
+  }
+})
+
+test('native tables deduplicate actual inline Markdown, not fenced examples or ordinary prose', async () => {
+  const table = '| facility_id | facility_name |\n| --- | --- |\n| F1 | Native facility |'
+  const bullets = '- Facility\n  - facility_id: F1\n  - facility_name: Native facility'
+  for (const [text, expected] of [[table, 0], [`\`\`\`markdown\n${table}\n\`\`\``, 1], [bullets, 1], [answer, 1]] as const) {
+    const { client } = fixture(request => request.method === 'tools/call'
+      ? { content: [{ type: 'text', text }, nativeResult().content[1], nativeResult().content[1]] } : undefined)
+    const result = await client.ask(question, new AbortController().signal)
+    assert.equal(result.text, text)
+    assert.equal(result.nativeTables?.length, expected)
+    client.reset()
+  }
+})
+
+test('invalid UTF-8 CSV bytes are never silently replaced in native tables', async () => {
+  const { client } = fixture(request => request.method === 'tools/call' ? { content: [
+    { type: 'text', text: answer },
+    { type: 'resource', resource: { uri: 'file:///broken.csv', mimeType: 'text/csv', blob: Buffer.from([0xff]).toString('base64') } },
+  ] } : undefined)
+  const result = await client.ask(question, new AbortController().signal)
+  assert.deepEqual(result.nativeTables, [])
+  assert.match(result.nativeTableIssues?.[0] ?? '', /not valid UTF-8/)
+  assert.deepEqual(new Uint8Array(await (await fetch(result.artifacts![0].url!)).arrayBuffer()), new Uint8Array([0xff]))
+  client.reset()
+})
+
+test('malformed native CSV remains downloadable with an explicit presentation error, never fabricated rows', async () => {
+  for (const data of ['id,label\nF1', 'id,id\nF1,F2', 'id,label\nF1,"unterminated']) {
+    const { client } = fixture(request => request.method === 'tools/call' ? { content: [
+      { type: 'text', text: answer },
+      { type: 'resource', resource: { uri: 'file:///broken.csv', mimeType: 'text/csv', text: data } },
+    ] } : undefined)
+    const result = await client.ask(question, new AbortController().signal)
+    assert.equal(result.text, answer)
+    assert.deepEqual(result.nativeTables, [])
+    assert.match(result.nativeTableIssues?.[0] ?? '', /malformed|inconsistent/)
+    assert.equal(await (await fetch(result.artifacts![0].url!)).text(), data)
+    client.reset()
+  }
 })
 
 test('subsequent MCP questions remain exact independent requests without invented conversation IDs or context envelopes', async () => {

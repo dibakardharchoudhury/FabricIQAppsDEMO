@@ -28,6 +28,13 @@ export function automaticCrewRole(events: OrchestrationEvent[]) {
     ?? events[0]?.role
 }
 
+export function crewTimelineStart(events: OrchestrationEvent[]) {
+  return Math.min(...events.flatMap(event => [
+    event.timestamp,
+    ...(event.trace ?? []).map(entry => entry.timestamp),
+  ]))
+}
+
 export function crewCommunications(events: OrchestrationEvent[]) {
   return events.flatMap(event => {
     const parent = events.find(parent => parent.id === event.parentId)

@@ -3,7 +3,7 @@ import { Activity, Check, ClipboardCheck, CloudSun, ExternalLink, GitBranch, Sea
 import type { AgentRole, OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
 import { AGENT_DISPLAY_NAMES } from '../services/copilot/orchestration'
 import { workOrderApprovals } from '../services/copilot/workOrderApproval'
-import { applicationInsightsLink, automaticCrewRole, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../services/copilot/agentTrace'
+import { applicationInsightsLink, automaticCrewRole, crewCommunications, crewHandoffs, crewTimelineStart, executionStatus, responseTraceQuery } from '../services/copilot/agentTrace'
 import './AgentCrewTrace.css'
 import { CopilotHelper } from './CopilotHelper'
 
@@ -62,7 +62,7 @@ export const AgentCrewTrace = memo(function AgentCrewTrace({ events, proposals =
   const activeCrew = CREW.filter(member => member.role === 'supervisor' || events.some(event => event.role === member.role))
   const focusedEvents = displayedEvents.filter(event => event.role === focused)
   const trace = focusedEvents.flatMap(event => event.trace ?? []).sort((a, b) => a.timestamp - b.timestamp)
-  const start = Math.min(...events.map(event => event.timestamp))
+  const start = crewTimelineStart(events)
   const latest = focusedEvents[focusedEvents.length - 1]
   const communications = crewCommunications(events)
   const currentCommunications = crewCommunications(currentEvents)
