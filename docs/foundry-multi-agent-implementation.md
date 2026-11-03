@@ -47,6 +47,24 @@ ESLint and production build passed. Publication and live acceptance of this
 follow-up remain pending; these results do not certify Battle, draft accuracy
 or operational delivery.
 
+### Historical scope at the native handoff
+
+On Dev release `0808356`, ordinary Q&A returned the three actual facility rows
+in 15.5s, and a subsequent question retained the same hosted session, previous
+table and in-flight state through refresh/navigation. Sparky nevertheless asked
+which facilities: its independent native call contained the current question
+but omitted the backend's already-validated historical context.
+
+Multi Agent now explicitly supplies that bounded, same-source historical context
+at the native handoff. It is marked untrusted reference/scope context, not fresh
+evidence, executable instructions or authorization; requested facts must be read
+afresh. The stable serialized context also participates in the handoff journal
+key, so rerunning the same handoff cannot replay a native call under a new clock.
+Standalone Direct questions remain unchanged and independent. All 227 focused
+supervisor/conversation/native-fidelity/semantic-planning tests completed
+successfully (one intentional skip), plus all 66 hosted packaging contracts.
+Publication and actual scoped-follow-up acceptance remain required.
+
 ## November 3 latest full Dev and Feature rollout completed
 
 All requested source and remaining local configuration are committed and pushed
