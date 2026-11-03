@@ -562,6 +562,54 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner.invoke.assert_not_awaited()
         self.assertEqual(client_presentation(owner.native_answer(request)).text.encode(), text.encode())
 
+    async def test_native_follow_up_receives_same_source_history_without_claiming_continuation(self):
+        from test_semantic_planning import decision
+        previous = HistoricalContext(
+            run_id=uuid4(), source=SOURCE, question="Show facility identifiers and names.",
+            rendered_answer="| facility_id | facility_name |\n|---|---|\n"
+                            "| FACILITY_RTI_001 | Sloy Power Station |\n"
+                            "| FACILITY_RTI_002 | Foyers Power Station |\n",
+            requested_at=utc_now() - timedelta(minutes=1), proposal_ids=(),
+        )
+        request = self.request.model_copy(update={
+            "question": "For those facilities, correlate historical quality and open work. Read only.",
+            "native_sources": ("data-agent",), "previous_run_id": previous.run_id,
+            "historical_context": previous,
+        })
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=())
+        owner = self.make_owner(
+            semantic_planning=True, analysis_model="test-model",
+            native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                         toolbox=version.name),
+        )
+        owner.run_id = request.run_id
+        owner.semantic_decision = SemanticDecision.model_validate(decision("fabric-iq", "native_claims", False))
+        owner.answer_contract = owner.semantic_decision.plan.answer_contract
+        text = "Native fresh-source answer.\r\n"
+        call = NativeDataAgentCall("native-follow-up", {"input": request.question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
+        journal = RunJournal(self.root / "native-follow-up")
+        owner.invoke = AsyncMock(side_effect=AssertionError("A wrapper model was invoked."))
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call) as native:
+            await owner.handoff(owner.semantic_decision.plan.steps[0], request, journal, {"fabric-iq": version})
+            sent = native.call_args.args[3]
+            self.assertEqual(previous.rendered_answer,
+                             json.loads(sent.split("Historical conversation context:\n")[1])["rendered_answer"])
+            self.assertTrue(sent.startswith(request.question))
+            self.assertIn("not current evidence or authorization", sent)
+            owner.evidence.clear()
+            owner.specialists.clear()
+            await owner.handoff(owner.semantic_decision.plan.steps[0], request, journal, {"fabric-iq": version})
+            native.assert_awaited_once()
+            await owner.invoke_data_agent(request.question, request, journal, version, passthrough=True)
+            self.assertEqual(native.call_args.args[3], sent)
+        owner.invoke.assert_not_awaited()
+        self.assertEqual(owner.specialists[0].text.encode(), text.encode())
+
     async def test_rca_handoff_scopes_native_evidence_and_does_not_replay_unscoped_cache(self):
         from test_semantic_planning import decision
         request = self.request.model_copy(update={
