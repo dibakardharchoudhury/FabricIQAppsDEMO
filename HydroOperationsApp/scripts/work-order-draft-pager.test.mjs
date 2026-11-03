@@ -9,6 +9,7 @@ import * as answerPresentation from '../src/services/copilot/answerPresentation.
 import * as orchestration from '../src/services/copilot/orchestration.ts'
 import * as suggestions from '../src/services/copilot/suggestions.ts'
 import * as intelligenceModes from '../src/services/intelligenceModes.ts'
+import * as settings from '../src/services/copilot/settings.ts'
 const { isWorkOrderRequest } = orchestration
 
 const require = createRequire(import.meta.url)
@@ -27,6 +28,7 @@ function loadComponent(file, symbol) {
     if (specifier === './WorkOrderDraftPager') return { WorkOrderDraftPager }
     if (specifier === './CopilotExperience') return { CopilotExperience, CopilotResponse: AgentMessage }
     if (specifier === '../services/intelligenceModes') return intelligenceModes
+    if (specifier === '../services/copilot/settings') return settings
     if (specifier === './AgentCrewTrace') return { AgentCrewTrace: Empty }
     if (specifier === './AnswerDashboard') return { AnswerDashboard: Empty }
     if (specifier === './AgentVisualizationView') return { AgentVisualizationView: Empty }
@@ -53,21 +55,21 @@ const drafts = count => Array.from({ length: count }, (_, index) => ({
   priority: 'Medium', createdAt: 0,
 }))
 
-test('Hydro Intelligence has accessible Fabric IQ, default Multi Agent and read-only Battle tabs', () => {
+test('Hydro Intelligence has accessible Fabric IQ, default Multi Agent and read-only Battle modes', () => {
   const conversations = new intelligenceModes.IntelligenceConversations(async () => ({ text: 'answer' }))
   const html = renderToStaticMarkup(createElement(IntelligenceExperience, {
     conversations, snapshot: conversations.getSnapshot(), identity: 'test',
   }))
   assert.equal((html.match(/<h1>Hydro Intelligence<\/h1>/g) ?? []).length, 1)
-  assert.match(html, /role="tablist" aria-label="Hydro Intelligence modes"/)
-  assert.equal((html.match(/role="tab"/g) ?? []).length, 3)
-  assert.equal((html.match(/role="tabpanel"/g) ?? []).length, 3)
-  assert.match(html, /aria-selected="true"[^>]*>Multi Agent/)
-  assert.match(html, />Fabric IQ<\/button>/)
-  assert.match(html, />Battle of the Agents<\/button>/)
+  assert.match(html, /aria-label="Chat mode: Multi Agent"/)
+  assert.equal((html.match(/type="radio"/g) ?? []).length, 3)
+  assert.equal((html.match(/role="region" aria-label="(?:Fabric IQ|Multi Agent|Battle of the Agents) conversation"/g) ?? []).length, 3)
+  assert.match(html, /type="radio"[^>]*checked=""/)
+  assert.match(html, />Fabric IQ<\/span>/)
+  assert.match(html, />Battle of the Agents<\/span>/)
   assert.match(html, /Review and approval are available only in Multi Agent/)
   assert.match(html, /Ask about connected Fabric data/)
-  assert.match(html, /published MCP tool does not declare native conversation or previous-response continuation/)
+  assert.match(html, /earlier turns are not sent as context/)
 })
 
 test('team capabilities include all roles without pretending unused specialists executed', () => {
@@ -204,6 +206,45 @@ test('a completed draft request without typed cards has an explicit visual outco
   }))
   assert.match(empty, /No approval-ready work-order drafts returned/)
   assert.doesNotMatch(empty, /Thinking/)
+})
+
+test('a checked maintenance review appears once without a duplicate outcome banner', () => {
+  const reason = 'No current telemetry samples were returned; BAD-quality turbines cannot be assessed.'
+  const html = renderToStaticMarkup(createElement(AgentMessage, {
+    question: 'Which WOs need to be created? Help me with the drafts.',
+    message: { role: 'agent', text: 'Native answer and legacy workflow.', backendOwned: true,
+      workflowText: `## More information needed\n\n${reason}\n\nNo drafts staged; no work orders created.`,
+      workOrderReview: { decision: 'needs_clarification', reason },
+      sourceAnswers: [{ evidence_id: 'resp_private_audit', text: 'Original native evidence.',
+        content_sha256: 'a'.repeat(64) }] },
+    streaming: false, showCrew: false,
+  }))
+  assert.equal(html.split(reason).length - 1, 1)
+  assert.doesNotMatch(html, /Work-order draft outcome|Fixer finishing a review/)
+  assert.match(html, /<summary>Source evidence<\/summary>/)
+  assert.ok(html.indexOf('resp_private_audit') > html.indexOf('<details'))
+  assert.match(html, /No drafts staged; no work orders created/)
+})
+
+test('native response identity and digest are retained inside collapsed execution details', () => {
+  const html = renderToStaticMarkup(createElement(AgentMessage, {
+    message: { role: 'agent', text: 'Original native answer.', backendOwned: true, readOnly: true,
+      nativeResponseId: 'resp_native_audit', nativeTextSha256: 'b'.repeat(64) },
+    streaming: false, showCrew: false,
+  }))
+  assert.match(html, /<summary>Native execution details<\/summary>/)
+  assert.ok(html.indexOf('resp_native_audit') > html.indexOf('<details'))
+  assert.ok(html.includes('b'.repeat(64)))
+})
+
+test('Direct and Multi composers start as readable multiline inputs', () => {
+  for (const direct of [false, true]) {
+    const html = renderToStaticMarkup(createElement(CopilotExperience, {
+      direct, messages: [], busy: false, onSend: Empty, onReset: Empty,
+    }))
+    assert.match(html, /<textarea[^>]*rows="3"/)
+    assert.match(html, new RegExp(`aria-label="${direct ? 'Fabric IQ' : 'Multi Agent'} question"`))
+  }
 })
 
 test('facts, failed responses and in-flight requests do not display a completed draft outcome', () => {

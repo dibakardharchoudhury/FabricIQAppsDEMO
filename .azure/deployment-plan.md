@@ -1,6 +1,53 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Historical scope handoff follow-up
+> **Status:** Validated - Operator response and composer follow-up
+
+## Operator response and composer follow-up
+
+Retain the approved Dev/Feature targets, tenant SPA, existing Foundry project,
+75,000 TPM model allocation, permissions, source bindings and agent roles.
+Update Fixer's completion-tool guidance and the hosted presentation/validation
+code; publish a new source-fingerprinted hosted image and the viewport-fitted SPA.
+No infrastructure, source profile, notebook, deployment parameter or write
+authorization change is proposed.
+
+All validation checks pass:
+- [x] 1. Core Validation: supported Node 24 build, focused UI and supervisor tests,
+  authenticated approved Azure identity, unchanged ARM scope.
+- [x] 2. Docker Build context: verify Dockerfile, unchanged locks and hosted
+  packaging contracts; canonical remote ACR build must produce the new image.
+- [x] 3. Azure Policy Validation: verify current assignments; no new resource,
+  role, SKU, region, network or policy delta.
+
+### Section 7: Validation Proof - operator response and composer
+
+November 3, 2026: all 115 focused UI/transport contracts and the Node 24
+production build pass. New regressions reproduce duplicate review output,
+receipt-ID leakage and undersized inputs before repair. Actual 1200x680
+measurement placed the old composer bottom at 694.67px; the updated stylesheet
+provides an 88px input with bottom at 639.33px and footer bottom at 651.33px.
+The exact 40,000-byte handoff regression passes after scoping completion
+constraints to their owning specialist; the threshold is not increased.
+All 187 final supervisor/presentation tests pass (263.579s), and all 66 hosted
+packaging tests pass (16.111s). Node 24 `validate-env` passes. Dockerfile and both
+dependency locks remain unchanged; its root build context copies the changed
+Python and agent contracts and excludes credentials/local state. Local Docker
+is unavailable; the existing remote ACR build/readback remains mandatory.
+UI lint passes; the unchanged `nativeSourceError` optional parameter has a
+pre-existing unused-variable ESLint diagnostic, outside this scoped repair.
+Azure CLI readback confirms the approved tenant and Foundry subscription.
+Current inherited policy assignments returned HTTP 200. Exact ARM readback of
+the inherited creation-deny definition confirms it targets Classic resource
+types, not this existing Foundry/Fabric/ACR reuse. Existing MFA and governance
+controls remain enforced; deployment stops on an actual authorization failure.
+No Bicep/Terraform or ARM resource delta exists; template build/what-if is not
+applicable to this code-only rollout.
+
+Role Assignment Verification: no generated or modified role assignments.
+Existing delegated Fabric source access, Foundry native connection ownership,
+ACR connection and human-only SQL approval contracts remain unchanged.
+Canonical publication must verify the existing connections, activation,
+permissions/consent, runtime settings and browser-equivalent endpoint contracts.
 
 ## Historical scope handoff follow-up
 

@@ -2169,7 +2169,21 @@ class FoundrySupervisor:
         }
         if role == "rca":
             payload["receipts"] = self.model_evidence("rca")
-        return await self.bridge.call(payload)
+        validated = await self.bridge.call(payload)
+        if role == "work-order":
+            reason = validated["reason"]
+            if not isinstance(reason, str):
+                raise SourceFailure("Work-order review reason must be operator-readable text.")
+            internal_ids = set(self.evidence) | {item.response_id for item in self.specialists}
+            if any(identifier in reason for identifier in internal_ids
+                   if len(identifier) >= 16 or identifier.startswith(("resp_", "call_"))):
+                raise SourceFailure(
+                    "The review reason contains internal execution identifiers. Explain the evidence and "
+                    "missing data in plain operator language; keep receipt IDs in the execution audit."
+                )
+            if len(reason.split()) > 100:
+                raise SourceFailure("The review reason must be concise: at most 100 words.")
+        return validated
 
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         def model_result(item: ToolEvidence) -> dict[str, object]:
@@ -3571,7 +3585,11 @@ class FoundrySupervisor:
                 if role in ("qa", "weather")
                 else "Call propose_work_order through hydro_query for every justified draft, or "
                      "complete_work_order_review. No prose-only drafts, SQL writes or dispatch. "
-                     "Reuse attested coverage and batch missing reads."
+                     "Reuse attested coverage. Reason: 1-3 short operator sentences, at most 100 words; "
+                     "no internal IDs, queries, hashes or tool names. State UTC scope and missing data. "
+                     "Zero BAD samples does not prove telemetry availability or equipment health. Without "
+                     "current samples, current BAD turbines/maintenance gaps cannot be assessed; "
+                     "historical/SQL-only work inventory is separate. The app supplies draft/write status."
                 if role == "work-order"
                 else "Tables by default. Values must be source references, never authored cells. "
                      "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
@@ -3601,8 +3619,9 @@ class FoundrySupervisor:
                 else "This current turn does not request a new proposal. Do not call propose_work_order. Any draft "
                      "mentioned in historical context is read-only and must remain separate from current evidence."
             ),
-            "completion_constraints": {
+            "completion_constraints": {name: constraint for name, constraint in {
                 "complete_work_order_review": {"exact_fields": ["decision", "reason"], "reason_max_characters": 1000,
+                                               "reason_max_words": 100,
                                                "decisions": ["no_draft", "needs_clarification"]},
                 "complete_rca_assessment": {"references": "Use an exact value from allowed_evidence_ids. JSON pointers "
                                                            "resolve inside that receipt's result object, without a "
@@ -3610,7 +3629,10 @@ class FoundrySupervisor:
                                                            "allowed_evidence_references. Never reference receipt "
                                                            "metadata such as /limitations.",
                                           "hypotheses": "Two to four distinct categories; no prose diagnosis fields."},
-            },
+            }.items() if name == (
+                "complete_work_order_review" if role == "work-order"
+                else "complete_rca_assessment" if role == "rca" else None
+            )},
             "trusted_operation_skills": operation_skill_guidance(role),
         }
         if self.carried_ids:

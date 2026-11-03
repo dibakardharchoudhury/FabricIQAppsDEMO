@@ -125,7 +125,7 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
         "## Fabric Data Agent answer\n\n" + item.text for item in native
     ]
     sections: list[str] = []
-    if native:
+    if native and not has_assessments:
         sections.append("## Hydro workflow result")
     if analysis is not None:
         sections.append("## Answer\n\n" + literal(analysis.answer))
@@ -163,7 +163,7 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
                 "Recommendations are advice written from the verified evidence below. No work order exists until you "
                 "approve a staged draft. " + literal(answer.summary)
             )
-    else:
+    elif not has_assessments:
         sections.append(literal(answer.summary))
     work_review: ClientWorkOrderReview | None = None
     rca_reports: list[RcaReport] = []
@@ -186,8 +186,10 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             sections.append("\n".join(lines))
         elif specialist.role == "work-order":
             work_review = ClientWorkOrderReview.model_validate(specialist.report)
-            label = "No additional draft justified" if work_review.decision == "no_draft" else "Evidence or identity needs clarification"
-            sections.append(f"## Fixer - Maintenance review\n\n**{label}.** {literal(work_review.reason)}")
+            label = "Maintenance review" if work_review.decision == "no_draft" else "More information needed"
+            sections.append(
+                f"## {label}\n\n{literal(work_review.reason)}\n\nNo drafts staged; no work orders created."
+            )
     native_receipts = {item.evidence_id for item in native}
     charted_tables = {chart.table_id for chart in answer.charts}
     for table in answer.tables:
