@@ -1,6 +1,48 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed and verified - Native tables and execution timeline
+> **Status:** Validated - Selected conversation view retention
+
+## Selected conversation view retention
+
+The deeper browser pass reproduced Direct returning to Multi after navigation,
+despite its retained answer. Move selection into the existing app-lifetime
+conversation owner. Same-identity refresh/remount must retain the selected
+Direct or Battle view without new requests; identity changes reset selection
+with history. Preserve Admin visibility resolution and mode-local cancellation.
+Do not introduce browser storage, source caching, agent or permission changes.
+
+All validation checks pass:
+- [x] 1. Core Validation: 61 native transport, lane/session, trace and actual
+  component contracts; focused ESLint, TypeScript, validate-env and production
+  build (Vite 27.48s). Both new regression tests failed before implementation.
+  Azure CLI verified the existing Enabled subscription and approved tenant.
+- [x] 2. Docker Build: inapplicable; only browser view ownership changes,
+  with no hosted service, image, model or dependency delta.
+- [x] 3. Azure Policy Validation: three current subscription policy assignments
+  retrieved; no infrastructure, role, source profile or permission change.
+
+### Section 7: Validation Proof - selected conversation
+
+November 3, 2026: Dev's actual build 1.0.1357 changed from Fabric IQ to Multi
+after Overview/back navigation. The source initialized mode inside the
+unmounted view. The existing external store now owns selection and notifies
+subscribers without changing lane objects, submitting a question or resetting
+conversation scope. All 61 focused contracts pass, including repeated Direct
+and Battle component mounts, same-identity refresh, no-op selection, reset and
+cross-identity clearing. Focused lint/type-check and production build pass.
+Commands: `node --import tsx --test scripts\direct-fabric-mcp.test.ts
+scripts\direct-fabric.test.ts scripts\intelligence-modes.test.ts
+scripts\agent-trace.test.ts scripts\work-order-draft-pager.test.mjs`;
+`eslint src\services\intelligenceModes.ts src\components\IntelligenceExperience.tsx`;
+`tsc -b`; `npm run validate-env`; `npm run build`.
+No ARM template or role assignment changed, so what-if and static role delta
+validation are inapplicable. Canonical publication and live remount acceptance
+remain required on both targets.
+
+The deeper runtime test separately found disagreement on Feature's latest
+historical timestamp between native Direct and native Responses/Multi. It is
+not certified by this UI repair or static validation. Do not rewrite the native
+answer, add sources, or claim full correlation accuracy from publication.
 
 ## Live parity and execution timeline follow-up
 

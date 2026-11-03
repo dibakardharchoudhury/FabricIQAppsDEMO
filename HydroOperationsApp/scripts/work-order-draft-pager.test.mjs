@@ -88,6 +88,21 @@ test('team capabilities include all roles without pretending unused specialists 
   assert.doesNotMatch(html, /Conversation agent flow|On the job|Finished/)
 })
 
+test('a remounted Hydro Intelligence view restores the selected Direct or Battle conversation', () => {
+  const conversations = new intelligenceModes.IntelligenceConversations(async () => ({ text: 'answer' }))
+  for (const [mode, label] of [['direct', 'Fabric IQ'], ['battle', 'Battle of the Agents']]) {
+    conversations.selectMode(mode)
+    for (let mount = 0; mount < 2; mount++) {
+      const html = renderToStaticMarkup(createElement(IntelligenceExperience, {
+        conversations, snapshot: conversations.getSnapshot(), identity: 'test',
+      }))
+      assert.ok(html.includes(`aria-label="Chat mode: ${label}"`))
+      assert.match(html, new RegExp(`role="region" aria-label="${label} conversation"[^>]*><`))
+      assert.doesNotMatch(html, new RegExp(`role="region" aria-label="${label} conversation"[^>]*hidden`))
+    }
+  }
+})
+
 test('new conversations have no sample prompt cards or agent-routing instructions', () => {
   const html = renderToStaticMarkup(createElement(CopilotExperience, {
     messages: [{ role: 'agent', text: 'Ready.' }], busy: false, onSend: Empty, onReset: Empty,

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Bot, ChevronDown, Layers3, Square } from 'lucide-react'
 import { CopilotExperience, CopilotResponse } from './CopilotExperience'
-import { INTELLIGENCE_MODES, resolveVisibleIntelligenceMode, visibleIntelligenceModes, type IntelligenceConversations, type IntelligenceMode } from '../services/intelligenceModes'
+import { INTELLIGENCE_MODES, resolveVisibleIntelligenceMode, visibleIntelligenceModes, type IntelligenceConversations } from '../services/intelligenceModes'
 import { loadCopilotSettings, subscribeCopilotSettings } from '../services/copilot/settings'
 
 export function IntelligenceExperience({ conversations, snapshot, identity }: {
@@ -9,7 +9,7 @@ export function IntelligenceExperience({ conversations, snapshot, identity }: {
   snapshot: ReturnType<IntelligenceConversations['getSnapshot']>
   identity: string
 }) {
-  const [mode, setMode] = useState<IntelligenceMode>('multi')
+  const mode = conversations.getSelectedMode()
   const [visibility, setVisibility] = useState(() => loadCopilotSettings().intelligenceModeVisibility)
   const id = useId()
   const picker = useRef<HTMLElement | null>(null)
@@ -32,7 +32,7 @@ export function IntelligenceExperience({ conversations, snapshot, identity }: {
         <input type="radio" name={`${id}-mode`} checked={selectedMode === tab.id}
           aria-controls={`${id}-${tab.id}-panel`} onChange={event => {
             event.currentTarget.closest('details')?.removeAttribute('open')
-            setMode(tab.id)
+            conversations.selectMode(tab.id)
             requestAnimationFrame(() => picker.current?.focus())
           }} />
         <span>{tab.label}</span>

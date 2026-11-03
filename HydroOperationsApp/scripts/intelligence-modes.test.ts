@@ -136,6 +136,32 @@ test('same-identity refresh and view remount preserve active work, history and t
   remounted()
 })
 
+test('selected mode survives view remount and same-identity refresh without submitting or resetting conversations', () => {
+  let requests = 0
+  let notifications = 0
+  const controller = new IntelligenceConversations(async () => { requests++; return { text: 'answer' } })
+  controller.setIdentity('workspace/source/user')
+  assert.equal(controller.getSelectedMode(), 'multi')
+  const initial = controller.getSnapshot()
+  const unsubscribe = controller.subscribe(() => { notifications++ })
+  controller.selectMode('direct')
+  assert.equal(controller.getSelectedMode(), 'direct')
+  assert.notEqual(controller.getSnapshot(), initial)
+  assert.equal(controller.getSnapshot().direct, initial.direct)
+  controller.selectMode('direct')
+  assert.equal(notifications, 1)
+  unsubscribe()
+  controller.setIdentity('workspace/source/user')
+  assert.equal(controller.getSelectedMode(), 'direct')
+  controller.reset('direct')
+  assert.equal(controller.getSelectedMode(), 'direct')
+  controller.selectMode('battle')
+  assert.equal(controller.getSelectedMode(), 'battle')
+  assert.equal(requests, 0)
+  controller.setIdentity('other-workspace/source/user')
+  assert.equal(controller.getSelectedMode(), 'multi')
+})
+
 test('reset and cancellation are mode-local and cannot promote a partial response to success', async () => {
   const controller = new IntelligenceConversations(async (_question, context) => {
     if (context.lane === 'direct') return { text: 'direct history' }

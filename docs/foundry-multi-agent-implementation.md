@@ -1,5 +1,32 @@
 # Foundry and multi-agent implementation record
 
+## November 3 deeper cross-source and view-retention follow-up
+
+A second browser pass went beyond the three-facility smoke question. Both Dev
+Battle lanes independently read five Foyers turbines, 30 registered signals,
+the same latest event `2026-11-03T11:57:50.823106Z` and three open SQL work
+orders: WO-2848 Approved, WO-2851 Planned and WO-2853 Scheduled. Direct took
+116s and Multi 153s. Both distinguished stale history from current condition.
+
+Feature's deeper comparison did not fully agree: Direct returned
+`2026-11-02T20:38:28.938354Z` / T010.vibration_d / 4.547 / GOOD; Multi returned
+`2026-11-02T20:27:30.063150Z` / T008.power_output / 772.206 / GOOD as the latest.
+Both returned the same five turbines, 30 signals and three open SQL orders.
+Direct took 122s and Multi 176s. This is a real latest-event correctness
+discrepancy, not code parity or freshness certification; a separate facility-wide
+MAX/arg_max verification was requested. Do not treat these native answers as
+interchangeable or hide the mismatch behind successful publication.
+
+The same pass reproduced a separate view-lifetime defect: leaving Direct and
+returning through Overview selected Multi even though Direct's history remained.
+Selection now belongs to the existing in-memory conversation owner, survives
+same-identity refresh/remount, and resets with history on identity changes.
+Admin visibility resolution, independent sessions, native answers, source
+bindings and approval boundaries are unchanged. No browser storage is added.
+Both new regressions failed first; all 61 focused contracts, lint, type-check,
+environment validation and production build pass. Fresh publication and
+remount acceptance will be recorded after the canonical deployments.
+
 ## November 3 live code parity and three-mode acceptance
 
 Read-only live verification confirms matching hosted image digest

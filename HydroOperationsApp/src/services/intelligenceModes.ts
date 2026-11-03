@@ -41,6 +41,7 @@ const lanesFor = (mode: IntelligenceMode): IntelligenceLane[] =>
 /** Separate in-memory conversations. Selecting a mode never submits a request. */
 export class IntelligenceConversations {
   private snapshot = empty()
+  private selectedMode: IntelligenceMode = 'multi'
   private listeners = new Set<() => void>()
   private controllers = new Map<IntelligenceLane, AbortController>()
   private sessions = new Map<IntelligenceLane, string>()
@@ -54,8 +55,15 @@ export class IntelligenceConversations {
   }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   getSnapshot = () => this.snapshot
+  getSelectedMode = () => this.selectedMode
   identityVersion = () => this.revision
   private emit() { for (const listener of this.listeners) listener() }
+  selectMode(mode: IntelligenceMode) {
+    if (this.selectedMode === mode) return
+    this.selectedMode = mode
+    this.snapshot = { ...this.snapshot }
+    this.emit()
+  }
   private update(lane: IntelligenceLane, value: Lane) {
     this.snapshot = { ...this.snapshot, [lane]: value }
     this.emit()
@@ -67,6 +75,7 @@ export class IntelligenceConversations {
   }
   clear() {
     this.revision++
+    this.selectedMode = 'multi'
     for (const controller of this.controllers.values()) controller.abort()
     this.controllers.clear()
     for (const session of this.sessions.values()) this.release(session)
