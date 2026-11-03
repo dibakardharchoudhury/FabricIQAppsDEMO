@@ -34,6 +34,28 @@ test('optional concise workflow preserves and verifies full native answer eviden
   assert.deepEqual(answer.rcaReports, [{ evidence_ids: ['native-1'], status: 'untested' }])
 })
 
+test('ordinary Q&A accepts the backend nullable workflow field without replacing its answer', async () => {
+  const body = reply()
+  Object.assign(body.presentation, {
+    workflow_text: null, source_answers: [], rca_reports: [], work_order_review: null,
+  })
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+  const answer = await client.run({ question: 'List facilities.' })
+  assert.equal(answer.text, body.presentation.text)
+  assert.equal(answer.workflowText, undefined)
+  assert.deepEqual(answer.sourceAnswers, [])
+  assert.equal(answer.proposals.length, 0)
+})
+
+test('supplied non-null workflow summaries still require a non-empty string', async () => {
+  for (const workflow_text of ['', ' ', 42, false, {}, []]) {
+    const body = reply()
+    Object.assign(body.presentation, { workflow_text })
+    const client = new HostedTransport(project, endpoint, source, async () => tokens(), async () => response(body))
+    await assert.rejects(client.run({ question: 'List facilities.' }), /Hosted workflow summary is invalid/)
+  }
+})
+
 test('modified native source text fails digest verification instead of rendering a rephrased source', async () => {
   const body = reply()
   Object.assign(body.presentation, { source_answers: [{ evidence_id: 'native-1', text: 'modified', content_sha256: 'a'.repeat(64) }] })

@@ -417,7 +417,7 @@ export class HostedTransport {
       let workflowText: string | undefined
       let sourceAnswers: HostedAnswer['sourceAnswers']
       let rcaReports: HostedAnswer['rcaReports']
-      if (presentation.workflow_text !== undefined) {
+      if (presentation.workflow_text !== undefined && presentation.workflow_text !== null) {
         if (typeof presentation.workflow_text !== 'string' || !presentation.workflow_text.trim()) throw new Error('Hosted workflow summary is invalid.')
         workflowText = presentation.workflow_text
       }
