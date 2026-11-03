@@ -801,6 +801,10 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         patch.object(deploy, "read_entra_spa_redirects_with_reauth", return_value=[url]),
                         patch.object(deploy, "write_rayfin_redirects", side_effect=lambda uris: uris),
                         patch.object(deploy, "ensure_deploy_dependencies"),
+                        patch.object(deploy, "configure_geo_connector"),
+                        patch.object(deploy, "current_rayfin_target", return_value=(
+                            {"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true"}, {},
+                        )),
                         patch.object(deploy, "energy_workspace", return_value=workspace),
                         patch.object(deploy, "provision_foundry_agents", side_effect=lambda *args: events.append("agents")),
                         patch.object(deploy, "ensure_rayfin_login", side_effect=lambda *args: events.append("login")),
