@@ -1,6 +1,6 @@
 # Foundry and multi-agent implementation record
 
-## November 3 session and native-fetch failures reproduced and repaired locally
+## November 3 session and native-fetch repair published and verified
 
 The latest Dev browser reproduced two concrete frontend failures:
 
@@ -20,11 +20,32 @@ changes still invalidate context. State remains in the active SPA's memory,
 not browser storage; a full browser reload starts a new local session. Direct
 MCP questions remain independent rather than claiming unsupported continuation.
 
-All 50 focused contracts, TypeScript, ESLint and production build pass.
-Publication and actual refreshed-page acceptance of these fixes remain pending.
-The fresh Feature task-owned page also completed normal sign-in and now loads
-the app; the earlier popup blocker is historical, not a current certified
-failure of all Feature sign-ins.
+All 50 focused contracts, TypeScript, ESLint and production build passed. The
+full canonical orchestrator published Dev release `5c254b1` at
+`2026-11-03T07:49:14Z` and Feature release `382525c` at
+`2026-11-03T08:00:46Z`, reusing the current agents and unchanged hosted image.
+Both actual browsers retained an executing question through the Stale refresh
+and navigation away/back; all four running/retention checks were true. Dev
+also retained its hosted session ID across those requests.
+
+Dev's actual Direct facility question completed through the published ontology
+Data Agent, preserving native text, files and digest. Its CSV contained all
+three actual facilities: Sloy, Foyers and Pitlochry. Both pages loaded version
+`1.0.1339` through normal reload without another sign-in picker. Feature connected
+all 90 telemetry signals through a normal user gesture; its initial synthetic
+connection attempt was not a successful authorization test.
+
+### Nullable presentation follow-up
+
+Actual Multi Q&A surfaced a separate `Hosted workflow summary is invalid`
+failure. The backend declares optional `workflow_text: str | None` and supplies
+null for ordinary Q&A, but the frontend rejected that valid serialized value.
+A regression reproduced the exact error before repair. Null is now treated as
+absent; non-null empty or malformed summaries remain rejected. The main answer
+is preserved without a replacement summary. All 94 combined focused tests,
+ESLint and production build passed. Publication and live acceptance of this
+follow-up remain pending; these results do not certify Battle, draft accuracy
+or operational delivery.
 
 ## November 3 latest full Dev and Feature rollout completed
 
