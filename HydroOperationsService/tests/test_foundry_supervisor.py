@@ -415,6 +415,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         native_question = native.call_args.args[3]
         self.assertTrue(native_question.startswith("Read-only evidence task"))
         self.assertIn("Do not perform RCA", native_question)
+        self.assertIn(request.requested_at.isoformat(), native_question)
+        self.assertIn("Aggregate event history", native_question)
+        self.assertIn("before applying any result limit", native_question)
+        self.assertIn("cannot establish complete coverage", native_question)
         self.assertIn(raw["plan"]["steps"][0]["question"], native_question)
         self.assertIn(
             "Original user request (context for this read-only subtask):\n" + request.question,
