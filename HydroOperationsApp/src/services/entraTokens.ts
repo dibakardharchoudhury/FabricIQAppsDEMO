@@ -79,5 +79,5 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
     }).catch(() => undefined)
     return current
   }
-  return { silent, popup }
+  return { silent, popup, selectedAccount: selectAccount }
 }

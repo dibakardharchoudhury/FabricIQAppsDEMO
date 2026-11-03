@@ -22,7 +22,8 @@ function fixture(override?: (request: Record<string, unknown>, signal?: AbortSig
     signal.throwIfAborted()
     return { key: source, workspaceId, dataAgentId, fabricToken: 'test-fabric',
       token: async () => { powerBiTokenRequests++; return 'unused-powerbi' } }
-  }, async (input, init) => {
+  }, async function (this: unknown, input, init) {
+    assert.equal(this, globalThis, 'Browser fetch requires the global receiver, not the conversation instance.')
     const url = String(input)
     assert.equal(url, endpoint)
     assert.equal(init?.cache, 'no-store')
@@ -43,6 +44,12 @@ function fixture(override?: (request: Record<string, unknown>, signal?: AbortSig
   })
   return { client, calls, powerBiTokenRequests: () => powerBiTokenRequests, source: (key: string) => { source = key } }
 }
+
+test('MCP requests preserve the browser global receiver for injected native fetch', async () => {
+  const { client } = fixture()
+  await client.ask(question, new AbortController().signal)
+  client.reset()
+})
 
 test('active Direct entry uses official published MCP protocol only and preserves native text, CSV and evidence digest', async () => {
   const { client, calls, powerBiTokenRequests } = fixture()

@@ -81,6 +81,15 @@ cache with concurrent-request coalescing, forced-refresh bypass, and failure inv
 definitions/native graph results use their own bounded, source-keyed in-memory cache. None of these
 analytical caches survive a full page reload.
 
+Hydro Intelligence keeps its independent transcripts, running requests and hosted
+conversation scopes in an app-lifetime, in-memory provider. Refreshing telemetry
+or navigating between pages does not reset them. Data-cache invalidation is not
+a conversation identity change. A different verified ontology, source or signed-in
+principal still clears the conversation; New chat resets only the selected mode.
+This session state is not stored in browser storage and does not survive a full
+browser reload. Direct Fabric IQ retains its visible transcript but its published
+MCP questions remain independent; no native continuation is invented.
+
 On a full reload, STID and Weather use the deployed Rayfin Lakehouse connector with the signed-in
 user's Fabric identity. Its workspace and SQL analytics endpoint ID are rebound from live target
 metadata by the canonical deployer. Every entity is keyless and relationship-free because SQL
@@ -269,6 +278,8 @@ HTTP failures retain their status and SDK cause; cancellation remains cancellati
 A fetch failure before an HTTP response is not proof of CORS rejection: connection,
 browser policy and redirect failures require separate investigation. Requests are
 not automatically replayed, and the repair adds no new request headers.
+The injected fetch function is bound to the browser global object so native
+`Window.fetch` is never called with the conversation instance as its receiver.
 
 Mode selection is a compact right-side dropdown beside Team, not a separate tab bar.
 Administration's **Agent runtime settings > Chat mode visibility** checkboxes control the

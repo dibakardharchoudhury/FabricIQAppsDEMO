@@ -1,5 +1,69 @@
 # Foundry and multi-agent implementation record
 
+## November 3 session and native-fetch failures reproduced and repaired locally
+
+The latest Dev browser reproduced two concrete frontend failures:
+
+- Direct MCP initialization failed with native `Window.fetch` **Illegal invocation**.
+  The class called unbound fetch with the conversation instance as receiver.
+  Binding injected fetch to the global receiver fixes the regression without
+  changing Fabric endpoints, headers, questions, native answers or source checks.
+- A running read-only Multi Agent prompt and its preceding history disappeared
+  when telemetry connection/refresh called `clearWorkspaceConfigCache`; its
+  hosted invocation was aborted. Cache revision and transient cleared discovery
+  values were incorrectly treated as conversation identity.
+
+Conversation ownership now lives in the shared app data provider rather than
+the navigated chat page. Refresh and navigation retain transcripts, running
+requests and hosted conversation scope. Verified ontology/source/principal
+changes still invalidate context. State remains in the active SPA's memory,
+not browser storage; a full browser reload starts a new local session. Direct
+MCP questions remain independent rather than claiming unsupported continuation.
+
+All 50 focused contracts, TypeScript, ESLint and production build pass.
+Publication and actual refreshed-page acceptance of these fixes remain pending.
+The fresh Feature task-owned page also completed normal sign-in and now loads
+the app; the earlier popup blocker is historical, not a current certified
+failure of all Feature sign-ins.
+
+## November 3 latest full Dev and Feature rollout completed
+
+All requested source and remaining local configuration are committed and pushed
+through `490c524`, including the session/mode controls, Direct diagnostics,
+typography and Stop icons. The canonical full app-and-agents orchestrator completed
+both targets, sequentially:
+
+- Dev release `df27c5e`: `SUCCESS` at `2026-11-03T06:57:19Z`,
+  <https://lofty-oasis-f52839c00b-swedencentral.webapp.fabricapps.net>.
+- Feature release `be1f0f1`: `SUCCESS` at `2026-11-03T07:07:58Z`,
+  <https://glad-hover-68cb866cd0-swedencentral.webapp.fabricapps.net>.
+
+The earlier Graph authorization blocker no longer occurred. Both runs preserved
+56 existing SPA redirects, verified the current five workspace-scoped specialists,
+native connections and toolbox, and reused the unchanged hosted image
+`src-5722c7ed30a7c988`. RCA and work-order specialists remain version 2; QA,
+Fabric IQ and weather remain version 1. This was the normal full deployment,
+not website-only. No model allocation, source profile or agent attachment changed.
+
+Both runs reapplied backend runtime/CORS and database configuration and passed
+endpoint identity, browser-equivalent preflights and POST readiness. GraphQL
+returned 200; malformed token requests returned the expected 400; delegated
+connector requests without credentials returned the expected 401. These are
+readiness checks, not successful source-query claims. Dev retained prepared
+Energy setup and verified its Geo connector without running Geo notebooks.
+Capacity was Active throughout the target preflights.
+
+The latest build and 47 combined frontend contracts passed before deployment.
+A fresh normal Dev browser sign-in loaded version `1.0.1336`, source `df27c5e`,
+with the right-side mode picker and Stop control. However, the first read-only
+Direct test question appeared and then its transcript cleared before an answer;
+no MCP request entry was observed in that page's resource history. Its cause is
+not yet established. Deployment success does not resolve or certify that runtime
+behavior, source execution, same-tab account reuse, comparisons or delivery.
+The shared standalone Feature page still reported a blocked sign-in popup after
+one normal Sign in attempt, so no Feature browser query was certified.
+No draft was approved and no operational record was written.
+
 ## November 3 direct transport and typography repair: runtime investigation incomplete
 
 The previous standalone Data Agent tab already used the same published Fabric
@@ -30,10 +94,11 @@ The failing authenticated app frame was unavailable; browser automation later
 failed to connect with a CDP timeout. The screenshot's underlying question failure
 has therefore not been reproduced or conclusively resolved.
 
-These repairs and the earlier session/mode-control changes remain unpublished.
-The Microsoft Graph interactive security sign-in described below still blocks
-canonical deployment; no authentication or redirect-preservation check was
-bypassed. Do not treat corrected diagnostics as a verified agent-runtime fix.
+At this earlier checkpoint, these repairs and the session/mode-control changes
+were unpublished because Microsoft Graph required interactive security sign-in.
+The completed rollout above supersedes that publication blocker; no authentication
+or redirect-preservation check was bypassed. Corrected diagnostics still do not
+constitute a verified agent-runtime fix.
 
 ## November 3 session and mode-control update: publication blocked
 
@@ -61,9 +126,9 @@ task's waiting deployment was stopped before preparation or publication;
 Feature was not started to avoid opening another authorization prompt.
 Existing deployment state and Entra redirects were preserved.
 
-**The new UI/session changes have not been deployed to either workspace.**
-Complete the required Microsoft Graph sign-in and rerun the canonical deployer,
-Dev then Feature. One initial SPA sign-in can still be needed because an old
+**At this earlier checkpoint, the new UI/session changes were not deployed.**
+The completed rollout above supersedes that blocker. One initial SPA sign-in can
+still be needed because an old
 memory-only authentication cache cannot migrate itself after reload. Same-tab
 live navigation and the remaining authenticated comparison acceptance are not
 certified by the local restored-account/UI tests or by the earlier rollout below.

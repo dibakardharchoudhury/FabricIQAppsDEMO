@@ -55,6 +55,29 @@ test('the removed static weather starter prompts are not restored by chat contro
   assert.doesNotMatch(source, /Compare the latest UKMet forecasts with observations for the same facilities|Compare Aurora and UKMet rainfall forecasts/)
 })
 
+test('conversation ownership spans both layouts and does not depend on refreshed data-cache state', () => {
+  const data = readFileSync(new URL('../src/ui-shared/hooks/useHydroOperationsData.ts', import.meta.url), 'utf8')
+  const page = readFileSync(new URL('../src/ui-shared/pages/CopilotPage.tsx', import.meta.url), 'utf8')
+  const provider = readFileSync(new URL('../src/ui-shared/hooks/useIntelligenceConversations.ts', import.meta.url), 'utf8')
+  const fabric = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
+  const identity = fabric.slice(fabric.indexOf('export function intelligenceIdentityKey()'), fabric.indexOf('/** Resolve by verified published source identity'))
+  assert.match(data, /createElement\(IntelligenceConversationsProvider, \{ userId: value\.user\?\.id \}, children\)/)
+  for (const layout of ['ui-v1', 'ui-v2']) {
+    const shell = readFileSync(new URL(`../src/${layout}/components/${layout === 'ui-v1' ? 'V1' : 'V2'}Shell.tsx`, import.meta.url), 'utf8')
+    assert.match(shell, /<HydroOperationsDataProvider>.*<\/HydroOperationsDataProvider>/)
+  }
+  assert.match(page, /useIntelligenceConversations\(\)/)
+  assert.doesNotMatch(page, /conversations\.clear|setIdentity|new IntelligenceConversations|useHydroOperationsData/)
+  assert.match(provider, /useEffect\(\(\) => \(\) => conversations\.clear\(\), \[conversations\]\)/)
+  assert.doesNotMatch(identity, /configRevision|configCache|ontologySourceConnectionKey/)
+  assert.match(identity, /intelligenceOntologyId/)
+  assert.match(identity, /selectedAccount\(\)\?\.localAccountId \?\? currentUser\(\)\?\.id/)
+  assert.match(identity, /VITE_RAYFIN_LAKEHOUSE_ID.*VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID/)
+  assert.match(identity, /VITE_RAYFIN_OPERATIONAL_SQL_DATABASE_ID/)
+  assert.match(fabric, /semantic\.ontologyGeneration === 2 && !semantic\.ontologyError && semantic\.ontologyId/)
+  assert.doesNotMatch(provider, /localStorage|sessionStorage|indexedDB/)
+})
+
 test('chat typography includes an automatic-height direct notice row and app-sized text controls', () => {
   const source = readFileSync(new URL('../src/components/CopilotExperience.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
