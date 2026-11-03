@@ -279,6 +279,9 @@ These are presentation preferences, not agent-provisioning flags or access contr
 Direct notices and Battle controls use the existing app typography. The Direct
 notice occupies an auto-sized grid row, leaving the flexible row for messages in
 both normal and maximized chat.
+While a response or comparison is running, its compact square Stop icon cancels
+the local request. The tooltip and accessible label identify the action; stopping
+does not certify that remote execution has ended.
 
 **Why regional Responses is not the active browser entry:** the regional ML
 `POST /metadata/v201606/generatemwctokenv2` preflight was rejected without

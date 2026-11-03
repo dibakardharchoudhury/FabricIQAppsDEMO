@@ -66,6 +66,20 @@ test('chat typography includes an automatic-height direct notice row and app-siz
   assert.ok(/\.v2-battle-panel > p[^}]*font-size: 12px/.test(css))
 })
 
+test('busy chats use compact accessible Stop icons without changing cancellation handlers', () => {
+  const chat = readFileSync(new URL('../src/components/CopilotExperience.tsx', import.meta.url), 'utf8')
+  const battle = readFileSync(new URL('../src/components/IntelligenceExperience.tsx', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
+  assert.match(chat, /busy && onCancel && <button className="v2-chat-stop"[^>]*title="Stop response" aria-label="Stop response" onClick=\{onCancel\}><Square/)
+  assert.match(battle, /busy && <button className="v2-chat-stop"[^>]*title="Stop comparison" aria-label="Stop comparison" onClick=\{\(\) => conversations\.cancel\('battle'\)\}><Square/)
+  for (const source of [chat, battle]) {
+    assert.match(source, /<Square size=\{15\} fill="currentColor" aria-hidden="true" \/>/)
+    assert.doesNotMatch(source, />Cancel(?: comparison)?<\/button>/)
+  }
+  assert.match(css, /\.v2-copilot > footer \.v2-chat-stop,[^}]*width: 40px; height: 40px; padding: 0/)
+  assert.match(css, /\.v2-chat-stop:focus-visible[^}]*outline: 2px solid var\(--cp-accent\)/)
+})
+
 test('retired Battle preferences are discarded without changing supported settings', () => {
   const legacy = {
     battleEnabled: true,
