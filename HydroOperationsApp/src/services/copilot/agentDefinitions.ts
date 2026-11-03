@@ -39,7 +39,7 @@ export const WORK_REVIEW_TOOL = {
   parameters: {
     type: 'object', properties: {
       decision: { type: 'string', enum: ['no_draft', 'needs_clarification'], description: 'Use no_draft only with complete work coverage for all affected targets. Use needs_clarification for missing identity or evidence required for the assigned purpose. Missing current telemetry or causal proof alone does not block a historical data-quality investigation draft.' },
-      reason: { type: 'string', minLength: 1, maxLength: 1000, description: 'Concise evidence-backed reason within 1000 characters. State missing-data or identity blockers explicitly; do not infer healthy equipment from absent telemetry.' },
+      reason: { type: 'string', minLength: 1, maxLength: 1000, description: 'Operator answer: 1-3 short sentences, at most 100 words/1000 chars. No internal IDs, hashes, queries or tool names. State UTC scope and missing data; zero BAD samples does not prove telemetry availability or equipment health. The app supplies draft/write status.' },
     }, required: ['decision', 'reason'], additionalProperties: false,
   }, strict: true,
 }

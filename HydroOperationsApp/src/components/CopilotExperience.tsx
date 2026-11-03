@@ -113,7 +113,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, l
         <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         <button className="v2-icon-action" type="button" title="New chat" aria-label="New chat" disabled={busy || !messages.length} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>
-      {direct && <p className="v2-direct-limit" role="note">Direct Fabric IQ sends each question unchanged and independently. The published MCP tool does not declare native conversation or previous-response continuation; earlier questions and answers are not sent as context. Native result files and evidence remain available.</p>}
+      {direct && <p className="v2-direct-limit" role="note">Each question is answered independently; earlier turns are not sent as context. Native answers and source files are preserved.</p>}
       {conversationEvents.length > 0 && <aside className="v2-conversation-crew" aria-label="Conversation agent flow">
         {flowExpanded && <label className="v2-flow-resize">Panel width<input aria-label="Agent panel width" type="range" min="280" max="420" step="20" value={flowWidth} onChange={event => setFlowWidth(Number(event.target.value))} /></label>}
         <AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} expanded={flowExpanded} onExpandedChange={setFlowExpanded} />
@@ -129,7 +129,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, l
           </div>
         })}
       </div>
-      <footer><textarea aria-label={`${direct ? 'Fabric IQ' : 'Multi Agent'} question`} ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
+      <footer><textarea aria-label={`${direct ? 'Fabric IQ' : 'Multi Agent'} question`} rows={3} ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
         {busy && onCancel && <button className="v2-chat-stop" type="button" title="Stop response" aria-label="Stop response" onClick={onCancel}><Square size={15} fill="currentColor" aria-hidden="true" /></button>}
         <button type="button" title="Send" aria-label="Send question" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
@@ -155,7 +155,8 @@ export const CopilotResponse = memo(function CopilotResponse({ message, streamin
 
 function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
   const receiptPrefix = useId()
-  const draftOutcome = !message.readOnly && !streaming && !message.failed && !message.proposals?.length && Boolean(question && isWorkOrderRequest(question))
+  const draftOutcome = !message.readOnly && !streaming && !message.failed && !message.proposals?.length
+    && !(message.workOrderReview && message.workflowText) && Boolean(question && isWorkOrderRequest(question))
   const hasBody = Boolean(draftOutcome || message.text || message.workflowText || message.proposals?.length || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
@@ -202,8 +203,9 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
       ? draftDetails
       : answer}
     {!!message.workflowText && message.sourceAnswers?.map(source => <details className="v2-answer-support" key={source.evidence_id}>
-      <summary>Full native source answer — {source.evidence_id}</summary>
+      <summary>Source evidence</summary>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{source.text}</ReactMarkdown>
+      <small>Evidence reference: {source.evidence_id}</small>
       <small>SHA-256: {source.content_sha256}</small>
     </details>)}
     {!!message.rcaReports?.length && <details className="v2-answer-support"><summary>RCA detail and evidence references</summary>
@@ -213,8 +215,11 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {!!message.citations?.length && <details className="v2-answer-support"><summary>Native citations ({message.citations.length})</summary><ul>{message.citations.map((citation, index) => <li key={index}>{citation.url
       ? <a href={citation.url} target="_blank" rel="noreferrer">{citation.title}</a>
       : <span>{citation.title} — result file available below</span>}</li>)}</ul></details>}
-    {message.nativeResponseId && <small>Fabric response: {message.nativeResponseId}</small>}
-    {message.nativeTextSha256 && <small>Native answer SHA-256: {message.nativeTextSha256}</small>}
+    {(message.nativeResponseId || message.nativeTextSha256) && <details className="v2-answer-support">
+      <summary>Native execution details</summary>
+      {message.nativeResponseId && <small>Fabric response: {message.nativeResponseId}</small>}
+      {message.nativeTextSha256 && <small>Native answer SHA-256: {message.nativeTextSha256}</small>}
+    </details>}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}

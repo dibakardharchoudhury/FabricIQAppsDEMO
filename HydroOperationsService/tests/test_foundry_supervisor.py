@@ -3389,6 +3389,29 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SourceFailure):
                 await self.bridge.call({"action": "validate_work_review", "report": json.dumps(payload)})
 
+    async def test_work_review_reason_keeps_internal_receipts_out_of_operator_output(self):
+        receipt = ToolEvidence(
+            id="resp_internal_source_receipt_123", source=SOURCE, tool="query_telemetry",
+            arguments={}, completed_at=utc_now(), result={"rows": []},
+        )
+        self.owner.evidence = {receipt.id: receipt}
+        with self.assertRaisesRegex(SourceFailure, "internal execution"):
+            await self.owner.validate_specialist_report("work-order", {
+                "decision": "needs_clarification",
+                "reason": f"Evidence {receipt.id} returned no current samples.",
+            })
+        reason = ("No telemetry samples were returned for today's UTC window. "
+                  "Current BAD-quality turbines and maintenance gaps cannot be assessed.")
+        report = {"decision": "needs_clarification", "reason": reason}
+        self.assertEqual(await self.owner.validate_specialist_report("work-order", report), report)
+        self.assertEqual(self.owner.evidence[receipt.id], receipt)
+        with self.assertRaisesRegex(SourceFailure, "100 words"):
+            await self.owner.validate_specialist_report("work-order", {
+                "decision": "needs_clarification", "reason": "gap " * 101,
+            })
+        covered = {"decision": "no_draft", "reason": "WO-1 already covers the observed issue on TEST_T005."}
+        self.assertEqual(await self.owner.validate_specialist_report("work-order", covered), covered)
+
     async def test_native_source_requires_verified_binding_and_a_matching_execution_receipt(self):
         self.mode = "native"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
@@ -4426,6 +4449,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             sum(len(json.dumps(payload["input"], separators=(",", ":")).encode()) for payload in self.payloads),
             40_000,
         )
+        for payload in self.payloads:
+            agent = payload["agent_reference"]["name"]
+            context = json.loads(payload["input"][0]["content"][0]["text"])
+            expected = {"complete_work_order_review"} if agent == "hydro-work-order-agent" else (
+                {"complete_rca_assessment"} if agent == "hydro-rca-agent" else set()
+            )
+            self.assertEqual(set(context["completion_constraints"]), expected)
         self.assertLessEqual(sum(payload["max_output_tokens"] for payload in self.payloads), 14_336)
         self.assertEqual(len(result.tables), 1)
         self.assertEqual(sum("agent_reference" not in payload for payload in self.payloads), 0)
