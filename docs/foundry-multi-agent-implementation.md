@@ -67,6 +67,72 @@ Publication and fresh-bundle inline-table/timing acceptance are recorded below.
 No operational writes, work-order approvals or Teams/email delivery were tested
 by this read-only matrix; previous maintenance receipts retain their own scope.
 
+### Final publication and fresh-bundle acceptance
+
+The native-file/timeline repair is committed as `79bdcf9`. Both isolated release
+branches contain the same app source tree
+`f535020c528d7197252f145dd67a5523cbec511b` and unchanged service source tree
+`ff8bc679cab6aee219a6f26916be80e40e844c8c`. Their only tracked app/service
+difference is generated Rayfin configuration. Both canonical deployments reused
+the five unchanged specialist definitions, native toolbox and existing hosted
+image; no new model allocation, source attachment or hosted version was needed.
+
+| Target | Compiled source | Actual browser build | Canonical completion (UTC) | Duration |
+| --- | --- | --- | --- | --- |
+| Dev | `8c3f7dd` | `1.0.1357` | `2026-11-03T21:08:55Z` | 767.422s |
+| Feature | `5db7df2` | `1.0.1358` | `2026-11-03T21:19:56Z` | 646.032s |
+
+Both printed `SUCCESS` and `DEPLOYED_APP_URL` after endpoint identity,
+AppBackend runtime/CORS, browser-equivalent preflights and POST readiness,
+permission/consent readback and preservation of all 56 existing SPA redirects.
+Protected hosting acceptance was followed by actual authenticated browser tests;
+it was not used as a substitute for agent execution.
+
+| Fresh-bundle check | Dev | Feature |
+| --- | --- | --- |
+| Direct facility question | 109s; native CSV-only prose now has one inline file table | 67s; native CSV-only prose now has one inline file table |
+| Ordinary Multi facility question | 18.5s | 21.1s |
+| Battle facility question | Direct 69s / Multi 18.1s | Direct 44.2s / Multi 13.0s |
+| Foyers-only scope seed / referential correlation | 15.4s / 67s | 9.7s / 55.7s |
+
+Every facility check returned the three exact IDs/names for Sloy, Foyers and
+Pitlochry. Direct CSV downloads retained their original CRLF bytes. Each Battle
+lane displayed exactly one table: Dev deduplicated native inline Markdown,
+while Feature rendered the returned CSV inline despite native prose offering
+only a file reference. Both retained the original evidence downloads.
+Feature Battle ran alongside the ordinary Foyers-scoped correlation without
+inheriting that narrower scope.
+
+Both new contextual follow-ups automatically selected Sparky without an agent
+name in the question, retained FACILITY_RTI_002, and returned five registered
+turbines T006-T010 with 30 registered signals. These particular reads returned
+zero events in the current 30-minute window and explicitly declined to infer
+equipment health or a mechanical fault. Their unavailable current timestamp is
+not proof that no older events exist; the earlier historical-event receipts
+remain separately scoped.
+
+On Dev, telemetry refresh plus Overview/back navigation during execution
+preserved the running contextual question, history and final answer. The
+separate running Direct question also completed after refresh/navigation;
+navigation defaults the visible mode to Multi, so Direct was explicitly
+reselected to inspect its retained answer. This does not certify selected-mode
+restoration or persistence across a full browser reload.
+Initial synthetic Send actions on the new Feature page were popup-blocked
+before execution; real trusted Send clicks completed authentication and the
+requests. No token injection or authentication bypass was used.
+
+Expanded live timelines on both new bundles contained no negative offsets.
+The actual-component fixture additionally verified unchanged 0s/25s trace
+intervals and 51-row pagination through 50 -> 1 -> 50 rows, including complete
+copied CSV. Fresh Battle composers and expanded Multi remained inside their
+actual viewports without document overflow. No source requests or operational
+writes were introduced by table rendering.
+
+These receipts do not certify arbitrary numerical completeness, work-order
+approval/execution, Teams/email delivery, embedded portal execution or improved
+hosting sign-in latency. The map tab is present on both builds; the separately
+recorded authenticated map-source timeouts remain unresolved.
+
 ## November 3 operator response and composer follow-up
 
 Maintenance completion reasons now use brief operator language, not response

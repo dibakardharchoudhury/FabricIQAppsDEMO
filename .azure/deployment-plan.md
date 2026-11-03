@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Live parity and execution timeline follow-up
+> **Status:** Deployed and verified - Native tables and execution timeline
 
 ## Live parity and execution timeline follow-up
 
@@ -47,6 +47,35 @@ and a new container build are inapplicable. Canonical packaged-source hashing
 remains `218480810c35612191dac7ab28180d4a1959d5e7621f3fb1d8c5b8bcfaa42840`.
 Full canonical runtime/CORS, consent, redirect-preservation and publication
 readback remain mandatory for both targets.
+
+### Publication and authenticated acceptance
+
+The full canonical deployments completed successfully on November 3:
+Dev source `8c3f7dd`, actual app `1.0.1357`, at `21:08:55Z` (767.422s);
+Feature source `5db7df2`, actual app `1.0.1358`, at `21:19:56Z` (646.032s).
+Both passed endpoint identity, runtime/CORS, connector preflights and POST
+readiness, delegated permissions/consent and all 56 SPA redirect-preservation
+checks. All five specialists, native toolbox and hosted image were reused
+unchanged. App source tree parity is
+`f535020c528d7197252f145dd67a5523cbec511b`; service source remains
+`ff8bc679cab6aee219a6f26916be80e40e844c8c`.
+
+Actual authenticated Direct, Multi and both Battle lanes passed on each new
+bundle with the same three exact facility IDs/names. CSV-only native replies
+rendered inline on both Direct builds and Feature Battle; Dev Battle retained
+one native Markdown table without duplication. Original CSV bytes and evidence
+downloads were verified. New contextual follow-ups automatically selected
+Sparky, retained Foyers-only scope and explicitly treated missing current
+telemetry as unknown equipment condition, not a fault. Dev's in-flight
+contextual request survived telemetry refresh and navigation.
+Both expanded live timelines had no negative offsets. Actual-component
+interaction also verified 0s/25s audit intervals and 50 -> 1 -> 50 row pagination.
+Fresh Battle and expanded Multi composers remained within their viewports.
+See the [implementation receipts](../docs/foundry-multi-agent-implementation.md#final-publication-and-fresh-bundle-acceptance)
+for timings, trusted-gesture authentication and the precise testing scope.
+Hosting sign-in latency, selected-mode restoration after navigation, embedded
+portal execution, map-source timeouts and operational delivery remain separate
+limitations; no new infrastructure or permission changes were made.
 
 ## Resized composer follow-up
 
