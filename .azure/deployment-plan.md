@@ -1,8 +1,42 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Latest Direct diagnostics and Stop controls rollout
+> **Status:** Validated - Native fetch and conversation-session preservation
 
 ## November 3 latest Direct diagnostics and Stop controls rollout
+
+### Session-preservation and native-fetch follow-up
+
+The same approved Dev and Feature scope is retained. This frontend-only update
+does not change hosted images, agent definitions, source profiles, infrastructure,
+permissions, model allocation or quota.
+
+All validation checks pass for this scoped update:
+- [x] 1. Core Validation: expected tenant/subscription verified; 50 focused
+  direct/auth/settings/mode tests, focused ESLint and `npm run build` (including
+  TypeScript) pass. `npm run validate-env` passes. No ARM template changed, so
+  Bicep validation/what-if is not applicable to this Fabric SPA-only delta.
+- [x] 2. Docker Build: not applicable; hosted source, locks, image and agent
+  definitions are unchanged.
+- [x] 3. Azure Policy Validation: existing assignments retrieved for the approved
+  Foundry resource-group scope (HTTP 200); no ARM creation, role, SKU, region,
+  network or policy delta. Existing MFA and resource-creation controls remain
+  enforced; canonical deployment must stop on any live authorization failure.
+
+#### Section 7: Validation Proof - session-preservation follow-up
+
+The previous Dev build reproduced the refresh bug: the prompt was visible before
+telemetry connection/refresh invalidation, absent afterward, and the hosted
+invocation was aborted. This follows the same `clearWorkspaceConfigCache` path
+as the button beside Stale. Cache revision and temporarily cleared discovery
+values no longer form conversation identity. An app-lifetime provider retains
+the running request, history and hosted scope across page navigation.
+
+The native Direct failure was independently reproduced as `Window.fetch:
+Illegal invocation`; binding injected fetch to the global receiver fixes the
+regression without changing endpoints, headers, questions or answer fidelity.
+The combined 50-test suite passed; final production build completed in 31.87s
+with existing large-chunk warnings. Browser acceptance on the newly published
+build remains required; no live success is inferred from these local checks.
 
 Retain the approved Dev and Feature workspaces, tenant SPA, active capacity and
 Foundry project. Use the existing canonical Python orchestrator from clean
