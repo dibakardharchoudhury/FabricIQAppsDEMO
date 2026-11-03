@@ -33,7 +33,22 @@ Battle viewports also retain their input and controls without document overflow.
 No ARM, dependency, managed identity, role or policy change exists.
 Static Role Assignment Verification: existing delegated source access and
 human-only operational approval boundaries are unchanged.
-Fresh-bundle publication/acceptance of this final CSS delta remains pending.
+Fresh-bundle publication/acceptance of this final CSS delta is complete:
+Feature `eb9dbcc` / app `1.0.1355` completed the full canonical deployment at
+`2026-11-03T19:58:35Z` (734.515s); Dev `94be620` / app `1.0.1354` completed at
+`2026-11-03T20:10:57Z` (720.828s). Both passed runtime/CORS, protected POST,
+connector, consent and preservation checks for all 56 existing SPA redirects.
+Each actual deployed stylesheet passed 39 browser cases without injected CSS:
+24 Multi with real execution events, 12 Direct and three Battle cases.
+Read-only Multi questions returned the three verified facility IDs/names on
+both final bundles; no operational writes were performed.
+
+The restored map navigation is visible on both final bundles. Prepared-source
+readback still verifies 12 layers and nine polygons per target. Subsequent
+authenticated browser map-source acceptance is separately blocked by repeated
+30-second connector timeouts, including on a second owned Feature page.
+The selected Fabric capacity remains Active. Protected endpoint readiness
+and the earlier successful map render do not certify these later source reads.
 
 ## Prepared Norwegian Energy Map preservation
 
