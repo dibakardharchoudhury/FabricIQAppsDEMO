@@ -247,6 +247,14 @@ test('Direct and Multi composers start as readable multiline inputs', () => {
   }
 })
 
+test('expanded flow and compact crew grids reserve the intrinsic composer height', () => {
+  const css = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
+  assert.equal([...css.matchAll(/\.v2-copilot\.v2-expanded-view\.has-expanded-flow\s*\{/g)].length, 2)
+  assert.match(css, /\.v2-copilot > footer\s*\{[^}]*min-height:\s*min-content/)
+  assert.match(css, /\.v2-copilot\.v2-expanded-view\.has-conversation-crew\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, auto\) minmax\(0, 1fr\) auto/)
+  assert.match(css, /@media \(max-height: 560px\), \(max-width: 760px\)\s*\{\s*\.v2-intelligence-modes > \.v2-page-head\s*\{\s*display: none/)
+})
+
 test('facts, failed responses and in-flight requests do not display a completed draft outcome', () => {
   for (const props of [
     { question: 'Which work orders are already open?', streaming: false },
