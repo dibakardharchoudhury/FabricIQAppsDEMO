@@ -1,6 +1,36 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Session preservation and nullable presentation contract
+> **Status:** Validated - Historical scope handoff follow-up
+
+## Historical scope handoff follow-up
+
+The same approved Dev/Feature targets, SPA, model, permissions and source bindings
+are retained. A live Dev follow-up demonstrated that the UI and hosted run
+identity retained context, but the native specialist input omitted the saved
+facility scope. The backend now explicitly forwards validated, bounded
+historical context solely for reference resolution, requiring fresh source reads
+and rejecting historical instructions or authorization claims.
+
+All validation checks pass:
+- [x] 1. Core Validation: all 227 conversation, semantic planning, source fidelity
+  and supervisor regressions completed successfully (one intentional skip).
+- [x] 2. Docker Build context: all 66 hosted packaging contracts pass. Dockerfile and locks
+  are unchanged; canonical publication must remotely build and verify the new
+  source-fingerprinted image rather than reusing the old image.
+- [x] 3. Azure Policy Validation: unchanged ARM, role, quota, SKU, region and
+  network scope. Current policy readback and live project roles are verified;
+  existing deny and MFA controls remain enforced.
+
+### Section 7: Validation Proof - historical scope handoff
+
+November 3, 2026: the new native handoff regression failed before repair because
+the earlier facility table was absent. All three focused context/no-history/RCA
+transport and cache-recovery tests pass after repair. `python -m unittest`
+completed 227 supervisor/conversation/native-fidelity/semantic-planning tests
+successfully (one intentional skip), and all 66 hosted packaging contracts pass.
+`npm run validate-env` also passes. No local Docker daemon is available; the
+canonical orchestrator must remotely build, activate and read back the new image.
+No ARM, role, permission or quota changes are authorized.
 
 ## November 3 latest Direct diagnostics and Stop controls rollout
 
