@@ -1,5 +1,6 @@
 import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from './catalog.ts'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './answerPresentation.ts'
+import type { IntelligenceModeVisibility } from '../intelligenceModes'
 
 // Operator-tunable copilot configuration, edited in Administration and persisted per browser.
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
@@ -17,6 +18,7 @@ export type CopilotSettings = {
   tools: Record<string, boolean>
   entities: Record<string, boolean>
   kustoSources: Record<string, boolean>
+  intelligenceModeVisibility: IntelligenceModeVisibility
 }
 
 // `import.meta.env` is absent under plain Node (the unit tests import this module), so read defensively.
@@ -139,6 +141,7 @@ export function defaultCopilotSettings(): CopilotSettings {
     tools: allEnabled(TOOL_NAMES),
     entities: allEnabled(ENTITY_KEYS),
     kustoSources: allEnabled(KUSTO_NAMES),
+    intelligenceModeVisibility: { direct: true, multi: true, battle: true },
   }
 }
 
@@ -165,6 +168,11 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },
     entities: { ...defaults.entities, ...(stored.entities ?? {}) },
     kustoSources: { ...defaults.kustoSources, ...(stored.kustoSources ?? {}) },
+    intelligenceModeVisibility: {
+      direct: typeof stored.intelligenceModeVisibility?.direct === 'boolean' ? stored.intelligenceModeVisibility.direct : true,
+      multi: typeof stored.intelligenceModeVisibility?.multi === 'boolean' ? stored.intelligenceModeVisibility.multi : true,
+      battle: typeof stored.intelligenceModeVisibility?.battle === 'boolean' ? stored.intelligenceModeVisibility.battle : true,
+    },
   }
 }
 

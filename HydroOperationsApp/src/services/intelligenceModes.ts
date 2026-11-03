@@ -9,6 +9,17 @@ export const INTELLIGENCE_MODES = [
   { id: 'battle', label: 'Battle of the Agents' },
 ] as const
 export type IntelligenceMode = typeof INTELLIGENCE_MODES[number]['id']
+export type IntelligenceModeVisibility = Record<IntelligenceMode, boolean>
+
+export function visibleIntelligenceModes(visibility: IntelligenceModeVisibility) {
+  return INTELLIGENCE_MODES.filter(mode => visibility[mode.id])
+}
+
+export function resolveVisibleIntelligenceMode(mode: IntelligenceMode, visibility: IntelligenceModeVisibility): IntelligenceMode | undefined {
+  if (visibility[mode]) return mode
+  return visibility.multi ? 'multi' : visibleIntelligenceModes(visibility)[0]?.id
+}
+
 export type IntelligenceLane = 'direct' | 'multi' | 'battleDirect' | 'battleMulti'
 type Lane = { messages: CopilotMessage[]; busy: boolean }
 type Snapshot = Record<IntelligenceLane, Lane>
