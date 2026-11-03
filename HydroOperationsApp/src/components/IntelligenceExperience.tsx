@@ -1,6 +1,8 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { Bot, ChevronDown, Layers3 } from 'lucide-react'
 import { CopilotExperience, CopilotResponse } from './CopilotExperience'
-import { INTELLIGENCE_MODES, type IntelligenceConversations, type IntelligenceMode } from '../services/intelligenceModes'
+import { INTELLIGENCE_MODES, resolveVisibleIntelligenceMode, visibleIntelligenceModes, type IntelligenceConversations, type IntelligenceMode } from '../services/intelligenceModes'
+import { loadCopilotSettings, subscribeCopilotSettings } from '../services/copilot/settings'
 
 export function IntelligenceExperience({ conversations, snapshot, identity }: {
   conversations: IntelligenceConversations
@@ -8,33 +10,46 @@ export function IntelligenceExperience({ conversations, snapshot, identity }: {
   identity: string
 }) {
   const [mode, setMode] = useState<IntelligenceMode>('multi')
+  const [visibility, setVisibility] = useState(() => loadCopilotSettings().intelligenceModeVisibility)
   const id = useId()
-  const tabs = useRef<Array<HTMLButtonElement | null>>([])
+  const picker = useRef<HTMLElement | null>(null)
+  const visibleModes = visibleIntelligenceModes(visibility)
+  const selectedMode = resolveVisibleIntelligenceMode(mode, visibility)
+  const selected = INTELLIGENCE_MODES.find(tab => tab.id === selectedMode)
+  useEffect(() => subscribeCopilotSettings(() => setVisibility(loadCopilotSettings().intelligenceModeVisibility)), [])
+  useEffect(() => {
+    for (const tab of INTELLIGENCE_MODES) if (!visibility[tab.id]) conversations.cancel(tab.id)
+  }, [conversations, visibility])
   const battleBusy = snapshot.battleDirect.busy || snapshot.battleMulti.busy
+  const modeControls = selected && visibleModes.length > 1 ? <details className="v2-intelligence-mode-picker"
+    onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; picker.current?.focus() } }}>
+    <summary ref={picker} aria-label={`Chat mode: ${selected.label}`} title="Choose chat mode">
+      <Layers3 size={14} /><span>{selected.id === 'battle' ? 'Battle' : selected.label}</span><ChevronDown size={12} />
+    </summary>
+    <fieldset>
+      <legend>Chat mode</legend>
+      {visibleModes.map(tab => <label key={tab.id}>
+        <input type="radio" name={`${id}-mode`} checked={selectedMode === tab.id}
+          aria-controls={`${id}-${tab.id}-panel`} onChange={event => {
+            event.currentTarget.closest('details')?.removeAttribute('open')
+            setMode(tab.id)
+            requestAnimationFrame(() => picker.current?.focus())
+          }} />
+        <span>{tab.label}</span>
+      </label>)}
+    </fieldset>
+  </details> : undefined
   return <div className="v2-domain-page v2-intelligence-modes">
     <section className="v2-page-head"><div><h1>Hydro Intelligence</h1><p>Direct Fabric answers, governed collaboration, or a read-only comparison.</p></div></section>
-    <div role="tablist" aria-label="Hydro Intelligence modes" className="v2-intelligence-tabs">
-      {INTELLIGENCE_MODES.map((tab, index) => <button key={tab.id} type="button" role="tab"
-        id={`${id}-${tab.id}-tab`} aria-controls={`${id}-${tab.id}-panel`} aria-selected={mode === tab.id}
-        tabIndex={mode === tab.id ? 0 : -1} ref={element => { tabs.current[index] = element }}
-        onClick={() => setMode(tab.id)} onKeyDown={event => {
-          let next: number
-          if (event.key === 'ArrowRight') next = (index + 1) % INTELLIGENCE_MODES.length
-          else if (event.key === 'ArrowLeft') next = (index + INTELLIGENCE_MODES.length - 1) % INTELLIGENCE_MODES.length
-          else if (event.key === 'Home') next = 0
-          else if (event.key === 'End') next = INTELLIGENCE_MODES.length - 1
-          else return
-          event.preventDefault()
-          setMode(INTELLIGENCE_MODES[next].id)
-          tabs.current[next]?.focus()
-        }}>{tab.label}</button>)}
-    </div>
-    {INTELLIGENCE_MODES.map(tab => <section key={tab.id} role="tabpanel" tabIndex={0}
-      id={`${id}-${tab.id}-panel`} aria-labelledby={`${id}-${tab.id}-tab`}
-      hidden={mode !== tab.id} style={mode !== tab.id ? { display: 'none' } : undefined}>
+    {!selectedMode && <p className="v2-direct-limit" role="status">Chat modes are hidden. Enable them in Administration under Chat mode visibility.</p>}
+    {INTELLIGENCE_MODES.map(tab => <section key={tab.id} role="region" aria-label={`${tab.label} conversation`}
+      id={`${id}-${tab.id}-panel`}
+      hidden={selectedMode !== tab.id} style={selectedMode !== tab.id ? { display: 'none' } : undefined}>
       {tab.id === 'battle'
-        ? <BattlePanel key={identity} conversations={conversations} snapshot={snapshot} busy={battleBusy} />
+        ? <BattlePanel key={identity} conversations={conversations} snapshot={snapshot} busy={battleBusy}
+          headerControls={selectedMode === tab.id ? modeControls : undefined} />
         : <CopilotExperience key={identity} embedded direct={tab.id === 'direct'}
+          headerControls={selectedMode === tab.id ? modeControls : undefined}
           label={tab.id === 'direct' ? 'Fabric IQ · Direct published Data Agent' : 'Supervisor-led multi-agent team'}
           messages={snapshot[tab.id].messages} busy={snapshot[tab.id].busy}
           onSend={question => { void conversations.send(tab.id, question) }}
@@ -43,10 +58,11 @@ export function IntelligenceExperience({ conversations, snapshot, identity }: {
   </div>
 }
 
-function BattlePanel({ conversations, snapshot, busy }: {
+function BattlePanel({ conversations, snapshot, busy, headerControls }: {
   conversations: IntelligenceConversations
   snapshot: ReturnType<IntelligenceConversations['getSnapshot']>
   busy: boolean
+  headerControls?: ReactNode
 }) {
   const [question, setQuestion] = useState('')
   const send = () => {
@@ -55,6 +71,7 @@ function BattlePanel({ conversations, snapshot, busy }: {
     setQuestion('')
   }
   return <div className="v2-battle-panel">
+    <header className="v2-battle-header"><span><Bot size={17} /><strong>Battle of the Agents</strong></span><span>{headerControls}</span></header>
     <p>Identical question, independent sessions. Direct Fabric IQ questions do not inherit earlier context; Multi Agent maintains its own conversation. Durations include authentication, source verification and retrieval. No judge or automatic winner. Review and approval are available only in Multi Agent.</p>
     <div className="v2-battle-columns">
       {(['battleDirect', 'battleMulti'] as const).map(lane => <section key={lane} aria-label={lane === 'battleDirect' ? 'Fabric IQ comparison answer' : 'Multi Agent comparison answer'}>

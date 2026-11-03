@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { IntelligenceConversations, INTELLIGENCE_MODES, routeIntelligenceRequest, type IntelligenceLane } from '../src/services/intelligenceModes.ts'
+import { IntelligenceConversations, INTELLIGENCE_MODES, resolveVisibleIntelligenceMode, routeIntelligenceRequest, visibleIntelligenceModes, type IntelligenceLane } from '../src/services/intelligenceModes.ts'
+
+test('visibility controls allow any subset, prefer the available team and fail closed when all modes are hidden', () => {
+  for (let mask = 0; mask < 8; mask++) {
+    const visibility = { direct: Boolean(mask & 1), multi: Boolean(mask & 2), battle: Boolean(mask & 4) }
+    const visible = visibleIntelligenceModes(visibility)
+    assert.equal(visible.length, Number(visibility.direct) + Number(visibility.multi) + Number(visibility.battle))
+    for (const selected of ['direct', 'multi', 'battle'] as const) {
+      const resolved = resolveVisibleIntelligenceMode(selected, visibility)
+      if (!visible.length) assert.equal(resolved, undefined)
+      else if (visibility[selected]) assert.equal(resolved, selected)
+      else assert.equal(resolved, visibility.multi ? 'multi' : visible[0].id)
+    }
+  }
+})
 
 test('mode requests route to independent lanes/sessions, preserving the identical operator question', async () => {
   const calls: Array<{ lane: IntelligenceLane; session: string; question: string; transport: string }> = []

@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Users, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -52,11 +52,12 @@ type CopilotExperienceProps = {
   label?: string
   direct?: boolean
   embedded?: boolean
+  headerControls?: ReactNode
 }
 
 const TEAM_LABEL = 'Supervisor-led multi-agent team'
 
-export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, label = TEAM_LABEL, direct = false, embedded = false }: CopilotExperienceProps) {
+export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, label = TEAM_LABEL, direct = false, embedded = false, headerControls }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
   const [flowExpanded, setFlowExpanded] = useState(false)
   const [flowWidth, setFlowWidth] = useState(320)
@@ -96,6 +97,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, l
     <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
       style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{label}</small></span>
       <span className="v2-copilot-actions">
+        {headerControls}
         {!direct && <details className="v2-copilot-team" onKeyDown={event => { if (event.key === 'Escape') event.currentTarget.open = false }}>
           <summary aria-label="Team capabilities" title="Team capabilities"><Users size={15} />Team</summary>
           <div className="v2-copilot-team-card">
