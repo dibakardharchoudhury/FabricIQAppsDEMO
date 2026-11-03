@@ -10,7 +10,7 @@ import { AGENT_CAPABILITIES, AGENT_DISPLAY_NAMES, isWorkOrderRequest, type Orche
 import { WorkOrderDraftPager } from './WorkOrderDraftPager'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
-import { answerSections, draftAnswerParts, draftDetailParts, operatorNarrative } from '../services/copilot/answerPresentation'
+import { answerSections, draftAnswerParts, draftDetailParts, operatorNarrative, type AnswerDataset } from '../services/copilot/answerPresentation'
 import { AnswerDashboard } from './AnswerDashboard'
 import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
@@ -36,6 +36,8 @@ export type CopilotMessage = {
   citations?: NativeCitation[]
   nativeResponseId?: string
   nativeTextSha256?: string
+  nativeTables?: AnswerDataset[]
+  nativeTableIssues?: string[]
   continuationSupported?: false
   workflowText?: string
   sourceAnswers?: Array<{ evidence_id: string; text: string; content_sha256: string }>
@@ -202,6 +204,8 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {useDraftPresentation
       ? draftDetails
       : answer}
+    {!streaming && !message.failed && message.nativeTableIssues?.map(issue => <p role="alert" key={issue}>{issue}</p>)}
+    {!streaming && !message.failed && message.nativeTables?.map((dataset, index) => <NativeResultTable dataset={dataset} key={`${index}:${dataset.title}`} />)}
     {!!message.workflowText && message.sourceAnswers?.map(source => <details className="v2-answer-support" key={source.evidence_id}>
       <summary>Source evidence</summary>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{source.text}</ReactMarkdown>
@@ -228,6 +232,28 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
+}
+
+function NativeResultTable({ dataset }: { dataset: AnswerDataset }) {
+  const [page, setPage] = useState(0)
+  const pageSize = 50
+  const start = page * pageSize
+  const rows = dataset.rows.slice(start, start + pageSize)
+  return <section className="v2-answer-dashboard" aria-label={`Native result table: ${dataset.title}`}>
+    <div className="v2-answer-table">
+      <strong>{dataset.title}</strong><small> {dataset.rows.length} returned rows</small>
+      <small className="v2-answer-citation">Source: native Fabric IQ result file; values are unchanged.</small>
+      <table><thead><tr>{dataset.columns.map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>
+        <tbody>{rows.map((row, rowIndex) => <tr key={start + rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+      </table>
+      {dataset.rows.length === 0 && <p>No rows returned in this result file.</p>}
+      {dataset.rows.length > pageSize && <div className="v2-chart-tabs" role="group" aria-label={`Rows in ${dataset.title}`}>
+        <button type="button" disabled={page === 0} onClick={() => setPage(value => value - 1)}>Previous rows</button>
+        <span role="status">Showing {start + 1}-{start + rows.length} of {dataset.rows.length} returned rows</span>
+        <button type="button" disabled={start + rows.length >= dataset.rows.length} onClick={() => setPage(value => value + 1)}>Next rows</button>
+      </div>}
+    </div>
+  </section>
 }
 
 function DraftDetails({ details }: { details: string }) {
@@ -280,6 +306,10 @@ function buildTranscript(question: string | undefined, message: CopilotMessage):
     parts.push(`## Agent flow\n\n${message.orchestrationEvents.map(event => `- ${event.label}: ${event.status} — ${event.detail}`).join('\n')}`)
   }
   if (message.text) parts.push(`## Answer\n\n${message.backendOwned ? message.text : stripOptionsMarker(message.text)}`)
+  for (const dataset of message.nativeTables ?? []) {
+    parts.push(`### Native result: ${dataset.title}\n\n${block('csv', dataset.csv)}`)
+  }
+  if (message.nativeTableIssues?.length) parts.push(`## Native result limitations\n\n${message.nativeTableIssues.join('\n\n')}`)
   if (message.citations?.length) parts.push(`## Native citations\n\n${message.citations.map(citation => `- ${citation.title}: ${citation.url ?? citation.fileId ?? ''}`).join('\n')}`)
   if (message.nativeResponseId) parts.push(`Fabric response: ${message.nativeResponseId}`)
   if (message.nativeTextSha256) parts.push(`Native answer SHA-256: ${message.nativeTextSha256}`)

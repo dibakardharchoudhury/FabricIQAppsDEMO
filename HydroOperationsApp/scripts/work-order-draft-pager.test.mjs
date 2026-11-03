@@ -115,6 +115,50 @@ test('native transcripts preserve original markers, whitespace, response identit
   assert.match(transcript, /Query result: file_result/)
 })
 
+test('native result files render exact cells inline without rewriting the answer or enabling approval', () => {
+  const dataset = { format: 'csv', title: 'result_0.csv', columns: ['facility_id', 'facility_name'],
+    rows: [['F1', 'Native facility'], ['002', '<img src=x onerror=alert(1)>']], csv: 'original CSV' }
+  const text = 'Original native summary. Current condition is unknown.'
+  const html = renderToStaticMarkup(createElement(AgentMessage, {
+    message: { role: 'agent', text, backendOwned: true, readOnly: true, nativeTables: [dataset], proposals: drafts(1) },
+    streaming: false, showCrew: false,
+  }))
+  assert.ok(html.includes(text))
+  assert.match(html, /aria-label="Native result table: result_0.csv"/)
+  assert.match(html, /<th scope="col">facility_id<\/th>/)
+  assert.match(html, /<td>002<\/td>/)
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/)
+  assert.equal((html.match(/<tbody>/g) ?? []).length, 1)
+  assert.doesNotMatch(html, /<img src=x|Review backend work-order draft|Next rows/)
+})
+
+test('large native tables bound rendered rows while copy retains the complete original CSV', () => {
+  const rows = Array.from({ length: 51 }, (_, index) => [String(index + 1), `Facility ${index + 1}`])
+  const csv = ['id,name', ...rows.map(row => row.join(','))].join('\r\n')
+  const message = { role: 'agent', text: 'Original summary', backendOwned: true,
+    nativeTables: [{ format: 'csv', title: 'all.csv', columns: ['id', 'name'], rows, csv }] }
+  const html = renderToStaticMarkup(createElement(AgentMessage, { message, streaming: false, showCrew: false }))
+  assert.match(html, /Showing 1-50 of 51 returned rows/)
+  assert.equal((html.match(/<td>/g) ?? []).length, 100)
+  assert.match(html, /<button type="button" disabled="">Previous rows<\/button>/)
+  assert.match(html, /<button type="button">Next rows<\/button>/)
+  assert.ok(buildTranscript('Question', message).includes(csv))
+})
+
+test('native table limitations are explicit and incomplete responses never render result tables', () => {
+  const message = { role: 'agent', text: 'Original summary', backendOwned: true,
+    nativeTableIssues: ['broken.csv: inconsistent columns'],
+    nativeTables: [{ format: 'csv', title: 'empty.csv', columns: ['id'], rows: [], csv: 'id\n' }] }
+  const html = renderToStaticMarkup(createElement(AgentMessage, { message, streaming: false, showCrew: false }))
+  assert.match(html, /role="alert">broken.csv: inconsistent columns/)
+  assert.match(html, /No rows returned in this result file/)
+  assert.ok(buildTranscript('Question', message).includes('broken.csv: inconsistent columns'))
+  for (const props of [{ message, streaming: true }, { message: { ...message, failed: true }, streaming: false }]) {
+    const incomplete = renderToStaticMarkup(createElement(AgentMessage, { ...props, showCrew: false }))
+    assert.doesNotMatch(incomplete, /Native result table:|No rows returned in this result file/)
+  }
+})
+
 test('workflow summary and limitations stay visible with full native answers and RCA collapsed once', () => {
   const native = '  Original native answer\r\nwith citations [1].  '
   const html = renderToStaticMarkup(createElement(AgentMessage, {

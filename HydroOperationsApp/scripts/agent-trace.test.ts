@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { applicationInsightsLink, automaticCrewRole, captureApplicationEvent, captureFoundryEvent, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
+import { applicationInsightsLink, automaticCrewRole, captureApplicationEvent, captureFoundryEvent, crewCommunications, crewHandoffs, crewTimelineStart, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
 import { createOrchestrationEvent } from '../src/services/copilot/orchestration.ts'
 
 test('crew status never turns a failed or unstarted invocation into success', () => {
@@ -23,6 +23,19 @@ test('automatic crew focus follows the current specialist failure or work, not h
   iq.status = 'completed'
   assert.equal(automaticCrewRole([supervisor, iq]), 'supervisor')
   assert.equal(automaticCrewRole([]), undefined)
+})
+
+test('crew timeline includes earlier traces retained by later hosted status updates', () => {
+  const event = { ...createOrchestrationEvent('supervisor', 'completed', 'Finished'), timestamp: 86_000 }
+  captureFoundryEvent(event, { type: 'response.created', response: { id: 'resp_real' } }, 23_000)
+  captureFoundryEvent(event, { type: 'response.completed' }, 48_000)
+  const original = JSON.stringify(event)
+  const start = crewTimelineStart([event])
+  assert.equal(start, 23_000)
+  assert.deepEqual(event.trace!.map(entry => (entry.timestamp - start) / 1000), [0, 25])
+  assert.equal(JSON.stringify(event), original, 'native event timestamps must not be rewritten')
+  assert.equal(crewTimelineStart([{ ...event, timestamp: 10_000 }]), 10_000)
+  assert.equal(crewTimelineStart([{ ...event, trace: [] }]), 86_000)
 })
 
 test('multi-step handoffs retain names and roles and always return through Supervisor', () => {

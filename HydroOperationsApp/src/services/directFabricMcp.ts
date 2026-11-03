@@ -1,5 +1,7 @@
 import type { AgentArtifact } from './assistantStream'
 import type { DirectAccess, DirectAnswer } from './directFabric'
+import Papa from 'papaparse'
+import { readAnswerDatasets, type AnswerDataset } from './copilot/answerPresentation.ts'
 
 const MAX_BYTES = 5_000_000
 const identity = (value: string) => {
@@ -10,6 +12,26 @@ type RecordValue = Record<string, unknown>
 const record = (value: unknown): RecordValue => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The published Data Agent returned malformed native evidence.')
   return value as RecordValue
+}
+
+function inlineTables(text: string) {
+  const tables: AnswerDataset[] = []
+  let fence: string | undefined
+  const lines = text.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    if (fence) {
+      if (new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(line)) fence = undefined
+      continue
+    }
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (marker) { fence = marker[1]; continue }
+    if (!line.includes('|') || !/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[index + 1] ?? '')) continue
+    const block = [line, lines[++index]]
+    while (lines[index + 1]?.includes('|')) block.push(lines[++index])
+    tables.push(...readAnswerDatasets(block.join('\n')).datasets)
+  }
+  return tables
 }
 
 /** Published MCP questions are independent; transport sessions are not conversation memory. */
@@ -91,6 +113,9 @@ export class DirectFabricMcpConversation {
       if (result.isError) throw new Error(text || 'The published Data Agent returned a native MCP error.')
       if (!text.trim()) throw new Error('The published Data Agent returned no native text answer. No replacement answer was generated.')
       const artifacts: AgentArtifact[] = []
+      const nativeTables: AnswerDataset[] = []
+      const nativeTableIssues: string[] = []
+      const renderedTables = inlineTables(text)
       const file = (fileId: string, name: string, blob: Blob, image = false) => {
         if (blob.size > MAX_BYTES || artifacts.length >= 20) throw new Error('Native MCP artifacts exceed the bounded evidence limit.')
         const url = URL.createObjectURL(blob)
@@ -104,8 +129,30 @@ export class DirectFabricMcpConversation {
           const title = typeof resource._meta === 'object' && resource._meta ? record(resource._meta).title : undefined
           const name = uri.split('/').pop() || (typeof title === 'string' ? title : `native-resource-${index}`)
           const mime = typeof resource.mimeType === 'string' ? resource.mimeType : 'application/octet-stream'
-          if (typeof resource.text === 'string') file(uri, name, new Blob([resource.text], { type: mime }))
-          else if (typeof resource.blob === 'string') file(uri, name, new Blob([Uint8Array.from(atob(resource.blob), c => c.charCodeAt(0))], { type: mime }), mime.startsWith('image/'))
+          const blob = typeof resource.text === 'string' ? new Blob([resource.text], { type: mime })
+            : typeof resource.blob === 'string' ? new Blob([Uint8Array.from(atob(resource.blob), c => c.charCodeAt(0))], { type: mime }) : undefined
+          if (blob) {
+            file(uri, name, blob, mime.startsWith('image/'))
+            if (/^text\/csv(?:;|$)/i.test(mime) || /\.csv$/i.test(name)) {
+              let csv: string
+              try { csv = new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()) }
+              catch (error) {
+                if (!(error instanceof TypeError)) throw error
+                nativeTableIssues.push(`${name}: the returned CSV is not valid UTF-8. No values were replaced; the original file remains available below.`)
+                continue
+              }
+              const parsed = Papa.parse<string[]>(csv, { delimiter: ',' })
+              if (/[\r\n]$/.test(csv) && parsed.data.at(-1)?.length === 1 && parsed.data.at(-1)?.[0] === '') parsed.data.pop()
+              const [columns, ...rows] = parsed.data
+              if (parsed.errors.length || !columns?.length || columns.some(column => !column.trim())
+                || new Set(columns).size !== columns.length || rows.some(row => row.length !== columns.length)) {
+                nativeTableIssues.push(`${name}: the returned CSV is malformed or has inconsistent columns. No rows were guessed; the original file remains available below.`)
+              } else if (![...renderedTables, ...nativeTables].some(dataset =>
+                JSON.stringify(dataset.columns) === JSON.stringify(columns) && JSON.stringify(dataset.rows) === JSON.stringify(rows))) {
+                nativeTables.push({ format: 'csv', title: name, columns, rows, csv })
+              }
+            }
+          }
         } else if (block.type === 'image' && typeof block.data === 'string' && typeof block.mimeType === 'string') {
           file(`native-image-${index}`, `native-image-${index}.${block.mimeType.split('/')[1]}`, new Blob([Uint8Array.from(atob(block.data), c => c.charCodeAt(0))], { type: block.mimeType }), true)
         }
@@ -115,7 +162,7 @@ export class DirectFabricMcpConversation {
       bounded.throwIfAborted()
       this.artifacts.push(...created)
       progress?.(text)
-      return { text, artifacts, nativeTextSha256, continuationSupported: false }
+      return { text, artifacts, nativeTables, nativeTableIssues, nativeTextSha256, continuationSupported: false }
     } catch (error) {
       for (const url of created) URL.revokeObjectURL(url)
       if (bounded.aborted) throw bounded.reason
