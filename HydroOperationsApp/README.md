@@ -89,6 +89,9 @@ principal still clears the conversation; New chat resets only the selected mode.
 This session state is not stored in browser storage and does not survive a full
 browser reload. Direct Fabric IQ retains its visible transcript but its published
 MCP questions remain independent; no native continuation is invented.
+Ordinary hosted Q&A accepts the backend's nullable optional `workflow_text`
+without replacing its answer. Supplied non-null summaries must still be
+non-empty strings; malformed presentations and native-evidence digests fail.
 
 On a full reload, STID and Weather use the deployed Rayfin Lakehouse connector with the signed-in
 user's Fabric identity. Its workspace and SQL analytics endpoint ID are rebound from live target

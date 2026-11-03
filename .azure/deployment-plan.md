@@ -1,10 +1,24 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Native fetch and conversation-session preservation
+> **Status:** Validated - Session preservation and nullable presentation contract
 
 ## November 3 latest Direct diagnostics and Stop controls rollout
 
 ### Session-preservation and native-fetch follow-up
+
+The follow-up optional-presentation contract accepts `workflow_text: null`,
+matching the backend's declared nullable field. Non-null malformed summaries
+remain errors. All 94 combined transport/source/direct/auth/settings/mode tests,
+focused ESLint and the production build passed on November 3, 2026 (22.86s,
+existing chunk-size warnings). The scope remains frontend-only; no infrastructure,
+hosted image, agent definition, permission or source-profile change is proposed.
+
+The session/native-fetch fixes were published successfully to Dev release
+`5c254b1` at `2026-11-03T07:49:14Z` and Feature release `382525c` at
+`2026-11-03T08:00:46Z`. Both actual browsers retained an executing prompt through
+the Stale refresh and navigation away/back. Dev also completed native Direct
+execution and returned the three actual facility identifiers/names. Live Multi
+acceptance of the nullable follow-up remains required after publication.
 
 The same approved Dev and Feature scope is retained. This frontend-only update
 does not change hosted images, agent definitions, source profiles, infrastructure,
@@ -23,6 +37,14 @@ All validation checks pass for this scoped update:
   enforced; canonical deployment must stop on any live authorization failure.
 
 #### Section 7: Validation Proof - session-preservation follow-up
+
+November 3 nullable-contract follow-up: `node --import tsx --test` passed all
+94 focused cases; focused ESLint and `npm run build` passed (22.86s).
+`npm run validate-env` passed again before rollout. Azure CLI verified the
+approved tenant and Foundry subscription; live policy assignment retrieval
+returned HTTP 200 with existing deny, MFA and resource-creation controls.
+No Bicep/Terraform or role assignment changed. The full canonical deployment
+must enforce all current authorization and endpoint readiness checks.
 
 The previous Dev build reproduced the refresh bug: the prompt was visible before
 telemetry connection/refresh invalidation, absent afterward, and the hosted
