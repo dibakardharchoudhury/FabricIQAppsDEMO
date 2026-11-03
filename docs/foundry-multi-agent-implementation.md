@@ -17,6 +17,37 @@ discrepancy, not code parity or freshness certification; a separate facility-wid
 MAX/arg_max verification was requested. Do not treat these native answers as
 interchangeable or hide the mismatch behind successful publication.
 
+The independent verification did not resolve this discrepancy. Direct declined
+the requested cross-source verification; its statement that federation was
+disabled is an agent answer, not independently verified tenant configuration.
+Multi failed with HTTP 500. Read-only logs for hosted session
+`7ba7433a-6efb-4d55-a49a-01eb736c9616` identify the actual failure:
+`SourceFailure: Required direct telemetry focus evidence was not produced.`
+QA first required an argument correction, and presentation subsequently refused
+the missing direct evidence. This was an orchestration evidence-contract failure,
+not proof that Fabric returned HTTP 500 or that the latest event was verified.
+The semantic fulfillment path does not generate legacy analytical-plan entries;
+its telemetry fulfillment loop therefore cannot supply an omitted focus read.
+Automatically substituting a default bounded query would not verify the requested
+all-retained-history maximum. No such fallback, source mutation or answer rewrite
+was added. Independent historical-maximum correctness remains unverified.
+
+Ordinary Multi's draft-only maintenance workflow also ran on both targets:
+
+| Target | Observed result | Duration |
+| --- | --- | --- |
+| Dev | Two review cards: T007 and T009; all six canonical signal IDs and stale historical timestamps are included | 303s |
+| Feature | Five review cards: T008, T007, T010, T006 and T009; descriptions distinguish stale observability from mechanical faults | 132s |
+
+Every card was inspected through the pager, with title and description fields
+present. Feature's T006/T008/T010 descriptions acknowledge their existing orders
+and propose broader observability investigations; these require operator review,
+not a blanket certification that proposed work cannot overlap existing work.
+Both terminal results explicitly report no production writes executed. No
+approval or rejection was submitted, no SQL work order was created, and no
+Teams/email delivery was tested. The observed proposal counts are not required
+to match across different workspace data and independent model executions.
+
 The same pass reproduced a separate view-lifetime defect: leaving Direct and
 returning through Overview selected Multi even though Direct's history remained.
 Selection now belongs to the existing in-memory conversation owner, survives
