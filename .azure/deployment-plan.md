@@ -1,6 +1,41 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Prose-only native evidence follow-up
+> **Status:** Validated - Tab-session authentication and chat controls update
+
+## Scoped tab-session authentication and chat controls update
+
+The previously approved Dev and Feature tenant, workspaces, SPA, capacity and
+Foundry project are retained. Deployment uses the repository's canonical Python
+orchestrator from clean matching-upstream release branches, not a custom azd flow.
+
+All validation checks pass for this frontend-only scope:
+- [x] 1. Core Validation: Azure CLI confirms the expected tenant and Foundry
+  subscription. Node 24 environment validation, TypeScript, focused ESLint,
+  all 30 auth/settings/mode regression tests and the production build pass.
+- [x] 2. Docker Build: not applicable; hosted service source, Dockerfile, locks,
+  and its source-fingerprinted image are unchanged.
+- [x] 3. Azure Policy Validation: no ARM/IaC, role, region, resource, source
+  profile, permission or quota delta. Canonical live preflights remain mandatory.
+
+### Section 7: Validation Proof - November 3, 2026
+
+Commands completed: `npm run validate-env`, `npm run typecheck`, focused
+`npx --no-install eslint`, `npm run build`, and `node --import tsx --test`
+for entra-tokens, copilot-settings and intelligence-modes. All pass; the build
+retains existing large-chunk warnings.
+
+A source-free fixture rendered the actual chat/settings components with the built
+stylesheet. Browser checks passed all eight visibility combinations, saving and
+reload persistence, default restoration, right-side placement beside Team,
+mode-local compose draft retention, Escape/focus restoration, maximized controls,
+dark/light styling and narrow viewport containment. Battle exposes no approval
+buttons. The fixture explicitly disables source invocation and performs no SQL
+write; it does not certify live authentication or agent execution.
+
+MSAL authentication cache now uses tab/origin-scoped sessionStorage; analytical
+data caches remain in memory. Restored-account regressions verify silent reuse
+and continued tenant filtering/error propagation. Same-tab live navigation after
+an initial real sign-in remains a separate post-deployment acceptance check.
 
 ## Scoped native Data Agent passthrough
 
