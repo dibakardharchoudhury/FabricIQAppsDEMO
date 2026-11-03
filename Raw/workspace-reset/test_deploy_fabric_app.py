@@ -2573,6 +2573,107 @@ class DeployOrderTests(unittest.TestCase):
                         ))
                     self.assertIn(f"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP={expected}", (rayfin / ".env").read_text())
 
+    def test_isolated_checkout_recovers_verified_energy_setting_from_target_checkpoint(self):
+        for saved_selection, expected in ((None, True), (True, True), (False, False)):
+            with self.subTest(saved_selection=saved_selection), tempfile.TemporaryDirectory() as directory:
+                checkpoint = Path(directory) / "fabric-demo-energy" / "tenant" / "workspace.json"
+                checkpoint.parent.mkdir(parents=True)
+                state = {
+                    "workspace_id": "workspace", "energy_lakehouse_id": "geo",
+                    "energy_map_verification": {"hydro-plants": 42},
+                }
+                if saved_selection is not None:
+                    state["energy_map_enabled"] = saved_selection
+                checkpoint.write_text(json.dumps(state), encoding="utf-8")
+                energy = Mock()
+                rayfin = Path(directory) / "rayfin"
+                rayfin.mkdir()
+                (rayfin / ".env").write_text("RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false\n", encoding="utf-8")
+                values = {
+                    "FABRIC_WORKSPACE_NAME": "Demo",
+                    "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
+                    "RAYFIN_PUBLIC_AAD_CLIENT_ID": "client", "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "false",
+                }
+                deployment = {"fabricWorkspaceId": "workspace", "fabricTenantId": "tenant", "fabricItemId": "item"}
+                with patch.object(DEPLOY.tempfile, "gettempdir", return_value=directory), \
+                        patch.object(DEPLOY, "RAYFIN_DIR", rayfin), \
+                        patch.object(DEPLOY, "current_rayfin_target", return_value=(values, deployment)), \
+                        patch.object(DEPLOY, "resolve_public_artifact_config",
+                                     return_value={"RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID": "geo"}), \
+                        patch.object(DEPLOY, "rayfin_api_targets_capacity", return_value=True), \
+                        patch.object(DEPLOY, "fabric_item_exists", return_value=True), \
+                        patch.object(DEPLOY, "energy_workspace", return_value=energy):
+                    self.assertTrue(DEPLOY.prepare_rayfin_env("tenant", "workspace", "Demo", "capacity", "client"))
+                self.assertIn(f"RAYFIN_PUBLIC_ENABLE_ENERGY_MAP={str(expected).lower()}", (rayfin / ".env").read_text())
+                if expected:
+                    energy.verify_energy.assert_called_once_with()
+                else:
+                    energy.verify_energy.assert_not_called()
+
+    def test_energy_setting_rejects_checkpoint_for_another_workspace_or_source(self):
+        for saved_workspace, saved_lakehouse in (("another", "geo"), ("workspace", "another")):
+            with self.subTest(workspace=saved_workspace, lakehouse=saved_lakehouse), \
+                    tempfile.TemporaryDirectory() as directory:
+                checkpoint = Path(directory) / "fabric-demo-energy" / "tenant" / "workspace.json"
+                checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_text(json.dumps({
+                    "workspace_id": saved_workspace, "energy_lakehouse_id": saved_lakehouse,
+                    "energy_map_verification": {"hydro-plants": 42},
+                }), encoding="utf-8")
+                with patch.object(DEPLOY.tempfile, "gettempdir", return_value=directory), \
+                        patch.object(DEPLOY, "energy_workspace") as energy:
+                    with self.assertRaises(DEPLOY.DeployError):
+                        DEPLOY.resolve_energy_map_setting(
+                            "tenant", "workspace", {}, {"RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID": "geo"}, None,
+                        )
+                energy.assert_not_called()
+
+    def test_explicit_energy_disable_survives_another_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "fabric-demo-energy" / "tenant" / "workspace.json"
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_text(json.dumps({
+                "workspace_id": "workspace", "energy_lakehouse_id": "geo",
+                "energy_map_verification": {"hydro-plants": 42}, "unknown": "preserved",
+            }), encoding="utf-8")
+            with patch.object(DEPLOY.tempfile, "gettempdir", return_value=directory), \
+                    patch.object(DEPLOY, "energy_workspace") as energy:
+                self.assertFalse(DEPLOY.resolve_energy_map_setting("tenant", "workspace", {}, {}, False))
+                self.assertFalse(DEPLOY.resolve_energy_map_setting(
+                    "tenant", "workspace", {}, {"RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID": "geo"}, None,
+                ))
+            self.assertEqual(json.loads(checkpoint.read_text())["unknown"], "preserved")
+            energy.assert_not_called()
+
+    def test_prepared_energy_readback_failure_stops_publication_instead_of_hiding_map(self):
+        from feature_workspace import FeatureWorkspaceError
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "fabric-demo-energy" / "tenant" / "workspace.json"
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_text(json.dumps({
+                "workspace_id": "workspace", "energy_lakehouse_id": "geo",
+                "energy_map_verification": {"hydro-plants": 42},
+            }), encoding="utf-8")
+            energy = Mock()
+            energy.verify_energy.side_effect = FeatureWorkspaceError("Read model unavailable")
+            with patch.object(DEPLOY.tempfile, "gettempdir", return_value=directory), \
+                    patch.object(DEPLOY, "energy_workspace", return_value=energy):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "readback failed"):
+                    DEPLOY.resolve_energy_map_setting(
+                        "tenant", "workspace", {}, {"RAYFIN_PUBLIC_GEO_LAKEHOUSE_ID": "geo"}, None,
+                    )
+
+    def test_energy_setting_rejects_malformed_checkpoints(self):
+        for content in ('{', '[]', '{"workspace_id":"workspace","energy_map_enabled":"true"}'):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                checkpoint = Path(directory) / "fabric-demo-energy" / "tenant" / "workspace.json"
+                checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_text(content, encoding="utf-8")
+                with patch.object(DEPLOY.tempfile, "gettempdir", return_value=directory):
+                    with self.assertRaises(DEPLOY.DeployError):
+                        DEPLOY.resolve_energy_map_setting("tenant", "workspace", {}, {}, None)
+
     def test_current_hosting_remains_last_without_losing_existing_redirects(self):
         current = "https://current.webapp.fabricapps.net"
         other = "https://other.webapp.fabricapps.net"
