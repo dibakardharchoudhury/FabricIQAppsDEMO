@@ -35,6 +35,46 @@ PIPELINE_JOB_URL = (
 )
 
 
+class BrowserAuthenticationTests(unittest.TestCase):
+    def test_direct_server_startup_uses_browser_authentication(self):
+        for key, value in SERVER.CLI_BROWSER_AUTH_SETTINGS.items():
+            self.assertEqual(os.environ[key], value)
+
+    def test_browser_login_command_on_windows_macos_and_linux(self):
+        client = SERVER.app.test_client()
+        for platform, os_name, executable in (
+            ("win32", "nt", "az.cmd"), ("darwin", "posix", "az"), ("linux", "posix", "az"),
+        ):
+            with (
+                self.subTest(platform=platform),
+                patch.object(SERVER.os, "name", os_name),
+                patch.object(SERVER.shutil, "which", return_value=executable),
+                patch.object(SERVER, "_start", return_value="login-job") as start,
+                patch.object(SERVER, "job_response", return_value=({"jobId": "login-job"}, 200)),
+            ):
+                response = client.post("/api/login", json={"tenant": "tenant.example"})
+                self.assertEqual(response.status_code, 200)
+                expected = (["cmd", "/c", executable] if os_name == "nt" else [executable])
+                self.assertEqual(start.call_args.args[0], expected + ["login", "--tenant", "tenant.example"])
+                self.assertFalse(start.call_args.kwargs["python"])
+
+    def test_login_and_deployment_children_inherit_browser_policy_and_existing_cache(self):
+        for python in (False, True):
+            with self.subTest(python=python), patch.dict(os.environ, {"AZURE_CONFIG_DIR": "existing-cache"}):
+                job = SERVER.Job(["Queued", "Done"])
+                process = Mock(stdout=io.StringIO(""), returncode=0)
+                with (
+                    patch.object(SERVER.subprocess, "Popen", return_value=process) as start,
+                    patch.object(SERVER.threading, "Timer"),
+                ):
+                    SERVER._worker(job, ["example"], None, 60, [], python=python)
+                environment = start.call_args.kwargs["env"]
+                for key, value in SERVER.CLI_BROWSER_AUTH_SETTINGS.items():
+                    self.assertEqual(environment[key], value)
+                self.assertEqual(environment["AZURE_CONFIG_DIR"], "existing-cache")
+                self.assertEqual(job.status, "succeeded")
+
+
 class FullWorkflowResumeTests(unittest.TestCase):
     def setUp(self):
         self.client = SERVER.app.test_client()
@@ -650,7 +690,8 @@ class WorkspaceActionTests(unittest.TestCase):
     def test_setup_modules_are_separate_from_app_publication(self):
         target = {"tenant": "tenant.example", "workspace": "Demo"}
         for endpoint, stage in (
-            ("/api/setup-energy", "energy"), ("/api/setup-foundry", "foundry"), ("/api/deploy-app", "app"),
+            ("/api/setup-energy", "energy"), ("/api/setup-foundry", "foundry"),
+            ("/api/deploy-app", "app"), ("/api/deploy-app-agents", "app-agents"),
         ):
             with self.subTest(stage=stage), patch.object(SERVER, "_start", return_value="job") as start:
                 response = self.client.post(endpoint, json=target)
@@ -661,7 +702,7 @@ class WorkspaceActionTests(unittest.TestCase):
         with patch.object(SERVER, "_start") as start:
             response = self.client.post("/api/deploy-app", json={**target, "createFoundry": True})
             self.assertEqual(response.status_code, 400)
-            self.assertIn("Foundry multi-agent setup module", response.get_json()["error"])
+            self.assertIn("Deploy app & agents", response.get_json()["error"])
             start.assert_not_called()
 
     def test_foundry_page_discloses_backend_creation_before_website_publication(self):
@@ -672,9 +713,13 @@ class WorkspaceActionTests(unittest.TestCase):
             response.close()
         foundry_pane = html.split('<section id="paneFoundry"', 1)[1].split("</section>", 1)[0]
         self.assertIn("AppBackend with SQL/GraphQL dependencies", foundry_pane)
-        self.assertIn("Does not publish the website.", foundry_pane)
-        self.assertIn("A Fabric App item can already appear during backend setup.", foundry_pane)
-        self.assertIn("After Foundry setup succeeds", foundry_pane)
+        self.assertIn("then publishes the website", foundry_pane)
+        self.assertIn("Agent failure blocks website publication.", foundry_pane)
+        self.assertIn("One run, one final result.", foundry_pane)
+        self.assertIn("Does not repeat Core or Energy setup", foundry_pane)
+        self.assertIn('runJob("/api/deploy-app-agents"', html)
+        self.assertNotIn('runJob("/api/setup-foundry"', html)
+        self.assertIn("Advanced: website-only publication", html)
         self.assertNotIn("Updates agents only", html)
         self.assertIn("five Foundry specialist agents", html)
         self.assertIn("Foundry account is the parent Azure resource", html)
@@ -1131,7 +1176,7 @@ async function evaluate(expression) {
     def test_full_deploy_is_outside_collapsible_actions_and_all_actions_have_icons(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         navigation = page[page.index('<nav class="nav"'):page.index("</nav>")]
-        group = navigation[navigation.index('<details id="deploymentActions"'):navigation.index("</details>")]
+        group = navigation[navigation.index('<details id="deploymentActions"'):navigation.rindex("</details>")]
         self.assertIn("Deployment Actions", group)
         self.assertNotIn('id="tabWorkflow"', group)
         self.assertIn("> Full Deploy</button>", navigation)
@@ -1141,6 +1186,10 @@ async function evaluate(expression) {
             button = button[:button.index("</button>")]
             self.assertIn("<svg", button)
         self.assertIn("Refresh energy sources", group)
+        advanced = group[group.index('<details class="deployment-actions">'):group.index("</details>")]
+        self.assertIn('id="tabDeploy"', advanced)
+        self.assertNotIn('id="tabFoundry"', advanced)
+        self.assertIn("Deploy app &amp; agents", group)
         self.assertNotIn("workflowEnableEnergy", page)
 
     def test_sidebar_toggle_is_accessible_and_remembers_state(self):
@@ -2133,17 +2182,59 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
     def test_deploy_job_limit_covers_project_creation_build_and_publish(self):
         self.assertGreaterEqual(SERVER.FOUNDRY_TIMEOUT_S, 75 * 60)
         self.assertLess(SERVER.DEPLOY_TIMEOUT_S, SERVER.FOUNDRY_TIMEOUT_S)
+        self.assertEqual(SERVER.APP_AGENTS_TIMEOUT_S, SERVER.FOUNDRY_TIMEOUT_S + SERVER.DEPLOY_TIMEOUT_S)
+
+    def test_combined_app_agents_route_uses_one_orchestrator_and_forwards_create_or_reuse(self):
+        for creating in (False, True):
+            payload = {
+                "tenant": "tenant.example", "workspace": "Demo", "createFoundry": creating,
+                "foundryAccountName": "account", "foundryProjectName": "project", "foundryModel": "model",
+            }
+            with self.subTest(creating=creating), patch.object(SERVER, "_start", return_value="job") as start, \
+                    patch.object(SERVER, "_start_workflow") as workflow:
+                response = self.client.post("/api/deploy-app-agents", json=payload)
+                self.assertEqual(response.status_code, 200, response.get_json())
+                start.assert_called_once()
+                argv, env, timeout, phases, markers = start.call_args.args
+                self.assertEqual(argv[argv.index("--stage") + 1], "app-agents")
+                self.assertEqual(env["HYDRO_FOUNDRY_CREATE"], str(creating).lower())
+                self.assertEqual(env["HYDRO_FOUNDRY_EXISTING_PROJECT_NAME"], "project")
+                self.assertEqual(timeout, SERVER.APP_AGENTS_TIMEOUT_S)
+                self.assertIs(phases, SERVER.APP_AGENTS_PHASES)
+                self.assertIs(markers, SERVER.APP_AGENTS_MARKERS)
+                self.assertTrue(start.call_args.kwargs["exclusive"])
+                workflow.assert_not_called()
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/deploy-app-agents", json={**payload, "energyMap": "enabled"})
+            self.assertEqual(response.status_code, 400)
+            start.assert_not_called()
+
+    def test_combined_app_agents_progress_does_not_finish_after_hosted_agent(self):
+        lines = [
+            "[1/8] Checking", "[2/8] Resolving", "[3/8] Preparing",
+            "Foundry: project", "Foundry: backend gateway", "Foundry: agents", "Foundry: Hosted Agent",
+            "[4/8] Signing in", "[5/8] Publishing", "[6/8] Settings", "[7/8] Auth", "[8/8] Checking",
+        ]
+        job = SERVER.Job(SERVER.APP_AGENTS_PHASES)
+        for line in lines:
+            previous = job.phase_index
+            for index, markers in SERVER.APP_AGENTS_MARKERS:
+                if index > job.phase_index and any(marker in line for marker in markers):
+                    job.phase_index = index
+            self.assertGreater(job.phase_index, previous)
+            self.assertLess(job.phase_index, len(SERVER.APP_AGENTS_PHASES) - 1)
+        self.assertEqual(SERVER.APP_AGENTS_PHASES[job.phase_index], "Checking endpoint and CORS readiness")
 
     def test_deploy_environment_forwards_only_validated_foundry_settings(self):
         env = SERVER._deploy_environment({
             "foundryEndpoint": "https://res.services.ai.azure.com/api/projects/proj/",
             "foundryModel": "gpt-5.6-sol", "acrName": "myreg12345", "foundryLocation": "Sweden Central",
-            "createFoundry": True, "productionWrites": "TRUE", "unexpected": "ignored",
+            "createFoundry": False, "productionWrites": "TRUE", "unexpected": "ignored",
         })
         self.assertEqual(env, {
             "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "https://res.services.ai.azure.com/api/projects/proj/",
             "HYDRO_FOUNDRY_MODEL": "gpt-5.6-sol", "HYDRO_ACR_NAME": "myreg12345",
-            "HYDRO_FOUNDRY_LOCATION": "Sweden Central", "HYDRO_FOUNDRY_CREATE": "true",
+            "HYDRO_FOUNDRY_LOCATION": "Sweden Central", "HYDRO_FOUNDRY_CREATE": "false",
             "HYDRO_PRODUCTION_WRITES_ENABLED": "true",
         })
         self.assertEqual(SERVER._deploy_environment({}), {})
@@ -2152,6 +2243,28 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
         }), {"HYDRO_FOUNDRY_CREATE": "false"})
         with self.assertRaisesRegex(ValueError, "explicit boolean"):
             SERVER._deploy_environment({"createFoundry": "true"})
+
+    def test_create_checked_rejects_reuse_selectors_without_starting_jobs(self):
+        project_id = (
+            "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg/"
+            "providers/Microsoft.CognitiveServices/accounts/account/projects/project"
+        )
+        for field, value in (
+            ("foundryEndpoint", "https://res.services.ai.azure.com/api/projects/proj"),
+            ("foundryProjectResourceId", project_id),
+        ):
+            for route in ("/api/setup-foundry", "/api/deploy-app-agents", "/api/full-workflow"):
+                with self.subTest(field=field, route=route), patch.object(SERVER, "_start") as job, \
+                        patch.object(SERVER, "_start_workflow") as workflow:
+                    response = self.client.post(route, json={
+                        "tenant": "tenant.example", "workspace": "Demo", "repository": "o/r",
+                        "connectionId": "yes", "parameters": PIPELINE_PARAMS,
+                        "createFoundry": True, field: value,
+                    })
+                    self.assertEqual(response.status_code, 400, response.get_json())
+                    self.assertIn("new project name", response.get_json()["error"])
+                    job.assert_not_called()
+                    workflow.assert_not_called()
 
     def test_subscription_and_model_creation_inputs_are_forwarded_without_defaults(self):
         subscription = "11111111-2222-3333-4444-555555555555"
@@ -2321,9 +2434,6 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes",
             "parameters": PIPELINE_PARAMS, "ontologyGraphBinding": json.dumps(graph),
             "azureSubscriptionId": guid,
-            "foundryEndpoint": "https://demo.services.ai.azure.com/api/projects/project",
-            "foundryProjectResourceId": f"/subscriptions/{guid}/resourceGroups/rg/providers/"
-                                       "Microsoft.CognitiveServices/accounts/account/projects/project",
             "foundryAccountName": "account", "foundryProjectName": "project",
             "foundryNewProjectName": "new-project", "foundryModel": "deployment",
             "foundryModelName": "gpt-4.1", "foundryModelVersion": "2025-04-14",
@@ -2332,7 +2442,7 @@ assert.equal(JSON.parse(stored.get(foundryTarget)).ProductionWrites, undefined);
             "createFoundry": True, "productionWrites": "false",
         }
         expected = SERVER._deploy_environment(payload)
-        self.assertEqual(len(expected), 16)
+        self.assertEqual(len(expected), 14)
         with patch.object(SERVER, "_start_workflow", return_value="id") as start:
             response = self.client.post("/api/full-workflow", json=payload)
         self.assertEqual(response.status_code, 200, response.get_json())
@@ -2381,6 +2491,8 @@ console.log(JSON.stringify([
             self.assertLess(form.index(f'id="{prefix}AzureSubscriptionId"'), form.index(f'id="{prefix}FoundryProjectName"'))
             self.assertIn("FoundryCreate", normal_fields)
             self.assertIn("Automatic multi-agent setup", form)
+            self.assertIn("live project incarnation and complete agent inventory", form)
+            self.assertIn("Creation approval never authorizes deleting agents", form)
             self.assertIn("billable", normal_fields)
             self.assertNotIn("FoundryOverrides", form)
             self.assertNotIn("FoundryNewProjectOptions", form)
@@ -2407,14 +2519,14 @@ console.log(JSON.stringify([
             self.assertIn("Allow project creation (billable)", form)
             self.assertIn(f'aria-describedby="{prefix}FoundryCreateHelp"', form)
             self.assertIn(f'id="{prefix}FoundryCreateHelp"', form)
-            self.assertIn("Existing project (even for a new Fabric workspace): unchecked.", form)
-            self.assertIn("Missing project: check. Agent updates still run.", form)
+            self.assertIn("Unchecked: reuse/update existing agents.", form)
+            self.assertIn("Checked: fresh project and agents; existing names stop setup.", form)
             help_text = re.search(rf'<p id="{prefix}FoundryCreateHelp" class="hint">(.*?)</p>', form).group(1)
             self.assertLessEqual(len(help_text.split()), 20)
             self.assertIn("Recommended for multiple workspaces: reuse one verified working account, project and model deployment; leave creation unchecked.", normal_fields)
             self.assertIn("Model TPM/RPM remains shared.", normal_fields)
-            self.assertIn("Separate projects are not end-to-end verified.", normal_fields)
-            self.assertIn("Creating another project did not resolve the earlier hosted-routing 404", normal_fields)
+            self.assertNotIn("Separate projects are not end-to-end verified.", normal_fields)
+            self.assertNotIn("Creating another project did not resolve the earlier hosted-routing 404", normal_fields)
             self.assertNotIn("or use separate projects in one account", form)
             self.assertNotIn("Separate projects: keep the account/model", form)
             self.assertIn("stable workspace-GUID project", form)
@@ -2422,8 +2534,8 @@ console.log(JSON.stringify([
             self.assertIn("Stable workspace suffixes separate agents, connections and hosted state", form)
             self.assertIn("no extra model deployment is allocated", form.lower())
             self.assertIn("names are not a security boundary", form)
-            self.assertIn("Creation approval permits missing resources; it does not force recreation.", form)
-            self.assertIn("Full Deploy uses these same settings and includes Foundry setup", form)
+            self.assertIn("Checked means create-only", form)
+            self.assertIn("Full Deploy and Deploy app &amp; agents use the same rule", form)
             self.assertIn("Approval is not saved.", form)
             self.assertNotIn("Leave blank unless", form)
             identifiers = re.findall(r'\bid="([^"]+)"', form)
@@ -2446,7 +2558,8 @@ console.log(JSON.stringify([
             self.assertLessEqual(len(spec["help"].split()), 12, spec["name"])
         self.assertIn("Allow project creation (billable)", page)
         self.assertIn("Deletes every workspace item.", page)
-        self.assertIn("materialize the ontology graph first", page)
+        self.assertIn("Requires verified existing agents and backend configuration.", page)
+        self.assertNotIn("materialize the ontology graph first", page)
         self.assertIn("Settings stay on this machine. GitHub PATs are never saved.", page)
 
     def test_precreated_spa_is_explicit_validated_and_used_by_each_submission(self):
@@ -2527,6 +2640,10 @@ for (const suffix of ["FoundryProjectName", "FoundryModel"]) {
   }
 }
 assert.equal(foundryValid("deploy"), true);
+fields.deployFoundryProjectName.value="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p";
+assert.equal(foundryValid("deploy"), false);
+fields.deployFoundryCreate.checked=false;
+assert.equal(foundryValid("deploy"), true);
 """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2574,9 +2691,8 @@ for (const prefix of ["deploy", "workflow"]) {
   assert.equal($(prefix+"FoundryModel").disabled, false);
   assert.equal($(prefix+"FoundryProjectName").value, "existing-project-name");
   assert.equal($(prefix+"FoundryModel").value, "existing-model");
-  assert.match($(prefix+"FoundryModeSummary").textContent, /Create only if missing/);
-  assert.match($(prefix+"FoundryCreationStatus").textContent, /verified multi-workspace shared-project path, leave unchecked/);
-  assert.match($(prefix+"FoundryCreationStatus").textContent, /Creation does not fix hosted-routing 404s/);
+  assert.match($(prefix+"FoundryModeSummary").textContent, /Create a fresh project and fresh agents/);
+  assert.equal($(prefix+"FoundryCreationStatus").textContent, "");
   assert.equal(foundryValid(prefix), true);
   const creating = foundryPayload(prefix);
   assert.equal(creating.createFoundry, true);

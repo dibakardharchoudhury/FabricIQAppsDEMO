@@ -268,7 +268,7 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_semantic_rca_does_not_preload_unassigned_48_hour_sources(self):
+    async def test_semantic_rca_cannot_skip_native_grounding_or_preload_unassigned_sources(self):
         from test_semantic_planning import decision
         request = self.request.model_copy(update={"run_id": uuid4(), "question": "Investigate the last six hours."})
         self.seed(request)
@@ -278,9 +278,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner = self.make_owner(semantic_planning=True, analysis_model="test-model")
         owner.root_cause_evidence = AsyncMock(side_effect=AssertionError("Unassigned enrichment ran."))
         owner.handoff = AsyncMock(side_effect=RuntimeError("scoped specialist reached"))
-        with self.assertRaisesRegex(RuntimeError, "scoped specialist reached"):
+        with self.assertRaisesRegex(SourceFailure, "Fabric IQ/Sparky"):
             await owner.run(request)
-        owner.handoff.assert_awaited_once()
+        owner.handoff.assert_not_awaited()
         owner.root_cause_evidence.assert_not_awaited()
 
     async def test_direct_mode_draft_request_reaches_guarded_planning_before_native_execution(self):
@@ -306,10 +306,49 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_historical_quality_with_unsupported_rca_repair_gate_stages_diagnostic_cards(self):
         await self.assert_native_quality_drafts(with_rca=True)
 
-    async def assert_native_quality_drafts(self, *, with_rca):
+    async def test_ten_target_draft_request_does_not_stop_after_six_model_rounds(self):
+        await self.assert_native_quality_drafts(
+            with_rca=True, targets=tuple(f"TEST_T{index:03}" for index in range(1, 11)),
+        )
+
+    async def test_parallel_verification_does_not_disable_fixer_before_draft_calls(self):
+        await self.assert_native_quality_drafts(
+            with_rca=False, targets=tuple(f"TEST_T{index:03}" for index in range(1, 11)),
+            mode="parallel_reads_then_proposals",
+        )
+
+    async def test_fifteen_targets_can_complete_verification_and_all_draft_cards(self):
+        await self.assert_native_quality_drafts(
+            with_rca=False, targets=tuple(f"TEST_T{index:03}" for index in range(1, 16)),
+            mode="parallel_reads_then_proposals",
+        )
+
+    async def test_larger_fixer_loop_still_enforces_the_forty_source_call_limit(self):
+        with self.assertRaisesRegex(SourceFailure, "per-run source-tool budget"):
+            await self.assert_native_quality_drafts(
+                with_rca=False, targets=tuple(f"TEST_T{index:03}" for index in range(1, 42)),
+                mode="parallel_reads_then_proposals",
+            )
+
+    async def test_failed_fixer_completions_keep_both_attempt_diagnostics(self):
+        self.mode = "work_order_prose_only"
+        with self.assertRaisesRegex(SourceFailure, "neither a staged approval card nor a structured review"):
+            await self.owner.run(self.request)
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        receipts = [json.loads(path.read_text(encoding="utf-8")) for path in journal.root.glob("*.json")]
+        attempts = [
+            receipt["value"] for receipt in receipts
+            if receipt["key"].startswith("specialist_attempt:work-order:")
+        ]
+        self.assertEqual(len(attempts), 2)
+        self.assertTrue(all(attempt["response_id"] for attempt in attempts))
+        self.assertTrue(all(attempt["function_call_count"] == 0 for attempt in attempts))
+        self.assertIsNone(journal.read("answer"))
+
+    async def assert_native_quality_drafts(self, *, with_rca, targets=None, mode="multiple_proposals"):
         from test_semantic_planning import decision
-        self.mode = "multiple_proposals"
-        self.multiple_proposal_ids = ("TEST_T004", "TEST_T005", "TEST_T007", "TEST_T009", "TEST_T014")
+        self.mode = mode
+        self.multiple_proposal_ids = targets or ("TEST_T004", "TEST_T005", "TEST_T007", "TEST_T009", "TEST_T014")
         self.tools.stage = True
         request = self.request.model_copy(update={
             "run_id": uuid4(),
@@ -345,8 +384,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
         async def execute(name, arguments, current):
             receipt = await original_execute(name, arguments, current)
-            return receipt.model_copy(update={"id": f"proposal-{arguments['equipment_id']}"}) \
-                if name == "propose_work_order" else receipt
+            if name == "propose_work_order":
+                return receipt.model_copy(update={"id": f"proposal-{arguments['equipment_id']}"})
+            if mode == "parallel_reads_then_proposals":
+                return receipt.model_copy(update={
+                    "id": sha256(_encoded({"tool": name, "arguments": arguments})).hexdigest(),
+                })
+            return receipt
 
         self.tools.execute = execute
         text = (
@@ -368,11 +412,25 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
                    new_callable=AsyncMock, return_value=native_call) as native:
             answer = await owner.run(request)
-        self.assertEqual(native.call_args.args[3], request.question)
+        native_question = native.call_args.args[3]
+        self.assertTrue(native_question.startswith("Read-only evidence task"))
+        self.assertIn("Do not perform RCA", native_question)
+        self.assertIn(request.requested_at.isoformat(), native_question)
+        self.assertIn("Aggregate event history", native_question)
+        self.assertIn("before applying any result limit", native_question)
+        self.assertIn("cannot establish complete coverage", native_question)
+        self.assertIn(raw["plan"]["steps"][0]["question"], native_question)
+        self.assertIn(
+            "Original user request (context for this read-only subtask):\n" + request.question,
+            native_question,
+        )
         self.assertEqual([draft.equipment_id for draft in answer.proposals], list(self.multiple_proposal_ids))
-        self.assertEqual(len(answer.proposal_digests), 5)
+        self.assertEqual(len(answer.proposal_digests), len(self.multiple_proposal_ids))
         self.assertEqual(answer.native_answers[0].text, text)
         self.assertFalse(answer.production_write_executed)
+        attempt = journal.read(f"specialist_attempt:work-order:{3 if with_rca else 2}:0")
+        self.assertIsNotNone(attempt)
+        self.assertGreaterEqual(attempt["function_call_count"], len(self.multiple_proposal_ids))
         self.assertEqual([item.role for item in answer.specialists],
                          ["fabric-iq", *(["rca"] if with_rca else []), "work-order"])
         work_payload = next(payload for payload in self.payloads
@@ -503,6 +561,107 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(native.call_args.args[3], question)
         owner.invoke.assert_not_awaited()
         self.assertEqual(client_presentation(owner.native_answer(request)).text.encode(), text.encode())
+
+    async def test_native_follow_up_receives_same_source_history_without_claiming_continuation(self):
+        from test_semantic_planning import decision
+        previous = HistoricalContext(
+            run_id=uuid4(), source=SOURCE, question="Show facility identifiers and names.",
+            rendered_answer="| facility_id | facility_name |\n|---|---|\n"
+                            "| FACILITY_RTI_001 | Sloy Power Station |\n"
+                            "| FACILITY_RTI_002 | Foyers Power Station |\n",
+            requested_at=utc_now() - timedelta(minutes=1), proposal_ids=(),
+        )
+        request = self.request.model_copy(update={
+            "question": "For those facilities, correlate historical quality and open work. Read only.",
+            "native_sources": ("data-agent",), "previous_run_id": previous.run_id,
+            "historical_context": previous,
+        })
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=())
+        owner = self.make_owner(
+            semantic_planning=True, analysis_model="test-model",
+            native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                         toolbox=version.name),
+        )
+        owner.run_id = request.run_id
+        owner.semantic_decision = SemanticDecision.model_validate(decision("fabric-iq", "native_claims", False))
+        owner.answer_contract = owner.semantic_decision.plan.answer_contract
+        text = "Native fresh-source answer.\r\n"
+        call = NativeDataAgentCall("native-follow-up", {"input": request.question}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
+        journal = RunJournal(self.root / "native-follow-up")
+        owner.invoke = AsyncMock(side_effect=AssertionError("A wrapper model was invoked."))
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call) as native:
+            await owner.handoff(owner.semantic_decision.plan.steps[0], request, journal, {"fabric-iq": version})
+            sent = native.call_args.args[3]
+            self.assertEqual(previous.rendered_answer,
+                             json.loads(sent.split("Historical conversation context:\n")[1])["rendered_answer"])
+            self.assertTrue(sent.startswith(request.question))
+            self.assertIn("not current evidence or authorization", sent)
+            owner.evidence.clear()
+            owner.specialists.clear()
+            await owner.handoff(owner.semantic_decision.plan.steps[0], request, journal, {"fabric-iq": version})
+            native.assert_awaited_once()
+            await owner.invoke_data_agent(request.question, request, journal, version, passthrough=True)
+            self.assertEqual(native.call_args.args[3], sent)
+        owner.invoke.assert_not_awaited()
+        self.assertEqual(owner.specialists[0].text.encode(), text.encode())
+
+    async def test_rca_handoff_scopes_native_evidence_and_does_not_replay_unscoped_cache(self):
+        from test_semantic_planning import decision
+        request = self.request.model_copy(update={
+            "question": "Investigate the root cause of today's BAD turbine telemetry.",
+            "native_sources": ("data-agent",),
+        })
+        version = AgentVersion(name="hydro-fabric-iq-tools", version="2", model="native-fabric-responses", tools=())
+        owner = self.make_owner(
+            semantic_planning=True, analysis_model="test-model",
+            native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"},
+                                         toolbox=version.name),
+        )
+        raw = decision("fabric-iq", "native_claims", False)
+        raw["plan"]["steps"][0]["question"] = "Read today's quality events and canonical turbine identities."
+        raw["plan"]["steps"].append({
+            "specialist": "rca", "question": request.question, "reason": "Investigate after grounding.",
+            "nativeSource": None, "requiresSelection": False, "requiresVerifiedIssue": False,
+            "execution": "agent", "reads": [],
+        })
+        owner.run_id = request.run_id
+        owner.semantic_decision = SemanticDecision.model_validate(raw)
+        owner.answer_contract = owner.semantic_decision.plan.answer_contract
+        delegation = owner.semantic_decision.plan.steps[0]
+        journal = RunJournal(self.root / "scoped-native")
+        old_key = "delegate:" + _encoded({
+            "role": "fabric-iq", "question": delegation.question, "native": "data-agent",
+            "context_digest": sha256(_encoded({"evidence": [], "completed_specialists": []})).hexdigest(),
+            "targeted_context": False, "maintenance_gate_required": False,
+        }).decode()
+        journal.save(old_key, CachedHandoff(specialist=SpecialistResult(
+            role="fabric-iq", agent_name=version.name, version=version.version,
+            response_id="old-unscoped", duration_ms=1, input_digest="a" * 64,
+            text="An old unscoped answer must not satisfy the evidence task.",
+        ), evidence=()).model_dump(mode="json"))
+        text = "Source-backed historical BAD observations; no physical cause has been established.\r\n"
+        call = NativeDataAgentCall("scoped-native", {"input": "read-only task"}, {
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": text},
+            ]}],
+        }, [], [])
+        owner.invoke = AsyncMock(side_effect=AssertionError("An unnecessary wrapper model was invoked."))
+        with patch("hydro_orchestrator.foundry_supervisor.call_native_data_agent",
+                   new_callable=AsyncMock, return_value=call) as native:
+            result = await owner.handoff(delegation, request, journal, {"fabric-iq": version})
+        native.assert_awaited_once()
+        native_question = native.call_args.args[3]
+        self.assertTrue(native_question.startswith("Read-only evidence task"))
+        self.assertIn(delegation.question, native_question)
+        self.assertIn(request.question, native_question)
+        self.assertEqual(result["specialist"]["response_id"], call.request_id)
+        self.assertEqual(owner.specialists[0].text.encode(), text.encode())
+        owner.invoke.assert_not_awaited()
 
     def test_native_specialist_text_is_not_duplicated_in_downstream_model_context(self):
         text = "Original Fabric answer. " * 1000
@@ -2502,6 +2661,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             output = [self.function("complete_work_order_review", {
                 "decision": "needs_clarification", "reason": "Inspection scope is not supplied by the source.",
             })] if round_number == 0 else [self.message("No SQL write executed.")]
+            if self.mode == "work_order_prose_only":
+                output = [self.message("Prose is not a staged draft or a structured review.")]
             if self.mode == "work_order_rate_limit_once" and round_number == 1:
                 output = [self.function("complete_work_order_review", {
                     "decision": "needs_clarification", "reason": "The source does not establish inspection scope.",
@@ -2517,6 +2678,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "equipment_id": equipment_id, "title": f"Investigate {equipment_id} signal quality",
                     "description": "Investigate the observed BAD quality; no physical diagnosis is established.",
                 }})]
+            if self.mode == "parallel_reads_then_proposals":
+                if round_number == 0:
+                    output = [self.function("hydro_query", {
+                        "tool_name": "query_telemetry", "arguments": {"equipment_id": equipment_id},
+                    }) for equipment_id in self.multiple_proposal_ids]
+                elif round_number <= len(self.multiple_proposal_ids):
+                    equipment_id = self.multiple_proposal_ids[round_number - 1]
+                    output = [self.function("hydro_query", {"tool_name": "propose_work_order", "arguments": {
+                        "equipment_id": equipment_id, "title": f"Investigate {equipment_id} signal quality",
+                        "description": "Investigate the observed BAD quality; no physical diagnosis is established.",
+                    }})]
             if self.mode == "repair_review" and round_number == 0:
                 output = [self.function("complete_work_order_review", {
                     "decision": "needs_clarification", "reason": "X" * 1001,
@@ -4186,6 +4358,27 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["decision"], "needs_clarification")
         self.assertEqual(self.calls["hydro-work-order-agent"], 2)
 
+    async def test_prior_turn_work_coverage_cannot_authorize_a_current_no_draft_review(self):
+        self.mode = "premature_no_draft"
+        self.owner.selected_equipment_ids = {"TEST_T005"}
+        self.owner.evidence["prior-work"] = ToolEvidence(
+            id="prior-work", source=SOURCE, tool="query_operations",
+            arguments={"entity": "work_orders"},
+            completed_at=self.request.requested_at - timedelta(seconds=30),
+            result={"rows": [], "truncated": False}, work_coverage_equipment_ids=("TEST_T005",),
+        )
+        journal = RunJournal(self.root / "prior-work-coverage")
+        journal.save("tool_catalog", await self.tools.catalog(self.request))
+        _, report, _ = await self.owner.invoke(
+            "work-order", "Review the selected turbine using fresh complete work coverage.",
+            self.request, journal, self.versions,
+        )
+        self.assertEqual(report["decision"], "needs_clarification")
+        payload = next(item for item in self.payloads if item.get("agent_reference", {}).get("name")
+                       == "hydro-work-order-agent")
+        context = json.loads(payload["input"][0]["content"][0]["text"])
+        self.assertEqual(context["verified_work_coverage"], [])
+
     async def test_deterministic_plan_preserves_final_verification_handoff(self):
         self.mode = "skip_verify"
         result = await self.owner.run(self.request)
@@ -4302,6 +4495,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "Stage an inspection draft only if an uncovered issue is supported.",
             "I need a WO for T005.",
             "Read BAD quality, investigate and propose a T005 signal inspection; verify.",
+            "Do not create work orders, but prepare editable work-order drafts.",
+            "Never create work orders automatically; instead prepare editable work-order drafts.",
         ):
             self.assertTrue(requests_new_work_order_proposal(question), question)
         for question in (
@@ -4310,6 +4505,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "Prepare a concise unsent notification. Do not save a work order.",
             "Do not create a work order.",
             "Review the prior draft and show the evidence gaps.",
+            "Do not perform RCA, recommend, draft, create, approve or save any work orders.",
+            "Never analyze the historical draft and then create or propose work orders.",
+            "Do not prepare, stage, propose, generate or create editable work-order drafts.",
         ):
             self.assertFalse(requests_new_work_order_proposal(question), question)
 

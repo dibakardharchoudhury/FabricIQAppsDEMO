@@ -1,15 +1,21 @@
 # Hydro Operations Fabric App
 
-Hydro Intelligence is one **Supervisor-led multi-agent experience**, with no
-Direct Data Agent tab, engine selector or comparison entry. The Supervisor routes
-Fabric business questions through **Sparky / Fabric IQ** to the published Fabric
-Data Agent. Sparky forwards the original question once and returns the original
-answer unchanged, without another LLM wrapper or answer writer. Other specialists
-participate only when needed; work-order drafts still require explicit review
-and approval. The hosted Responses transport consumes completion events
-incrementally rather than waiting for the streaming connection to close.
-The legacy MCP/browser-coordination implementation described below is not this
-hosted execution path.
+Hydro Intelligence has the same three accessible tabs in `ui=v1` and `ui=v2`:
+
+- **Fabric IQ** invokes the verified published Fabric Data Agent directly as the signed-in
+  delegated user, without Foundry, Supervisor, an answer writer, or prompt rewriting.
+- **Multi Agent** (default) retains the governed Foundry request and human-approval flow.
+- **Battle of the Agents** sends the identical question to separate Direct and Multi Agent
+  conversations, showing measured durations, citations and failures independently. It is
+  comparison-only: no approval/rejection/creation controls, judge, winner or silent fallback.
+
+Histories and Multi Agent continuation IDs stay in memory and are isolated by mode. Direct
+MCP questions are independent; its visible history is not sent as conversational context. Switching tabs
+does not submit requests. Authoritative workspace/source/user changes clear histories and
+invalidate approvals; cancellation stops local waiting, not necessarily remote execution.
+No starter/sample prompts are inserted. Optional backend workflow summaries remain visible;
+full unchanged native answers, their verified SHA-256 digests and RCA detail expand separately.
+The direct answer itself is never summarized, truncated or replaced.
 
 A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
@@ -74,6 +80,18 @@ across the map, Knowledge Graph, and digital twin. Weather uses a five-minute, s
 cache with concurrent-request coalescing, forced-refresh bypass, and failure invalidation. Ontology
 definitions/native graph results use their own bounded, source-keyed in-memory cache. None of these
 analytical caches survive a full page reload.
+
+Hydro Intelligence keeps its independent transcripts, running requests and hosted
+conversation scopes in an app-lifetime, in-memory provider. Refreshing telemetry
+or navigating between pages does not reset them. Data-cache invalidation is not
+a conversation identity change. A different verified ontology, source or signed-in
+principal still clears the conversation; New chat resets only the selected mode.
+This session state is not stored in browser storage and does not survive a full
+browser reload. Direct Fabric IQ retains its visible transcript but its published
+MCP questions remain independent; no native continuation is invented.
+Ordinary hosted Q&A accepts the backend's nullable optional `workflow_text`
+without replacing its answer. Supplied non-null summaries must still be
+non-empty strings; malformed presentations and native-evidence digests fail.
 
 On a full reload, STID and Weather use the deployed Rayfin Lakehouse connector with the signed-in
 user's Fabric identity. Its workspace and SQL analytics endpoint ID are rebound from live target
@@ -215,11 +233,13 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   five-minute source polling work independently of STID connectivity. Work-order mutations
   invalidate the source snapshot immediately.
 
-These read capabilities do **not** imply Data Agent semantic runtime or Operations Agent playbook
-execution succeeds. The latest live attempt accepted source publication and stopped-agent
-configuration, but the real ontology MCP question failed inside `analyze_ontology` with an
-unsupported API version despite `isError: false`. A SQL-only question correctly returned 12 work
-orders; it does not validate ontology reasoning or resolve the external playbook-runtime issue.
+These read capabilities do **not** imply every Data Agent semantic query or Operations Agent playbook
+execution succeeds. An earlier live attempt accepted source publication and stopped-agent
+configuration, but its ontology MCP question failed inside `analyze_ontology` with an
+unsupported API version despite `isError: false`. A later first question through the official
+published MCP endpoint succeeded against the verified ontology-backed agent and returned three
+facilities with a CSV resource, as detailed below. This does not certify every cross-source
+question or resolve the separate playbook-runtime issue.
 The app does not fabricate success for either service.
 Guided setup marks only SQL/GraphQL and app data connection steps complete. It does not read
 notebook capability statuses or treat a completed notebook as agent readiness: review
@@ -230,61 +250,106 @@ configuration the app reads the candidate's real `getDefinition` response and ve
 `artifactId` and `workspaceId` against the selected, verified generation-2 Ontology. Draft sources,
 agent names, and notebook completion are insufficient. A different/legacy ontology source, an
 unreadable or malformed definition, or no matching published source blocks invocation explicitly.
-Invocation uses Fabric's published Data Agent MCP endpoint over the documented Streamable HTTP
-transport. Fabric's published MCP tool accepts only one `userQuestion` and is stateless across
-calls, even on a reused transport. Standalone questions are sent unchanged. For explicitly
-referential follow-ups such as `this asset`, `same signal`, or a leading `or`, the app includes at
-most four recent user questions in a bounded context envelope; it never replays the potentially
-large agent answers or makes an additional summarization call. Starting a new chat clears the
-bounded user-question context but retains the reusable MCP transport and tool metadata. Transport
-reuse does not create semantic memory or carry a previous answer into a standalone question.
-Global all-facilities/all-assets scope
-and cross-source join rules live in the published Data Agent instructions rather than being
-prepended by the web app. The app never injects the selected facility/asset.
-Follow-up questions reuse the authenticated MCP connection and discovered tool while the endpoint
-and access token remain unchanged. Workspace refreshes, token/endpoint changes, or MCP failures
-invalidate that session. SDK close notifications evict disconnected sessions, and a call that races
-with a stale transport reconnects and retries once instead of exposing a raw `Not connected` error.
-The verified identity is keyed to the exact workspace, Data Agent, Ontology, and live generation.
-Workspace/config changes invalidate it immediately and force fresh published-definition readback.
-Warm-up starts only when Hydro Intelligence opens with the Data Agent selected, so Data Agent
-connection and verification work cannot delay initial application load or unrelated tabs. It also
-retains discovered MCP tool metadata across transport reconnects. On a cold request, source verification and MCP
-connection setup run in parallel, but the tool call cannot start until verification succeeds.
-The published server advertises the `io.modelcontextprotocol/tasks` extension, but live simple and
-visual task-creation probes did not return `taskCreated`, persisted no task in `tasks/list`, and
-timed out. The production app therefore retains the proven synchronous `tools/call` path instead
-of enabling a capability whose live execution is inconclusive.
-No app-authored scope reset or source-routing hint is injected into user prompts. When the Data
-Agent returns plot-ready fenced CSV, the app converts it directly into the existing local chart
-model. Multi-signal CSV containing `opcua_node_id` is rendered as grouped series. This adds no
-model call or data query and therefore does not add network latency.
-Fabric-rendered visual images are currently limited to the native Data Agent experience. NB09
-therefore keeps visual semantics in the agent instructions and requires no more than the documented
-200 plot rows so external clients can reconstruct the chart without adding source-routing or join
-instructions to the user question.
-The regular chat hides Data Agent internal progress and uses the Signal Sprint thinking animation.
-Fabric can batch lifecycle notifications near completion
-and exposes internal tool names/statuses, not generated SQL, arguments, intermediate rows, or
-execution duration. Those steps say **status received**, including in copied transcripts; notification
-counts are not query counts. Repeated/out-of-order notifications cannot turn a duration into an
-epoch timestamp. Foundry steps have measured client execution durations and actual arguments/results.
-The remote Data Agent owns its internal orchestration. Experimental MCP task
-invocation was not enabled because the live Fabric endpoint
-either rejected the SDK's automatic task shape or timed out with explicit task parameters.
-Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
-`type: ontology`, `artifactId`, and `workspaceId` fields used by the notebook publishers.
+Direct execution uses the official published MCP endpoint with existing delegated Fabric
+token acquisition. It selects exactly one agent
+whose **published** definition matches the selected live numeric generation-2 ontology, not
+an agent name or a sole-item guess. It does not read a Foundry connection or require Foundry
+configuration. Zero or multiple matching agents are an explicit configuration blocker.
+
+Each request initializes a fresh MCP client, discovers the single tool and question argument,
+then sends that argument the exact operator question. No selected facility, context envelope,
+clock hint or answer-format instruction is prepended. The native text is retained unchanged;
+embedded result resources are downloadable with their original bytes and MIME types, and a
+downloadable native MCP envelope preserves returned resource/citation metadata. The answer's
+SHA-256 is displayed. The operation has a five-minute deadline, bounded evidence/artifacts,
+local cancellation and no automatic question replay. Provider errors, invalid identities and
+artifact failures fail closed.
+
+**Continuation limitation:** the published tool currently declares only `userQuestion: string`,
+not `previous_response_id` or `conversation`. Direct supports first and subsequent independent
+questions, but does not claim that a referential follow-up inherits earlier context. This is
+disclosed above the Direct transcript and in Battle. No context wrapper, hidden answer writer
+or undeclared continuation argument is substituted.
+
+Browser prerequisites are delegated Fabric `Workspace.Read.All`, `Item.Read.All`,
+`DataAgent.Execute.All`, published Data Agent access, and CORS support from Fabric discovery
+and the official published MCP endpoint to the current app origin. Direct MCP does not request
+Power BI, Foundry, regional routing or generated workload-endpoint access.
+Missing consent/RBAC or browser CORS/network support is surfaced as a real blocker, never
+worked around through Foundry and labelled Direct. Live hosting/browser acceptance remains
+necessary; unit tests do not certify these product/tenant prerequisites. Entra token caching
+for this SPA uses MSAL `sessionStorage`, scoped to the app origin and browser tab, so returning
+to the Fabric app reuses the selected tenant account instead of reopening the account picker.
+Closing the tab ends that cache; expired sessions, revoked consent or tenant policy can still
+require explicit sign-in. Only authentication state is cached there, never analytical data.
+The older `askDataAgent` helper remains for
+other callers but its prompt rewriting is not used by these Hydro Intelligence modes.
+
+Direct MCP diagnostics identify initialization, tool discovery or question execution.
+HTTP failures retain their status and SDK cause; cancellation remains cancellation.
+A fetch failure before an HTTP response is not proof of CORS rejection: connection,
+browser policy and redirect failures require separate investigation. Requests are
+not automatically replayed, and the repair adds no new request headers.
+The injected fetch function is bound to the browser global object so native
+`Window.fetch` is never called with the conversation instance as its receiver.
+
+Mode selection is a compact right-side dropdown beside Team, not a separate tab bar.
+Administration's **Agent runtime settings > Chat mode visibility** checkboxes control the
+Fabric IQ, Multi Agent and Battle choices. Save changes applies them across both app layouts
+and preserves them in the existing per-browser settings. Hiding the active mode selects an
+enabled mode (preferring Multi Agent); hiding all modes displays an explicit disabled message.
+These are presentation preferences, not agent-provisioning flags or access controls.
+Direct notices and Battle controls use the existing app typography. The Direct
+notice occupies an auto-sized grid row, leaving the flexible row for messages in
+both normal and maximized chat.
+While a response or comparison is running, its compact square Stop icon cancels
+the local request. The tooltip and accessible label identify the action; stopping
+does not certify that remote execution has ended.
+
+**Why regional Responses is not the active browser entry:** the regional ML
+`POST /metadata/v201606/generatemwctokenv2` preflight was rejected without
+`Access-Control-Allow-Origin` for the deployed Fabric App origin, despite valid SPA-issued
+delegated tokens and successful workspace/cluster discovery. That Responses route cannot
+execute from the inspected hosted browser. More consent or a different model does not repair
+provider CORS. It is not called before MCP, retried through MCP, or used as a fallback.
+
+Microsoft's [SDK documentation](https://learn.microsoft.com/en-us/fabric/data-science/fabric-data-agent-sdk)
+identifies the published [MCP endpoint](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-mcp-server)
+as the runtime consumption surface:
+`https://api.fabric.microsoft.com/v1/mcp/workspaces/{WorkspaceId}/dataagents/{DataAgentId}/agent`.
+Its documented flow is `initialize`, `tools/list`, then `tools/call` with the discovered question
+argument. An MCP transport session alone does not prove native conversational continuation.
+The [official Responses sample](https://github.com/microsoft/fabric-samples/blob/main/docs-samples/data-science/data-agent-sdk/responses-api/responses-api-notebook.ipynb)
+demonstrates Python `previous_response_id`/`conversation`, not a browser API contract.
+Inspection of SDK `0.1.34a0` confirmed headless Responses uses the same regional routing request;
+notebook execution consumes Fabric runtime workload-host context, not a SPA-provided equivalent.
+Read-only live MCP metadata checks from the hosted browser succeeded (`initialize` HTTP 200,
+`notifications/initialized` HTTP 202, `tools/list` HTTP 200). Both listed published agents
+advertised only `userQuestion: string`, no declared native continuation argument, and no
+`outputSchema`. Tasks/list/cancel capabilities were advertised, but tasks are execution handles,
+not proof of conversation memory. A browser-readable MCP session header was not present.
+A subsequent first read-only `tools/call` against the verified ontology-backed agent succeeded
+with HTTP 200 and `isError: false`, returning three actual facility IDs/names in unchanged native
+text and an embedded CSV resource. This verifies that first-question route, not native
+continuation or every cross-source question.
+
+Verification recognizes the dedicated v2
+`Files/Config/published/ontologies/{name}/ontology.json` part's exact `artifactId` and `workspaceId`,
+as well as typed ontology `Files/Config/published/{source}/datasource.json` bindings.
+The dedicated ontology record need not contain a `type` property. A SQL/custom datasource
+beside that record does not make the agent SQL-only. Both formats fail closed on mismatched
+identity, malformed content, draft-only bindings or a conflicting explicit type.
 Matching published identity plus the selected item's authoritative live generation `2` proves
-**configured source identity only**, not runtime readiness. It permits the real MCP attempt;
+**configured source identity only**, not runtime readiness. It permits the real native attempt;
 backend/product failures propagate unchanged, and onboarding may still be unavailable.
 The public datasource schema's enum omission is not a permanent execution gate. No name/latest-version
 heuristic or generation-only check bypasses source verification. Reading the published definition
 requires appropriate Data Agent read permissions; read failures remain errors. The app does not
 invoke or certify an Operations Agent playbook.
 
-Battle of the Agents has been removed, including its Administration option, comparison page,
-runner and styles. Old browser settings cannot enable it. Hydro Intelligence is the single
-Supervisor-led chat experience. Categorical chart axes display actual asset labels, not row indices.
+Battle is an ordinary Hydro Intelligence tab, not an Administration feature flag. It retains
+independent conversations and failures, without exposing typed approval capabilities.
+Categorical chart axes display actual asset labels, not row indices.
 
 NB09 owns the Data Agent's published count/join instructions, including explicit transfer of actual
 SQL count tuples into an isolated Lakehouse analyzer request. Open orders exclude `Completed` and
@@ -296,27 +361,17 @@ Foundry's instructions distinguish full equipment IDs from short tags and use a 
 Eventhouse `arg_max` query for unbounded latest-per-signal requests, retaining explicitly requested
 time windows and reporting the actual timestamp/staleness.
 
-Foundry chat uses five separately provisioned, versioned Prompt Agents. The persistent Supervisor
-chooses Q&A, RCA, Work Order, or Fabric IQ using a delegation function. The client invokes the selected
-agent by its Foundry identity and executes its allowed direct tools as the signed-in user. This is
-code-mediated agent delegation, not local role-prompt switching, not native server-to-server A2A,
-and not Foundry Workflows. Microsoft Agent Framework is not required for this client-coordinated
-design; a hosted Framework coordinator would need a separate delegated tool/authentication boundary.
-Browser coordination is intended for user-attended requests, not durable enterprise workflows:
-closing/reloading the tab interrupts coordination and loses in-memory approval state. Durable
-resumption, unattended jobs, centrally enforced orchestration policy, and durable approvals require
-server-side implementation; adding a Framework library alone does not provide those guarantees.
-Q&A and RCA retain direct Lakehouse, Eventhouse, and operational SQL tools. The Fabric IQ
-specialist uses `fabric_iq_preview` with separate Data Agent and Ontology connections; the
-deprecated `fabric_dataagent_preview` tool is not used. Data Agent direct-table queries do not
-depend on its currently limited ontology query runtime. The independent direct Ontology endpoint
-requires its own runtime acceptance; configuration is not proof that it executes successfully.
-The trace records real Foundry response IDs and agent identities; it does not expose hidden reasoning.
+Multi Agent uses the hosted governed coordinator and separately provisioned, versioned Foundry
+specialists. The browser sends the operator request and delegated source credentials through
+the accepted hosted transport, not local role-prompt switching. Sparky retrieves read-only native
+evidence, Sleuth performs RCA, and Fixer prepares human-review drafts. The backend owns routing,
+evidence validation and decision/write enforcement. Displaying a draft is not approval.
+The trace records actual response IDs and agent identities without exposing hidden reasoning.
+The independently selected Direct Fabric IQ tab bypasses this entire hosted workflow.
 
-Hydro Intelligence in both layouts now starts with the Supervisor, regardless of an old saved
-engine preference. There is no separate Data Agent selector in ordinary chat; explicit Data Agent
-requests route through the Fabric IQ specialist. Missing Foundry configuration
-fails explicitly instead of silently changing engines.
+Hydro Intelligence in both layouts defaults to Multi Agent regardless of old saved engine
+preferences. Fabric IQ is an explicit direct tab; Multi Agent still routes through the governed
+Supervisor workflow. Missing configuration fails in the selected mode instead of changing engines.
 
 The animated crew reuses the existing yellow Signal Sprint helpers. Real parent/call IDs drive
 Supervisor-to-specialist request packets and matching return/failure packets, with distinct working

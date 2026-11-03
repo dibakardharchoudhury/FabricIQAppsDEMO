@@ -18,8 +18,8 @@ Operations website.
 | Goal | Action |
 |---|---|
 | New workspace | **Full Deploy** |
-| Website update | **Deploy app** |
-| Agent update | **Set up Foundry agents**, then **Deploy app** |
+| Routine app/agent update | **Deploy app & agents** |
+| Website-only update with verified existing agents | **Advanced → Website only** |
 | Energy data refresh | **Refresh energy sources** |
 
 Deployment targets **one workspace at a time**; there is no multi-workspace checkbox
@@ -35,9 +35,11 @@ enabled; other failures still propagate. Do not reset deployment state or repeat
 Core setup just to repair local dependencies or app publication.
 
 Microsoft Graph can reject a still-unexpired CLI token with a Continuous Access
-Evaluation claims challenge. On Windows, the deployer uses Azure CLI's documented
-browser login mode for itself and its children, so Graph recovery and subsequent
-commands use the same non-broker cache. This is process-scoped: it does not change
+Evaluation claims challenge. The local launcher, Sign in/Switch, server (including
+direct startup), and deployer use a shared Azure CLI browser-authentication policy
+on Windows, macOS and Linux. Platform brokers are disabled for these processes;
+Graph recovery and subsequent commands use the same non-broker cache.
+This is process-scoped: it does not change
 global CLI configuration, remove credentials, or disable tenant security policies.
 Graph recovery reads the resource's actual
 `WWW-Authenticate` challenge and requests Graph-scoped sign-in with those claims,
@@ -52,11 +54,31 @@ Browser sign-in setup uses this same Graph recovery path, not a second generic l
 This does not bypass Conditional Access: a repeated rejection stops deployment.
 After recovery, retry the failed final deployment stage; do not repeat successful
 Git sync/Core setup. Account metadata alone does not verify Graph authorization.
+Foundry specialist version creation handles only the explicit HTTP 409
+`The project workspace identity changed during version creation. Read the current agent and retry.`
+by reading the current agent before retrying (at most three writes). Matching
+readback completes without another version. Other conflicts, authorization errors,
+transport failures and mismatched successful readbacks still fail explicitly.
 Non-Graph stale-session recovery creates a new owner-only CLI session directory;
 it never renames or deletes an active cache
 that Windows or another process may hold open. Only after successful login and
 tenant verification is the active-session pointer atomically updated for later
 deployments. Failed login leaves the previous session selection intact.
+
+Foundry provisioning and hosted publication verify azd token acquisition for both
+ARM and Foundry in the selected tenant, rather than relying on generic signed-in
+status. A failed credential check permits one target-tenant browser sign-in and
+rechecks both audiences before proceeding. Persistent failures stop explicitly;
+agent publication is not automatically replayed after an ambiguous failure.
+The shared Foundry entry point checks publishing tools before project, AppBackend,
+image or specialist provisioning, for both Full Deploy and Deploy app & agents.
+It requires azd 1.37.0 or newer, agent extension 1.0.0-beta.23 or newer and Foundry
+bundle 1.0.0-beta.4 or newer. Missing/older extensions are installed/updated to those
+minimums, then actual `installedVersion` readback and the running agent-extension
+version are verified. Catalog version or installed extension names alone are not
+readiness. Compatible newer versions are retained. A startup/readback failure stops
+before cloud setup; no deployment write is replayed. These local checks do not certify
+hosted activation, source execution or final endpoint/CORS readiness.
 
 **Do not reset, delete items or reimport Git to update an existing website.**
 If a Full Deploy step fails, fix the reported prerequisite and choose **Retry from … and
@@ -74,7 +96,7 @@ Checkpoints from the older five-stage layout explicitly refuse automatic resume;
 their completed-stage information remains available. Runs made before checkpoint
 support cannot be recovered automatically. For this older
 Energy failure, use **Refresh energy sources** (it updates changed Geo notebook code
-only), then **Set up Foundry agents** and **Deploy app**. Do not repeat successful Core setup.
+only), then **Deploy app & agents**. Do not repeat successful Core setup.
 
 If `NB11_model` reports `Project contract requires one entityName binding` with
 valid core tables, update the checkout and import the latest notebook definitions
@@ -223,8 +245,8 @@ Foundry setup therefore receives the complete published Fabric context, not a fi
 intermediate ontology. No Foundry prompt/model changes are needed for this ordering fix.
 Full Deploy is not a workspace-creation wizard or a safe routine website update:
 Git synchronization can remove generated items. For an existing prepared target,
-use **Deploy app**, or **Set up Foundry agents** followed by **Deploy app** when
-agent definitions also need updating.
+use **Deploy app & agents**. **Advanced → Website only** skips agent updates when
+the existing deployment is already verified.
 
 #### B. Full Deploy: GitHub sync
 
@@ -297,7 +319,7 @@ The launcher omits the timeout control; child notebooks retain the pipeline's `3
 
 #### D. Foundry agents: subscription, then project and model
 
-These are the same shared fields in **Full Deploy** and **Set up Foundry agents**:
+These are the same shared fields in **Full Deploy** and **Deploy app & agents**:
 
 | Field | What to enter | Meaning |
 |---|---|---|
@@ -305,7 +327,7 @@ These are the same shared fields in **Full Deploy** and **Set up Foundry agents*
 | **Foundry account name (optional)** | For example `hydro-demo-account` | Parent Azure AI Services resource containing the project. Scopes existing-project selection to this account and sets the exact account name when creating missing resources. Blank preserves automatic naming/discovery. |
 | **Foundry project name** | For example `hydro-demo-project` | Existing project to reuse, or the exact project name to create with approval below. For duplicate names/scoped access, a full project ARM ID can identify an existing project. |
 | **Model deployment name** | For example `hydro-chat` if that deployment already exists, or a supported catalog chat model name for creation | Not an agent name or API endpoint. An existing alias must resolve to a model/version in the selected subscription; an arbitrary invented alias is not a catalog model. |
-| **Allow project creation (billable)** | Leave off for an existing project, even in a fresh Fabric workspace; check only to approve missing resources | Existing projects are still reused when checked. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
+| **Allow project creation (billable)** | Unchecked: reuse/update an existing project and its agents. Checked: create a fresh project with fresh agents | Checked creation stops if the selected project name already exists; it never silently reuses, deletes or replaces it. Approval is not remembered after reload or target change. Creating resources is billable; global inference may apply. |
 | **Use a pre-created app registration** | Leave off for automatic discovery/reuse or creation | Enable only to select a specific administrator-prepared SPA in the target tenant. |
 | **Application (client) ID**, shown when that option is enabled | The SPA's full Application/client GUID | Not its object ID, tenant ID, or the notebook SPN secret. The registration is verified; redirects, permissions and consent setup remain automated. |
 
@@ -348,19 +370,26 @@ These results do not certify a fresh live Full Deploy or separate-project deploy
 | Subsequent update using the same account/project/model | **Unchecked**; agent updates still run |
 | Missing account and project | **Checked**; billable account/model bootstrap also requires permissions, availability and quota |
 
-Approval permits creation; it does not force recreation. To share a project, enter
-its exact existing name. A blank project uses saved target identity or a stable
-workspace-GUID project; it is not an explicit shared-project selection.
+Checked means create-only, not delete-and-recreate. The selected project must be
+absent and the new agent inventory empty; an existing name is a hard stop. To share
+or update a project, uncheck creation and enter its exact existing name.
+A blank unchecked project can use saved target identity; a blank checked project
+uses the stable workspace-GUID name and ignores saved project hints. A failed create
+that left a project behind counts as existing: unchecked reuse requires verified
+infrastructure/lifecycle; incomplete infrastructure needs repair, not another fresh creation.
+App-only publication rejects checked
+creation: use Full Deploy or Deploy app & agents.
 
 **Full Deploy includes Foundry setup using these same fields**; do not run the
-standalone Foundry action first. Full Deploy repeats Git sync and Core setup.
-For routine updates, use **Set up Foundry agents** for agent changes and **Deploy app**
-for website changes. Resource selection alone does not certify deployment or runtime success.
+standalone deployment action first. Full Deploy repeats Git sync and Core setup.
+For routine updates, use **Deploy app & agents**. Unchanged agents/images and the
+backend are reused; agent failure prevents website publication. **Advanced → Website only**
+is available for an already verified deployment. Resource selection alone does not certify runtime success.
 
 ### Run, confirm success, and keep settings
 
-After reviewing the target and fields, click **Run Full Deploy**, **Set up Foundry
-agents**, or **Deploy app**, according to the job table above. If a run button is
+After reviewing the target and fields, click **Run Full Deploy** or **Deploy app &
+agents**, according to the job table above. If a run button is
 disabled, wait for target settings to load, review validation messages/required
 fields, and check whether another job is still running. Follow the live progress;
 do not treat a running progress bar or an accessible HTML page as completed deployment.
@@ -436,7 +465,7 @@ failures do not block the source-backed page.
 Foundry setup and app publication do not require graph materialization. The deployer
 resolves `RAYFIN_PUBLIC_ONTOLOGY_ID` from the verified live generation-2 item,
 independently of optional `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`.
-Continue with **Foundry agents → Deploy app** without materializing a graph.
+Continue with **Deploy app & agents** without materializing a graph.
 New model allocations prefer 75,000 TPM within the selected model/SKU's available
 regional quota; smaller positive allocations are accepted with a throttling advisory.
 Existing allocations and explicit capacity overrides are not automatically resized.
@@ -527,7 +556,9 @@ of known capacity and 33 plants with unknown capacity, including a formerly
 failing paraphrase through hosted Map Chat. Adamselv's 50 MW, owner and NO4
 price area also matched the independently queried imported source row.
 
-## 6. Set up Foundry agents
+<a id="6-set-up-foundry-agents"></a>
+
+## 6. Deploy app & agents
 
 ### Persistent Foundry agents
 
@@ -535,14 +566,16 @@ price area also matched the independently queried imported source row.
 keep the same workspace/account/project/model. Agent updates still run.
 A missing project stops deployment when creation is unchecked.
 
-Confirm **Azure subscription**, then run **Set up Foundry agents**. It checks five
+Confirm **Azure subscription**, then run **Deploy app & agents**. It checks five
 specialists and `hydro-orchestrator`, each suffixed with the workspace GUID without
 hyphens, against this checkout and the selected Fabric target.
 An existing project/model may still contain missing or older agents. Setup reuses matching
 connections and specialists, creates versions only for changed/missing agents, builds only
 missing source-fingerprinted images, and republishes the hosted coordinator only when its
 image or runtime configuration differs. Each reuse/update is logged, with specialist
-`current / updated / created` counts. It does not publish the website.
+`current / updated / created` counts. After agent setup succeeds, the same orchestrator
+publishes the website and validates authentication, connectors and CORS. Core/Energy
+setup is not repeated. The combined job does not finish at Hosted Agent readiness.
 
 **Implementation details only: separate-project runtime is not end-to-end verified.**
 Use the shared-project path above for the verified multi-workspace layout.
@@ -599,9 +632,10 @@ Rayfin with `--exclude-services staticHosting`, so Fabric can already show the
 `hydro-operations-ui` **App** item with its SQL database, SQL analytics endpoint and
 GraphQL API. That is backend provisioning, not website publication or proof that
 the Foundry agents are ready. Progress labels it **Fabric backend gateway**, followed
-by **Foundry agents** and **Hosted Agent**. Only after Foundry setup succeeds should
-**Deploy app** publish the website and run its authentication/CORS/connector checks.
-`FOUNDRY_SETUP_SUCCESS` confirms configuration readback, not agent execution.
+by **Foundry agents** and **Hosted Agent**, then website publication and final
+authentication/CORS/connector checks in the same run. Any failure stops the combined job.
+The retained internal `--stage foundry` action still stops after configuration readback;
+its `FOUNDRY_SETUP_SUCCESS` does not certify website publication or agent execution.
 Registry and monitoring resources stay shared, but new infrastructure connection
 names are project-specific. Compatible connections already owned by the selected
 project are retained; sibling-project connections are never updated or claimed.
@@ -623,12 +657,12 @@ An identical-definition redeployment can reuse the existing version, and an
 enabled-state readback after a lifecycle restart does not verify serving recovery.
 Do not automate either as a claimed repair without successful invocation admission.
 
-**Deploy app** checks the prepared source/authentication bindings,
+**Advanced → Website only** checks the prepared source/authentication bindings,
 specialist definitions and active immutable Hosted runtime identity. A packaged-code
 fingerprint difference (or missing fingerprint) alone is a warning, not missing setup:
 compatible deployed agents are reused without provisioning or republishing them. This
-does not certify new agent features or execution. Run **Set up Foundry agents** separately
-to update agent code; missing or incompatible configuration still blocks app publication.
+does not certify new agent features or execution. Use **Deploy app & agents**
+to update agent code; missing or incompatible configuration still blocks website-only publication.
 
 Model preflight requires a verifiable positive token limit. New allocations prefer
 **75,000 tokens/minute** within the selected model/SKU's available regional quota.
@@ -748,8 +782,9 @@ silently replaced.
 
 ## 7. Publish the Fabric app last
 
-Choose **Deploy app**. It verifies prepared agents, publishes the website and checks
-runtime/CORS, SQL and authentication. It does not rebuild agents or seed data.
+Choose **Deploy app & agents**. It ensures/updates the agents before publishing the
+website, then checks runtime/CORS, SQL and authentication. Unchanged agents/images
+are reused. **Advanced → Website only** verifies prepared agents without updating them.
 The launcher preserves the target's prepared energy-map setting; app publication
 does not offer a second enable/disable selector. Run **Energy setup** first to
 prepare map data and enable its navigation.
@@ -772,7 +807,7 @@ GeoContext, while renamed Lakehouses require the verified item ID. Cross-workspa
 or mismatched bindings stop before writes. The refresh pipeline runs
 `Geo_002_publish_map_agent` only after successful ingestion, so map chat sees the
 new read models. **Refresh energy sources** owns map-agent preparation and publication.
-Routine **Deploy app** reuses that prepared setup and checks the existing serving data;
+Routine **Deploy app & agents** reuses that prepared Energy setup and checks the existing serving data;
 it does not execute either Geo notebook, rebuild the agent projection or republish the
 map agent. Run Energy refresh separately when its sources or agent definition change.
 
@@ -794,8 +829,9 @@ python Raw\workspace-reset\deploy_fabric_app.py `
 ```
 
 Add `--client-id <verified-spa-guid>` only when needed. CLI module selectors are
-`--stage app`, `--stage foundry`, and `--stage energy`; no selector retains combined
-setup/publication. The UI does not require GitHub write access.
+`--stage app-agents` (the normal combined UI action), `--stage app` (advanced
+website-only), `--stage foundry` (retained setup-only compatibility) and `--stage energy`.
+No selector retains the full combined setup/publication flow. The UI does not require GitHub write access.
 
 `--push-config` requires a clean, pushed **non-main branch** tracking
 `origin/<same-branch>`. Merge generated-origin configuration normally.
@@ -839,10 +875,12 @@ or resume requires explicit approval.
 
 ## Faster deployment and a simpler operator path
 
-### Independent local modules; app publication last
+### One normal deployment action; app publication last
 
-For website-only changes, use **Deploy app**. Dependencies, backend and unchanged
-images are reused; runtime/auth checks remain mandatory.
+Use **Deploy app & agents** for routine updates. Agent/backend verification gates
+website publication, and final runtime/auth checks gate overall success. Dependencies,
+backend and unchanged images are reused. **Advanced → Website only** skips agent
+updates for a verified deployment; runtime/auth checks remain mandatory.
 
 ### Speed changes and measurements
 

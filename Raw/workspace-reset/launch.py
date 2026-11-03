@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
+from azure_cli_auth import CLI_BROWSER_AUTH_SETTINGS
 
 HERE = Path(__file__).resolve().parent
 REQUIREMENTS = HERE / "requirements.txt"
@@ -220,6 +221,7 @@ def main() -> int:
     print("  [2/2] Starting the app...\n")
     stop_existing_server()
     env = os.environ.copy()
+    env.update(CLI_BROWSER_AUTH_SETTINGS)
     env["FABRIC_UI_NO_BROWSER"] = "1"  # this launcher opens the browser once, below
     env.setdefault("FABRIC_UI_PIPELINE_DEFAULTS_FILE", str(HERE / "webapp" / "pipeline-defaults.local.json"))
     popen_kwargs: dict[str, object] = {

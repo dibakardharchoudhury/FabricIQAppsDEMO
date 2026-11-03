@@ -52,6 +52,10 @@ from flask import Flask, jsonify, request, send_from_directory
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+from azure_cli_auth import CLI_BROWSER_AUTH_SETTINGS
+
+# Covers direct server startup, Sign in/Switch, restarts and every CLI child.
+os.environ.update(CLI_BROWSER_AUTH_SETTINGS)
 SYNC_SCRIPT = SCRIPT_DIR / "sync_workspace_from_git.py"
 DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
 PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
@@ -142,6 +146,18 @@ FOUNDRY_MARKERS = [
     (1, ("[1/8]",)), (2, ("[2/8]",)), (3, ("[3/8]",)),
     (4, ("Foundry: project",)), (5, ("Foundry: backend gateway",)),
     (6, ("Foundry: agents",)), (7, ("Foundry: Hosted Agent",)),
+]
+APP_AGENTS_TIMEOUT_S = FOUNDRY_TIMEOUT_S + DEPLOY_TIMEOUT_S
+APP_AGENTS_PHASES = [
+    "Queued", "Checking prerequisites", "Resolving SPA", "Preparing source/gateway",
+    "Foundry project", "Fabric backend gateway", "Foundry agents", "Hosted Agent",
+    "Signing in", "Publishing app", "Syncing backend settings", "Setting up sign-in",
+    "Checking endpoint and CORS readiness", "Done",
+]
+APP_AGENTS_MARKERS = [
+    *FOUNDRY_MARKERS,
+    (8, ("[4/8]",)), (9, ("[5/8]",)), (10, ("[6/8]",)),
+    (11, ("[7/8]",)), (12, ("[8/8]",)),
 ]
 ENERGY_PHASES = ["Queued", "Checking prerequisites", "Preparing energy sources", "Verifying read models", "Done"]
 ENERGY_MARKERS = [
@@ -448,8 +464,8 @@ def _workflow_source_keys() -> dict[str, str]:
         "http_retries.py", "sync_workspace_from_git.py", "key_vault_preflight.py",
     )]
     core.extend([PIPELINE_SCRIPT, *shared_reads])
-    energy.extend((DEPLOY_SCRIPT, SCRIPT_DIR / "feature_workspace.py"))
-    foundry = [DEPLOY_SCRIPT, SCRIPT_DIR / "provision_foundry_agents.py",
+    energy.extend((DEPLOY_SCRIPT, SCRIPT_DIR / "feature_workspace.py", SCRIPT_DIR / "azure_cli_auth.py"))
+    foundry = [DEPLOY_SCRIPT, SCRIPT_DIR / "azure_cli_auth.py", SCRIPT_DIR / "provision_foundry_agents.py",
                SCRIPT_DIR / "deploy_foundry_project.py", SCRIPT_DIR / "deploy_hosted_agent.py",
                SCRIPT_DIR / "shared_foundry_project.py", SCRIPT_DIR / "foundry_resource_names.py"]
     if (REPO_ROOT / "HydroOperationsService" / "Dockerfile").exists():
@@ -1287,7 +1303,7 @@ def api_deploy_app():
         argv = _deploy_invocation(data)
         env = _deploy_environment(data)
         if any(key != "HYDRO_ONTOLOGY_GRAPH_BINDING" for key in env):
-            raise ValueError("Use the Foundry multi-agent setup module to change Foundry settings, then deploy the app.")
+            raise ValueError("Use Deploy app & agents to change Foundry settings and publish the app together.")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     job_id = _start(
@@ -1301,6 +1317,11 @@ def api_setup_foundry():
     return _setup_stage("foundry", FOUNDRY_TIMEOUT_S, FOUNDRY_PHASES, FOUNDRY_MARKERS)
 
 
+@app.post("/api/deploy-app-agents")
+def api_deploy_app_agents():
+    return _setup_stage("app-agents", APP_AGENTS_TIMEOUT_S, APP_AGENTS_PHASES, APP_AGENTS_MARKERS)
+
+
 @app.post("/api/setup-energy")
 def api_setup_energy():
     return _setup_stage("energy", ENERGY_TIMEOUT_S, ENERGY_PHASES, ENERGY_MARKERS)
@@ -1310,7 +1331,7 @@ def _setup_stage(stage, timeout, phases, markers):
     data = request.get_json(silent=True) or {}
     try:
         argv = _deploy_invocation(data, stage=stage)
-        env = _deploy_environment(data) if stage == "foundry" else {}
+        env = _deploy_environment(data) if stage in ("foundry", "app-agents") else {}
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     return job_response(_start(argv, env or None, timeout, phases, markers, exclusive=True))
@@ -1363,6 +1384,8 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         ):
             raise ValueError("Foundry project resource ID must be a full project ARM resource ID.")
         env["HYDRO_FOUNDRY_PROJECT_RESOURCE_ID"] = project_id
+    if data.get("createFoundry") is True and (endpoint or project_id):
+        raise ValueError("Fresh-project creation requires a new project name, not an existing endpoint/resource ID.")
     if data.get("foundryAccountName") is not None and not isinstance(data["foundryAccountName"], str):
         raise ValueError("Foundry account name must be text.")
     account_name = text("foundryAccountName")
@@ -1444,7 +1467,7 @@ def _deploy_invocation(data: dict, *, stage: str = "app") -> list[str]:
     energy = data.get("energyMap", "keep")
     if energy not in ("keep", "enabled", "disabled"):
         raise ValueError("Energy map must be keep, enabled or disabled.")
-    if stage == "app" and energy != "keep":
+    if stage in ("app", "app-agents") and energy != "keep":
         raise ValueError("App publication preserves the prepared energy-map setting. Run Energy setup first.")
 
     argv = [

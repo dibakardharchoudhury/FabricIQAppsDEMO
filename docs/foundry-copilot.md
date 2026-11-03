@@ -9,8 +9,14 @@ The recommended, live-tested FEATURE/DEV layout shares one verified working Foun
 account/project/model with workspace-scoped agent sets. Separate-project provisioning
 exists in code but is **not end-to-end verified**; creating another project did not
 resolve the earlier hosted-routing 404.
-Full Deploy includes Foundry setup. Creation approval is for missing resources,
-not every fresh Fabric workspace; see the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
+Full Deploy includes Foundry setup. Creation unchecked reuses/updates existing agents;
+checked requires a fresh, missing project and never reuses or deletes an existing one.
+For routine updates, **Deploy app & agents** runs agent setup and website publication
+in one orchestrator job without repeating Core/Energy setup. Agent failure blocks
+publication; website/auth/CORS failure fails the combined job. **Advanced → Website
+only** is retained for verified deployments requiring no agent update.
+A fresh Fabric workspace can use an existing project with creation unchecked; see
+the [operator decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 
 > Current implementation: the SPA invokes the `hydro-orchestrator` Foundry Hosted Agent.
 > Its Microsoft Agent Framework runtime selects from five persistent specialist

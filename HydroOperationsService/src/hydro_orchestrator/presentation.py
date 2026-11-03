@@ -37,12 +37,21 @@ class ClientWorkOrderReview(Contract):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class ClientSourceAnswer(Contract):
+    evidence_id: str
+    text: str
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class ClientPresentation(Contract):
     schema_version: Literal[1] = 1
     text: str
     visualizations: tuple[ClientVisualization, ...] = ()
     execution_events: tuple[ClientExecutionEvent, ...] = ()
     work_order_review: ClientWorkOrderReview | None = None
+    workflow_text: str | None = None
+    source_answers: tuple[ClientSourceAnswer, ...] = ()
+    rca_reports: tuple[RcaReport, ...] = ()
 
 
 ANALYSIS_ACTION_LABELS = {
@@ -112,9 +121,10 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
         return text
 
     analysis = getattr(answer, "analysis", None)
-    sections: list[str] = [
+    native_sections = [
         "## Fabric Data Agent answer\n\n" + item.text for item in native
     ]
+    sections: list[str] = []
     if native:
         sections.append("## Hydro workflow result")
     if analysis is not None:
@@ -156,28 +166,23 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
     else:
         sections.append(literal(answer.summary))
     work_review: ClientWorkOrderReview | None = None
+    rca_reports: list[RcaReport] = []
     for specialist in answer.specialists:
         if specialist.report is None:
             continue
         if specialist.role == "rca":
             report = RcaReport.model_validate(specialist.report)
-
-            def references(items: tuple[EvidenceReference, ...]) -> str:
-                return "; ".join(literal(f"{item.evidence_id} {item.path}") for item in items) or "None cited"
-
+            rca_reports.append(report)
+            missing = dict.fromkeys(key for hypothesis in report.hypotheses for key in hypothesis.missing)
             lines = [
                 "## Sleuth - Evidence-backed investigation", "",
                 "**Cause remains undetermined.** These are competing hypotheses, not confirmed diagnoses.",
-                "", "Observed evidence: " + references(report.observations),
+                "", "Unconfirmed explanations:",
+                *(f"- {RCA_HYPOTHESIS_LABELS[item.category]}" for item in report.hypotheses),
+                "", "Evidence gaps: " + "; ".join(RCA_GAP_LABELS[key] for key in missing) + ".",
+                "", "Repair assessment: " + MAINTENANCE_GATE_LABELS[report.maintenance_follow_up.reason],
+                "", "Observed, supporting and contradicting records are retained in the investigation details.",
             ]
-            for hypothesis in report.hypotheses:
-                lines.extend([
-                    "", f"### {RCA_HYPOTHESIS_LABELS[hypothesis.category]}",
-                    "- Supporting evidence: " + references(hypothesis.supporting),
-                    "- Contradicting evidence: " + references(hypothesis.contradicting),
-                    "- Missing evidence: " + "; ".join(RCA_GAP_LABELS[key] for key in hypothesis.missing),
-                ])
-            lines.extend(["", "Conditional repair gate: " + MAINTENANCE_GATE_LABELS[report.maintenance_follow_up.reason]])
             sections.append("\n".join(lines))
         elif specialist.role == "work-order":
             work_review = ClientWorkOrderReview.model_validate(specialist.report)
@@ -213,8 +218,16 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             xAxisTitle=next(column.label for column in table.columns if column.key == chart.x_key),
             inlineCsvData=stream.getvalue(),
         ))
-    return ClientPresentation(text="\n\n".join(sections), visualizations=tuple(charts),
-                              execution_events=events, work_order_review=work_review)
+    workflow_text = "\n\n".join(sections)
+    return ClientPresentation(
+        text="\n\n".join((*native_sections, *sections)), visualizations=tuple(charts),
+        execution_events=events, work_order_review=work_review,
+        workflow_text=workflow_text if native else None,
+        source_answers=tuple(ClientSourceAnswer(
+            evidence_id=item.evidence_id, text=item.text, content_sha256=item.content_sha256,
+        ) for item in native),
+        rca_reports=tuple(rca_reports),
+    )
 
 
 class AnswerColumn(Contract):

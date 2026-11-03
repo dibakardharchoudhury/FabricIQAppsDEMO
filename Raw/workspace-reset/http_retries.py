@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ssl
 import time
 from collections.abc import Callable
 from typing import Any
@@ -15,6 +16,27 @@ READ_ATTEMPTS = 6
 TRANSIENT_READ_STATUSES = {408, 429, 500, 502, 503, 504}
 
 
+def _is_tls_eof(error: BaseException) -> bool:
+    pending = [error]
+    seen: set[int] = set()
+    interrupted = False
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return False
+        if isinstance(current, ssl.SSLEOFError):
+            interrupted = True
+        pending.extend(
+            nested for nested in (
+                *current.args, current.__cause__, current.__context__, getattr(current, "reason", None),
+            ) if isinstance(nested, BaseException)
+        )
+    return interrupted
+
+
 def request_with_read_retry(
     method: str, url: str, *, send: Callable[..., requests.Response] | None = None,
     retry_http: bool = True, retry_throttled_writes: bool = False, **kwargs: Any,
@@ -26,8 +48,10 @@ def request_with_read_retry(
         delay = min(2 ** attempt, 15)
         try:
             response = sender(method, url, **kwargs)
-        except requests.exceptions.SSLError:
-            raise
+        except requests.exceptions.SSLError as error:
+            if not safe_read or not _is_tls_eof(error) or attempt == READ_ATTEMPTS - 1:
+                raise
+            reason = "TLS EOF"
         except (requests.ConnectionError, requests.Timeout) as error:
             if not safe_read or attempt == READ_ATTEMPTS - 1:
                 raise

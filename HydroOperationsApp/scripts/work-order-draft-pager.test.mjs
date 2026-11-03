@@ -8,6 +8,7 @@ import ts from 'typescript'
 import * as answerPresentation from '../src/services/copilot/answerPresentation.ts'
 import * as orchestration from '../src/services/copilot/orchestration.ts'
 import * as suggestions from '../src/services/copilot/suggestions.ts'
+import * as intelligenceModes from '../src/services/intelligenceModes.ts'
 const { isWorkOrderRequest } = orchestration
 
 const require = createRequire(import.meta.url)
@@ -24,6 +25,8 @@ function loadComponent(file, symbol) {
   const componentRequire = specifier => {
     if (specifier === './WorkOrderApprovalCard') return { WorkOrderApprovalCard: ApprovalCard }
     if (specifier === './WorkOrderDraftPager') return { WorkOrderDraftPager }
+    if (specifier === './CopilotExperience') return { CopilotExperience, CopilotResponse: AgentMessage }
+    if (specifier === '../services/intelligenceModes') return intelligenceModes
     if (specifier === './AgentCrewTrace') return { AgentCrewTrace: Empty }
     if (specifier === './AnswerDashboard') return { AnswerDashboard: Empty }
     if (specifier === './AgentVisualizationView') return { AgentVisualizationView: Empty }
@@ -42,21 +45,29 @@ function loadComponent(file, symbol) {
 const WorkOrderDraftPager = loadComponent('WorkOrderDraftPager', 'WorkOrderDraftPager')
 const AgentMessage = loadComponent('CopilotExperience', 'AgentMessage')
 const CopilotExperience = loadComponent('CopilotExperience', 'CopilotExperience')
+const IntelligenceExperience = loadComponent('IntelligenceExperience', 'IntelligenceExperience')
+const buildTranscript = loadComponent('CopilotExperience', 'buildTranscript')
 const drafts = count => Array.from({ length: count }, (_, index) => ({
   id: `draft-${index + 1}`, equipmentId: `EQUIP_T00${index + 1}`,
   title: `Diagnostic draft ${index + 1}`, description: 'Investigate observed quality.',
   priority: 'Medium', createdAt: 0,
 }))
 
-test('Hydro Intelligence renders one Supervisor-led experience with no direct-agent or comparison selector', () => {
-  const html = renderToStaticMarkup(createElement(CopilotExperience, {
-    messages: [], busy: false, onSend: Empty, onReset: Empty,
+test('Hydro Intelligence has accessible Fabric IQ, default Multi Agent and read-only Battle tabs', () => {
+  const conversations = new intelligenceModes.IntelligenceConversations(async () => ({ text: 'answer' }))
+  const html = renderToStaticMarkup(createElement(IntelligenceExperience, {
+    conversations, snapshot: conversations.getSnapshot(), identity: 'test',
   }))
   assert.equal((html.match(/<h1>Hydro Intelligence<\/h1>/g) ?? []).length, 1)
-  assert.match(html, /Supervisor-led multi-agent team/)
-  assert.doesNotMatch(html, /Supervisor · Sparky \/ Fabric IQ · Specialist collaboration/)
-  assert.doesNotMatch(html, /Direct Data Agent|Foundry orchestration|Copilot options|Battle|v2-engine-toggle/)
+  assert.match(html, /role="tablist" aria-label="Hydro Intelligence modes"/)
+  assert.equal((html.match(/role="tab"/g) ?? []).length, 3)
+  assert.equal((html.match(/role="tabpanel"/g) ?? []).length, 3)
+  assert.match(html, /aria-selected="true"[^>]*>Multi Agent/)
+  assert.match(html, />Fabric IQ<\/button>/)
+  assert.match(html, />Battle of the Agents<\/button>/)
+  assert.match(html, /Review and approval are available only in Multi Agent/)
   assert.match(html, /Ask about connected Fabric data/)
+  assert.match(html, /published MCP tool does not declare native conversation or previous-response continuation/)
 })
 
 test('team capabilities include all roles without pretending unused specialists executed', () => {
@@ -75,13 +86,65 @@ test('team capabilities include all roles without pretending unused specialists 
   assert.doesNotMatch(html, /Conversation agent flow|On the job|Finished/)
 })
 
-test('simple factual starter does not force a native model call', () => {
+test('new conversations have no sample prompt cards or agent-routing instructions', () => {
   const html = renderToStaticMarkup(createElement(CopilotExperience, {
     messages: [{ role: 'agent', text: 'Ready.' }], busy: false, onSend: Empty, onReset: Empty,
   }))
-  assert.match(html, /<button[^>]*>List every facility with its identifier and name\.<\/button>/)
-  assert.doesNotMatch(html, /Ask Sparky \(Fabric IQ\) to list every facility/)
-  assert.match(html, /Use the Fabric Data Agent for the facts/)
+  assert.doesNotMatch(html, /v2-suggestions|List every facility with its identifier|Use the Fabric Data Agent for the facts/)
+  assert.match(html, /<textarea[^>]*placeholder="Ask about connected Fabric data"/)
+})
+
+test('direct/native answers remain unchanged and Battle cannot render approval controls', () => {
+  const text = '  Original native answer\r\n\n[Source](https://example.com)\n' + 'Long evidence. '.repeat(160)
+  const html = renderToStaticMarkup(createElement(AgentMessage, {
+    message: { role: 'agent', text, backendOwned: true, readOnly: true, proposals: drafts(2) },
+    streaming: false, showCrew: false, question: 'Create drafts',
+  }))
+  assert.ok(html.includes(text))
+  assert.doesNotMatch(html, /Review backend work-order draft|Work-order draft outcome|Full answer and native source evidence/)
+})
+
+test('native transcripts preserve original markers, whitespace, response identity and citations', () => {
+  const text = '  Native text\r\n<options>Keep this original marker</options>\n'
+  const transcript = buildTranscript('Original question', { role: 'agent', text, backendOwned: true,
+    nativeResponseId: 'resp_1', citations: [{ title: 'Query result', fileId: 'file_result' }] })
+  assert.ok(transcript.includes(text))
+  assert.match(transcript, /Fabric response: resp_1/)
+  assert.match(transcript, /Query result: file_result/)
+})
+
+test('workflow summary and limitations stay visible with full native answers and RCA collapsed once', () => {
+  const native = '  Original native answer\r\nwith citations [1].  '
+  const html = renderToStaticMarkup(createElement(AgentMessage, {
+    message: { role: 'agent', text: `${native}\nLegacy workflow`, backendOwned: true,
+      workflowText: 'Pending approval. No fault is established.',
+      sourceAnswers: [{ evidence_id: 'native-1', text: native, content_sha256: 'a'.repeat(64) }],
+      rcaReports: [{ evidence_ids: ['native-1'], status: 'untested' }] },
+    streaming: false, showCrew: false,
+  }))
+  assert.ok(html.indexOf('Pending approval') < html.indexOf('<details'))
+  assert.ok(html.includes(native))
+  assert.equal((html.match(/Original native answer/g) ?? []).length, 1)
+  assert.match(html, /RCA detail and evidence references/)
+  assert.match(html, /SHA-256/)
+  assert.doesNotMatch(html, /Legacy workflow/)
+})
+
+test('typed drafts never collapse material limitations from the concise backend workflow', () => {
+  const workflow = 'Pending human approval. No work was created.\n\n## Supporting findings and sources\n\nMaterial limitation: inherited SQL did not execute.'
+  const native = 'Full unchanged native answer with citations [1].'
+  const html = renderToStaticMarkup(createElement(AgentMessage, {
+    message: { role: 'agent', text: `${native}\nLegacy workflow`, backendOwned: true, proposals: drafts(2),
+      workflowText: workflow,
+      sourceAnswers: [{ evidence_id: 'native-1', text: native, content_sha256: 'a'.repeat(64) }],
+      rcaReports: [{ evidence_ids: ['native-1'], status: 'untested' }] },
+    streaming: false, showCrew: false,
+  }))
+  assert.ok(html.includes(workflow))
+  assert.ok(html.indexOf('Material limitation: inherited SQL did not execute.') < html.indexOf('<details'))
+  assert.equal((html.match(/Full unchanged native answer/g) ?? []).length, 1)
+  assert.match(html, /Review backend work-order draft/)
+  assert.doesNotMatch(html, /Legacy workflow/)
 })
 
 test('no drafts render no pager; one draft needs no page controls', () => {

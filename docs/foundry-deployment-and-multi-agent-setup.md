@@ -25,12 +25,13 @@ do not prove source freshness or connector execution.
 1. Start the local app from the intended pushed checkout.
 2. For a fresh workspace, confirm the subscription/account/project/model and run
    **Full Deploy**. It includes Core setup, Foundry setup and app publication.
-3. For an already prepared workspace, use **Set up Foundry agents** for agent changes,
-   followed by **Deploy app** to publish website/configuration changes.
+3. For an already prepared workspace, use **Deploy app & agents** to update agents
+   and publish website/configuration changes in one run.
 4. Require `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
 
 Existing resources are reused. New-project creation requires a chat model name
-and explicit resource-creation approval. Website-only updates need **Deploy app** only.
+and explicit resource-creation approval. **Advanced → Website only** is available
+when the existing agents/backend are already verified and need no update.
 
 ## 1. The multi-agent setup
 
@@ -111,9 +112,12 @@ load/quality/failure-recovery tests. Microsoft's
 [checkpoint guidance](https://learn.microsoft.com/en-us/agent-framework/workflows/checkpoints)
 distinguishes local file storage from production distributed storage.
 
-## 2. What the independent Foundry setup module does
+<a id="2-what-the-independent-foundry-setup-module-does"></a>
 
-The separate setup stage (also used by combined CLI deployment;
+## 2. What Deploy app & agents does
+
+The existing setup stage and subsequent app publication share one orchestrator job
+(also used by combined CLI deployment;
 [`provision_foundry_agents.py`](../Raw/workspace-reset/provision_foundry_agents.py),
 [`deploy_hosted_agent.py`](../Raw/workspace-reset/deploy_hosted_agent.py)):
 
@@ -129,6 +133,7 @@ The separate setup stage (also used by combined CLI deployment;
 | 6. Configuration | Composes `HYDRO_ORCHESTRATOR_CONFIG` and `HYDRO_FABRIC_SOURCE_CONFIG` from the verified target | never (always compared) |
 | 7. Publish | Creates or refreshes the azd environment's project, tenant and registry identity from live metadata, applies runtime settings and publishes; waits until the active version has the exact image digest and configuration | live agent already matches |
 | 8. Verify | The existing gate: active, numeric version, immutable digest, source identity and native binding all match | never |
+| 9. Website | Publishes the app only after agent setup succeeds; reapplies backend settings and checks sign-in, connectors, CORS and real POST readiness | never in the combined action |
 
 The local app shows these as separate progress stages: *Foundry project*,
 *Fabric backend gateway*, *Foundry agents*, *Hosted Agent*. Backend preparation
@@ -137,8 +142,10 @@ already show the `hydro-operations-ui` **App** item, its SQL database and SQL
 analytics endpoint, and the GraphQL API. The Hosted Agent needs the backend's
 identity, API URL and publishable key in its verified source configuration.
 These resources do not mean the website was published or that the agents are ready.
-The standalone Foundry action returns after verified multi-agent configuration;
-the separate **Deploy app** action publishes the website afterward.
+The normal **Deploy app & agents** action continues through website publication,
+then final authentication/connector/CORS checks. Hosted Agent readiness alone does
+not complete the job. The retained internal `--stage foundry` endpoint remains
+setup-only for compatibility; it is no longer a separate normal UI module.
 
 An existing project and model do not prove that the five specialists and hosted coordinator
 exist or match this checkout and Fabric target. Setup checks live state, but an unchanged
@@ -261,8 +268,19 @@ Consequences:
 | Update existing agents | Same account/project/model; creation **unchecked**; updates still run |
 
 The shared form exposes subscription, optional account, project and model deployment.
-Creation approval permits missing resources; it never forces recreation and is not
-saved. A blank project uses saved target identity or a stable workspace-GUID project;
+Unchecked reuses the verified project and updates its agents. Checked is create-only:
+the selected project must be absent and its new agent inventory empty. Existing
+names stop setup without reuse, deletion or replacement; uncheck creation to update
+that project, or choose an unused name. Approval is not saved. App-only publication
+rejects checked creation; use Full Deploy or Deploy app & agents.
+If the selected project was removed but its account/model/registry/monitoring
+survive, approved project-only setup can recover missing infrastructure selections
+from successful ARM deployment output resource IDs anchored to that exact account.
+Live registry and monitoring readback is mandatory; names, tags and cached values
+are not sufficient. Existing connections are retained, ambiguous or unavailable
+infrastructure fails, and no replacement account/model/registry/monitoring is created.
+A blank unchecked project can use saved target identity; a blank checked project
+uses the stable workspace-GUID name, ignoring saved project hints.
 enter the exact existing name to share one project. Region, version, SKU,
 capacity, supporting resource names, connections, monitoring and agent deployment
 are automatic. No model-settings questionnaire is shown. Existing-project reuse
@@ -272,8 +290,8 @@ the form. See [environment variables](#6-settings) for specialist overrides.
 
 On a fresh workspace, run **Full Deploy**: it includes Foundry setup using these same
 fields; no standalone Foundry run is required first. Full Deploy repeats Git sync
-and Core setup. Use **Set up Foundry agents** for routine agent changes and
-**Deploy app** for website changes. Reuse the same verified working account/project/model
+and Core setup. Use **Deploy app & agents** for routine updates, or **Advanced →
+Website only** to skip agent updates against a verified deployment. Reuse the same verified working account/project/model
 for multiple workspaces; leave creation unchecked. Model TPM/RPM remains shared.
 See the [creation decision table](../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 Graph materialization does not gate
@@ -366,11 +384,17 @@ including the independent `operational_sql_database_id`,
 | `Set HYDRO_FOUNDRY_LOCATION to the Azure region…` | Creating a project, but the Fabric capacity region could not be read. Enter the region (for example `swedencentral`). |
 | `azd provision` fails on the model deployment | The model, version, SKU or quota is unavailable in that region. Set `HYDRO_FOUNDRY_MODEL_VERSION`, `_SKU` or `_CAPACITY`, or another region, then rerun; the same azd environment is reused. |
 | `The new Foundry project … is not yet usable by the signed-in user…` | Role assignments are still propagating. Wait a few minutes and rerun. |
+| `Create a fresh Foundry project was selected, but the requested project already exists.` | Checked is create-only. Uncheck creation to reuse/update the verified project and its agents, or enter an unused name. A partially completed create also counts as existing; nothing is automatically deleted or replaced. |
+| `App-only publication cannot create a fresh Foundry project.` | Use Full Deploy or Deploy app & agents with creation checked. Uncheck creation for website-only publication and subsequent existing-agent updates. |
+| `Foundry project lifecycle mismatch…` | The agent endpoint exposed objects predating the current ARM project, or a newly created project was not empty. Full Deploy, standalone Foundry setup and app-only verification stop rather than adopt these agents. Stop concurrent deployments, review explicitly authorized agent cleanup before project deletion/recreation, and contact Azure support if the identity conflict persists. Creation approval does not authorize purging other workspaces' agents. |
+| `Foundry project lifecycle … unverifiable` / `…malformed or incomplete` / `…changed during…` | Live project identity/creation metadata or the complete paginated agent inventory could not be verified. No readiness is inferred from HTTP 200. Resolve the readback/access problem and retry; do not bypass the guard. This check is not execution certification. |
+| `SSLEOFError` / `UNEXPECTED_EOF_WHILE_READING` during agent readback | A TLS stream closed before verification completed; the agent version may already exist. Typed TLS EOF failures on GET/HEAD use the shared six-attempt retry budget with certificate verification unchanged. Certificate/unknown SSL failures and ambiguous writes are not replayed. If recovery is exhausted, keep the partial project and retry with creation unchecked and the same project selected; setup compares live definitions before creating versions. Never delete/recreate the project just to repeat a readback. |
+| `Extension azure.ai.agents did not start` / service host `azure.ai.agent` unsupported | The local publishing provider failed to start, not the Fabric ontology or specialist agents. Shared preflight now verifies azd >=1.37.0, installed agent extension >=1.0.0-beta.23 and Foundry bundle >=1.0.0-beta.4, updates missing/older extensions to those minimums, verifies readback and executes the agent-extension version command before project/backend/agent setup. Existing agents are retained. A persistent startup failure blocks publication explicitly; do not change the service to another host or delete the project. |
 | `The selected Foundry model deployment is not ready.` | Fix the model deployment or set `HYDRO_FOUNDRY_MODEL`. |
 | `…must have one linked Application Insights resource` | Link exactly one; it is never inferred by name. |
 | `Live numeric Ontology generation 2 is required…` | The selected ontology is not a live v2 item. No fallback exists. |
 | `Exactly one published Data Agent must match the verified v2 ontology.` | Publish `RTI_Demo_Agent_*` against the selected ontology; remove stale ones. |
-| `Could not determine the container registry…` | Project has zero or several registry connections. Set `HYDRO_ACR_NAME`. |
+| `Could not determine the container registry…` | Run approved Foundry setup for missing connections. A removed project's surviving infrastructure can be recovered only from successful ARM deployment resource IDs anchored to the exact account, followed by live readback. `HYDRO_ACR_NAME` selects among verified candidates; it cannot establish a missing connection by itself. Ambiguous or unverified infrastructure stops setup. |
 | `Required command 'azd' was not found on PATH.` | Install `azd`, then the two extensions (Section 3). |
 | `az acr build` fails with authorization | Your identity cannot run builds in the registry. Grant the role, then rerun. |
 | `azd deploy` reports a missing extension | `azd extension install azure.ai.agents` and `microsoft.foundry`. |

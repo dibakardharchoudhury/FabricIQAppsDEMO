@@ -1,6 +1,153 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Prose-only native evidence follow-up
+> **Status:** Validated - Historical scope handoff follow-up
+
+## Historical scope handoff follow-up
+
+The same approved Dev/Feature targets, SPA, model, permissions and source bindings
+are retained. A live Dev follow-up demonstrated that the UI and hosted run
+identity retained context, but the native specialist input omitted the saved
+facility scope. The backend now explicitly forwards validated, bounded
+historical context solely for reference resolution, requiring fresh source reads
+and rejecting historical instructions or authorization claims.
+
+All validation checks pass:
+- [x] 1. Core Validation: all 227 conversation, semantic planning, source fidelity
+  and supervisor regressions completed successfully (one intentional skip).
+- [x] 2. Docker Build context: all 66 hosted packaging contracts pass. Dockerfile and locks
+  are unchanged; canonical publication must remotely build and verify the new
+  source-fingerprinted image rather than reusing the old image.
+- [x] 3. Azure Policy Validation: unchanged ARM, role, quota, SKU, region and
+  network scope. Current policy readback and live project roles are verified;
+  existing deny and MFA controls remain enforced.
+
+### Section 7: Validation Proof - historical scope handoff
+
+November 3, 2026: the new native handoff regression failed before repair because
+the earlier facility table was absent. All three focused context/no-history/RCA
+transport and cache-recovery tests pass after repair. `python -m unittest`
+completed 227 supervisor/conversation/native-fidelity/semantic-planning tests
+successfully (one intentional skip), and all 66 hosted packaging contracts pass.
+`npm run validate-env` also passes. No local Docker daemon is available; the
+canonical orchestrator must remotely build, activate and read back the new image.
+No ARM, role, permission or quota changes are authorized.
+
+## November 3 latest Direct diagnostics and Stop controls rollout
+
+### Session-preservation and native-fetch follow-up
+
+The follow-up optional-presentation contract accepts `workflow_text: null`,
+matching the backend's declared nullable field. Non-null malformed summaries
+remain errors. All 94 combined transport/source/direct/auth/settings/mode tests,
+focused ESLint and the production build passed on November 3, 2026 (22.86s,
+existing chunk-size warnings). The scope remains frontend-only; no infrastructure,
+hosted image, agent definition, permission or source-profile change is proposed.
+
+The session/native-fetch fixes were published successfully to Dev release
+`5c254b1` at `2026-11-03T07:49:14Z` and Feature release `382525c` at
+`2026-11-03T08:00:46Z`. Both actual browsers retained an executing prompt through
+the Stale refresh and navigation away/back. Dev also completed native Direct
+execution and returned the three actual facility identifiers/names. Live Multi
+acceptance of the nullable follow-up remains required after publication.
+
+The same approved Dev and Feature scope is retained. This frontend-only update
+does not change hosted images, agent definitions, source profiles, infrastructure,
+permissions, model allocation or quota.
+
+All validation checks pass for this scoped update:
+- [x] 1. Core Validation: expected tenant/subscription verified; 50 focused
+  direct/auth/settings/mode tests, focused ESLint and `npm run build` (including
+  TypeScript) pass. `npm run validate-env` passes. No ARM template changed, so
+  Bicep validation/what-if is not applicable to this Fabric SPA-only delta.
+- [x] 2. Docker Build: not applicable; hosted source, locks, image and agent
+  definitions are unchanged.
+- [x] 3. Azure Policy Validation: existing assignments retrieved for the approved
+  Foundry resource-group scope (HTTP 200); no ARM creation, role, SKU, region,
+  network or policy delta. Existing MFA and resource-creation controls remain
+  enforced; canonical deployment must stop on any live authorization failure.
+
+#### Section 7: Validation Proof - session-preservation follow-up
+
+November 3 nullable-contract follow-up: `node --import tsx --test` passed all
+94 focused cases; focused ESLint and `npm run build` passed (22.86s).
+`npm run validate-env` passed again before rollout. Azure CLI verified the
+approved tenant and Foundry subscription; live policy assignment retrieval
+returned HTTP 200 with existing deny, MFA and resource-creation controls.
+No Bicep/Terraform or role assignment changed. The full canonical deployment
+must enforce all current authorization and endpoint readiness checks.
+
+The previous Dev build reproduced the refresh bug: the prompt was visible before
+telemetry connection/refresh invalidation, absent afterward, and the hosted
+invocation was aborted. This follows the same `clearWorkspaceConfigCache` path
+as the button beside Stale. Cache revision and temporarily cleared discovery
+values no longer form conversation identity. An app-lifetime provider retains
+the running request, history and hosted scope across page navigation.
+
+The native Direct failure was independently reproduced as `Window.fetch:
+Illegal invocation`; binding injected fetch to the global receiver fixes the
+regression without changing endpoints, headers, questions or answer fidelity.
+The combined 50-test suite passed; final production build completed in 31.87s
+with existing large-chunk warnings. Browser acceptance on the newly published
+build remains required; no live success is inferred from these local checks.
+
+Retain the approved Dev and Feature workspaces, tenant SPA, active capacity and
+Foundry project. Use the existing canonical Python orchestrator from clean
+matching-upstream release branches, sequentially Dev then Feature.
+
+All validation checks pass for this scoped update:
+- [x] 1. Core Validation: Azure CLI verified the existing tenant/subscription;
+  environment validation, all 47 direct/auth/settings/mode contracts, TypeScript,
+  focused ESLint and the latest production build passed.
+- [x] 2. Docker Build: not applicable; hosted service source, locks, Dockerfile and
+  source-fingerprinted image are unchanged.
+- [x] 3. Azure Policy Validation: no IaC, RBAC, model, quota or source-profile
+  change. Canonical source, runtime, connector and CORS preflights remain required.
+
+### Section 7: Validation Proof - latest controls, November 3, 2026
+
+`npm run validate-env`, `npm run build`, TypeScript, focused ESLint and the combined
+direct-fabric-mcp, direct-fabric, entra-tokens, copilot-settings and
+intelligence-modes tests passed. The latest build completed with existing
+large-chunk warnings. A source-free actual-component browser fixture verified
+40-by-40 Stop icons, accessible labels, keyboard activation, narrow dark/maximized
+layouts and cancellation of all four lanes. It made no agent or operational call.
+Direct error reporting is corrected, but the reported live question failure and
+post-deployment account reuse still require authenticated runtime acceptance.
+
+## Scoped tab-session authentication and chat controls update
+
+The previously approved Dev and Feature tenant, workspaces, SPA, capacity and
+Foundry project are retained. Deployment uses the repository's canonical Python
+orchestrator from clean matching-upstream release branches, not a custom azd flow.
+
+All validation checks pass for this frontend-only scope:
+- [x] 1. Core Validation: Azure CLI confirms the expected tenant and Foundry
+  subscription. Node 24 environment validation, TypeScript, focused ESLint,
+  all 30 auth/settings/mode regression tests and the production build pass.
+- [x] 2. Docker Build: not applicable; hosted service source, Dockerfile, locks,
+  and its source-fingerprinted image are unchanged.
+- [x] 3. Azure Policy Validation: no ARM/IaC, role, region, resource, source
+  profile, permission or quota delta. Canonical live preflights remain mandatory.
+
+### Section 7: Validation Proof - November 3, 2026
+
+Commands completed: `npm run validate-env`, `npm run typecheck`, focused
+`npx --no-install eslint`, `npm run build`, and `node --import tsx --test`
+for entra-tokens, copilot-settings and intelligence-modes. All pass; the build
+retains existing large-chunk warnings.
+
+A source-free fixture rendered the actual chat/settings components with the built
+stylesheet. Browser checks passed all eight visibility combinations, saving and
+reload persistence, default restoration, right-side placement beside Team,
+mode-local compose draft retention, Escape/focus restoration, maximized controls,
+dark/light styling and narrow viewport containment. Battle exposes no approval
+buttons. The fixture explicitly disables source invocation and performs no SQL
+write; it does not certify live authentication or agent execution.
+
+MSAL authentication cache now uses tab/origin-scoped sessionStorage; analytical
+data caches remain in memory. Restored-account regressions verify silent reuse
+and continued tenant filtering/error propagation. Same-tab live navigation after
+an initial real sign-in remains a separate post-deployment acceptance check.
 
 ## Scoped native Data Agent passthrough
 

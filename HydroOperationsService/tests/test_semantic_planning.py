@@ -148,6 +148,83 @@ class SemanticPlanningTests(unittest.IsolatedAsyncioTestCase):
                 SemanticDecision.model_validate(planned), SourceCatalog.model_validate(catalog()),
             )
 
+    def test_contextual_investigation_requires_sparky_before_dependent_specialists(self):
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        planned = decision()
+        planned["plan"]["steps"].append({
+            "specialist": "rca", "question": "Investigate the cause using the connected context.",
+            "nativeSource": None, "execution": "agent", "reads": [],
+        })
+        with self.assertRaisesRegex(SourceFailure, "Fabric IQ/Sparky"):
+            self.owner.validate_semantic_plan(
+                SemanticDecision.model_validate(planned), SourceCatalog.model_validate(catalog()),
+            )
+
+    def test_cross_source_facts_require_ontology_grounding_without_agent_names(self):
+        source_catalog = catalog()
+        source_catalog["context"]["datasets"].append({
+            **source_catalog["context"]["datasets"][0],
+            "key": "work_orders", "source": "sql", "entity": "work_orders",
+        })
+        planned = decision()
+        planned["plan"]["answer_contract"]["requirements"].append({
+            "evidence": "work_orders_population_direct", "purpose": "coverage",
+        })
+        with self.assertRaisesRegex(SourceFailure, "Fabric IQ/Sparky"):
+            self.owner.validate_semantic_plan(
+                SemanticDecision.model_validate(planned), SourceCatalog.model_validate(source_catalog),
+            )
+
+    def test_semantically_identified_context_requires_native_grounding_even_for_one_dataset(self):
+        planned = decision()
+        planned["ontology_context_required"] = True
+        with self.assertRaisesRegex(SourceFailure, "Fabric IQ/Sparky"):
+            self.owner.validate_semantic_plan(
+                SemanticDecision.model_validate(planned), SourceCatalog.model_validate(catalog()),
+            )
+
+    def test_native_grounding_cannot_run_after_dependent_review(self):
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        planned = decision("fabric-iq", "native_claims", reader=False)
+        planned["ontology_context_required"] = True
+        planned["plan"]["steps"].insert(0, {
+            "specialist": "work-order", "question": "Review work coverage.",
+            "nativeSource": None, "execution": "agent", "reads": [],
+        })
+        with self.assertRaisesRegex(SourceFailure, "must precede"):
+            self.owner.validate_semantic_plan(
+                SemanticDecision.model_validate(planned), SourceCatalog.model_validate(catalog()),
+            )
+        planned["plan"]["steps"].reverse()
+        self.owner.validate_semantic_plan(
+            SemanticDecision.model_validate(planned), SourceCatalog.model_validate(catalog()),
+        )
+
+    async def test_gauge_first_correlation_is_corrected_before_any_source_execution(self):
+        omitted = decision()
+        omitted["ontology_context_required"] = True
+        corrected = decision("fabric-iq", "native_claims", reader=False)
+        corrected["ontology_context_required"] = True
+        self.owner.native_binding = NativeBinding(source=SOURCE, connections={"data-agent": "verified"})
+        client, api = AsyncMock(), AsyncMock()
+        client.__aenter__.return_value = client
+        api.__aenter__.return_value = api
+        client.get_openai_client = lambda: api
+        api.responses.create.side_effect = [
+            SimpleNamespace(status="completed", id="gauge-first", output_text=json.dumps(omitted)),
+            SimpleNamespace(status="completed", id="sparky-first", output_text=json.dumps(corrected)),
+        ]
+        with patch("hydro_orchestrator.foundry_supervisor.BoundedAIProjectClient", return_value=client):
+            request = await self.owner.plan_semantically(
+                self.request.model_copy(update={"question": "Correlate turbine quality with open work."}),
+                self.journal,
+            )
+        self.assertEqual(api.responses.create.await_count, 2)
+        self.assertEqual(request.native_sources, ("data-agent",))
+        self.assertEqual(request.required_specialists, ())
+        self.owner.bridge.call.assert_not_called()
+        self.assertFalse(self.owner.evidence)
+
     def test_checked_rca_report_does_not_invoke_another_briefing_model(self):
         from hydro_orchestrator.foundry_supervisor import SpecialistResult
         planned = decision()

@@ -2,12 +2,15 @@ import contextlib
 import io
 import json
 import os
+import ssl
 import sys
 import time
 import unittest
 from unittest.mock import Mock, call, patch
 
 import requests
+from urllib3.connectionpool import HTTPSConnectionPool
+from urllib3.exceptions import MaxRetryError, SSLError as Urllib3SSLError
 
 import http_retries
 import run_pipeline
@@ -32,6 +35,72 @@ def response(status=200, body=None, **headers):
 
 
 class SharedReadRetryTests(unittest.TestCase):
+    def test_tls_eof_reads_retry_through_requests_and_urllib3_wrappers(self):
+        eof = ssl.SSLEOFError(ssl.SSL_ERROR_EOF, "private TLS payload")
+        for failure in (
+            requests.exceptions.SSLError(eof),
+            requests.exceptions.SSLError(MaxRetryError(
+                HTTPSConnectionPool("api.fabric.microsoft.com"), URL, reason=Urllib3SSLError(eof),
+            )),
+        ):
+            for method in ("GET", "HEAD"):
+                with self.subTest(method=method, failure=type(failure.args[0]).__name__):
+                    sender = Mock(side_effect=[failure, response()])
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output), patch.object(http_retries.time, "sleep") as sleep:
+                        result = http_retries.request_with_read_retry(
+                            method, URL + "?token=private-query", send=sender, timeout=60,
+                        )
+                    self.assertEqual(result.status_code, 200)
+                    self.assertEqual(sender.call_count, 2)
+                    self.assertEqual(sender.call_args_list[0], sender.call_args_list[1])
+                    self.assertNotIn("verify", sender.call_args.kwargs)
+                    sleep.assert_called_once_with(1)
+                    self.assertIn("TLS EOF", output.getvalue())
+                    self.assertNotIn("private", output.getvalue())
+
+    def test_tls_eof_retry_budget_is_bounded_and_preserves_original_error(self):
+        failure = requests.exceptions.SSLError(
+            MaxRetryError(HTTPSConnectionPool("api.fabric.microsoft.com"), URL, reason=Urllib3SSLError(
+                ssl.SSLEOFError(ssl.SSL_ERROR_EOF, "TLS stream closed"),
+            )),
+        )
+        sender = Mock(side_effect=failure)
+        with patch.object(http_retries.time, "sleep") as sleep, self.assertRaises(
+            requests.exceptions.SSLError,
+        ) as caught:
+            http_retries.request_with_read_retry("GET", URL, send=sender)
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(sender.call_count, http_retries.READ_ATTEMPTS)
+        self.assertEqual(sleep.call_args_list, [call(1), call(2), call(4), call(8), call(15)])
+
+    def test_tls_writes_certificate_and_unknown_ssl_errors_are_never_retried(self):
+        eof = ssl.SSLEOFError(ssl.SSL_ERROR_EOF, "TLS stream closed")
+        certificate = ssl.SSLCertVerificationError(1, "certificate verify failed")
+        mixed = ssl.SSLEOFError(ssl.SSL_ERROR_EOF, "TLS stream closed")
+        mixed.__cause__ = certificate
+        mixed.__context__ = mixed
+        failures = [
+            (method, requests.exceptions.SSLError(eof))
+            for method in ("POST", "PUT", "PATCH", "DELETE")
+        ] + [
+            ("GET", requests.exceptions.SSLError(MaxRetryError(
+                HTTPSConnectionPool("api.fabric.microsoft.com"), URL, reason=Urllib3SSLError(certificate),
+            ))),
+            ("GET", requests.exceptions.SSLError(mixed)),
+            ("GET", requests.exceptions.SSLError(ssl.SSLError(1, "wrong protocol"))),
+            ("GET", requests.exceptions.SSLError("UNEXPECTED_EOF_WHILE_READING")),
+        ]
+        for method, failure in failures:
+            with self.subTest(method=method, failure=str(failure)):
+                sender = Mock(side_effect=failure)
+                with patch.object(http_retries.time, "sleep") as sleep, self.assertRaises(
+                    requests.exceptions.SSLError,
+                ):
+                    http_retries.request_with_read_retry(method, URL, send=sender)
+                sender.assert_called_once()
+                sleep.assert_not_called()
+
     def test_all_fabric_clients_recover_the_same_read_without_replaying_a_start(self):
         for client_type in (Fabric, run_pipeline.Fabric, FeatureFabric, DeleteFabric, CloudClient):
             with self.subTest(client=client_type.__name__):

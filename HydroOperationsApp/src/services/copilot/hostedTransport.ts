@@ -32,6 +32,9 @@ export type HostedAnswer = {
   proposals: WorkOrderProposal[]
   workOrderReview?: WorkOrderReview
   executionEvents: OrchestrationEvent[]
+  workflowText?: string
+  sourceAnswers?: Array<{ evidence_id: string; text: string; content_sha256: string }>
+  rcaReports?: Record<string, unknown>[]
 }
 
 export class HostedInvocationError extends Error {
@@ -209,6 +212,12 @@ export class HostedTransport {
     this.interruptedRunId = undefined
   }
 
+  invalidateConversation() {
+    this.conversationVersion++
+    this.previousRunId = undefined
+    this.interruptedRunId = undefined
+  }
+
   reset() {
     this.clearConversation()
     this.sessionId = this.newSession()
@@ -233,12 +242,14 @@ export class HostedTransport {
   }
 
   private async invoke(
-    body: Record<string, unknown>, onEvent?: (event: OrchestrationEvent) => void,
+    body: Record<string, unknown>, onEvent?: (event: OrchestrationEvent) => void, signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
     this.inFlight++
     let tokens: SourceTokens | undefined
     try {
+      signal?.throwIfAborted()
       tokens = await this.credentials(body.operation === 'run' || body.operation === 'decide' || body.operation === 'reconcile')
+      signal?.throwIfAborted()
       if ((['fabric', 'foundry', 'graphql', 'kusto'] as const).some(kind => {
         const token = tokens?.[kind]
         return typeof token !== 'string' || !token
@@ -248,7 +259,7 @@ export class HostedTransport {
       const endpoint = new URL(this.endpoint)
       endpoint.searchParams.set('agent_session_id', this.sessionId)
       const response = await this.fetcher(endpoint, {
-        method: 'POST', redirect: 'error', cache: 'no-store',
+        method: 'POST', redirect: 'error', cache: 'no-store', signal,
         headers: { Authorization: `Bearer ${tokens.foundry}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...body, ...(onEvent ? { stream: true } : {}), tokens }),
       })
@@ -333,13 +344,14 @@ export class HostedTransport {
     }
   }
 
-  private async recoverInterruptedRun(): Promise<Record<string, unknown>> {
+  private async recoverInterruptedRun(signal?: AbortSignal): Promise<Record<string, unknown>> {
     const runId = this.interruptedRunId
     if (!runId) throw new Error('The interrupted hosted request has no server-assigned run identity.')
     let consecutiveTransportFailures = 0
     while (true) {
+      signal?.throwIfAborted()
       try {
-        const result = await this.invoke({ operation: 'result', run_id: runId })
+        const result = await this.invoke({ operation: 'result', run_id: runId }, undefined, signal)
         consecutiveTransportFailures = 0
         if (result.status === 'completed') return record(result.answer)
         if (result.status === 'failed') {
@@ -355,6 +367,7 @@ export class HostedTransport {
           throw new Error('Hosted run recovery returned an invalid status contract.')
         }
       } catch (error) {
+        signal?.throwIfAborted()
         if (error instanceof HostedInvocationError) throw error
         consecutiveTransportFailures++
         if (consecutiveTransportFailures >= 3) {
@@ -368,9 +381,10 @@ export class HostedTransport {
     }
   }
 
-  async run(chat: HostedChat, onEvents?: (events: OrchestrationEvent[]) => void): Promise<HostedAnswer> {
+  async run(chat: HostedChat, onEvents?: (events: OrchestrationEvent[]) => void, signal?: AbortSignal): Promise<HostedAnswer> {
     if (this.running) throw new Error('A hosted request is already running.')
     this.running = true
+    signal ??= AbortSignal.timeout(12 * 60_000)
     try {
       const streamedEvents: OrchestrationEvent[] = []
       this.interruptedRunId = undefined
@@ -382,11 +396,13 @@ export class HostedTransport {
             if (index < 0) streamedEvents.push(event)
             else streamedEvents[index] = event
             onEvents?.([...streamedEvents])
-          })
+          }, signal)
       } catch (error) {
+        signal?.throwIfAborted()
         if (!this.interruptedRunId || error instanceof HostedInvocationError) throw error
-        reply = await this.recoverInterruptedRun()
+        reply = await this.recoverInterruptedRun(signal)
       }
+      signal?.throwIfAborted()
       const source = record(reply.source)
       if (Object.entries(this.source).some(([key, value]) => source[key] !== value)
         || reply.production_write_executed !== false || typeof reply.run_id !== 'string') {
@@ -398,6 +414,29 @@ export class HostedTransport {
         throw new Error('Hosted answer has no supported backend-owned presentation.')
       }
       const runId = reply.run_id
+      let workflowText: string | undefined
+      let sourceAnswers: HostedAnswer['sourceAnswers']
+      let rcaReports: HostedAnswer['rcaReports']
+      if (presentation.workflow_text !== undefined && presentation.workflow_text !== null) {
+        if (typeof presentation.workflow_text !== 'string' || !presentation.workflow_text.trim()) throw new Error('Hosted workflow summary is invalid.')
+        workflowText = presentation.workflow_text
+      }
+      if (presentation.source_answers !== undefined) {
+        if (!Array.isArray(presentation.source_answers)) throw new Error('Hosted native source evidence is invalid.')
+        sourceAnswers = []
+        for (const raw of presentation.source_answers) {
+          const item = record(raw)
+          if (typeof item.evidence_id !== 'string' || !item.evidence_id || typeof item.text !== 'string'
+            || typeof item.content_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(item.content_sha256)) throw new Error('Hosted native source evidence has no valid identity or digest.')
+          const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(item.text))), byte => byte.toString(16).padStart(2, '0')).join('')
+          if (digest !== item.content_sha256) throw new Error('Hosted native answer digest does not match the unchanged source text.')
+          sourceAnswers.push({ evidence_id: item.evidence_id, text: item.text, content_sha256: item.content_sha256 })
+        }
+      }
+      if (presentation.rca_reports !== undefined) {
+        if (!Array.isArray(presentation.rca_reports)) throw new Error('Hosted RCA detail collection is invalid.')
+        rcaReports = presentation.rca_reports.map(record)
+      }
       let workOrderReview: WorkOrderReview | undefined
       if (presentation.work_order_review != null) {
         const review = record(presentation.work_order_review)
@@ -457,9 +496,11 @@ export class HostedTransport {
         mergedEvents.set(event.id, { ...mergedEvents.get(event.id), ...event })
       }
       const executionEvents = [...mergedEvents.values()]
+      signal?.throwIfAborted()
       this.previousRunId = runId
       this.interruptedRunId = undefined
-      return { runId, text: presentation.text, proposals, workOrderReview, visualizations, executionEvents, receipt: reply }
+      return { runId, text: presentation.text, proposals, workOrderReview, visualizations, executionEvents, receipt: reply,
+        workflowText, sourceAnswers, rcaReports }
     } catch (error) {
       // A failed turn must not erase the conversation. Only an unusable earlier run (the backend answers 404/409
       // for it) is dropped, so the next question does not keep failing on it.

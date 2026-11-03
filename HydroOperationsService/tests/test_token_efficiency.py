@@ -111,6 +111,59 @@ class TokenEfficiencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(projected[0]["result"]["projected_row_count"], 1)
         self.assertEqual(receipt.result["rows"], rows)
 
+    def test_fixer_after_rca_retains_direct_signal_rows_bound_by_verified_inventory(self):
+        owner = object.__new__(FoundrySupervisor)
+        inventory = ToolEvidence(
+            id="inventory", source=SOURCE, tool="query_assets", arguments={}, completed_at=utc_now(),
+            result={"rows": [
+                {"equipment_id": "TARGET", "opcua_node_id": "opaque.target"},
+                {"equipment_id": "OTHER", "opcua_node_id": "opaque.other"},
+            ]},
+            resolved_equipment_ids=("TARGET", "OTHER"),
+            row_identities={"/rows/0": {"equipment_id": "TARGET", "opcua_node_id": "opaque.target"},
+                            "/rows/1": {"equipment_id": "OTHER", "opcua_node_id": "opaque.other"}},
+        )
+        quality = ToolEvidence(
+            id="bad-quality", source=SOURCE, tool="query_telemetry", arguments={}, completed_at=utc_now(),
+            result={"rows": [{"opcua_node_id": "opaque.other", "quality": "BAD"},
+                             {"opcua_node_id": "opaque.target", "quality": "BAD"}], "row_count": 2},
+            resolved_equipment_ids=("TARGET", "OTHER"),
+            row_identities={"/rows/0": {"opcua_node_id": "opaque.other"},
+                            "/rows/1": {"opcua_node_id": "opaque.target"}},
+        )
+        owner.evidence = {item.id: item for item in (inventory, quality)}
+        owner.carried_ids, owner.selected_equipment_ids = set(), {"TARGET"}
+        owner.specialists = [SpecialistResult(
+            role="rca", agent_name="hydro-rca-agent", version="1", response_id="rca-1",
+            duration_ms=1, input_digest="a" * 64, text="",
+            report={"observations": [{"evidence_id": "inventory", "path": "/rows/0"}]},
+        )]
+        original = copy.deepcopy(quality.result)
+        projected = {item["id"]: item for item in owner.model_evidence("work-order")}
+        self.assertEqual(projected["bad-quality"]["result"]["rows"], [None, original["rows"][1]])
+        self.assertEqual(projected["bad-quality"]["result"]["projected_row_count"], 1)
+        self.assertEqual(quality.result, original)
+        owner.selected_equipment_ids.add("OTHER")
+        projected = {item["id"]: item for item in owner.model_evidence("work-order")}
+        self.assertEqual(projected["bad-quality"]["result"]["rows"], original["rows"],
+                         "An RCA citation subset must not narrow established maintenance scope.")
+
+    def test_fixer_projection_never_replaces_unmapped_signal_rows_with_only_their_count(self):
+        owner = object.__new__(FoundrySupervisor)
+        receipt = ToolEvidence(
+            id="quality", source=SOURCE, tool="query_telemetry", arguments={}, completed_at=utc_now(),
+            result={"rows": [{"opcua_node_id": "opaque.unmapped", "quality": "BAD"}], "row_count": 1},
+            resolved_equipment_ids=("TARGET",),
+        )
+        owner.evidence, owner.carried_ids, owner.selected_equipment_ids = {receipt.id: receipt}, set(), {"TARGET"}
+        owner.specialists = [SpecialistResult(
+            role="rca", agent_name="hydro-rca-agent", version="1", response_id="rca-1",
+            duration_ms=1, input_digest="a" * 64, text="", report={},
+        )]
+        projected = owner.model_evidence("work-order")
+        self.assertEqual(projected[0]["result"]["rows"], receipt.result["rows"])
+        self.assertNotIn("projected_row_count", projected[0]["result"])
+
     def test_native_fixer_handoff_preserves_the_complete_affected_population_and_citation_indices(self):
         owner = object.__new__(FoundrySupervisor)
         registry = [

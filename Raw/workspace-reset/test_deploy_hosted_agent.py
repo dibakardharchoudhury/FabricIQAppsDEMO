@@ -106,6 +106,7 @@ class FakeDeploy:
         self.azd_environments = list(azd_environments)
         self.azd_signed_in = azd_signed_in
         self.extensions = list(extensions)
+        self.extension_versions = {name: "1.0.0-beta.99" for name in extensions}
         self.azd_values = azd_values
         self.log = []
         self.cwds = []
@@ -124,10 +125,16 @@ class FakeDeploy:
             if tag not in self.tags:
                 raise self.DeployError("ERROR: The requested data does not exist.")
             return self.tags[tag]
-        if argv[:4] == ["azd", "auth", "login", "--check-status"] and not self.azd_signed_in:
+        if argv[:3] == ["azd", "auth", "token"] and not self.azd_signed_in:
             raise self.DeployError("Not logged in")
         if argv[:3] == ["azd", "extension", "list"]:
-            return json.dumps([{"id": item} for item in self.extensions])
+            return json.dumps([{
+                "id": item, "installedVersion": self.extension_versions[item], "version": "9.9.9",
+            } for item in self.extensions])
+        if argv == ["azd", "version"]:
+            return "azd version 1.37.2"
+        if argv == ["azd", "ai", "agent", "version"]:
+            return f"Version: {self.extension_versions['azure.ai.agents']}\nCommit: test"
         if argv[:3] == ["azd", "env", "get-values"]:
             return self.azd_values
         if argv[:3] == ["azd", "env", "list"]:
@@ -144,6 +151,13 @@ class FakeDeploy:
 
     def run_stream(self, argv, cwd=None, env=None):
         self.log.append(argv)
+        if argv[:3] in (["azd", "extension", "install"], ["azd", "extension", "update"]):
+            name = argv[3]
+            if name not in self.extensions:
+                self.extensions.append(name)
+            self.extension_versions[name] = argv[argv.index("--version") + 1]
+        if argv[:3] == ["azd", "auth", "login"]:
+            self.azd_signed_in = True
         if argv[:3] == ["az", "acr", "build"]:
             self.build_cwd = cwd
             self.build_context = Path(argv[-1])
@@ -588,11 +602,122 @@ class ProjectRoutingTests(unittest.TestCase):
     def test_missing_azd_extensions_are_installed_and_present_ones_are_not(self):
         fake = FakeDeploy(extensions=["azure.ai.agents"])
         hosted.ensure_azd_ready(fake, "tenant")
-        self.assertEqual(fake.commands("azd", "extension", "install"), [["azd", "extension", "install", "microsoft.foundry"]])
+        self.assertEqual(fake.commands("azd", "extension", "install"), [[
+            "azd", "extension", "install", "microsoft.foundry", "--version", "1.0.0-beta.4",
+        ]])
         both = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
         hosted.ensure_azd_ready(both, "tenant")
         self.assertEqual(both.commands("azd", "extension", "install"), [])
         self.assertEqual(set(hosted.REQUIRED_EXTENSIONS), {"azure.ai.agents", "microsoft.foundry"})
+
+    def test_old_installed_version_is_updated_even_when_catalog_version_is_new(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        fake.extension_versions["azure.ai.agents"] = "1.0.0-beta.18"
+        hosted.ensure_azd_ready(fake, "tenant")
+        self.assertEqual(fake.commands("azd", "extension", "update"), [[
+            "azd", "extension", "update", "azure.ai.agents", "--version", "1.0.0-beta.23",
+        ]])
+        self.assertEqual(fake.commands("azd", "ai", "agent", "version"), [["azd", "ai", "agent", "version"]])
+        self.assertEqual(fake.commands("azd", "deploy"), [])
+
+    def test_extension_update_requires_verified_installed_version_readback(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        fake.extension_versions["azure.ai.agents"] = "1.0.0-beta.18"
+        with patch.object(fake, "run_stream", side_effect=lambda argv: fake.log.append(argv)), \
+                self.assertRaisesRegex(fake.DeployError, "installed version"):
+            hosted.ensure_azd_ready(fake, "tenant")
+        self.assertEqual(fake.commands("azd", "deploy"), [])
+
+    def test_installed_but_unstartable_agent_extension_stops_before_environment_changes(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        capture = fake.run_capture
+
+        def fail_start(argv, **kwargs):
+            if argv == ["azd", "ai", "agent", "version"]:
+                raise fake.DeployError("Extension azure.ai.agents did not start")
+            return capture(argv, **kwargs)
+
+        with patch.object(fake, "run_capture", side_effect=fail_start), \
+                self.assertRaisesRegex(fake.DeployError, "did not start"):
+            hosted.ensure_azd_ready(fake, "tenant")
+        self.assertEqual(fake.commands("azd", "env"), [])
+        self.assertEqual(fake.commands("azd", "deploy"), [])
+
+    def test_manifest_and_tooling_minimums_remain_aligned(self):
+        manifest = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
+        self.assertIn("azd: '>=1.37.0'", manifest)
+        for name, minimum in hosted.REQUIRED_EXTENSIONS.items():
+            self.assertIn(f"{name}: '>={minimum}'", manifest)
+
+    def test_unverified_installed_metadata_and_running_version_fail_closed(self):
+        for listing, running in (
+            ("not-json", "Version: 1.0.0-beta.99"),
+            ("{}", "Version: 1.0.0-beta.99"),
+            (json.dumps([{"id": "azure.ai.agents", "version": "9.9.9"}]), "Version: 1.0.0-beta.99"),
+            (None, "Version: 1.0.0-beta.18"),
+            (None, "extension startup warning without a version"),
+        ):
+            fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+            capture = fake.run_capture
+
+            def override(argv, **kwargs):
+                if listing is not None and argv[:3] == ["azd", "extension", "list"]:
+                    return listing
+                if argv == ["azd", "ai", "agent", "version"]:
+                    return running
+                return capture(argv, **kwargs)
+
+            with self.subTest(listing=listing, running=running), \
+                    patch.object(fake, "run_capture", side_effect=override), \
+                    self.assertRaises(fake.DeployError):
+                hosted.ensure_azd_ready(fake, "tenant")
+            self.assertEqual(fake.commands("azd", "env"), [])
+            self.assertEqual(fake.commands("azd", "deploy"), [])
+
+    def test_unsupported_azd_stops_before_login_or_extension_changes(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        capture = fake.run_capture
+        with patch.object(fake, "run_capture", side_effect=lambda argv, **kwargs: (
+            "azd version 1.35.0" if argv == ["azd", "version"] else capture(argv, **kwargs)
+        )), self.assertRaisesRegex(fake.DeployError, "azd >=1.37.0"):
+            hosted.ensure_azd_ready(fake, "tenant")
+        self.assertEqual(fake.commands("azd", "auth"), [])
+        self.assertEqual(fake.commands("azd", "extension"), [])
+
+    def test_publishing_checks_both_token_audiences_in_the_selected_tenant(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        hosted.ensure_azd_ready(fake, "selected-tenant")
+        self.assertEqual(fake.commands("azd", "auth", "token"), [
+            ["azd", "auth", "token", "--tenant-id", "selected-tenant", "--scope", scope]
+            for scope in ("https://management.azure.com/.default", "https://ai.azure.com/.default")
+        ])
+        self.assertEqual(fake.commands("azd", "auth", "login"), [])
+
+    def test_stale_publishing_credential_allows_one_login_then_rechecks(self):
+        fake = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        original = fake.run_capture
+        failures = iter([True, False, False])
+
+        def capture(argv, **kwargs):
+            if argv[:3] == ["azd", "auth", "token"] and next(failures):
+                raise fake.DeployError("AzureDeveloperCLICredential: exit status 1")
+            return original(argv, **kwargs)
+
+        with patch.object(fake, "run_capture", side_effect=capture):
+            hosted.ensure_azd_ready(fake, "selected-tenant")
+        self.assertEqual(fake.commands("azd", "auth", "login"), [
+            ["azd", "auth", "login", "--tenant-id", "selected-tenant"],
+        ])
+        self.assertEqual(len(fake.commands("azd", "auth", "token")), 2)
+
+    def test_failed_credential_recovery_stops_without_installing_or_publishing(self):
+        fake = FakeDeploy(azd_signed_in=False)
+        with patch.object(fake, "run_stream", side_effect=lambda argv: fake.log.append(argv)), \
+                self.assertRaisesRegex(fake.DeployError, "Not logged in"):
+            hosted.ensure_azd_ready(fake, "selected-tenant")
+        self.assertEqual(len(fake.commands("azd", "auth", "login")), 1)
+        self.assertEqual(fake.commands("azd", "extension", "install"), [])
+        self.assertEqual(fake.commands("azd", "deploy"), [])
 
 
 class ProjectCreationTests(unittest.TestCase):
