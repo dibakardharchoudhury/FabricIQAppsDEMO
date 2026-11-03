@@ -1,6 +1,32 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Tab-session authentication and chat controls update
+> **Status:** Validated - Latest Direct diagnostics and Stop controls rollout
+
+## November 3 latest Direct diagnostics and Stop controls rollout
+
+Retain the approved Dev and Feature workspaces, tenant SPA, active capacity and
+Foundry project. Use the existing canonical Python orchestrator from clean
+matching-upstream release branches, sequentially Dev then Feature.
+
+All validation checks pass for this scoped update:
+- [x] 1. Core Validation: Azure CLI verified the existing tenant/subscription;
+  environment validation, all 47 direct/auth/settings/mode contracts, TypeScript,
+  focused ESLint and the latest production build passed.
+- [x] 2. Docker Build: not applicable; hosted service source, locks, Dockerfile and
+  source-fingerprinted image are unchanged.
+- [x] 3. Azure Policy Validation: no IaC, RBAC, model, quota or source-profile
+  change. Canonical source, runtime, connector and CORS preflights remain required.
+
+### Section 7: Validation Proof - latest controls, November 3, 2026
+
+`npm run validate-env`, `npm run build`, TypeScript, focused ESLint and the combined
+direct-fabric-mcp, direct-fabric, entra-tokens, copilot-settings and
+intelligence-modes tests passed. The latest build completed with existing
+large-chunk warnings. A source-free actual-component browser fixture verified
+40-by-40 Stop icons, accessible labels, keyboard activation, narrow dark/maximized
+layouts and cancellation of all four lanes. It made no agent or operational call.
+Direct error reporting is corrected, but the reported live question failure and
+post-deployment account reuse still require authenticated runtime acceptance.
 
 ## Scoped tab-session authentication and chat controls update
 

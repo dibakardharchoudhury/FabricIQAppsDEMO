@@ -16,6 +16,17 @@ services:
       enabled: true
       externalEntraExchange: true
     allowedRedirectUris:
+      - https://lofty-oasis-f52839c00b-swedencentral.webapp.fabricapps.net
+      - https://glad-hover-68cb866cd0-swedencentral.webapp.fabricapps.net
+      - https://warm-edge-ac3b1903d6-swedencentral.webapp.fabricapps.net
+      - https://honey-ford-5515776f76-swedencentral.webapp.fabricapps.net
+      - https://snowy-flint-5e51887339-swedencentral.webapp.fabricapps.net
+      - https://free-coral-b7b89aadbb-swedencentral.webapp.fabricapps.net
+      - https://regal-jewel-7c943d5278-swedencentral.webapp.fabricapps.net
+      - https://spicy-fog-8e5a883e31-swedencentral.webapp.fabricapps.net
+      - https://hasty-wilds-c56c3103da-swedencentral.webapp.fabricapps.net
+      - https://risen-gorge-0a18c957dc-swedencentral.webapp.fabricapps.net
+      - https://grand-heron-1ceff4e9c9-swedencentral.webapp.fabricapps.net
       - https://live-vine-116adb1e08-swedencentral.webapp.fabricapps.net
       - https://lean-lake-e7891f0381-swedencentral.webapp.fabricapps.net
       - https://sleek-echo-51b3703235-swedencentral.webapp.fabricapps.net
@@ -61,9 +72,6 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
-      - https://free-coral-b7b89aadbb-swedencentral.webapp.fabricapps.net
-      - https://snowy-flint-5e51887339-swedencentral.webapp.fabricapps.net
-      - https://honey-ford-5515776f76-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
@@ -97,15 +105,6 @@ connectors:
     config:
       workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
       itemId: ${RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID}
-    auth:
-      type: delegated
-    operations:
-      - name: read
-  - name: hydrogeo
-    type: fabric-sqlanalytics
-    config:
-      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
-      itemId: ${RAYFIN_PUBLIC_GEO_SQL_ENDPOINT_ID}
     auth:
       type: delegated
     operations:
