@@ -1,5 +1,33 @@
 # Foundry and multi-agent implementation record
 
+## November 3 operator response and composer follow-up
+
+Maintenance completion reasons now use brief operator language, not response
+IDs, duplicate-check receipts or query mechanics. The owner rejects leaked
+run-scoped execution identifiers and reasons over 100 words, retaining the
+original receipts in the audit. Empty BAD-only results do not establish that
+telemetry arrived, that the requested window is complete, or that equipment is
+healthy. Current missing measurements and historical/SQL-only work inventory
+must remain distinct.
+
+The UI presents the checked maintenance outcome once, with explicit draft/write
+status, rather than repeating Fixer's reason in a separate outcome banner.
+Native source text and hashes remain unchanged in collapsed source evidence;
+native execution IDs are not the details-toggle label or normal answer footer.
+No response-rewriting model or substituted data source is introduced.
+
+Hydro Intelligence fits the actual SPA/iframe viewport, with scrolling inside
+the transcript or Battle results, keeping its multiline composer and controls
+visible. The textarea starts at three rows and at least 88px, can be resized,
+and uses the full available width. Smaller-height views omit the redundant page
+heading; normal and expanded chat retain their mode and Stop controls.
+
+The user's Direct `Illegal invocation` screenshot shows build `1.0.1336`,
+before the already-published native fetch receiver repair. Current source binds
+fetch to the browser global receiver and keeps exact independent native requests.
+Fresh embedded and newly published acceptance remain required; an open old SPA
+does not automatically reload when the hosted bundle is updated.
+
 ## November 3 session and native-fetch repair published and verified
 
 The latest Dev browser reproduced two concrete frontend failures:

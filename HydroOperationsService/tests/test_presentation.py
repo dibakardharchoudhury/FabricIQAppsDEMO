@@ -18,6 +18,31 @@ from test_durable_service import BODY, HEADERS, SOURCE, TOKEN, TestAdapters, dec
 
 
 class PresentationTests(unittest.TestCase):
+    def test_empty_current_telemetry_review_has_one_clear_outcome_and_unchanged_native_audit(self):
+        reason = ("No telemetry samples were returned for today's UTC window. "
+                  "Current BAD-quality turbines and maintenance gaps cannot be assessed.")
+        native_text = "Full source answer: resp_original; 0 BAD records is not proof of healthy equipment."
+        specialist = SpecialistResult(
+            role="work-order", agent_name="hydro-work-order-agent", version="1",
+            response_id="resp_fixer", duration_ms=1, input_digest="a" * 64, text="Audit only.",
+            report={"decision": "needs_clarification", "reason": reason},
+        )
+        answer = ChatAnswer(
+            run_id=uuid4(), source=SOURCE, requested_at=utc_now(), source_read_times=(),
+            summary="No production writes executed.", tables=(), charts=(), limitations=(),
+            cell_sources=(), specialists=(specialist,), audit_url="/invocations",
+            native_answers=(NativeAnswer(evidence_id="resp_original", text=native_text,
+                                        content_sha256=sha256(native_text.encode()).hexdigest()),),
+        )
+        result = client_presentation(answer)
+        self.assertEqual(result.workflow_text.count(reason), 1)
+        self.assertIn("No drafts staged; no work orders created.", result.workflow_text)
+        self.assertNotIn("No production writes", result.workflow_text)
+        self.assertNotIn("Hydro workflow result", result.workflow_text)
+        self.assertNotIn("resp_", result.workflow_text)
+        self.assertEqual(result.source_answers[0].text, native_text)
+        self.assertEqual(result.execution_events[0].responseId, "resp_fixer")
+
     def test_native_answer_keeps_separate_checked_specialist_assessments_without_a_writer(self):
         original = "## Original Fabric answer\r\n\r\nT005: BAD quality; not a physical diagnosis.\r\n"
         report = {
@@ -66,7 +91,7 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(presentation.rca_reports[0].observations[0].path, "/rows/0")
         self.assertIn("No current complete work coverage.", text)
         self.assertNotIn("Do not render this unverified prose.", text)
-        self.assertIn("## Fixer - Maintenance review", client_presentation(
+        self.assertIn("## More information needed", client_presentation(
             answer.model_copy(update={"native_answers": ()}),
         ).text)
 
