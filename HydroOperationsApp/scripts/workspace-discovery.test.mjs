@@ -140,7 +140,7 @@ test('direct access fails closed for nonnumeric live generation and unpublished 
   }
 })
 
-function weatherService() {
+function weatherService({ servingRows = true } = {}) {
   const requests = []
   let fail = false
   const source = Object.fromEntries(Object.keys(serviceDependencies['./lakehouseConnector'].lakehouseConnectorConfig.entities)
@@ -152,7 +152,10 @@ function weatherService() {
         if (fail) throw new Error('Lakehouse connector read failed')
         return { hasNextPage: false, items: entity === 'WeatherLocations'
           ? [{ location_id: 'L1', location_name: 'Station 1', latitude: 1, longitude: 2 }]
-          : entity === 'WeatherVariables' ? [{ variable_id: 'temperature', canonical_unit: 'C' }] : [] }
+          : entity === 'WeatherVariables' ? [{ variable_id: 'temperature', canonical_unit: 'C' }]
+            : entity === 'WeatherLatestObservations' && servingRows
+              ? [{ source_id: 'ukmet', location_id: 'L1', observed_at_utc: '2026-01-01T00:00:00Z', temperature: 1 }]
+              : [] }
       },
     }) }]))
   const dependencies = {
@@ -241,6 +244,14 @@ test('weather uses the deployed connector, coalesces reads and invalidates faile
   setFailure(false)
   await service.queryWeatherData()
   assert.equal(requests.length, 15)
+})
+
+test('weather metadata without serving rows remains unavailable and is not cached', async () => {
+  const { service, requests } = weatherService({ servingRows: false })
+  assert.equal(await service.queryWeatherData(), null)
+  assert.equal(requests.length, 5)
+  assert.equal(await service.queryWeatherData(), null)
+  assert.equal(requests.length, 10)
 })
 
 test('unmaterialized graph fails before ontology definition loading or native execution', async () => {
