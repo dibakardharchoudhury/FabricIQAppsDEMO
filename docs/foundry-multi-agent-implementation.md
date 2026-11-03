@@ -43,9 +43,20 @@ null for ordinary Q&A, but the frontend rejected that valid serialized value.
 A regression reproduced the exact error before repair. Null is now treated as
 absent; non-null empty or malformed summaries remain rejected. The main answer
 is preserved without a replacement summary. All 94 combined focused tests,
-ESLint and production build passed. Publication and live acceptance of this
-follow-up remain pending; these results do not certify Battle, draft accuracy
-or operational delivery.
+ESLint and production build passed. Full deployment completed for Dev release
+`0808356` at `2026-11-03T08:39:01Z` and Feature release `60cf82d` at
+`2026-11-03T08:48:32Z`. Actual ordinary Q&A returned the three facility rows
+without the invalid-summary error in 15.5s and 17.0s respectively.
+
+Both actual Battle runs independently completed the identical facility question,
+retained native files/digests and returned CSV rows matching the Multi table.
+Comparison hosted sessions differed from standalone Multi sessions. Neither
+comparison exposed approval controls or a judge. Feature's native prose included
+a placeholder table, retained verbatim; successful retrieval does not certify
+that prose as a good answer. Actual Stop/navigation tests in both workspaces
+retained cancellation notices and unaffected other-lane evidence without another
+sign-in picker. No work-order draft was approved or operational record written;
+draft accuracy and delivery remain separate, uncertified acceptance work.
 
 ### Historical scope at the native handoff
 
@@ -63,7 +74,31 @@ key, so rerunning the same handoff cannot replay a native call under a new clock
 Standalone Direct questions remain unchanged and independent. All 227 focused
 supervisor/conversation/native-fidelity/semantic-planning tests completed
 successfully (one intentional skip), plus all 66 hosted packaging contracts.
-Publication and actual scoped-follow-up acceptance remain required.
+
+The canonical orchestrator published the new source image
+`src-7f2deb204055fe98` to Dev hosted version 4 and Feature hosted version 5.
+Dev release `585e2b2` completed full deployment at `2026-11-03T09:21:06Z`.
+Feature release `a171548` initially published the app and hosted agent but
+failed final Entra verification because the shared machine's Azure CLI
+installation disappeared. Microsoft's official portable Azure CLI was restored
+in an isolated user-local folder, without changing the system installation or
+persistent PATH. The same full orchestrator then completed successfully at
+`2026-11-03T09:51:17Z`, reusing the current image and all five specialists.
+It preserved all 56 required redirects and verified permissions, consent,
+backend runtime/CORS, connector receipts and browser-equivalent POST readiness.
+Neither a manual Entra workaround nor a source-profile change was used.
+
+Both actual browsers first returned the three facility identifiers/names, then
+answered the follow-up referring to "those facilities" with a three-facility
+historical BAD-quality/open-work table and freshness disclosures, rather than
+asking which facilities. During that follow-up, telemetry refresh and navigation
+away/back retained the question, prior table and running request. Both turns
+used the same respective hosted session: Dev
+`6aec1600-0323-4f1f-a2ee-e1b6822d2e7c`, Feature
+`a4eaa38c-57c0-42fb-9055-13b002a7da78`. Follow-ups completed in 1m43s and 1m11s.
+This verifies conversational reference resolution and active-SPA retention,
+not independent numerical completeness, RCA/draft accuracy or delivery.
+No draft was created or approved during these scoped follow-up tests.
 
 ## November 3 latest full Dev and Feature rollout completed
 
