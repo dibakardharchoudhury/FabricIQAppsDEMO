@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Users, Wrench } from 'lucide-react'
+import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, Square, SquarePen, Users, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
@@ -94,7 +94,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, l
 
   return <div className="v2-domain-page v2-copilot-page">
     {!embedded && <section className="v2-page-head"><div><span className="v2-eyebrow">{label}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>}
-    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
+    <section className={`v2-copilot${direct ? ' has-direct-notice' : ''}${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
       style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{label}</small></span>
       <span className="v2-copilot-actions">
         {headerControls}
@@ -130,7 +130,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, l
         })}
       </div>
       <footer><textarea aria-label={`${direct ? 'Fabric IQ' : 'Multi Agent'} question`} ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
-        {busy && onCancel && <button type="button" onClick={onCancel}>Cancel</button>}
+        {busy && onCancel && <button className="v2-chat-stop" type="button" title="Stop response" aria-label="Stop response" onClick={onCancel}><Square size={15} fill="currentColor" aria-hidden="true" /></button>}
         <button type="button" title="Send" aria-label="Send question" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>

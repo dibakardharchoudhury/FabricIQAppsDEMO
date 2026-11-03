@@ -264,12 +264,24 @@ require explicit sign-in. Only authentication state is cached there, never analy
 The older `askDataAgent` helper remains for
 other callers but its prompt rewriting is not used by these Hydro Intelligence modes.
 
+Direct MCP diagnostics identify initialization, tool discovery or question execution.
+HTTP failures retain their status and SDK cause; cancellation remains cancellation.
+A fetch failure before an HTTP response is not proof of CORS rejection: connection,
+browser policy and redirect failures require separate investigation. Requests are
+not automatically replayed, and the repair adds no new request headers.
+
 Mode selection is a compact right-side dropdown beside Team, not a separate tab bar.
 Administration's **Agent runtime settings > Chat mode visibility** checkboxes control the
 Fabric IQ, Multi Agent and Battle choices. Save changes applies them across both app layouts
 and preserves them in the existing per-browser settings. Hiding the active mode selects an
 enabled mode (preferring Multi Agent); hiding all modes displays an explicit disabled message.
 These are presentation preferences, not agent-provisioning flags or access controls.
+Direct notices and Battle controls use the existing app typography. The Direct
+notice occupies an auto-sized grid row, leaving the flexible row for messages in
+both normal and maximized chat.
+While a response or comparison is running, its compact square Stop icon cancels
+the local request. The tooltip and accessible label identify the action; stopping
+does not certify that remote execution has ended.
 
 **Why regional Responses is not the active browser entry:** the regional ML
 `POST /metadata/v201606/generatemwctokenv2` preflight was rejected without

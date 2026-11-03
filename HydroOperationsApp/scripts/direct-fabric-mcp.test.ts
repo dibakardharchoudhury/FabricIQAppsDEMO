@@ -31,6 +31,7 @@ function fixture(override?: (request: Record<string, unknown>, signal?: AbortSig
     const request = init?.body ? JSON.parse(String(init.body)) : {}
     calls.push({ url, request })
     const custom = await override?.(request, init?.signal)
+    if (custom instanceof Response) return custom
     if (custom !== undefined) return Response.json({ jsonrpc: '2.0', id: request.id, result: custom })
     if (request.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: request.id,
       result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'Published Data Agent', version: '1' } } })
@@ -99,4 +100,42 @@ test('Direct MCP cancellation is bounded and source changes revoke old native ev
   await client.ask(question, new AbortController().signal)
   await assert.rejects(fetch(first.artifacts![0].url!))
   client.reset()
+})
+
+test('fetch failures identify the failed MCP phase without claiming a proven CORS block or replaying the question', async () => {
+  for (const method of ['initialize', 'tools/call']) {
+    const original = new TypeError('Failed to fetch')
+    const { client, calls } = fixture(request => {
+      if (request.method === method) throw original
+    })
+    await assert.rejects(client.ask(question, new AbortController().signal), error => {
+      assert.ok(error instanceof Error)
+      assert.equal(error.cause, original)
+      assert.match(error.message, method === 'initialize' ? /initialization/ : /question/)
+      assert.match(error.message, /before an HTTP response/)
+      assert.doesNotMatch(error.message, /CORS.*is blocked|https:\/\//)
+      return true
+    })
+    assert.equal(calls.filter(call => call.request.method === method).length, 1)
+  }
+})
+
+test('SDK cancellation and non-network failures retain their real cause instead of becoming CORS errors', async () => {
+  for (const original of [new DOMException('SDK request cancelled', 'AbortError'), new Error('Unexpected transport invariant')]) {
+    const { client } = fixture(() => { throw original })
+    await assert.rejects(client.ask(question, new AbortController().signal), error => {
+      assert.equal(error, original)
+      return true
+    })
+  }
+})
+
+test('visible provider HTTP failures remain HTTP failures, not speculative browser-policy errors', async () => {
+  const { client } = fixture(() => new Response('Provider denied this request', { status: 403 }))
+  await assert.rejects(client.ask(question, new AbortController().signal), error => {
+    assert.ok(error instanceof Error)
+    assert.match(error.message, /403/)
+    assert.doesNotMatch(error.message, /CORS.*is blocked/)
+    return true
+  })
 })
