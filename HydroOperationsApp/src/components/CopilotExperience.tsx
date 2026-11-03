@@ -94,7 +94,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset, onCancel, l
 
   return <div className="v2-domain-page v2-copilot-page">
     {!embedded && <section className="v2-page-head"><div><span className="v2-eyebrow">{label}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>}
-    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
+    <section className={`v2-copilot${direct ? ' has-direct-notice' : ''}${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
       style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{label}</small></span>
       <span className="v2-copilot-actions">
         {headerControls}

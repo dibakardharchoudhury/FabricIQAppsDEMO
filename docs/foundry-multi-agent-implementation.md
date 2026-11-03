@@ -1,5 +1,40 @@
 # Foundry and multi-agent implementation record
 
+## November 3 direct transport and typography repair: runtime investigation incomplete
+
+The previous standalone Data Agent tab already used the same published Fabric
+MCP endpoint and delegated Fabric scopes. Its existence does not establish a
+different working runtime route. The newer adapter incorrectly described every
+fetch exception as a proven CORS block, including cancellation and unrelated
+errors. The repair preserves cancellation and unexpected SDK causes, includes
+HTTP status when available, and identifies initialization, tool discovery or
+question execution without changing the endpoint, request headers, exact
+question, native answer or source checks.
+No failed question is replayed and no proxy or alternative source is introduced.
+
+The Direct notice was also an unstyled fourth child of a three-row chat grid.
+It inherited the root font size and consumed the flexible message row. Direct
+chat now explicitly uses four rows in ordinary and maximized layouts; its notice,
+composer and Battle controls use existing app-sized typography.
+
+All 46 focused direct/auth/settings/mode tests, TypeScript, targeted ESLint and
+the production build passed. Regression tests first reproduced the misleading network label, lost
+cancellation/unexpected causes, omitted HTTP status and missing typography/grid
+contract. These tests do not certify live browser layout or agent execution.
+
+For Feature, metadata-only diagnostics found an Active capacity, a successful
+origin-specific MCP preflight, authenticated initialize, initialized notification,
+tool discovery and SSE connection, with no observed redirect. These CLI-authorized
+protocol checks did not execute a question and are not normal-SPA acceptance.
+The failing authenticated app frame was unavailable; browser automation later
+failed to connect with a CDP timeout. The screenshot's underlying question failure
+has therefore not been reproduced or conclusively resolved.
+
+These repairs and the earlier session/mode-control changes remain unpublished.
+The Microsoft Graph interactive security sign-in described below still blocks
+canonical deployment; no authentication or redirect-preservation check was
+bypassed. Do not treat corrected diagnostics as a verified agent-runtime fix.
+
 ## November 3 session and mode-control update: publication blocked
 
 Source `fb65a4d` is committed and pushed. It replaces the conspicuous left mode
