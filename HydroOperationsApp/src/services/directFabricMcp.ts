@@ -35,6 +35,7 @@ export class DirectFabricMcpConversation {
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(5 * 60_000)])
     const created: string[] = []
     let close: (() => Promise<void>) | undefined
+    let phase = 'initialization'
     try {
       const access = await this.access(bounded)
       bounded.throwIfAborted()
@@ -60,11 +61,15 @@ export class DirectFabricMcpConversation {
               signal: init?.signal ? AbortSignal.any([bounded, init.signal]) : bounded })
           } catch (error) {
             if (bounded.aborted) throw bounded.reason
-            throw new Error(`Direct Fabric published MCP request failed at ${endpoint}. Browser CORS/network access is blocked; no Foundry fallback or proxy was used.`, { cause: error })
+            if (init?.signal?.aborted) throw init.signal.reason
+            if (!(error instanceof TypeError)) throw error
+            throw new Error(`Direct Fabric MCP ${phase} failed before an HTTP response (${init?.method ?? 'GET'}). `
+              + `${error.message} Check the connection, browser policy or blocked redirects. No Foundry fallback or proxy was used.`, { cause: error })
           }
         },
       })
       await client.connect(transport, { signal: bounded, timeout: 30_000 })
+      phase = 'tool discovery'
       const tools = await client.listTools(undefined, { signal: bounded, timeout: 30_000 })
       if (tools.tools.length !== 1) throw new Error('Expected exactly one tool on the verified published Data Agent.')
       const tool = tools.tools[0]
@@ -74,6 +79,7 @@ export class DirectFabricMcpConversation {
         || tool.inputSchema.required?.some(key => key !== argumentsList[0])) {
         throw new Error('The published Data Agent question schema is unsupported. No undeclared conversation arguments were sent.')
       }
+      phase = 'question'
       const result = await client.callTool({ name: tool.name, arguments: { [argumentsList[0]]: question } }, undefined, {
         signal: bounded, timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000, resetTimeoutOnProgress: false,
       })
@@ -113,6 +119,10 @@ export class DirectFabricMcpConversation {
     } catch (error) {
       for (const url of created) URL.revokeObjectURL(url)
       if (bounded.aborted) throw bounded.reason
+      if (error instanceof Error && 'code' in error && typeof error.code === 'number'
+        && Number.isInteger(error.code) && error.code >= 400 && error.code <= 599) {
+        throw new Error(`Direct Fabric MCP ${phase} failed (HTTP ${error.code}): ${error.message}`, { cause: error })
+      }
       throw error
     } finally {
       await close?.().catch(() => undefined)

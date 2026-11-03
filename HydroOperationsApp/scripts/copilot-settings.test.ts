@@ -55,6 +55,31 @@ test('the removed static weather starter prompts are not restored by chat contro
   assert.doesNotMatch(source, /Compare the latest UKMet forecasts with observations for the same facilities|Compare Aurora and UKMet rainfall forecasts/)
 })
 
+test('chat typography includes an automatic-height direct notice row and app-sized text controls', () => {
+  const source = readFileSync(new URL('../src/components/CopilotExperience.tsx', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
+  assert.ok(source.includes("direct ? ' has-direct-notice'"))
+  assert.ok(/\.v2-copilot\.v2-expanded-view\.has-direct-notice[^}]*grid-template-rows: auto auto minmax\(0, 1fr\) auto/.test(css))
+  assert.ok(/\.v2-direct-limit[^}]*font-size: 11px/.test(css))
+  assert.ok(/\.v2-copilot textarea[^}]*font-size: 12px/.test(css))
+  assert.ok(/\.v2-battle-compose textarea[^}]*font-size: 12px/.test(css))
+  assert.ok(/\.v2-battle-panel > p[^}]*font-size: 12px/.test(css))
+})
+
+test('busy chats use compact accessible Stop icons without changing cancellation handlers', () => {
+  const chat = readFileSync(new URL('../src/components/CopilotExperience.tsx', import.meta.url), 'utf8')
+  const battle = readFileSync(new URL('../src/components/IntelligenceExperience.tsx', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../src/ui-shared/styles/app.css', import.meta.url), 'utf8')
+  assert.match(chat, /busy && onCancel && <button className="v2-chat-stop"[^>]*title="Stop response" aria-label="Stop response" onClick=\{onCancel\}><Square/)
+  assert.match(battle, /busy && <button className="v2-chat-stop"[^>]*title="Stop comparison" aria-label="Stop comparison" onClick=\{\(\) => conversations\.cancel\('battle'\)\}><Square/)
+  for (const source of [chat, battle]) {
+    assert.match(source, /<Square size=\{15\} fill="currentColor" aria-hidden="true" \/>/)
+    assert.doesNotMatch(source, />Cancel(?: comparison)?<\/button>/)
+  }
+  assert.match(css, /\.v2-copilot > footer \.v2-chat-stop,[^}]*width: 40px; height: 40px; padding: 0/)
+  assert.match(css, /\.v2-chat-stop:focus-visible[^}]*outline: 2px solid var\(--cp-accent\)/)
+})
+
 test('retired Battle preferences are discarded without changing supported settings', () => {
   const legacy = {
     battleEnabled: true,

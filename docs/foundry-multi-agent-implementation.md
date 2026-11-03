@@ -1,5 +1,73 @@
 # Foundry and multi-agent implementation record
 
+## November 3 direct transport and typography repair: runtime investigation incomplete
+
+The previous standalone Data Agent tab already used the same published Fabric
+MCP endpoint and delegated Fabric scopes. Its existence does not establish a
+different working runtime route. The newer adapter incorrectly described every
+fetch exception as a proven CORS block, including cancellation and unrelated
+errors. The repair preserves cancellation and unexpected SDK causes, includes
+HTTP status when available, and identifies initialization, tool discovery or
+question execution without changing the endpoint, request headers, exact
+question, native answer or source checks.
+No failed question is replayed and no proxy or alternative source is introduced.
+
+The Direct notice was also an unstyled fourth child of a three-row chat grid.
+It inherited the root font size and consumed the flexible message row. Direct
+chat now explicitly uses four rows in ordinary and maximized layouts; its notice,
+composer and Battle controls use existing app-sized typography.
+
+All 46 focused direct/auth/settings/mode tests, TypeScript, targeted ESLint and
+the production build passed. Regression tests first reproduced the misleading network label, lost
+cancellation/unexpected causes, omitted HTTP status and missing typography/grid
+contract. These tests do not certify live browser layout or agent execution.
+
+For Feature, metadata-only diagnostics found an Active capacity, a successful
+origin-specific MCP preflight, authenticated initialize, initialized notification,
+tool discovery and SSE connection, with no observed redirect. These CLI-authorized
+protocol checks did not execute a question and are not normal-SPA acceptance.
+The failing authenticated app frame was unavailable; browser automation later
+failed to connect with a CDP timeout. The screenshot's underlying question failure
+has therefore not been reproduced or conclusively resolved.
+
+These repairs and the earlier session/mode-control changes remain unpublished.
+The Microsoft Graph interactive security sign-in described below still blocks
+canonical deployment; no authentication or redirect-preservation check was
+bypassed. Do not treat corrected diagnostics as a verified agent-runtime fix.
+
+## November 3 session and mode-control update: publication blocked
+
+Source `fb65a4d` is committed and pushed. It replaces the conspicuous left mode
+tabs with a compact right-side picker beside Team, adds Administration visibility
+checkboxes for all three modes, and changes only MSAL's authentication cache to
+tab/origin-scoped sessionStorage. Analytical data caches remain in memory.
+Visibility is a browser presentation preference, not an agent-provisioning,
+source-permission or work-order authorization switch.
+
+All 30 focused auth/settings/mode tests, TypeScript, targeted ESLint and the
+Node 24 production build passed. An isolated browser fixture rendered the actual
+components and built stylesheet without source access. It verified all eight
+visibility combinations, save/reload/default restoration, mode-local compose
+draft retention, Escape/focus behavior, maximized controls, narrow layouts and
+dark/light styling. Both supported layouts use the same shared pages. No approval
+was clicked and no operational record was written.
+
+Dev release branch `63b8563` and Feature release branch `1dd7bca` are prepared
+and pushed. The canonical Dev deployment verified the tenant, workspace and
+Active capacity, then stopped at read-only stage 2: Microsoft Graph required
+a claims-aware interactive sign-in before SPA discovery and redirect readback.
+The user was unavailable to complete that tenant-policy authorization. This
+task's waiting deployment was stopped before preparation or publication;
+Feature was not started to avoid opening another authorization prompt.
+Existing deployment state and Entra redirects were preserved.
+
+**The new UI/session changes have not been deployed to either workspace.**
+Complete the required Microsoft Graph sign-in and rerun the canonical deployer,
+Dev then Feature. One initial SPA sign-in can still be needed because an old
+memory-only authentication cache cannot migrate itself after reload. Same-tab
+live navigation and the remaining authenticated comparison acceptance are not
+certified by the local restored-account/UI tests or by the earlier rollout below.
+
 ## November 3 final rollout and authenticated workflow results
 
 Source `42031b5` is deployed to both workspaces through the canonical

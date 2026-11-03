@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Bot, ChevronDown, Layers3 } from 'lucide-react'
+import { Bot, ChevronDown, Layers3, Square } from 'lucide-react'
 import { CopilotExperience, CopilotResponse } from './CopilotExperience'
 import { INTELLIGENCE_MODES, resolveVisibleIntelligenceMode, visibleIntelligenceModes, type IntelligenceConversations, type IntelligenceMode } from '../services/intelligenceModes'
 import { loadCopilotSettings, subscribeCopilotSettings } from '../services/copilot/settings'
@@ -87,7 +87,7 @@ function BattlePanel({ conversations, snapshot, busy, headerControls }: {
         onChange={event => setQuestion(event.target.value)}
         onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} />
       <button type="button" disabled={busy || !question.trim()} onClick={send}>Compare answers</button>
-      {busy && <button type="button" onClick={() => conversations.cancel('battle')}>Cancel comparison</button>}
+      {busy && <button className="v2-chat-stop" type="button" title="Stop comparison" aria-label="Stop comparison" onClick={() => conversations.cancel('battle')}><Square size={15} fill="currentColor" aria-hidden="true" /></button>}
       <button type="button" disabled={busy} onClick={() => { setQuestion(''); conversations.reset('battle') }}>New comparison</button>
     </div>
   </div>
