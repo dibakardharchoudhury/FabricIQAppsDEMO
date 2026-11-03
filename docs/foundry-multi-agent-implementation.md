@@ -89,6 +89,37 @@ Normal Direct, compact Multi (normal/maximized) and Battle also fit those three
 viewports. Narrow Direct retains both the 88px and resized 200px composer.
 Publication and actual new-bundle acceptance remain required for this follow-up.
 
+Fresh Feature acceptance also exposed normal compact Multi with a manually
+resized 200px input: its bottom reached 669.17px at 390x600. Every chat grid now
+reserves a max-content footer track, and the crew has an explicit zero minimum.
+All 21 component tests and the Node 24 production build pass (Vite 56.24s).
+The complete-stylesheet preview passes all 24 normal/maximized, compact/side-flow
+Multi combinations, 12 Direct combinations and three Battle viewports, including
+88px/200px inputs where supported. Final publication/readback remains pending.
+
+### Norwegian Energy Map deployment regression
+
+The map page and data were not deleted. Dev retained its true build flag while
+Feature's isolated release checkout supplied false, causing navigation to filter
+out the map despite completed energy setup. Routine preparation now recovers the
+tenant/workspace-scoped checkpoint, matches its Lakehouse against live target
+metadata and verifies the existing read models before publication. Explicit
+disable selections remain durable. No ingestion or map-agent recreation occurs.
+All 209 deployment/energy tests and all four map-flag tests pass; the deployment
+fixture no longer reads/writes private checkout configuration.
+
+Both canonical map-preservation rollouts passed, including the hydrogeo connector
+and protected preflight/POST checks, consent and all 56 existing SPA redirects:
+Feature completed at `2026-11-03T19:32:19Z` in 686.813s (source `e75145c`,
+app `1.0.1352`, persisted `31ec958`); Dev completed at
+`2026-11-03T19:44:12Z` in 700.469s (source `16daa48`, persisted `e014cbc`).
+Existing hosted images and specialist definitions were reused, not duplicated.
+The fresh Feature app displays the restored tab and successfully loads 2,161
+features and nine area overlays, plus live grid frequency. Its one-day-old
+country balance remains explicitly stale, not live. Source readback verifies
+12 layers and nine polygons on both targets, with 75 Feature and 78 Dev
+asset-message links. No work orders were approved or created.
+
 Separate portal tests did not reach the SPA because the AppBackend extension
 worker failed to render; they do not establish a Direct-agent transport failure
 or certify embedded execution. Browser automation outages are not counted as

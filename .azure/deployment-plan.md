@@ -1,6 +1,39 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Prepared map preservation and expanded composer
+> **Status:** Validated - Resized composer and prepared map preservation
+
+## Resized composer follow-up
+
+The approved targets, prepared-map preservation and agent/image contracts remain
+unchanged. Fresh Feature acceptance exposed an additional normal compact-Multi
+case: at 390x600, manually resizing the input to 200px placed its bottom at
+669.17px. Explicit max-content footer tracks and a zero minimum crew height
+reserve the actual resized input instead of the textarea's default intrinsic
+contribution. No agent, source, permission or infrastructure change is proposed.
+
+All validation checks pass:
+- [x] 1. Core Validation (CLI, auth, build, validate, what-if): supported Node 24
+  environment/build and all 21 component contracts pass; existing approved
+  tenant/subscription and policy readback remain unchanged.
+  No ARM/template delta exists, so template build/what-if is inapplicable.
+- [x] 2. Docker Build: inapplicable; no hosted source/image/dependency delta.
+- [x] 3. Azure Policy Validation: unchanged scope, inherited controls and roles;
+  no generated infrastructure or changed identity-to-resource operation.
+
+### Section 7: Validation Proof - resized composer
+
+November 3, 2026: `node --import tsx --test
+scripts\work-order-draft-pager.test.mjs` passes all 21 tests.
+`npm run validate-env` and Node 24 `npm run build` pass (Vite 56.24s;
+existing chunk warnings only). Complete-stylesheet browser previews pass
+all 24 normal/maximized, compact/side-flow Multi combinations across 1200x680,
+1024x540 and 390x600 with both 88px and 200px inputs. The narrow Multi input
+now ends at 575.33px with footer 587.33px. Twelve Direct combinations and three
+Battle viewports also retain their input and controls without document overflow.
+No ARM, dependency, managed identity, role or policy change exists.
+Static Role Assignment Verification: existing delegated source access and
+human-only operational approval boundaries are unchanged.
+Fresh-bundle publication/acceptance of this final CSS delta remains pending.
 
 ## Prepared Norwegian Energy Map preservation
 
