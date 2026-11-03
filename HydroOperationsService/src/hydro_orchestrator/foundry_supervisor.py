@@ -2916,7 +2916,15 @@ class FoundrySupervisor:
                         "Do not perform RCA, recommend new work, create work orders, or draft work orders. "
                         "Report source-backed facts, canonical equipment/signal mappings, event times and "
                         "existing open-work coverage where relevant. Preserve the original request's time "
-                        "window and scope. Disclose missing or stale evidence.\n\n"
+                        "window and scope. Resolve relative dates against the request reference time UTC: "
+                        + request.requested_at.isoformat()
+                        + ". Aggregate event history by the ontology's declared canonical signal key before "
+                        "applying any result limit. Return complete per-key counts, event-time bounds and "
+                        "latest observations instead of an unbounded raw-event export. Keep current "
+                        "freshness separate from historical aggregates. Retain the complete canonical "
+                        "equipment/signal population and existing work coverage; capped event samples "
+                        "cannot establish complete coverage. If individual events are explicitly needed, "
+                        "return bounded examples and disclose truncation. Disclose missing or stale evidence.\n\n"
                         "Supervisor evidence assignment (read-only portion only):\n"
                         + delegation.question
                         + "\n\nOriginal user request (context for this read-only subtask):\n"
