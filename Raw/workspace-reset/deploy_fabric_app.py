@@ -2344,7 +2344,7 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
     print(
         "No AppBackend exists for this target yet; creating the Fabric App item and its SQL/GraphQL dependencies "
         "without static hosting so the Hosted Agent can be configured against its identity. "
-        "Deploy app remains the separate website publication step.",
+        "Website publication follows verified agent setup; backend preparation alone does not publish it.",
         flush=True,
     )
     ensure_rayfin_login(tenant, workspace_id)
@@ -2596,6 +2596,9 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
         raise DeployError("Foundry provisioning module is unavailable.")
     foundry = importlib.util.module_from_spec(foundry_spec)
     foundry_spec.loader.exec_module(foundry)
+    with timed_operation("Foundry publishing-tool preflight"):
+        hosted = foundry._load_sibling("deploy_hosted_agent")
+        hosted.ensure_azd_ready(sys.modules[__name__], tenant)
     with timed_operation("Foundry project/model preflight"):
         selection = foundry.resolve_project(sys.modules[__name__], tenant, workspace_id)
 
@@ -2803,7 +2806,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
     if stage == "app":
         if not reuse_deployment:
-            raise DeployError("Run the local Foundry setup module first to prepare this target's AppBackend and agents.")
+            raise DeployError("Run Deploy app & agents to prepare this target's AppBackend and agents before website-only publication.")
         verify_foundry_agents(tenant_id, workspace_id)
     else:
         if stage == "all" and core_prepared:
@@ -2816,6 +2819,10 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
                 raise DeployError("Combined setup did not retain the verified AppBackend identity; no app was published.")
         else:
             provision_foundry_agents(tenant_id, workspace_id)
+            if stage == "app-agents":
+                reuse_deployment = appbackend_identity_present()
+                if not reuse_deployment:
+                    raise DeployError("Agent setup did not retain the verified AppBackend identity; no app was published.")
         if stage == "foundry":
             print(
                 "FOUNDRY_SETUP_SUCCESS (backend identity and multi-agent configuration readback verified; "
@@ -2954,8 +2961,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tenant", required=True, help="Target Entra tenant GUID or domain.")
     parser.add_argument("--workspace", required=True, help="Target Fabric workspace GUID or name.")
     parser.add_argument("--client-id", help="Existing SPA app client id; auto-resolved/created when omitted.")
-    parser.add_argument("--stage", choices=("all", "energy", "foundry", "app"), default="all",
-                        help="Independent local setup module; app verifies existing Foundry without provisioning it.")
+    parser.add_argument("--stage", choices=("all", "energy", "foundry", "app-agents", "app"), default="all",
+                        help="app-agents updates Foundry then publishes the app without repeating Core/Energy; "
+                             "advanced app verifies existing Foundry without provisioning it.")
     parser.add_argument("--energy-map", choices=("keep", "enabled", "disabled"), default="keep",
                         help="Keep this target's visibility setting, or explicitly enable/disable energy navigation.")
     parser.add_argument("--energy-read-models-only", action="store_true",

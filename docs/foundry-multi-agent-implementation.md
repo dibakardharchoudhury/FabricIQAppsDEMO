@@ -1,5 +1,452 @@
 # Foundry and multi-agent implementation record
 
+## November 3 session and native-fetch repair published and verified
+
+The latest Dev browser reproduced two concrete frontend failures:
+
+- Direct MCP initialization failed with native `Window.fetch` **Illegal invocation**.
+  The class called unbound fetch with the conversation instance as receiver.
+  Binding injected fetch to the global receiver fixes the regression without
+  changing Fabric endpoints, headers, questions, native answers or source checks.
+- A running read-only Multi Agent prompt and its preceding history disappeared
+  when telemetry connection/refresh called `clearWorkspaceConfigCache`; its
+  hosted invocation was aborted. Cache revision and transient cleared discovery
+  values were incorrectly treated as conversation identity.
+
+Conversation ownership now lives in the shared app data provider rather than
+the navigated chat page. Refresh and navigation retain transcripts, running
+requests and hosted conversation scope. Verified ontology/source/principal
+changes still invalidate context. State remains in the active SPA's memory,
+not browser storage; a full browser reload starts a new local session. Direct
+MCP questions remain independent rather than claiming unsupported continuation.
+
+All 50 focused contracts, TypeScript, ESLint and production build passed. The
+full canonical orchestrator published Dev release `5c254b1` at
+`2026-11-03T07:49:14Z` and Feature release `382525c` at
+`2026-11-03T08:00:46Z`, reusing the current agents and unchanged hosted image.
+Both actual browsers retained an executing question through the Stale refresh
+and navigation away/back; all four running/retention checks were true. Dev
+also retained its hosted session ID across those requests.
+
+Dev's actual Direct facility question completed through the published ontology
+Data Agent, preserving native text, files and digest. Its CSV contained all
+three actual facilities: Sloy, Foyers and Pitlochry. Both pages loaded version
+`1.0.1339` through normal reload without another sign-in picker. Feature connected
+all 90 telemetry signals through a normal user gesture; its initial synthetic
+connection attempt was not a successful authorization test.
+
+### Nullable presentation follow-up
+
+Actual Multi Q&A surfaced a separate `Hosted workflow summary is invalid`
+failure. The backend declares optional `workflow_text: str | None` and supplies
+null for ordinary Q&A, but the frontend rejected that valid serialized value.
+A regression reproduced the exact error before repair. Null is now treated as
+absent; non-null empty or malformed summaries remain rejected. The main answer
+is preserved without a replacement summary. All 94 combined focused tests,
+ESLint and production build passed. Full deployment completed for Dev release
+`0808356` at `2026-11-03T08:39:01Z` and Feature release `60cf82d` at
+`2026-11-03T08:48:32Z`. Actual ordinary Q&A returned the three facility rows
+without the invalid-summary error in 15.5s and 17.0s respectively.
+
+Both actual Battle runs independently completed the identical facility question,
+retained native files/digests and returned CSV rows matching the Multi table.
+Comparison hosted sessions differed from standalone Multi sessions. Neither
+comparison exposed approval controls or a judge. Feature's native prose included
+a placeholder table, retained verbatim; successful retrieval does not certify
+that prose as a good answer. Actual Stop/navigation tests in both workspaces
+retained cancellation notices and unaffected other-lane evidence without another
+sign-in picker. No work-order draft was approved or operational record written;
+draft accuracy and delivery remain separate, uncertified acceptance work.
+
+### Historical scope at the native handoff
+
+On Dev release `0808356`, ordinary Q&A returned the three actual facility rows
+in 15.5s, and a subsequent question retained the same hosted session, previous
+table and in-flight state through refresh/navigation. Sparky nevertheless asked
+which facilities: its independent native call contained the current question
+but omitted the backend's already-validated historical context.
+
+Multi Agent now explicitly supplies that bounded, same-source historical context
+at the native handoff. It is marked untrusted reference/scope context, not fresh
+evidence, executable instructions or authorization; requested facts must be read
+afresh. The stable serialized context also participates in the handoff journal
+key, so rerunning the same handoff cannot replay a native call under a new clock.
+Standalone Direct questions remain unchanged and independent. All 227 focused
+supervisor/conversation/native-fidelity/semantic-planning tests completed
+successfully (one intentional skip), plus all 66 hosted packaging contracts.
+
+The canonical orchestrator published the new source image
+`src-7f2deb204055fe98` to Dev hosted version 4 and Feature hosted version 5.
+Dev release `585e2b2` completed full deployment at `2026-11-03T09:21:06Z`.
+Feature release `a171548` initially published the app and hosted agent but
+failed final Entra verification because the shared machine's Azure CLI
+installation disappeared. Microsoft's official portable Azure CLI was restored
+in an isolated user-local folder, without changing the system installation or
+persistent PATH. The same full orchestrator then completed successfully at
+`2026-11-03T09:51:17Z`, reusing the current image and all five specialists.
+It preserved all 56 required redirects and verified permissions, consent,
+backend runtime/CORS, connector receipts and browser-equivalent POST readiness.
+Neither a manual Entra workaround nor a source-profile change was used.
+
+Both actual browsers first returned the three facility identifiers/names, then
+answered the follow-up referring to "those facilities" with a three-facility
+historical BAD-quality/open-work table and freshness disclosures, rather than
+asking which facilities. During that follow-up, telemetry refresh and navigation
+away/back retained the question, prior table and running request. Both turns
+used the same respective hosted session: Dev
+`6aec1600-0323-4f1f-a2ee-e1b6822d2e7c`, Feature
+`a4eaa38c-57c0-42fb-9055-13b002a7da78`. Follow-ups completed in 1m43s and 1m11s.
+This verifies conversational reference resolution and active-SPA retention,
+not independent numerical completeness, RCA/draft accuracy or delivery.
+No draft was created or approved during these scoped follow-up tests.
+
+## November 3 latest full Dev and Feature rollout completed
+
+All requested source and remaining local configuration are committed and pushed
+through `490c524`, including the session/mode controls, Direct diagnostics,
+typography and Stop icons. The canonical full app-and-agents orchestrator completed
+both targets, sequentially:
+
+- Dev release `df27c5e`: `SUCCESS` at `2026-11-03T06:57:19Z`,
+  <https://lofty-oasis-f52839c00b-swedencentral.webapp.fabricapps.net>.
+- Feature release `be1f0f1`: `SUCCESS` at `2026-11-03T07:07:58Z`,
+  <https://glad-hover-68cb866cd0-swedencentral.webapp.fabricapps.net>.
+
+The earlier Graph authorization blocker no longer occurred. Both runs preserved
+56 existing SPA redirects, verified the current five workspace-scoped specialists,
+native connections and toolbox, and reused the unchanged hosted image
+`src-5722c7ed30a7c988`. RCA and work-order specialists remain version 2; QA,
+Fabric IQ and weather remain version 1. This was the normal full deployment,
+not website-only. No model allocation, source profile or agent attachment changed.
+
+Both runs reapplied backend runtime/CORS and database configuration and passed
+endpoint identity, browser-equivalent preflights and POST readiness. GraphQL
+returned 200; malformed token requests returned the expected 400; delegated
+connector requests without credentials returned the expected 401. These are
+readiness checks, not successful source-query claims. Dev retained prepared
+Energy setup and verified its Geo connector without running Geo notebooks.
+Capacity was Active throughout the target preflights.
+
+The latest build and 47 combined frontend contracts passed before deployment.
+A fresh normal Dev browser sign-in loaded version `1.0.1336`, source `df27c5e`,
+with the right-side mode picker and Stop control. However, the first read-only
+Direct test question appeared and then its transcript cleared before an answer;
+no MCP request entry was observed in that page's resource history. Its cause is
+not yet established. Deployment success does not resolve or certify that runtime
+behavior, source execution, same-tab account reuse, comparisons or delivery.
+The shared standalone Feature page still reported a blocked sign-in popup after
+one normal Sign in attempt, so no Feature browser query was certified.
+No draft was approved and no operational record was written.
+
+## November 3 direct transport and typography repair: runtime investigation incomplete
+
+The previous standalone Data Agent tab already used the same published Fabric
+MCP endpoint and delegated Fabric scopes. Its existence does not establish a
+different working runtime route. The newer adapter incorrectly described every
+fetch exception as a proven CORS block, including cancellation and unrelated
+errors. The repair preserves cancellation and unexpected SDK causes, includes
+HTTP status when available, and identifies initialization, tool discovery or
+question execution without changing the endpoint, request headers, exact
+question, native answer or source checks.
+No failed question is replayed and no proxy or alternative source is introduced.
+
+The Direct notice was also an unstyled fourth child of a three-row chat grid.
+It inherited the root font size and consumed the flexible message row. Direct
+chat now explicitly uses four rows in ordinary and maximized layouts; its notice,
+composer and Battle controls use existing app-sized typography.
+
+All 46 focused direct/auth/settings/mode tests, TypeScript, targeted ESLint and
+the production build passed. Regression tests first reproduced the misleading network label, lost
+cancellation/unexpected causes, omitted HTTP status and missing typography/grid
+contract. These tests do not certify live browser layout or agent execution.
+
+For Feature, metadata-only diagnostics found an Active capacity, a successful
+origin-specific MCP preflight, authenticated initialize, initialized notification,
+tool discovery and SSE connection, with no observed redirect. These CLI-authorized
+protocol checks did not execute a question and are not normal-SPA acceptance.
+The failing authenticated app frame was unavailable; browser automation later
+failed to connect with a CDP timeout. The screenshot's underlying question failure
+has therefore not been reproduced or conclusively resolved.
+
+At this earlier checkpoint, these repairs and the session/mode-control changes
+were unpublished because Microsoft Graph required interactive security sign-in.
+The completed rollout above supersedes that publication blocker; no authentication
+or redirect-preservation check was bypassed. Corrected diagnostics still do not
+constitute a verified agent-runtime fix.
+
+## November 3 session and mode-control update: publication blocked
+
+Source `fb65a4d` is committed and pushed. It replaces the conspicuous left mode
+tabs with a compact right-side picker beside Team, adds Administration visibility
+checkboxes for all three modes, and changes only MSAL's authentication cache to
+tab/origin-scoped sessionStorage. Analytical data caches remain in memory.
+Visibility is a browser presentation preference, not an agent-provisioning,
+source-permission or work-order authorization switch.
+
+All 30 focused auth/settings/mode tests, TypeScript, targeted ESLint and the
+Node 24 production build passed. An isolated browser fixture rendered the actual
+components and built stylesheet without source access. It verified all eight
+visibility combinations, save/reload/default restoration, mode-local compose
+draft retention, Escape/focus behavior, maximized controls, narrow layouts and
+dark/light styling. Both supported layouts use the same shared pages. No approval
+was clicked and no operational record was written.
+
+Dev release branch `63b8563` and Feature release branch `1dd7bca` are prepared
+and pushed. The canonical Dev deployment verified the tenant, workspace and
+Active capacity, then stopped at read-only stage 2: Microsoft Graph required
+a claims-aware interactive sign-in before SPA discovery and redirect readback.
+The user was unavailable to complete that tenant-policy authorization. This
+task's waiting deployment was stopped before preparation or publication;
+Feature was not started to avoid opening another authorization prompt.
+Existing deployment state and Entra redirects were preserved.
+
+**At this earlier checkpoint, the new UI/session changes were not deployed.**
+The completed rollout above supersedes that blocker. One initial SPA sign-in can
+still be needed because an old
+memory-only authentication cache cannot migrate itself after reload. Same-tab
+live navigation and the remaining authenticated comparison acceptance are not
+certified by the local restored-account/UI tests or by the earlier rollout below.
+
+## November 3 final rollout and authenticated workflow results
+
+Source `42031b5` is deployed to both workspaces through the canonical
+orchestrator. Dev release `599764f` completed at `2026-11-03T00:31:24Z`;
+Feature release `f338145` completed at `2026-11-03T00:42:57Z`. Both reported
+`SUCCESS` after endpoint, browser-equivalent CORS, POST readiness, redirect
+preservation and consent checks. Hosted Dev version 3 and Feature version 4
+read back active on the same source image, `src-5722c7ed30a7c988`. Model allocation
+remains 75,000 TPM; no quota, model, source-profile or authentication bypass was
+introduced.
+
+The existing authenticated Dev SPA exercised the deployed service through its
+normal chat UI, without CLI credentials:
+
+- The unchanged original BAD-telemetry/RCA/draft question completed Sparky,
+  Sleuth and Fixer in 1 minute 52 seconds, run
+  `6c057fc4-2668-4004-bd54-776d4979c71d`. Its immutable request date was now
+  November 3 UTC. No BAD samples existed in that requested window, so no draft
+  was justified. The result did not turn missing current measurements into a
+  healthy-equipment claim.
+- An explicit November 2 historical-window follow-up completed all three roles
+  in 1 minute 55 seconds, run `18ed69ea-c9d7-43fd-86c2-cb72da964fca`. The native
+  answer reported five affected canonical signals. T011 had exact same-signal
+  open-work coverage; four uncovered signals produced pending diagnostic
+  proposal cards:
+  - T005 turbine speed.
+  - T013 turbine speed.
+  - T014 turbine temperature.
+  - T008 inlet pressure, distinct from its existing power-output work order.
+- All four card equipment/signal pairs and pager positions were inspected.
+  Title and description controls were enabled; a title edit was verified and
+  restored. The inspected T005 proposal had Medium priority, cited its native
+  receipt, disclosed the stale latest GOOD observation, and requested data-path
+  investigation without claiming a mechanical fault.
+- No approval or rejection was clicked and no production work order was saved.
+  These two serial executions completed without HTTP 429; they do not establish
+  concurrent-load readiness or unlimited throughput for the shared model.
+
+The native historical answer explicitly disclosed an unusable `BadHours`
+projection (`[[]]`) rather than inventing affected-hour values. Its scalar
+sample counts, time bounds and latest-observation facts remained separate from
+that limitation and from a confirmed physical diagnosis.
+
+The latest Feature UI was reloaded and its displayed release matched
+`f338145`. All three tabs rendered, Multi Agent was the default, Battle exposed
+no approval/rejection controls, and its question/error did not leak into the
+separate Multi Agent history. Fabric IQ displayed the native MCP independent-
+question limitation.
+
+Interactive acceptance is still incomplete: a real latest-Feature Battle
+submission returned `popup_window_error` independently in both panels before
+source execution, even with a normal trusted button click. New standalone
+hosting sessions require sign-in, and a separate Dev portal attempt did not
+finish loading the hosted frame. These are not successful comparison or Feature
+agent executions. The earlier real compiled-adapter MCP success below remains
+valid, but does not substitute for full authenticated testing of every new tab
+and layout. Complete that remaining acceptance in a browser that can finish the
+interactive SPA sign-in; do not replace it with CLI tokens, a proxy, disabled
+CORS or hosting-page success.
+
+## November 2 published MCP repair and live acceptance findings
+
+The direct browser Responses implementation reached a regional routing-token
+endpoint that does not allow the hosted application's CORS origin. Fabric IQ now
+uses the official published Data Agent MCP endpoint on `api.fabric.microsoft.com`,
+not that internal routing endpoint or a Foundry/server proxy. Published ontology
+definitions can occupy dedicated `published/ontologies/.../ontology.json` parts;
+verification must inspect those parts, not conclude that the ontology is absent
+from the SQL datasource profile alone.
+
+A real delegated Dev browser MCP call to the verified generation-2 ontology agent
+returned three facilities successfully (HTTP 200, `isError:false`, 20.313 seconds).
+The exact native answer digest was
+`258ca0a2848cbf23bbe1f2c596cf2877f8269fbb7d02a0637467cecdf72de733`.
+Native resource attachments and the envelope are retained without correcting a
+provider JSON-reference/CSV-attachment discrepancy. This transport provides
+independent questions; native conversational continuation is not established and
+must not be claimed by the UI.
+
+The actual compiled Direct adapter, publication/v2 checks and normal silent SPA
+token acquisition were then exercised together in the browser. The same facility
+question completed in 46.237 seconds with answer digest
+`f6311919678cb895ff9e8c48ae503379a8cdf5b08f6ea8e8a44d163d1ed0c489`,
+the three-row native CSV and a downloadable native envelope. Adapter traffic used
+only `api.fabric.microsoft.com`; no Foundry proxy or Power BI token was used.
+
+Separate authenticated Dev hosted passthrough run
+`dedd1fc8-e0f6-42c5-809f-2006720fc989` recorded ontology context injection and
+Lakehouse, Kusto and operational SQL analysis calls. This disproves a blanket
+missing-source or missing-SPA-permission diagnosis. At that stage, the original
+mixed question had not passed acceptance: a subsequent run logged failed Rayfin work-order and
+Lakehouse connector GraphQL reads, and another streamed run terminated without
+certifying an answer. Missing current telemetry was also explicitly disclosed.
+No approval decisions or production SQL writes were exercised.
+
+Later probes could not resolve the deployment's capacity-specific AppBackend
+hostname from either the browser or local requests. Although an earlier capacity
+read showed Active, the next rollout detected Inactive and ARM confirmed Paused.
+The capacity audit records a successful suspend at `2026-11-02T23:37:45Z`.
+Following the user's explicit authorization, only that capacity was resumed;
+ARM and Fabric both read back Active before retrying the canonical rollout.
+Do not invent another capacity URL, weaken source authentication, or treat failed
+work reads as empty work. Both earlier canonical deployments completed
+successfully; that historical readiness result does not certify the current
+source path or agent execution.
+
+After resumption, a normal SPA repeat of the original mixed question
+(`41437df1-2d64-4b3d-b157-3d4f6ef62c25`) completed Sparky and Sleuth but reached
+the Foundry model throughput limit in Fixer (HTTP 429). It did not certify an
+answer or write outcome. This is not a missing Data Agent permission diagnosis.
+To reduce evidence volume without changing quota, mixed native handoffs now
+request complete canonical-key event aggregates before row limits, not unbounded
+raw-history exports. Current freshness remains separate, and the immutable
+request time anchors relative UTC dates across delayed stages or midnight.
+Direct native-only questions remain unchanged. The change passed 61 focused
+native/proposal tests and Python type checking; live acceptance remains separate.
+
+Read-only intent also now retains negation across coordinated action lists:
+`Do not perform RCA, recommend, draft, create, approve or save any work orders`
+must not force proposal generation. Explicit positive commands after `but`,
+`however`, `instead` or a sentence boundary still require the governed draft
+workflow.
+
+The repair passed all 423 service tests (one skipped), Python type checking,
+64 focused MCP/mode/discovery/card tests, focused frontend lint/type checking,
+and the production build. Adding artifact snapshot checks produced 75 passes
+and two failures; the same two failures were reproduced against the deployed
+source baseline with the identical TypeScript loader. The full frontend suite
+is therefore not reported as passing.
+
+## November 2 chat separation and role-completion contracts
+
+The current UX deliberately supersedes the October 29 single-entry design:
+Fabric IQ is a direct, delegated browser-to-Data-Agent chat; Multi Agent is the
+default Supervisor workflow; Battle of the Agents compares independent direct
+and multi-agent requests with the same question and no approval actions. Source
+identity, histories, cancellation and errors are isolated. A direct-source
+authorization/CORS failure must remain visible, not turn into a Foundry fallback.
+
+The native-source tool no longer requires the operator to mention Fabric IQ or
+the Data Agent. Its allowed-source validation remains enforced. General
+human-readable answer instructions apply to QA and Weather only; RCA and Fixer
+must finish through their structured terminal tools, without a contradictory
+prose completion instruction. A no-draft review requires a nonempty reason.
+
+Mixed-workflow presentation now separates concise `workflow_text` from exact,
+hash-attested `source_answers` and validated `rca_reports`. Full native prose and
+the detailed RCA evidence ledger remain available; the compact operator summary
+does not restate native source prose or repeat every evidence pointer. The
+backward-compatible `text` field retains the full source answer and workflow.
+This is a wire/presentation change, not permission to hide source limitations or
+turn hypotheses into verified mechanical causes.
+
+Local validation completed with 423 service tests (zero failures, one skipped),
+184 integrated frontend/agent-contract tests under Node 24, zero Python
+type-check errors, and a successful production frontend build. The RCA suite
+now distinguishes legacy unstructured briefing coverage from structured RCA,
+which must not invoke a redundant briefing model. Live deployment and
+authenticated browser source execution remain separate acceptance gates.
+
+## November 2 read-only native evidence handoff
+
+The combined BAD-telemetry/RCA/work-order request was being forwarded verbatim to
+the read-only Data Agent, even when Supervisor had assigned a narrower evidence
+task. Fabric's own test page reproduced a refusal after confirming ontology
+context injection and automatic attachment of the associated Lakehouse and Kusto
+sources. Published Preview Runtime was already enabled in both Feature and Dev.
+Changing agent/stage query parameters was not established as a repair: the
+existing API-version-only transport successfully queried the Lakehouse.
+
+A read-only evidence subtask using the unchanged published agent and deployed
+request format queried Lakehouse, Eventhouse and operational SQL. It returned
+15 turbines with historical BAD events, 90 canonical signal mappings, 10 open
+work orders and an explicit missing-current-telemetry limitation. This is native
+source-execution evidence, not proof of deployed application acceptance.
+
+Mixed workflows now retain Supervisor's evidence assignment, scope Sparky to
+read-only correlation, and include the complete original request as context.
+Sleuth handles RCA and Fixer handles recommendations and pending approval drafts.
+Native-answer-only requests still pass the original question unchanged. Native
+responses are never rewritten, and handoff caching keys the actual submitted
+assignment so an old unscoped result cannot satisfy the corrected task. This
+does not bypass provider refusals or certify that every native prompt succeeds.
+
+## November 2 Fixer function-budget incident
+
+The failed Dev browser invocation was traced to its original hosting session,
+not inferred from deployment health or another session's startup logs. Fixer
+performed ten parallel equipment-level work checks, but its Agent Framework
+loop allowed only eight function calls. The framework's best-effort limit is
+checked after a parallel batch and then disables tools, forcing a text response.
+The bounded repair repeated the problem instead of staging cards or completing
+a structured review. A separate ten-target regression reproduced another
+truncation: the six-round limit returned only six cards.
+
+Fixer's function and round limits now align with the existing 40-call backend
+budget. The backend still rejects source work beyond that bound; the larger
+function loop does not authorize writes or bypass coverage, identity or approval
+checks. Prior-turn work coverage cannot authorize a current no-draft decision.
+Fixer receives fresh source-attested complete-work coverage and instructions
+to batch missing coverage rather than repeat a query per turbine. Completion
+attempt diagnostics are committed before validating the returned response, so
+an omitted structured result retains response identity, finish reason, function
+count, usage and elapsed time.
+
+Regression scenarios include ten/fifteen-target card sets, parallel verification
+before staging, enforcement of the 40-source-call boundary, and retained failure
+diagnostics. These tests are not signed-in runtime acceptance. Promotion to
+Feature and Dev remains gated on representative source-backed prompt flows;
+authentication or deployment success alone cannot satisfy that gate.
+
+## November 2 automatic ontology context and Fixer evidence handoff
+
+Complex correlations and contextual investigations use **Supervisor -> Sparky/Fabric IQ ->
+dependent specialists** without requiring agent names in the operator's question.
+The semantic decision explicitly declares `ontology_context_required`; governed validation
+also rejects cross-source factual plans and RCA investigations that omit native grounding,
+or schedule it after dependent RCA/maintenance review. Rejected decisions get the existing
+bounded planning correction before any source execution. Missing native connections fail
+explicitly; Gauge is not a fallback for ontology context. Gauge remains available for exact
+single-source queries and independent verification. Fresh maintenance identity/duplicate
+checks remain governed direct reads, not a second factual-answer writer.
+
+The telemetry-quality investigation exception that encouraged Gauge-first routing is removed.
+The verified v2 ontology's attached Lakehouse, Eventhouse and SQL sources provide the
+context; this does not certify that any particular native query or combined answer succeeds.
+The original native answer remains unchanged.
+
+Fixer's scoped evidence projection now retains signal rows through exact verified
+equipment/node bindings across receipts, preserving original citation indices. Established
+equipment scope survives an RCA handoff. If a relevant receipt cannot be safely narrowed,
+its rows are retained rather than reducing it to population counts without the evidence.
+No signal identity is inferred from names, exclusions or summary prose. Draft staging still
+requires verified identity, fresh work coverage and separate human approval before SQL creation.
+
+The chat's hardcoded starter sample cards are removed. Users ask their own operational
+questions; routing is the orchestration service's responsibility. Local regressions cover
+automatic grounding, rejected Gauge-first plans, signal-row preservation and draft-card
+rendering. These code changes do not constitute deployment or signed-in runtime acceptance.
+
 ## October 30 scope-corruption and dependent-review correction
 
 SQL schema metadata could become equipment scope: recursively inspecting the raw
@@ -57,8 +504,8 @@ A post-publication RCA variant still returned the Fabric provider's content refu
 with no cited result tables. Runtime republication is therefore not a demonstrated
 fix for every failing prompt. End-to-end signed-in card verification remains open.
 
-Keep the execution minimal: Supervisor selects capabilities, Sparky calls the
-original Fabric question without a wrapper-model round, and Fixer reviews requested
+Keep the execution minimal: Supervisor selects capabilities, Sparky retrieves
+native evidence without a wrapper-model round, and Fixer reviews requested
 drafts. Gauge is a separate governed-read/verification capability, not a mandatory
 second factual-answer writer. Sleuth is only needed for requested investigation;
 Gale is only needed for weather work. Do not remove those capabilities merely to
@@ -66,6 +513,9 @@ conceal a handoff or source failure. An investigation does not veto an otherwise
 supported diagnostic draft, and no production work order is saved without approval.
 
 ## October 29 single Hydro Intelligence entry point
+
+Historical deployment record; superseded by the November 2 explicit request for
+separate Fabric IQ, Multi Agent and Battle of the Agents tabs above.
 
 The separate Direct Data Agent mode was a UI design mistake and has been
 removed. Both layouts render the same single Supervisor-led experience.
@@ -1320,8 +1770,10 @@ cannot select a registry outside the project's live connections.
 The demo model name/version/SKU/capacity defaults were removed. Existing projects select a verified deployment
 or discover one ready chat-capable deployment. The current launcher exposes subscription, optional account,
 project and model names, not catalog/version/SKU/capacity or graph-binding JSON controls.
-Unchecking creation explicitly overrides inherited opt-in. Creation approval permits missing resources,
-not forced recreation: a fresh Fabric workspace can reuse an existing project with creation unchecked.
+Unchecking creation explicitly overrides inherited opt-in and reuses/updates existing agents.
+Checked creation requires a fresh, missing project with an empty agent inventory; an existing name
+stops setup without reuse or automatic deletion/replacement. A fresh Fabric workspace can reuse
+an existing project with creation unchecked. App-only publication cannot create a fresh project.
 Workspace-GUID suffixes allow concurrent workspace agent sets in one shared project.
 This shared-project layout was live-tested for FEATURE/DEV and is recommended.
 Separate-project provisioning exists in code but is not end-to-end verified;

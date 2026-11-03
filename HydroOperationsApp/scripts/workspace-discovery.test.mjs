@@ -4,13 +4,15 @@ import test from 'node:test'
 import ts from 'typescript'
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { applyDataAgentProgress } from '../src/services/dataAgentProgress.ts'
+import * as artifactDiscovery from '../src/services/artifactDiscovery.ts'
 
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
 const hydroDataHookSource = await readFile(new URL('../src/ui-shared/hooks/useHydroOperationsData.ts', import.meta.url), 'utf8')
 const copilotPageSource = await readFile(new URL('../src/ui-shared/pages/CopilotPage.tsx', import.meta.url), 'utf8')
-test('direct Data Agent is the default with an explicit orchestration switch and unmodified prompt', () => {
-  assert.match(hydroDataHookSource, /useState<CopilotEngine>\('data-agent'\)/)
-  assert.match(copilotPageSource, /onEngineChange=\{data\.actions\.changeCopilotEngine\}/)
+test('shared Intelligence page uses separate direct and governed conversations without rewriting prompts', () => {
+  assert.match(copilotPageSource, /IntelligenceConversations/)
+  assert.match(copilotPageSource, /client\.ask\(question, context\.signal, context\.progress\)/)
+  assert.match(copilotPageSource, /askHostedCopilot\('foundry', question/)
   assert.match(hydroDataHookSource, /const text = question\s+if \(!text\.trim\(\)/)
 })
 const serviceDependencies = Object.fromEntries(await Promise.all([
@@ -95,6 +97,48 @@ function graphService(onRequest = async () => undefined, envOverrides = {}, depe
   )
   return { service: exports, requests }
 }
+
+test('direct access resolves the unique published matching v2 source without display-name inference and rechecks every request', async () => {
+  const agentId = '44444444-4444-4444-4444-444444444444'
+  const unrelatedId = '55555555-5555-5555-5555-555555555555'
+  let publishedReads = 0
+  const { service } = graphService(async url => {
+    if (url.endsWith('/items')) return Response.json({ value: [
+      { id: ontologyId, type: 'Ontology', displayName: 'Hydro v2' },
+      { id: agentId, type: 'DataAgent', displayName: 'An arbitrary title' },
+      { id: unrelatedId, type: 'DataAgent', displayName: 'RTI_Demo_Agent_V999' },
+    ] })
+    if (url.includes('/dataAgents/')) {
+      publishedReads++
+      const source = { artifactId: url.includes(agentId) ? ontologyId : graphModelId, workspaceId }
+      return Response.json({ definition: { parts: [{ path: 'Files/Config/published/ontologies/source/ontology.json',
+        payloadType: 'InlineBase64', payload: Buffer.from(JSON.stringify(source)).toString('base64') }] } })
+    }
+  }, { VITE_RAYFIN_ONTOLOGY_ID: ontologyId }, { './artifactDiscovery': artifactDiscovery })
+  const first = await service.directFabricAccess(new AbortController().signal)
+  const second = await service.directFabricAccess(new AbortController().signal)
+  assert.equal(first.dataAgentId, agentId)
+  assert.equal(second.dataAgentId, agentId)
+  assert.equal(first.workspaceId, workspaceId)
+  assert.equal(await first.token(), 'test-token')
+  assert.equal(publishedReads, 4)
+})
+
+test('direct access fails closed for nonnumeric live generation and unpublished ontology sources', async () => {
+  for (const kind of ['generation', 'publication']) {
+    const agentId = '44444444-4444-4444-4444-444444444444'
+    const { service } = graphService(async url => {
+      if (url.endsWith('/items')) return Response.json({ value: [
+        { id: ontologyId, type: 'Ontology', displayName: 'Hydro v2' },
+        { id: agentId, type: 'DataAgent', displayName: 'Agent' },
+      ] })
+      if (kind === 'generation' && url.endsWith(`/ontologies/${ontologyId}`)) return Response.json({ properties: { generation: '2' } })
+      if (url.includes('/dataAgents/')) return Response.json({ definition: { parts: [] } })
+    }, { VITE_RAYFIN_ONTOLOGY_ID: ontologyId }, { './artifactDiscovery': artifactDiscovery })
+    await assert.rejects(service.directFabricAccess(new AbortController().signal), kind === 'generation'
+      ? /generation|v2/i : /exactly one published Data Agent/)
+  }
+})
 
 function weatherService() {
   const requests = []

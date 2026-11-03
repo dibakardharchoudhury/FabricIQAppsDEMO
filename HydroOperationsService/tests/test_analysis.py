@@ -282,10 +282,10 @@ def cause_briefing(**changes):
     )
 
 
-def rca_specialist():
+def rca_specialist(*, structured=True):
     return SpecialistResult(
         role="rca", agent_name="hydro-rca-agent", version="1", response_id="r1", duration_ms=1,
-        input_digest="0" * 64, text="", report={"hypotheses": []},
+        input_digest="0" * 64, text="", report={"hypotheses": []} if structured else None,
     )
 
 
@@ -296,7 +296,7 @@ class RootCauseEvidenceTests(AnalysisHarness):
         self.journal.save("tool_catalog", await self.owner.bridge.call({"action": "source_contracts"}))
         self.owner.specialists = [rca_specialist()]
         self.calls = []
-        self.fail = set()
+        self.failed_sources = set()
         self.owner.evidence = {"snapshot": self.evidence_for("query_signal_quality_snapshot", {"quality": "BAD"}, [
             {"equipment_id": "EQUIP_RTI_T014", "opcua_node_id": "ns=2;s=T014.vibration_a", "quality": "BAD"},
         ])}
@@ -312,7 +312,7 @@ class RootCauseEvidenceTests(AnalysisHarness):
     async def read(self, name, arguments, _request):
         self.calls.append((name, arguments))
         entity = arguments.get("entity", arguments.get("aggregation"))
-        if entity in self.fail:
+        if entity in self.failed_sources:
             raise SourceFailure(f"{entity} unavailable")
         rows = {
             "equipment": [{"equipment_id": "EQUIP_RTI_T014", "tag": "T014", "equipment_type_code": "TURBINE",
@@ -367,7 +367,7 @@ class RootCauseEvidenceTests(AnalysisHarness):
         self.assertEqual(self.calls, [])
 
     async def test_an_unreadable_source_is_reported_not_treated_as_empty(self):
-        self.fail = {"inspections"}
+        self.failed_sources = {"inspections"}
         context = await self.owner.root_cause_evidence(self.request, self.journal)
         self.assertEqual(context["unavailable_sources"], ["Inspection records could not be read for this analysis."])
         self.assertEqual(context["equipment"][0]["inspections"], [])
@@ -402,8 +402,9 @@ class RootCauseEvidenceTests(AnalysisHarness):
         self.assertEqual(len(scope["equipment_ids"]), 8)
         self.assertEqual(scope["omitted"], 3)
 
-    async def test_briefing_receives_the_history_and_its_probable_causes_are_grounded(self):
-        self.answer.specialists = (rca_specialist(),)
+    async def test_legacy_unstructured_rca_briefing_receives_history_and_grounded_causes(self):
+        self.owner.specialists = [rca_specialist(structured=False)]
+        self.answer.specialists = tuple(self.owner.specialists)
         self.replies = [cause_briefing()]
         report = await self.owner.analysis_for(self.request, self.answer, self.journal)
         sent = json.loads(self.inputs[0]["input"])
@@ -411,12 +412,20 @@ class RootCauseEvidenceTests(AnalysisHarness):
         [cause] = report.probable_causes
         self.assertEqual((cause.category, cause.likelihood), ("instrument_or_sensor", "High"))
 
-    async def test_a_cause_naming_unknown_equipment_is_rejected(self):
+    async def test_legacy_unstructured_rca_cause_naming_unknown_equipment_is_rejected(self):
+        self.owner.specialists = [rca_specialist(structured=False)]
         invented = cause_briefing()
         invented["probable_causes"][0]["equipment_id"] = "EQUIP_RTI_T099"
         self.replies = [invented, invented, invented]
         self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
         self.assertIn("EQUIP_RTI_T099", self.owner.analysis_rejection or "")
+
+    async def test_structured_rca_does_not_invoke_a_redundant_briefing_model(self):
+        self.answer.specialists = tuple(self.owner.specialists)
+        self.replies = [cause_briefing()]
+        self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
+        self.assertEqual(self.inputs, [])
+        self.assertEqual(self.calls, [])
 
     async def test_non_rca_questions_send_no_root_cause_section_and_may_return_no_causes(self):
         self.owner.specialists = []

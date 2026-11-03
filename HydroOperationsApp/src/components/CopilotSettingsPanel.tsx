@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Bot, RotateCcw, Save } from 'lucide-react'
+import { INTELLIGENCE_MODES } from '../services/intelligenceModes'
 import {
   defaultCopilotSettings, FOUNDRY_ENV_DEFAULTS, loadCopilotSettings, resetCopilotSettings,
   saveCopilotSettings, type CopilotSettings,
@@ -39,6 +40,20 @@ export function CopilotSettingsPanel() {
         Set the Foundry project endpoint below to enable the provisioned agents. The signed-in user also needs the
         <code>Foundry User</code> role on that project.
       </p> : null}
+
+      <div className="copilot-settings-group">
+        <h4>Chat mode visibility</h4>
+        <p>Choose which modes appear beside Team in Hydro Intelligence. These browser preferences do not change deployed agents, source permissions or approval policy.</p>
+        <ul>{INTELLIGENCE_MODES.map(mode => <li key={mode.id}>
+          <label>
+            <input type="checkbox" checked={draft.intelligenceModeVisibility[mode.id]}
+              onChange={event => setDraft(current => ({
+                ...current, intelligenceModeVisibility: { ...current.intelligenceModeVisibility, [mode.id]: event.target.checked },
+              }))} />
+            <span><strong>{mode.label}</strong></span>
+          </label>
+        </li>)}</ul>
+      </div>
 
       <div className="copilot-settings-group">
         <h4>Foundry Agent Service

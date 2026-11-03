@@ -105,7 +105,7 @@ function options() {
   return { workspaceId, projectId, fabricPortalUrl, returnOrigin: location.origin }
 }
 
-function currentUser(): AppUser | null {
+export function currentUser(): AppUser | null {
   const session = client?.auth.getSession()
   if (!session?.isAuthenticated || !session.user) return null
   return { id: session.user.id, email: session.user.email, name: session.user.email.split('@')[0] }

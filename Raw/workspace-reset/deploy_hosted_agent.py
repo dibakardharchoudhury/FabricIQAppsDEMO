@@ -29,7 +29,10 @@ IMAGE_REPOSITORY = "hydro-orchestrator"
 AZD_ENVIRONMENT = "hydro-orchestrator"  # the `name` in azure.yaml
 DOCKERFILE = "HydroOperationsService/Dockerfile"
 DEFAULT_STATE_DIR = "/home/session/hydro"
-REQUIRED_EXTENSIONS = ("azure.ai.agents", "microsoft.foundry")  # pinned in azure.yaml requiredVersions
+REQUIRED_EXTENSIONS = {
+    "azure.ai.agents": "1.0.0-beta.23",
+    "microsoft.foundry": "1.0.0-beta.4",
+}
 ACTIVATION_TIMEOUT_S = 900
 ACTIVATION_POLL_S = 10
 IMAGE_DIGEST_RE = re.compile(r"^[^@\s]+@(?P<digest>sha256:[0-9a-f]{64})$")
@@ -383,21 +386,76 @@ def _registry_digest(deploy, registry: str, subscription: str, tag: str) -> str 
     return digest
 
 
-def ensure_azd_ready(deploy, tenant: str) -> None:
-    """azd must be signed in and carry the Foundry extensions azure.yaml requires; install what is missing."""
+def _version_at_least(actual: str, minimum: str) -> bool:
+    def key(value: str) -> tuple[int, ...] | None:
+        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?", value)
+        if not match:
+            return None
+        major, minor, patch, beta = match.groups()
+        return int(major), int(minor), int(patch), int(beta is None), int(beta or 0)
+
+    installed, required = key(actual), key(minimum)
+    return installed is not None and required is not None and installed >= required
+
+
+def _installed_azd_versions(deploy) -> dict[str, str]:
     try:
-        deploy.run_capture(deploy.command_argv("azd", "auth", "login", "--check-status"))
+        listing = json.loads(deploy.run_capture(
+            deploy.command_argv("azd", "extension", "list", "--installed", "--output", "json"),
+        ))
+    except ValueError as error:
+        raise deploy.DeployError("azd returned invalid installed-extension JSON.") from error
+    if not isinstance(listing, list):
+        raise deploy.DeployError("azd did not return an installed-extension list.")
+    installed: dict[str, str] = {}
+    for item in listing:
+        if not isinstance(item, dict):
+            raise deploy.DeployError("azd returned an invalid installed-extension entry.")
+        name, version = item.get("id"), item.get("installedVersion")
+        if not isinstance(name, str) or not name or not isinstance(version, str) or not version or name in installed:
+            raise deploy.DeployError("azd installed extension identity/version is unverifiable.")
+        installed[name] = version
+    return installed
+
+
+def ensure_azd_ready(deploy, tenant: str) -> None:
+    """Verify supported, executable tooling and target-tenant publishing credentials."""
+    version = re.search(r"\bazd version (\S+)", deploy.run_capture(deploy.command_argv("azd", "version")))
+    if not version or not _version_at_least(version[1], "1.37.0"):
+        raise deploy.DeployError("Hosted agent publication requires azd >=1.37.0; upgrade azd before deployment.")
+
+    def check_credentials() -> None:
+        for scope in ("https://management.azure.com/.default", "https://ai.azure.com/.default"):
+            deploy.run_capture(deploy.command_argv(
+                "azd", "auth", "token", "--tenant-id", tenant, "--scope", scope,
+            ))
+
+    try:
+        check_credentials()
     except deploy.DeployError:
-        print("azd is not signed in; opening sign-in for the target tenant.", flush=True)
+        print("azd publishing credentials are unavailable; opening sign-in for the target tenant.", flush=True)
         deploy.run_stream(deploy.command_argv("azd", "auth", "login", "--tenant-id", tenant))
-    listing = json.loads(deploy.run_capture(
-        deploy.command_argv("azd", "extension", "list", "--installed", "--output", "json"),
-    ) or "[]")
-    installed = {str(item.get("id")) for item in listing if isinstance(item, dict)}
-    for extension in REQUIRED_EXTENSIONS:
-        if extension not in installed:
-            print(f"Installing the azd extension {extension}.", flush=True)
-            deploy.run_stream(deploy.command_argv("azd", "extension", "install", extension))
+        check_credentials()
+    installed = _installed_azd_versions(deploy)
+    changed = False
+    for extension, minimum in REQUIRED_EXTENSIONS.items():
+        if extension not in installed or not _version_at_least(installed[extension], minimum):
+            action = "update" if extension in installed else "install"
+            print(f"Foundry: azd extension {extension} requires {minimum}; running {action}.", flush=True)
+            deploy.run_stream(deploy.command_argv("azd", "extension", action, extension, "--version", minimum))
+            changed = True
+    if changed:
+        installed = _installed_azd_versions(deploy)
+    for extension, minimum in REQUIRED_EXTENSIONS.items():
+        if extension not in installed or not _version_at_least(installed[extension], minimum):
+            raise deploy.DeployError(f"azd extension {extension} installed version does not meet {minimum}.")
+    running = re.search(
+        r"^Version:\s*(\S+)", deploy.run_capture(deploy.command_argv("azd", "ai", "agent", "version")),
+        re.MULTILINE,
+    )
+    if not running or not _version_at_least(running[1], REQUIRED_EXTENSIONS["azure.ai.agents"]):
+        raise deploy.DeployError("The azd agent extension did not start with the required version; no publication attempted.")
+    print(f"Foundry: verified azd agent extension {running[1]} starts successfully.", flush=True)
 
 
 def set_azd_environment(deploy, directory: Path, name: str, values: dict[str, str]) -> None:

@@ -148,11 +148,12 @@ running, you can close its window; the server keeps running. Use the sidebar's
 
 For the simplest deployment, choose the target tenant/workspace, then use **Refresh
 subscriptions** instead of copying a subscription GUID. The list shows tenant IDs and does
-not switch Azure subscriptions. Use **Deploy app** for an existing prepared workspace; only
+not switch Azure subscriptions. Use **Deploy app & agents** for an existing prepared workspace; only
 use **Full Deploy** when Git sync and data setup are actually needed.
-**Set up Foundry agents** is a separate module before final app publication;
-it owns project/model/registry settings and explicitly billable first-time
-provisioning. Blank overrides use verified discovery, never another tenant's saved target.
+The combined action owns project/model/registry settings, explicitly billable first-time
+provisioning and website publication in one orchestrator run. Agent failure blocks
+publication; unchanged agents/images/backend are reused. **Advanced → Website only**
+is retained for an already verified deployment. Blank overrides use verified discovery.
 
 The **Core setup** and **Full Deploy** setup forms share non-secret parameter
 values and remember workspace overrides in this browser. Reusable defaults from
@@ -218,27 +219,50 @@ the Fabric workspace is new:
 | Missing account/project | **Checked**; billable bootstrap also needs permissions and quota |
 
 Full Deploy includes Foundry setup with these same fields; no standalone Foundry
-run is needed first. It repeats Git sync and Core setup. Use **Set up Foundry agents**
-for routine agent updates and **Deploy app** for website updates.
+run is needed first. It repeats Git sync and Core setup. Use **Deploy app & agents**
+for routine updates without repeating Core/Energy, or **Advanced → Website only**
+to skip agent updates against an already verified deployment.
 The account owns the model deployment and projects; a Fabric workspace is separate.
 Shared-project agents have distinct workspace bindings, not separate project/RBAC
 boundaries. Separate projects remain unverified end-to-end and do not add model
 TPM/RPM. See the [project-sharing decision guide](../../HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 
 A missing project without approval stops deployment. Approval is never remembered.
-It permits missing resources, not forced recreation. It does not discard or
-disable either shared name; existing projects
-are reused even with approval enabled. With an existing account, a missing project
+Unchecked reuses the verified existing project and updates its agents. Checked is
+create-only: it requires a missing project and an empty new agent inventory.
+If the selected name already exists, setup stops without reusing, deleting or
+replacing it. Uncheck creation to update that project, or choose an unused name.
+A blank checked project uses the stable workspace-GUID name, not saved project hints.
+App-only publication rejects checked creation; use Full Deploy or Deploy app & agents.
+A failed create that left a project behind counts as existing: reuse
+unchecked only after its infrastructure/lifecycle checks pass; incomplete infrastructure
+needs repair, not another fresh creation. With an existing account, a missing project
 uses the exact name entered above, or the stable full workspace-GUID project name.
 The existing ready account-level model deployment is verified before project-only
 creation. Its model/version/SKU/capacity fingerprint is checked again during setup;
 no model catalog, quota allocation or model resize runs on this path.
-The existing account's region, connected registry and monitoring are reused;
+The existing account's region, connected registry and monitoring are reused.
+If a removed project left no infrastructure connections, setup can recover missing
+selections from a successful ARM deployment in the account's resource group only
+when its output resource IDs include that exact account and the supporting resources.
+It then verifies the live registry identity and full monitoring connection string.
+Names, matching tags, a sole resource in the group and cached azd values are not proof.
+Creation approval is still required; existing connections take precedence, and
 ambiguous/missing infrastructure, invalid model identity, access denial or allocation
-drift fails explicitly. Project managed identities receive scoped registry/model/project
+drift fails explicitly. No supporting resource is recreated by this recovery path.
+Project managed identities receive scoped registry/model/project
 access; the operator receives project access. Shared account/model/registry/monitoring
 resources are outside project-only cleanup ownership. Project agent access is verified
 after bounded endpoint/RBAC propagation waits, not inferred from project creation.
+Readiness also checks the live ARM project incarnation and creation time against the
+complete, paginated agent inventory. A newly created project must expose no agents;
+existing-project reruns reject agents whose latest version predates that project.
+Malformed/incomplete inventory or a project identity change during readback stops
+setup before backend/image preparation. This also applies to app-only verification.
+Creation approval is not permission to adopt or delete retained agents. If same-name
+recreation exposes old agents, stop other deployments and review explicit cleanup
+before deleting/recreating the project; persistent identity conflicts require Azure
+support. This guard does not certify service-side ownership or agent execution.
 
 Only an approved genuinely missing account uses full infrastructure/model bootstrap.
 On that bootstrap path a deployment alias is resolved to its underlying
@@ -849,8 +873,12 @@ Completed component/subphase timings remain visible; the overall timer measures
 the current retry attempt.
 
 Related deployment REST clients share bounded GET/HEAD recovery: up to six attempts for
-connection resets, timeouts and transient HTTP errors. Ambiguous start/write requests are
-never replayed; permanent authorization, certificate and terminal job failures propagate.
+connection resets, typed TLS EOF interruptions, timeouts and transient HTTP errors.
+Certificate verification remains enabled; unknown SSL failures are not retried.
+Ambiguous start/write requests are never replayed; permanent authorization, certificate
+and terminal job failures propagate. An accepted agent-version write whose readback
+disconnects retries only the GET, not version creation. After an exhausted read, retain
+the partial project and use unchecked reuse/update so live definitions are compared first.
 Dependent stages require verified success, never an interrupted monitor or cancelled run.
 The Setup runner prints its accepted job URL. `--resume-job-url <url>` validates the
 workspace/pipeline and monitors that existing job without starting another one.
@@ -876,8 +904,8 @@ Reloading such a run displays **Previous deployment history**, including its rec
 outcome and completed stages, without a new failure, live progress, or any deployment
 being started. Explicit resume still refuses the incompatible checkpoint.
 Older runs have no durable checkpoint. For an older
-Energy failure, use **Refresh energy sources**, then **Set up Foundry agents** and
-**Deploy app**, rather than repeating successful Core setup. Energy setup now compares
+Energy failure, use **Refresh energy sources**, then **Deploy app & agents**,
+rather than repeating successful Core setup. Energy setup now compares
 the Git-managed Geo notebooks with this checkout and updates changed code only,
 preserving their live bindings, before retrying. Missing/corrupt checkpoints
 explicitly refuse resume, never silently start a new deployment.
@@ -977,8 +1005,10 @@ Flags: `--tenant --workspace --yes --dry-run`.
 
 ## Deploy the Hydro Operations Fabric app
 
-The **Deploy app** tab runs the complete Rayfin application deployment against the
-tenant and workspace selected in the sidebar:
+The normal **Deploy app & agents** action runs the existing deployment orchestrator
+against the selected target: agent setup first, then website publication and final
+checks in one job. Hosted Agent readiness alone is not final success.
+**Advanced → Website only** keeps the read-only prepared-agent verification path.
 
 Energy ingestion and map-agent publication belong to **Refresh energy sources**.
 The app-publication phase checks existing serving data without running `Geo_001` or
@@ -1002,8 +1032,8 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
   current capacity. A workspace/capacity/tenant mismatch moves only the three Rayfin state files
   into a unique temporary backup, then generates and validates a fresh ignored `rayfin/.env`.
   Existing state is not deleted.
-   In the independent **Set up Foundry agents** module (or the combined CLI flow),
-   the deployer converges the **Foundry** side: the
+   In **Deploy app & agents** (and the combined CLI flow),
+   the deployer converges the **Foundry** side before website publication: the
    Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
@@ -1018,7 +1048,8 @@ CLI flow still prepares Energy once when explicitly enabled, before app publicat
    Requires `azd`; missing
    `azure.ai.agents` and `microsoft.foundry` extensions are installed
    by the deployer. Foundry uses the verified `RAYFIN_PUBLIC_ONTOLOGY_ID` independently of
-   graph binding; native graph materialization does not gate **Set up Foundry agents** or **Deploy app**.
+   graph binding; native graph materialization does not gate **Deploy app & agents**
+   or **Advanced → Website only**.
    New models prefer 75,000 TPM within the selected model/SKU's available regional quota, falling back
    to a supported lower allocation. Existing positive allocations are accepted without automatic resizing.
    The final app module only reads prepared Foundry definitions/runtime identities;

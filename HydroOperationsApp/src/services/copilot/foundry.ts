@@ -12,11 +12,14 @@ export type FoundryAnswer = AgentAnswer & {
   proposals?: WorkOrderProposal[]
   workOrderReview?: WorkOrderReview
   backendOwned?: boolean
+  workflowText?: string
+  sourceAnswers?: Array<{ evidence_id: string; text: string; content_sha256: string }>
+  rcaReports?: Record<string, unknown>[]
 }
 
 const env = (import.meta as { env?: Record<string, string | undefined> }).env ?? {}
 const invocationUrl = env.VITE_RAYFIN_FOUNDRY_INVOCATIONS_URL
-const clients = new Map<'foundry' | 'data-agent', { key: string; client: HostedTransport }>()
+const clients = new Map<string, { key: string; client: HostedTransport }>()
 
 export function isHostedFoundryConfigured() { return Boolean(invocationUrl) }
 export function isFoundryConfigured() {
@@ -36,7 +39,13 @@ export function resetFoundryConversation() {
   for (const { client } of clients.values()) client.clearConversation()
 }
 
-function hostedClient(engine: 'foundry' | 'data-agent') {
+export function releaseHostedConversation(scope: string) {
+  const key = `foundry.${scope}`
+  clients.get(key)?.client.invalidateConversation()
+  clients.delete(key)
+}
+
+function hostedClient(engine: 'foundry' | 'data-agent', scope?: string) {
   if (!invocationUrl) throw new Error('No accepted hosted invocation endpoint is configured.')
   const project = requireProjectEndpoint(loadCopilotSettings().projectEndpoint)
   const tenant = env.VITE_FABRIC_TENANT_ID ?? env.VITE_RAYFIN_TENANT_ID
@@ -50,7 +59,8 @@ function hostedClient(engine: 'foundry' | 'data-agent') {
   const source: HostedSource = { tenant_id: tenant, workspace_id: workspace,
     ontology_id: ontologyId, generation: 2, configuration_digest: digest }
   const key = JSON.stringify([project, invocationUrl, source])
-  let cached = clients.get(engine)
+  const clientKey = scope ? `${engine}.${scope}` : engine
+  let cached = clients.get(clientKey)
   if (!cached || cached.key !== key) {
     cached?.client.reset()
     cached = { key, client: new HostedTransport(project, invocationUrl, source,
@@ -59,8 +69,8 @@ function hostedClient(engine: 'foundry' | 'data-agent') {
           throw new Error('The selected Foundry project changed. Request fresh evidence before approving work.')
         }
         return (await import('../fabric.ts')).hostedSourceTokens(interactive)
-      }, undefined, undefined, `${engine}.${__APP_VERSION__}`) }
-    clients.set(engine, cached)
+      }, undefined, undefined, scope ? undefined : `${engine}.${__APP_VERSION__}`) }
+    clients.set(clientKey, cached)
   }
   return cached.client
 }
@@ -72,15 +82,16 @@ export function warmHostedCopilot(engine: 'foundry' | 'data-agent' = 'foundry') 
 
 export async function askHostedCopilot(
   engine: 'foundry' | 'data-agent', question: string, onProgress?: (text: string) => void,
-  onEvents?: (events: OrchestrationEvent[]) => void,
+  onEvents?: (events: OrchestrationEvent[]) => void, options?: { scope: string; signal: AbortSignal },
 ): Promise<FoundryAnswer> {
-  const answer = await hostedClient(engine).run({
+  const answer = await hostedClient(engine, options?.scope).run({
     question, ...(engine === 'data-agent' ? { native_sources: ['data-agent'] } : {}),
-  }, onEvents)
+  }, onEvents, options?.signal)
   onProgress?.(answer.text)
   return { text: answer.text, visualizations: answer.visualizations,
     proposals: answer.proposals, workOrderReview: answer.workOrderReview,
-    orchestrationEvents: answer.executionEvents, backendOwned: true }
+    orchestrationEvents: answer.executionEvents, backendOwned: true,
+    workflowText: answer.workflowText, sourceAnswers: answer.sourceAnswers, rcaReports: answer.rcaReports }
 }
 
 export async function askFoundryCopilot(

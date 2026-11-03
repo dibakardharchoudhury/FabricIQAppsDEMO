@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime
 import json
 import os
 import unittest
@@ -26,7 +27,9 @@ class SharedProjectTests(unittest.TestCase):
         self.deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
         self.projects = {}
         self.connections = {}
+        self.deployment_history = []
         self.calls = []
+        self.agent_page = {"data": [], "has_more": False}
         self.instrumentation_key = "40000000-0000-0000-0000-000000000001"
         self.connection_string = (
             f"InstrumentationKey={self.instrumentation_key};"
@@ -56,6 +59,10 @@ class SharedProjectTests(unittest.TestCase):
         self.deploy.run_capture.side_effect = self.capture
 
     def capture(self, argv, **kwargs):
+        if argv[:3] == ["deployment", "group", "list"]:
+            self.assertEqual(argv[argv.index("--subscription") + 1], self.subscription)
+            self.assertEqual(argv[argv.index("--resource-group") + 1], "rg")
+            return json.dumps(self.deployment_history)
         if argv[:2] == ["resource", "list"]:
             if argv[argv.index("--resource-type") + 1].endswith("/projects"):
                 return json.dumps([{"id": identity} for identity in self.projects])
@@ -78,7 +85,7 @@ class SharedProjectTests(unittest.TestCase):
     def response(self, method, url, **kwargs):
         if ".services.ai.azure.com/" in url:
             self.calls.append((method, url))
-            return Mock(status_code=200, ok=True, json=lambda: {"value": []})
+            return Mock(status_code=200, ok=True, json=lambda: copy.deepcopy(self.agent_page))
         path = url.split("management.azure.com", 1)[1].split("?", 1)[0]
         self.calls.append((method, path))
         if "/deployments/" in path:
@@ -145,7 +152,9 @@ class SharedProjectTests(unittest.TestCase):
                 self.projects[path] = {"id": path, "identity": {
                     "type": "SystemAssigned", "principalId": str(uuid.uuid5(uuid.NAMESPACE_URL, path)),
                 },
-                                       "properties": {"provisioningState": "Succeeded", "endpoints": {
+                                       "systemData": {"createdAt": "2026-11-02T18:25:42.8764902Z"},
+                                       "properties": {"internalId": uuid.uuid4().hex,
+                                                      "provisioningState": "Succeeded", "endpoints": {
                                            "AI Foundry API": f"https://shared.services.ai.azure.com/api/projects/{name}",
                                        }}}
             if path not in self.projects:
@@ -163,6 +172,137 @@ class SharedProjectTests(unittest.TestCase):
             "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "", "HYDRO_FOUNDRY_LOCATION": "", "HYDRO_ACR_NAME": "",
         })
 
+    def deployment_record(self, resources, *, state="Succeeded", name="bootstrap"):
+        return {
+            "id": self.account.split("/providers/")[0] + "/providers/Microsoft.Resources/deployments/" + name,
+            "state": state, "resources": [{"id": identity} for identity in resources],
+        }
+
+    def test_deleted_project_recovers_infrastructure_from_account_deployment_without_mutation(self):
+        self.infrastructure = []
+        record = self.deployment_record([self.account, self.registry, self.monitor])
+        self.deployment_history = [record, copy.deepcopy(record)]
+        before = copy.deepcopy(self.allocation)
+        with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            selection = foundry.resolve_project(
+                self.deploy, "tenant", "20000000-0000-0000-0000-000000000001",
+            )
+        self.assertFalse(selection.project_id)
+        settings = selection.creation_settings
+        assert settings is not None
+        self.assertEqual(settings["registry_id"], self.registry)
+        self.assertEqual(settings["insights_id"], self.monitor)
+        self.assertEqual(self.allocation, before)
+        self.assertFalse(self.projects)
+        self.assertFalse(self.connections)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+        self.deploy.run_stream.assert_not_called()
+
+    def test_recovery_only_creates_approved_project_and_owned_connections(self):
+        self.infrastructure = []
+        self.deployment_history = [self.deployment_record([self.account, self.registry, self.monitor])]
+        workspace = "20000000-0000-0000-0000-000000000001"
+        project = self.account + "/projects/" + workspace_project_name(workspace)
+        before = copy.deepcopy(self.allocation)
+        with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "false"}):
+                with self.assertRaisesRegex(RuntimeError, "was not found"):
+                    foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
+            preflight = foundry.resolve_project(self.deploy, "tenant", workspace)
+            selected = foundry.resolve_project(
+                self.deploy, "tenant", workspace, allow_create=True, creation_settings=preflight.creation_settings,
+            )
+        self.assertEqual(selected.project_id, project)
+        self.assertEqual(self.allocation, before)
+        writes = [path for method, path in self.calls if method != "GET"]
+        self.assertEqual(len(writes), 3)
+        self.assertTrue(all(path == project or path.startswith(project + "/connections/") for path in writes))
+
+    def test_deployment_recovery_only_fills_missing_infrastructure(self):
+        self.infrastructure = self.infrastructure[:1]
+        self.deployment_history = [self.deployment_record([self.account, self.registry + "other", self.monitor])]
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            settings = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="new", model="shared-model",
+            )
+        assert settings is not None
+        self.assertEqual(settings["registry_id"], self.registry)
+        self.assertEqual(settings["insights_id"], self.monitor)
+
+    def test_deployment_inventory_denial_and_malformed_payload_are_not_ignored(self):
+        self.infrastructure = []
+        for inventory in (None, [{"state": "Succeeded", "id": self.deployment_record([])["id"],
+                                  "resources": "invalid"}], RuntimeError("deployment inventory access denied")):
+            def capture(argv, **kwargs):
+                if argv[:3] == ["deployment", "group", "list"]:
+                    if isinstance(inventory, RuntimeError):
+                        raise inventory
+                    return json.dumps(inventory)
+                return self.capture(argv, **kwargs)
+            with self.subTest(inventory=inventory), self.environment(), \
+                    patch.object(self.deploy, "run_capture", side_effect=capture), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                with self.assertRaisesRegex(RuntimeError, "inventory is invalid|access denied"):
+                    shared.prepare_shared_project(
+                        self.deploy, tenant="tenant", subscription=self.subscription,
+                        account_name="shared", project_name="new", model="shared-model",
+                    )
+        self.assertFalse(self.projects)
+        self.assertFalse(self.connections)
+
+    def test_deployment_recovery_requires_success_exact_account_and_scoped_deployment_identity(self):
+        self.infrastructure = []
+        unrelated = self.account + "-other"
+        records = [
+            self.deployment_record([self.account, self.registry, self.monitor], state="Failed"),
+            self.deployment_record([unrelated, self.registry, self.monitor]),
+            self.deployment_record([self.account, self.registry, self.monitor]),
+        ]
+        records[-1]["id"] = records[-1]["id"].replace("/resourceGroups/rg/", "/resourceGroups/other/")
+        for record in records:
+            with self.subTest(record=record), self.environment(), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                self.deployment_history = [record]
+                with self.assertRaisesRegex(RuntimeError, "incomplete or ambiguous"):
+                    shared.prepare_shared_project(
+                        self.deploy, tenant="tenant", subscription=self.subscription,
+                        account_name="shared", project_name="new", model="shared-model",
+                    )
+        self.assertFalse(self.projects)
+        self.assertFalse(self.connections)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+
+    def test_deployment_recovery_rejects_ambiguous_or_unavailable_infrastructure(self):
+        self.infrastructure = []
+        records = [
+            self.deployment_record([self.account, self.registry, self.monitor, self.registry + "other"]),
+            self.deployment_record([self.account, self.registry, self.monitor, self.monitor + "other"]),
+            self.deployment_record([self.account, self.registry + "other", self.monitor]),
+        ]
+        for record in records:
+            with self.subTest(record=record), self.environment(), \
+                    patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+                self.deployment_history = [record]
+                with self.assertRaisesRegex(RuntimeError, "incomplete or ambiguous|identity/readback"):
+                    shared.prepare_shared_project(
+                        self.deploy, tenant="tenant", subscription=self.subscription,
+                        account_name="shared", project_name="new", model="shared-model",
+                    )
+        self.assertFalse(self.projects)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+
+    def test_connected_infrastructure_does_not_read_deployment_history(self):
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="new", model="shared-model",
+            )
+        self.assertFalse(any(call.args[0][:3] == ["deployment", "group", "list"]
+                             for call in self.deploy.run_capture.call_args_list))
+
     def test_ten_workspaces_create_ten_projects_without_model_or_account_mutation(self):
         before = copy.deepcopy(self.allocation)
         with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
@@ -179,7 +319,10 @@ class SharedProjectTests(unittest.TestCase):
                 self.assertEqual(selected.project_id, self.account + "/projects/" + workspace_project_name(workspace))
                 self.assertEqual(selected.model, "shared-model")
                 writes_before = len([method for method, _ in self.calls if method != "GET"])
-                rerun = foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
+                with self.assertRaisesRegex(RuntimeError, "already exists"):
+                    foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
+                with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "false"}):
+                    rerun = foundry.resolve_project(self.deploy, "tenant", workspace, allow_create=True)
                 self.assertEqual(rerun.project_id, selected.project_id)
                 self.assertEqual(len([method for method, _ in self.calls if method != "GET"]), writes_before)
             quota.assert_not_called()
@@ -287,10 +430,11 @@ class SharedProjectTests(unittest.TestCase):
             self.response("PUT", "https://management.azure.com" + test, json={
                 "identity": {"type": "SystemAssigned"}, "properties": {},
             })
-            selection = foundry.resolve_project(
-                self.deploy, "tenant", "20000000-0000-0000-0000-000000000001", allow_create=True,
+            plan = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="test", model="shared-model",
             )
-            self.assertEqual(selection.project_id, test)
+            shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
         self.assertEqual(sum(owner == test for owner, _ in self.connections), 2)
         self.assertTrue(all(owner == test for owner, _ in self.connections))
 
@@ -324,7 +468,9 @@ class SharedProjectTests(unittest.TestCase):
             for connection in self.infrastructure[:2]:
                 self.connections[(feature, connection["name"])] = copy.deepcopy(connection["properties"])
             start = len(self.calls)
-            with patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "feature"}):
+            with patch.dict(os.environ, {
+                "HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "feature", "HYDRO_FOUNDRY_CREATE": "false",
+            }):
                 selected = foundry.resolve_project(
                     self.deploy, "tenant", "20000000-0000-0000-0000-000000000001", allow_create=True,
                 )
@@ -345,6 +491,86 @@ class SharedProjectTests(unittest.TestCase):
         })
         self.assertNotEqual(self.projects[selected.project_id]["identity"]["principalId"],
                             self.projects[feature]["identity"]["principalId"])
+
+    def test_create_checked_rejects_existing_projects_in_both_preflight_and_provisioning(self):
+        project_id = self.account + "/projects/existing"
+        self.response("PUT", "https://management.azure.com" + project_id, json={
+            "identity": {"type": "SystemAssigned"}, "properties": {},
+        })
+        before = copy.deepcopy(self.projects)
+        with self.environment(), patch.dict(os.environ, {"HYDRO_FOUNDRY_EXISTING_PROJECT_NAME": "existing"}), \
+                patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            for allow_create in (False, True):
+                start = len(self.calls)
+                with self.subTest(allow_create=allow_create), self.assertRaisesRegex(RuntimeError, "already exists"):
+                    foundry.resolve_project(
+                        self.deploy, "tenant", "20000000-0000-0000-0000-000000000001", allow_create=allow_create,
+                    )
+                self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+        self.assertEqual(self.projects, before)
+        self.assertFalse(self.connections)
+
+    def test_create_checked_checks_live_arm_absence_even_if_discovery_omits_project(self):
+        project_id = self.account + "/projects/existing"
+        self.response("PUT", "https://management.azure.com" + project_id, json={
+            "identity": {"type": "SystemAssigned"}, "properties": {},
+        })
+        start = len(self.calls)
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response), \
+                self.assertRaisesRegex(RuntimeError, "already exists"):
+            shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription, account_name="shared",
+                project_name="existing", model="shared-model", require_new=True,
+            )
+        self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+
+    def test_create_checked_rechecks_absence_after_preflight_without_adopting_partial_project(self):
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            plan = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription, account_name="shared",
+                project_name="new", model="shared-model", require_new=True,
+            )
+            self.response("PUT", "https://management.azure.com" + self.account + "/projects/new", json={
+                "identity": {"type": "SystemAssigned"}, "properties": {},
+            })
+            start = len(self.calls)
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan, require_new=True)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+        self.assertFalse(self.connections)
+
+    def test_checked_blank_project_ignores_saved_project_and_uses_workspace_guid_name(self):
+        workspace = "20000000-0000-0000-0000-000000000001"
+        old = self.account + "/projects/old"
+        self.response("PUT", "https://management.azure.com" + old, json={
+            "identity": {"type": "SystemAssigned"}, "properties": {},
+        })
+        self.deploy.current_rayfin_target.return_value = ({
+            "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": workspace,
+            "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": self.subscription,
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_RESOURCE_ID": old,
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://shared.services.ai.azure.com/api/projects/old",
+        }, None)
+        start = len(self.calls)
+        with self.environment(), patch.object(foundry, "resolve_subscription", return_value=self.subscription), \
+                patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            selection = foundry.resolve_project(self.deploy, "tenant", workspace)
+        settings = selection.creation_settings
+        assert settings is not None
+        self.assertEqual(settings["project_name"], workspace_project_name(workspace))
+        self.assertFalse(selection.project_id)
+        self.assertEqual(list(self.projects), [old])
+        self.assertTrue(all(method == "GET" for method, _ in self.calls[start:]))
+
+    def test_absence_check_denial_is_not_treated_as_missing(self):
+        for status in (403, 500):
+            with self.subTest(status=status), patch.object(foundry, "request_with_read_retry", return_value=Mock(
+                ok=False, status_code=status,
+            )) as request, self.assertRaisesRegex(RuntimeError, "Cannot verify"):
+                shared._require_missing_project(self.deploy, self.account + "/projects/new", {})
+            request.assert_called_once()
+            self.assertEqual(request.call_args.args[0], "GET")
 
     def test_original_missing_registry_credentials_are_rejected_without_connection_mutation(self):
         path = self.account + "/projects/dev/connections/hydro-shared-registry"
@@ -524,6 +750,22 @@ class SharedProjectTests(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         sleep.assert_called_once_with(15)
 
+    def test_recreated_project_rejects_retained_agents_on_creation_and_rerun(self):
+        self.agent_page = {"data": [{
+            "name": "hydro-qa-agent-old-workspace", "versions": {"latest": {"created_at": 1793634885}},
+        }], "has_more": False}
+        with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
+            plan = shared.prepare_shared_project(
+                self.deploy, tenant="tenant", subscription=self.subscription,
+                account_name="shared", project_name="new", model="shared-model",
+            )
+            for attempt in range(2):
+                with self.subTest(attempt=attempt), self.assertRaisesRegex(RuntimeError, "project lifecycle"):
+                    shared.ensure_shared_project(self.deploy, tenant="tenant", settings=plan)
+            self.assertEqual(len(self.projects), 1)
+            self.assertFalse(self.connections)
+            self.assertTrue(all(method != "DELETE" for method, _ in self.calls))
+
     def test_role_assignment_failure_preserves_partial_project_without_connections(self):
         with self.environment(), patch.object(foundry, "request_with_read_retry", side_effect=self.response):
             plan = shared.prepare_shared_project(self.deploy, tenant="tenant", subscription=self.subscription,
@@ -534,6 +776,146 @@ class SharedProjectTests(unittest.TestCase):
         self.assertEqual(len(self.projects), 1)
         self.assertFalse(self.connections)
         self.assertTrue(all("/projects/" in path for method, path in self.calls if method != "GET"))
+
+
+class ProjectLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.deploy = Mock(DeployError=RuntimeError)
+        self.deploy.run_capture.return_value = "token"
+        self.project_id = (
+            "/subscriptions/10000000-0000-0000-0000-000000000001/resourceGroups/rg/"
+            "providers/Microsoft.CognitiveServices/accounts/shared/projects/recreated"
+        )
+        self.endpoint = "https://shared.services.ai.azure.com/api/projects/recreated"
+        self.project = {
+            "id": self.project_id, "systemData": {"createdAt": "2026-11-02T18:25:42.8764902Z"},
+            "properties": {"internalId": uuid.uuid4().hex, "provisioningState": "Succeeded",
+                           "endpoints": {"AI Foundry API": self.endpoint}},
+        }
+        self.created_second = int(datetime.fromisoformat(self.project["systemData"]["createdAt"]).timestamp())
+        self.pages = [{"data": [], "has_more": False}]
+        self.agent_reads = []
+        self.readback = None
+        self.arm_reads = 0
+        self.request = self.enterContext(patch.object(foundry, "request_with_read_retry", side_effect=self.response))
+
+    def agent(self, *, name="hydro-qa-agent-workspace", timestamp=None):
+        return {"name": name, "versions": {"latest": {
+            "created_at": self.created_second if timestamp is None else timestamp,
+        }}}
+
+    def response(self, method, url, **kwargs):
+        self.assertEqual(method, "GET")
+        if ".services.ai.azure.com/" in url:
+            self.agent_reads.append(url)
+            body = self.pages.pop(0)
+        else:
+            self.arm_reads += 1
+            body = self.readback if self.arm_reads > 1 and self.readback is not None else self.project
+        return Mock(status_code=200, ok=True, content=b"json", json=lambda: copy.deepcopy(body))
+
+    def verify(self, **kwargs):
+        return shared.verify_project_lifecycle(
+            self.deploy, tenant="tenant", project_id=self.project_id, endpoint=self.endpoint, **kwargs,
+        )
+
+    def test_existing_empty_and_current_shared_workspace_agents_are_valid(self):
+        for data in ([], [self.agent(), self.agent(name="hydro-qa-agent-another-workspace")]):
+            with self.subTest(data=data):
+                self.pages = [{"data": data, "has_more": False}]
+                self.verify()
+
+    def test_new_project_requires_empty_inventory_even_with_current_timestamps(self):
+        self.pages = [{"data": [self.agent()], "has_more": False}]
+        with self.assertRaisesRegex(RuntimeError, "project lifecycle mismatch"):
+            self.verify(require_empty=True)
+
+    def test_retained_agent_on_later_page_is_rejected_and_cursor_is_encoded(self):
+        self.pages = [
+            {"data": [self.agent()], "has_more": True, "last_id": "cursor/&?"},
+            {"data": [self.agent(name="old", timestamp=self.created_second - 1)], "has_more": False},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "agent 'old'"):
+            self.verify()
+        self.assertEqual(self.agent_reads[-1], self.endpoint + "/agents?api-version=v1&limit=100&after=cursor%2F%26%3F")
+
+    def test_valid_complete_pagination_is_read_only(self):
+        self.pages = [
+            {"data": [self.agent()], "has_more": True, "last_id": "first"},
+            {"data": [self.agent(name="second")], "has_more": False},
+        ]
+        self.verify()
+        self.assertEqual(len(self.agent_reads), 2)
+        self.assertEqual(self.arm_reads, 2)
+
+    def test_invalid_inventory_never_counts_as_ready(self):
+        for page in (
+            None, {"value": []}, {"data": [], "has_more": "false"},
+            {"data": None, "has_more": False}, {"data": [], "has_more": True},
+            {"data": [self.agent()], "has_more": True},
+            {"data": [self.agent(), self.agent()], "has_more": False},
+            {"data": [{}], "has_more": False},
+            *({"data": [self.agent(timestamp=value)], "has_more": False}
+              for value in (True, "1793643942", float("nan"), float("inf"), 0, -1)),
+        ):
+            with self.subTest(page=page):
+                self.pages = [page]
+                with self.assertRaisesRegex(RuntimeError, "project lifecycle"):
+                    self.verify()
+
+    def test_cyclic_pagination_is_rejected(self):
+        self.pages = [
+            {"data": [self.agent(name="first")], "has_more": True, "last_id": "cursor"},
+            {"data": [self.agent(name="second")], "has_more": True, "last_id": "cursor"},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "pagination"):
+            self.verify()
+        self.assertEqual(len(self.agent_reads), 2)
+
+    def test_missing_or_untrusted_arm_incarnation_is_rejected_before_agent_read(self):
+        for created, incarnation in (
+            (None, "id"), ("invalid", "id"), ("2026-11-02T18:25:42", "id"),
+            ("2026-11-02T18:25:42Z", ""),
+        ):
+            with self.subTest(created=created, incarnation=incarnation):
+                self.project["systemData"]["createdAt"] = created
+                self.project["properties"]["internalId"] = incarnation
+                with self.assertRaisesRegex(RuntimeError, "project lifecycle"):
+                    self.verify()
+        self.assertFalse(self.agent_reads)
+
+    def test_project_identity_endpoint_or_incarnation_change_fails_closed(self):
+        for field in ("internalId", "createdAt", "endpoint", "id", "state"):
+            with self.subTest(field=field):
+                self.pages = [{"data": [], "has_more": False}]
+                self.arm_reads = 0
+                self.readback = copy.deepcopy(self.project)
+                if field == "createdAt":
+                    self.readback["systemData"][field] = "2026-11-03T18:25:42Z"
+                elif field == "endpoint":
+                    self.readback["properties"]["endpoints"]["AI Foundry API"] += "-other"
+                elif field == "id":
+                    self.readback["id"] += "-other"
+                elif field == "state":
+                    self.readback["properties"]["provisioningState"] = "Deleting"
+                else:
+                    self.readback["properties"][field] = uuid.uuid4().hex
+                with self.assertRaisesRegex(RuntimeError, "changed during"):
+                    self.verify()
+
+    def test_access_denied_or_project_missing_is_not_success(self):
+        for status in (403, 404, 500):
+            with self.subTest(status=status):
+                self.request.side_effect = None
+                self.request.return_value = Mock(ok=False, status_code=status, text="denied")
+                with self.assertRaises(RuntimeError):
+                    self.verify()
+        self.request.side_effect = self.response
+        with patch.object(foundry, "request_with_read_retry", side_effect=[
+            self.response("GET", "https://management.azure.com/project"),
+            Mock(ok=False, status_code=403),
+        ]), self.assertRaisesRegex(RuntimeError, "inventory failed"):
+            self.verify()
 
 
 if __name__ == "__main__":

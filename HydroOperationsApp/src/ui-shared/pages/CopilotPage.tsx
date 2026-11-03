@@ -1,21 +1,12 @@
-import { useEffect } from 'react'
-import { CopilotExperience } from '../../components/CopilotExperience'
-import { warmHostedCopilot } from '../../services/copilot/foundry'
-import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
+import { useSyncExternalStore } from 'react'
+import { IntelligenceExperience } from '../../components/IntelligenceExperience'
+import { intelligenceIdentityKey, subscribeIntelligenceIdentity } from '../../services/fabric'
+import { useIntelligenceConversations } from '../hooks/useIntelligenceConversations'
 
 export function CopilotPage() {
-  const data = useHydroOperationsData()
-  const foundryAvailable = data.foundryAvailable
+  const identity = useSyncExternalStore(subscribeIntelligenceIdentity, intelligenceIdentityKey)
+  const conversations = useIntelligenceConversations()
+  const snapshot = useSyncExternalStore(conversations.subscribe, conversations.getSnapshot)
 
-  useEffect(() => {
-    if (!foundryAvailable) return
-    warmHostedCopilot()
-  }, [foundryAvailable])
-
-  return <CopilotExperience
-    messages={data.messages}
-    busy={data.copilotBusy}
-    onSend={question => void data.actions.sendCopilotQuestion(question)}
-    onReset={data.actions.resetCopilot}
-  />
+  return <IntelligenceExperience conversations={conversations} snapshot={snapshot} identity={`${identity}:${conversations.identityVersion()}`} />
 }
