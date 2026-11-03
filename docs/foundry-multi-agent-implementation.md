@@ -28,6 +28,72 @@ fetch to the browser global receiver and keeps exact independent native requests
 Fresh embedded and newly published acceptance remain required; an open old SPA
 does not automatically reload when the hosted bundle is updated.
 
+### Publication and acceptance receipts
+
+The repairs were committed/pushed as `dbb73a5`. All 115 focused UI/transport
+contracts, 187 supervisor/presentation tests and 66 hosted packaging contracts
+pass. A final 55-case committed-source answer/display/composer/native selection
+also passes. The supported Node 24 production build passes; the pre-existing
+unused default parameter in `nativeSourceError` remains a separate lint finding.
+
+Dev completed the full canonical rollout at `2026-11-03T10:45:11Z` in
+1011.312s: release `ee84c0b`, app `1.0.1346`, hosted v5 on new image
+`src-218480810c356121`, Fixer v3. Final runtime/CORS, connector preflights,
+permissions/consent and all 56 existing redirect-preservation checks passed.
+The actual new Dev browser independently completed the native facility
+question in 57.9s; its unchanged CSV contains the three verified facility IDs
+and names. No `Illegal invocation` occurred. Native receipt details remained
+collapsed and the native files remained downloadable.
+
+With the actual deployed stylesheet, both idle and running Direct at 1200x680
+use an 88px, three-row textarea ending at 639.33px and a footer ending at
+651.33px. The running state includes the Stop icon and document height is 680px.
+This is not the earlier injected-stylesheet preview.
+
+Feature's first attempt updated Fixer to v3 and activated hosted v6 on the same
+new image, but stalled in static app publication before final readback. The
+owned local deployment was stopped, preserving its cloud and private state.
+Its only tracked generated change moved the existing Feature redirect without
+adding/removing any URI; that reorder was committed/pushed as `069427e` before
+canonical reconciliation. Full Feature recovery completed at
+`2026-11-03T13:16:12Z` in 1997.844s: app `1.0.1347`, source `069427e`,
+persisted release `6e5474b`, hosted v6 and Fixer v3 on the same image.
+Final runtime/CORS, POST, consent and 56-redirect preservation gates passed.
+Actual Feature Direct completed the same facility question in 56.6s and
+returned the matching three-row native CSV without `Illegal invocation`.
+
+The exact BAD-quality/open-work/draft question automatically invoked Sparky.
+Dev returned five editable diagnostic draft cards, distinguishing historical
+BAD readings from unknown current quality and avoiding inferred mechanical
+faults. Feature returned one concise maintenance conclusion: no observed BAD
+samples in the requested UTC window, no evidence-backed drafts, and unknown
+current status because the final 30 minutes had no measurements. Its separate
+open-work inventory remained visible. No work orders were approved or created.
+Independent numerical completeness, draft recommendation accuracy and
+Teams/email delivery are not certified by these acceptance runs.
+
+### Expanded composer follow-up
+
+Live maximized Multi chat with side flow exposed a separate CSS specificity
+conflict: the four-row crew rule overrode the three-row side-flow rule, placing
+the input bottom at 768px in a 680px viewport. Explicit maximized side-flow
+selectors, an intrinsic footer minimum and a shrinkable compact crew track
+repair that conflict without changing conversation ownership or agent code.
+Narrow layouts also omit the redundant page heading, which otherwise consumed
+the Direct composer's reserved space at 390x600.
+All 21 component contracts and the supported Node 24 production build pass.
+An actual-browser preview of the complete updated stylesheet keeps 88px and
+200px inputs visible at 1200x680, 1024x540 and 390x600; input bottoms are
+655.33px, 515.33px and 575.33px respectively, with no horizontal overflow.
+Normal Direct, compact Multi (normal/maximized) and Battle also fit those three
+viewports. Narrow Direct retains both the 88px and resized 200px composer.
+Publication and actual new-bundle acceptance remain required for this follow-up.
+
+Separate portal tests did not reach the SPA because the AppBackend extension
+worker failed to render; they do not establish a Direct-agent transport failure
+or certify embedded execution. Browser automation outages are not counted as
+successful acceptance.
+
 ## November 3 session and native-fetch repair published and verified
 
 The latest Dev browser reproduced two concrete frontend failures:

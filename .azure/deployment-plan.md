@@ -1,6 +1,49 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated - Operator response and composer follow-up
+> **Status:** Validated - Expanded composer follow-up
+
+## Expanded composer follow-up
+
+Retain the already approved Dev/Feature targets and canonical full deployment
+flow. This follow-up changes only frontend CSS, its regression test and receipts.
+Hosted source/image, agents, source profiles, dependency locks, ARM resources,
+roles, policy, model, quota, region and authorization remain unchanged.
+
+The specific maximized side-flow selector must override the four-row crew rule.
+The footer reserves its intrinsic height while the compact crew can shrink.
+All 21 component contracts, `validate-env` and the Node 24 TypeScript/Vite
+production build pass. Actual-browser stylesheet previews retain both 88px and
+200px inputs at 1200x680, 1024x540 and 390x600 without horizontal overflow.
+Canonical publication must still reapply runtime/CORS settings and verify
+permissions, existing redirects and real endpoint readiness on both targets.
+All validation checks pass:
+- [x] 1. Core Validation: supported Node 24 production build and 21 component
+  contracts pass; approved tenant/subscription read back successfully.
+  No ARM template delta exists, so template validation/what-if is inapplicable.
+- [x] 2. Docker Build: inapplicable; no hosted source, image or dependency delta.
+- [x] 3. Azure Policy Validation: current assignments returned HTTP 200;
+  unchanged deny, audit, baseline and MFA controls remain enforced.
+  No policy, infrastructure or role delta is proposed.
+
+Role Assignment Verification: no generated/modified assignments or changed
+identity-to-resource operations. Existing source and approval boundaries remain
+unchanged. Deployed-bundle acceptance remains pending.
+
+### Section 7: Validation Proof - expanded composer
+
+November 3, 2026: `node --import tsx --test
+scripts\work-order-draft-pager.test.mjs` passes all 21 cases. Node 24
+`npm run build` passes TypeScript and Vite (existing chunk warnings only);
+its prebuild validates the required environment. The final narrow-heading
+follow-up is covered by the same component regression and production build.
+Actual full-stylesheet browser previews verify normal Direct, compact Multi
+(normal/maximized), side-flow Multi and Battle at 1200x680, 1024x540 and
+390x600. Both 88px and resized 200px Direct inputs fit the narrow viewport.
+Approved Azure tenant/subscription readback matches; live policy retrieval
+returned HTTP 200 with unchanged inherited governance/MFA controls.
+No ARM template, Docker context, dependency lock, hosted source or role
+assignment changes exist, so infrastructure what-if and image rebuilding
+are inapplicable. Full canonical endpoint and runtime readback remain required.
 
 ## Operator response and composer follow-up
 
