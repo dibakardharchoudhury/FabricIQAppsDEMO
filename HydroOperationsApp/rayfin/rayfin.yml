@@ -16,8 +16,8 @@ services:
       enabled: true
       externalEntraExchange: true
     allowedRedirectUris:
-      - https://savvy-coast-6cc7d37cc3-norwayeast.webapp.fabricapps.net
       - http://localhost:5173
+      - https://savvy-coast-6cc7d37cc3-norwayeast.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
