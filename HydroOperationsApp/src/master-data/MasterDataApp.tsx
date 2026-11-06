@@ -235,7 +235,7 @@ export function MasterDataApp() {
             <div className="mdm-section-heading"><div><h2>Golden record simulation</h2><p>Sample-only evidence. The pipeline validates every source row before publishing.</p></div><div className="mdm-actions"><button onClick={() => chooseImport('samples')}><Upload size={14} />Load bounded sample</button><button onClick={() => setSamples({})}>Clear sample</button></div></div>
             {!simulation ? <div className="mdm-no-results">No sample loaded. Supply JSON keyed by source ID. Records remain in this tab's memory only.</div> : <>
               {simulation.conflicts.length > 0 && <div className="mdm-banner error"><CircleAlert size={20} /><span><strong>{simulation.conflicts.length} conflicts: release blocked</strong><br />{simulation.conflicts.join('\n')}</span></div>}
-              {contract.entities.map(e => <div key={e.id} className="mdm-preview-table"><h3>{e.label}<span className="mdm-chip neutral">{simulation.rows[e.id]?.length ?? 0} eligible sample records</span></h3><table className="mdm-table"><thead><tr>{e.properties.map(p => <th key={p.name}>{p.label}</th>)}</tr></thead><tbody>{(simulation.rows[e.id] ?? []).map(row => <tr key={String(row[e.key])}>{e.properties.map(p => <td key={p.name}>{String(row[p.name] ?? '—')}<small>{simulation.lineage.find(l => l.entity === e.id && l.key === row[e.key] && l.property === p.name)?.source ?? 'No value'}</small></td>)}</tr>)}</tbody></table></div>)}
+              {contract.entities.map(e => <div key={e.id} className="mdm-preview-table"><h3>{e.label}<span className="mdm-chip neutral">{simulation.rows[e.id]?.length ?? 0} projected sample records</span></h3><table className="mdm-table"><thead><tr>{e.properties.map(p => <th key={p.name}>{p.label}</th>)}</tr></thead><tbody>{(simulation.rows[e.id] ?? []).map(row => <tr key={String(row[e.key])}>{e.properties.map(p => <td key={p.name}>{String(row[p.name] ?? '—')}<small>{simulation.lineage.find(l => l.entity === e.id && l.key === row[e.key] && l.property === p.name)?.source ?? 'No value'}</small></td>)}</tr>)}</tbody></table></div>)}
             </>}
           </section>}
           {page === 'releases' && <div className="mdm-release-grid"><section className="mdm-card">
@@ -305,7 +305,7 @@ function MappingPanel({ entity, source, column, contract, existing, onSave, onAd
         || entity.properties.some(p => p.name === newName || p.ontologyProperty === ontologyProperty)} onClick={() => {
         onAdd({ name: newName, ontologyProperty, label: newLabel, type: source.columns.find(c => c.name === column)!.type,
           required: false, strategy: 'require_equal', priority: [] })
-        setTarget(newName); setAdding(false)
+        setTarget(newName); setExclude(false); setAdding(false)
       }}>Add to draft</button><button onClick={() => setAdding(false)}>Cancel</button>
     </div>}
     <label className="mdm-field">Normalization<select value={transform} disabled={exclude || isKey} onChange={e => setTransform(e.target.value as Transform)}><option value="identity">Keep original value</option><option value="trim">Trim whitespace</option><option value="lower">Trim + lowercase</option><option value="upper">Trim + uppercase</option></select></label>
