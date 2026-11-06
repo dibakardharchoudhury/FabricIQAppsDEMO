@@ -89,7 +89,7 @@ export class MasterDataDraft {
   @uuid() id!: string
   @text({ max: 255 }) name!: string
   @text({ max: 64 }) contentHash!: string
-  @text({ max: 1000000 }) contractJson!: string
+  @text() contractJson!: string
   @text() createdBy!: string
   @date() createdAt!: Date
 }

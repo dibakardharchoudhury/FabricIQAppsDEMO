@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { SchemaAnalyzer } from '@microsoft/rayfin-core/analysis'
+import * as schema from '../rayfin/data/schema.ts'
 import {
   canonicalJson, columnPeers, fingerprint, parseContract, preview, reconcileSources, suggestions, updateMapping, validateContract, type Contract,
 } from '../src/master-data/contract.ts'
@@ -31,6 +33,17 @@ test('multi-entry build preserves the canonical deployer index asset name and Wi
   assert.equal(inputs.index, fileURLToPath(new URL('../index.html', import.meta.url)))
   assert.ok(inputs.masterData.endsWith('master-data.html'))
   assert.deepEqual(Object.keys(inputs), ['index', 'masterData'])
+})
+
+test('draft history passes the MSSQL analyzer without truncating contracts or broadening access', () => {
+  const entities = new SchemaAnalyzer(Object.values(schema), 'mssql', { log: () => {} }).analyzeEntities()
+  const draft = entities.find(entity => entity.name === 'MasterDataDraft')!
+  assert.equal(draft.fields.find(field => field.name === 'contractJson')?.dbType, 'NVARCHAR(MAX)')
+  assert.deepEqual(draft.permissions, {
+    authenticated: ['create', 'read'].map(action => ({
+      action, policy: { database: '@claims.sub eq @item.createdBy' },
+    })),
+  })
 })
 
 test('contract import rejects unknown fields, wrong versions, legacy ontology and malformed nested data', () => {

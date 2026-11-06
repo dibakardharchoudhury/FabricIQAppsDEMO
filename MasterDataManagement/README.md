@@ -101,7 +101,9 @@ silently rewrite the ontology, source data or existing semantic models.
 `read` are exposed, with a server-side `claims.sub == createdBy` policy. Updates
 and deletes are not exposed. Saves verify exact SQL readback; uncertain writes
 surface an error and must be inspected before retrying. History uses stable,
-cursor-paginated reads. Metadata only is stored.
+cursor-paginated reads. Metadata only is stored. Contract JSON uses MSSQL
+`NVARCHAR(MAX)`; Rayfin's bounded `@text({ max: ... })` is limited to 4,000
+characters and must not be used to truncate a contract.
 
 Apply this additive schema through the existing canonical deployment flow. Do not
 expect SQL history to work against an older deployment without this entity.
