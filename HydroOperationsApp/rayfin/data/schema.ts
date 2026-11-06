@@ -1,4 +1,4 @@
-import { authenticated, date, decimal, entity, int, text, uuid } from '@microsoft/rayfin-core'
+import { authenticated, date, decimal, entity, int, role, text, uuid } from '@microsoft/rayfin-core'
 
 @entity()
 @authenticated('*')
@@ -78,4 +78,18 @@ export class SparePart {
   @text() storageLocation!: string
   @decimal({ optional: true }) unitCostUsd?: number
   @date({ optional: true }) lastRestockedAt?: Date
+}
+
+// Draft history only. Production authorization is a separately pinned pipeline digest.
+@entity()
+@role('authenticated', ['create', 'read'], {
+  policy: (claims, item) => claims.sub.eq(item.createdBy),
+})
+export class MasterDataDraft {
+  @uuid() id!: string
+  @text({ max: 255 }) name!: string
+  @text({ max: 64 }) contentHash!: string
+  @text({ max: 1000000 }) contractJson!: string
+  @text() createdBy!: string
+  @date() createdAt!: Date
 }
