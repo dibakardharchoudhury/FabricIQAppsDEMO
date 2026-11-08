@@ -92,9 +92,31 @@ not cardinality inferred from a sample or names; no ontology mutation is needed.
 
 No MDM Gold release, publisher run, production approval, or semantic model has
 been created for this pilot. Sign-in and authenticated SQL draft acceptance also
-remain outstanding. After resolving ontology validation, a steward must review
-the contract and an authorized operator must independently pin its digest before
-deploying the Gold notebook and its succeeded-dependency pipeline activity.
+remain outstanding. The cardinality correction was deployed successfully on
+2026-11-08 through the canonical orchestrator, preserving the existing hosting
+origin and ontology. The complete prospective Direct Lake definition also passed
+offline TOM deserialization: 3 tables, 22 columns and 2 declared relationships.
+This syntax check does not authorize a release or verify live model execution.
+
+To resume the remaining governed workflow:
+
+1. Sign in to the hosted Concord app in a normal browser and use **Import
+   contract** with the pilot JSON. Save the draft, reload, and confirm history
+   readback under the same signed-in user. The embedded browser's private-hosting
+   sign-in popup was blocked; Azure CLI authorization is not a substitute.
+2. Review all 23 mappings and verify the live ontology. The only proposed renames
+   are `facility_type`, `latitude`, `longitude` and `equipment_tag`; installation
+   date is excluded. No mappings were marked reviewed automatically.
+3. Have an authorized operator independently approve and pin the reviewed
+   contract's exact SHA-256 digest, then package/deploy the publisher and its
+   succeeded-dependency pipeline activity.
+4. Verify committed Gold tables, provenance and the release marker before
+   deploying the semantic model from that release.
+
+Autonomous execution and an unavailable reviewer are not approval of mapping
+decisions or a release digest. Tenant-wide admin consent for Fabric and Foundry
+also remains administrator work before broader rollout; the deployer verified
+current-operator consent only.
 
 ## Steward workflow
 
