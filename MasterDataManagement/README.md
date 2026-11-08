@@ -82,11 +82,13 @@ do not automatically delete or replay it.
 `hydro_pilot.build_draft(receipt, ontology)` generates an unreviewed contract from
 a verified Silver receipt and live ontology identity/fingerprint. All 23 column
 decisions remain unreviewed. The live Hydro ontology's returned relationship
-TMDL omits explicit `fromCardinality`/`toCardinality`, so Concord's current strict
-validator cannot certify the two proposed many-to-one joins. Their endpoints
-and physical keys are declared; cardinality must not be inferred from a small
-sample or names. Resolve this through reviewed ontology authoring or separately
-verified format-default support, preserving all existing bindings.
+TMDL omits explicit `fromCardinality`/`toCardinality`. Microsoft's actual TOM
+19.84.1 TMDL deserializer was used to verify the formal defaults (`many`/`one`);
+its serializer also omits these values on roundtrip. Concord normalizes those
+defaults at the **physical** endpoints before orienting the declared semantic
+relationship. Explicit incompatible or unsupported values still fail validation,
+and unbound relationships acquire no defaults. This is format interpretation,
+not cardinality inferred from a sample or names; no ontology mutation is needed.
 
 No MDM Gold release, publisher run, production approval, or semantic model has
 been created for this pilot. Sign-in and authenticated SQL draft acceptance also

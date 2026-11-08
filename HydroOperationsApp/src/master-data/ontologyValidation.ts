@@ -39,7 +39,7 @@ export function ontologyIssues(contract: Contract, live: OntologyContract): Issu
       || relation.targetEntityTypeId !== toType?.id || relation.sourceCardinality !== 'many' || relation.targetCardinality !== 'one'
       || JSON.stringify(relation.sourceKeys) !== JSON.stringify([fromColumn])
       || JSON.stringify(relation.targetKeys) !== JSON.stringify([toColumn])) issues.push({
-      code: 'ontology_relationship', message: `${r.name}: live ontology must explicitly declare this many-to-one relationship and both physical property bindings.`,
+      code: 'ontology_relationship', message: `${r.name}: live ontology must define this many-to-one relationship and both physical property bindings.`,
     })
   }
   return issues

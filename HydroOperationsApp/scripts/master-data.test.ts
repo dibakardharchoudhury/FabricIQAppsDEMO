@@ -82,9 +82,18 @@ test('live v2 ontology validation follows explicit property bindings, not simila
 `))
   const live = parseOntologyContract(c.ontology.itemId, 'Customer ontology', { definition: { parts } }, 2)
   assert.deepEqual(ontologyIssues(c, live), [])
+  const defaultParts = parts.map(p => p.path !== 'relationships.tmdl' ? p : part(p.path,
+    Buffer.from(p.payload, 'base64').toString().replace('    fromCardinality: many\n', '').replace('    toCardinality: one\n', '')))
+  assert.deepEqual(ontologyIssues(c, parseOntologyContract(c.ontology.itemId, 'Customer ontology', { definition: { parts: defaultParts } }, 2)), [])
   assert.equal(await definitionFingerprint(parts), await definitionFingerprint([...parts].reverse()))
   assert.throws(() => parseOntologyContract('id', 'Legacy', { definition: { parts } }, 1))
   const mutated = structuredClone(live)
+  mutated.relationshipTypes[0].targetCardinality = 'many'
+  assert.ok(ontologyIssues(c, mutated).some(i => i.code === 'ontology_relationship'))
+  mutated.relationshipTypes[0].targetCardinality = 'one'
+  mutated.relationshipTypes[0].sourceCardinality = 'one'
+  assert.ok(ontologyIssues(c, mutated).some(i => i.code === 'ontology_relationship'))
+  mutated.relationshipTypes[0].sourceCardinality = 'many'
   mutated.relationshipTypes[0].targetKeys = ['guessed_customer_id']
   assert.ok(ontologyIssues(c, mutated).some(i => i.code === 'ontology_relationship'))
   mutated.entityTypes[0].entityIdParts = ['different_key']
