@@ -10,11 +10,19 @@ The app manages source-schema inventory, canonical naming, ontology mappings,
 column exclusions, conflict policies, lineage and release candidates.
 The pipeline executes the reviewed contract against complete Delta tables.
 
-**Deployment status:** source implementation, local preview and deployment
-artifact builder. No target tenant/workspace has been selected or modified.
-Fabric SQL persistence, live ontology access, Fabric Spark execution and semantic
-model deployment require a configured target and live acceptance. A local
-simulation or a generated TMDL definition does not certify those services.
+**Deployment status (2026-11-08):** the frontend and additive SQL draft schema
+were published to `ws-FabricIQAppsDemoEspenFeature` through the canonical
+orchestrator. Open [Concord](https://savvy-coast-6cc7d37cc3-norwayeast.webapp.fabricapps.net/master-data.html)
+with normal Fabric sign-in. Deployment verified the AppBackend identity,
+protected hosting gate, CORS/POST readiness, redirects and current-operator
+consent. Tenant-wide consent still requires an administrator. The embedded
+browser's sign-in popup was blocked, so authenticated UI and draft save/readback
+acceptance remain unperformed.
+
+Live ontology access, approved-contract Fabric Spark execution and semantic-model
+deployment remain separate acceptance steps. No MDM Gold release or semantic
+model was published by this app deployment. A local simulation or a generated
+TMDL definition does not certify those services.
 
 ## Run the standalone app
 
