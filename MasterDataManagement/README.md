@@ -46,6 +46,54 @@ The existing required deployment environment must pass `npm run validate-env`
 before any production build/deploy. Local metadata editing needs no Fabric
 credentials. SQL history and live ontology verification do.
 
+## Hosted Hydro pilot
+
+On 2026-11-08, the user selected the existing Hydro equipment/facility demo and
+approved an isolated, schema-enabled `Concord_MDM_Pilot` Lakehouse in
+`ws-FabricIQAppsDemoEspenFeature`. The original source Lakehouse and ontology
+bindings were not changed. These are **hosted demo datasets**, not production
+customer feeds or independent overlapping source systems.
+
+`MDM_000_prepare_hydro_silver` completed successfully. Its read-back Silver
+receipt records 15 equipment, 3 systems and 3 facilities, copied from original
+Delta version 5 for each table. Equipment criticality was explicitly widened
+from `int` to `bigint`; installation date was retained as ISO text in Silver and
+explicitly excluded from proposed Gold mappings. Systems is included because
+the ontology declares Equipment → Systems → Facilities, not a direct
+Equipment → Facilities relationship.
+
+The reusable preparation builder is:
+
+```bash
+python3 -m MasterDataManagement.hydro_pilot \
+  --source-workspace <verified-hydro-workspace-guid> \
+  --source-lakehouse <verified-hydro-lakehouse-guid> \
+  --target-workspace <verified-pilot-workspace-guid> \
+  --target-lakehouse <verified-schema-enabled-pilot-lakehouse-guid> \
+  --target-name <verified-pilot-lakehouse-name> \
+  --output /path/to/pilot-artifacts
+```
+
+It creates local notebook/definition artifacts only. The deployed notebook is
+**one-shot**: existing tables or a receipt block another run rather than
+overwriting prior data. For an incomplete run, inspect the actual job and tables;
+do not automatically delete or replay it.
+
+`hydro_pilot.build_draft(receipt, ontology)` generates an unreviewed contract from
+a verified Silver receipt and live ontology identity/fingerprint. All 23 column
+decisions remain unreviewed. The live Hydro ontology's returned relationship
+TMDL omits explicit `fromCardinality`/`toCardinality`, so Concord's current strict
+validator cannot certify the two proposed many-to-one joins. Their endpoints
+and physical keys are declared; cardinality must not be inferred from a small
+sample or names. Resolve this through reviewed ontology authoring or separately
+verified format-default support, preserving all existing bindings.
+
+No MDM Gold release, publisher run, production approval, or semantic model has
+been created for this pilot. Sign-in and authenticated SQL draft acceptance also
+remain outstanding. After resolving ontology validation, a steward must review
+the contract and an authorized operator must independently pin its digest before
+deploying the Gold notebook and its succeeded-dependency pipeline activity.
+
 ## Steward workflow
 
 1. Import a format-version-1 JSON contract or create one from the customer template.
