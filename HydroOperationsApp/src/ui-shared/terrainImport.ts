@@ -6,8 +6,11 @@ export async function importTerrain(mesh: File, metadata: File, signal: AbortSig
   signal.throwIfAborted()
   const [buffer, text] = await Promise.all([mesh.arrayBuffer(), metadata.text()])
   signal.throwIfAborted()
+  // Inline code avoids a separate protected-asset request from the native worker loader.
+  const { default: TerrainWorker } = await import('./terrain.worker?worker&inline')
+  signal.throwIfAborted()
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./terrain.worker.ts', import.meta.url), { type: 'module' })
+    const worker = new TerrainWorker({ name: 'terrain-import' })
     const cleanup = () => { worker.terminate(); signal.removeEventListener('abort', cancel); window.clearTimeout(timeout) }
     const cancel = () => { cleanup(); reject(new DOMException('Terrain import cancelled.', 'AbortError')) }
     const timeout = window.setTimeout(() => { cleanup(); reject(new Error('Terrain import exceeded 60 seconds. Export a smaller mesh.')) }, 60_000)
@@ -17,7 +20,11 @@ export async function importTerrain(mesh: File, metadata: File, signal: AbortSig
       if (event.data.terrain) resolve(event.data.terrain)
       else reject(new Error(event.data.error ?? 'Terrain worker returned no mesh.'))
     }
-    worker.onerror = event => { event.preventDefault(); cleanup(); reject(new Error('The terrain worker could not run. Reload the app and try again.')) }
+    worker.onerror = event => {
+      event.preventDefault()
+      cleanup()
+      reject(new Error(`Terrain validation worker failed${event.message ? `: ${event.message}` : '. Check whether your browser blocks local workers.'}`))
+    }
     worker.onmessageerror = () => { cleanup(); reject(new Error('The terrain worker returned unreadable data.')) }
     try { worker.postMessage({ buffer, metadata: text, fileName: mesh.name }, [buffer]) }
     catch (reason) { cleanup(); reject(reason) }

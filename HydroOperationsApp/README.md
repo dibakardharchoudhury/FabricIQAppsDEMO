@@ -69,7 +69,11 @@ provenance and compute `meshSha256` from the exact complete PLY bytes:
 
 Select the surface `.ply` and sidecar `.json`, then **Import terrain**. The app
 verifies their SHA-256 match and validates the complete mesh in a cancellable
-worker before rendering. It supports Rasputin ASCII and binary little-endian
+worker before rendering. Production builds embed the worker code in the app module
+and start it locally, avoiding a separate worker-script fetch through Fabric's
+protected static hosting. Browser policy must permit local blob workers; failures
+remain visible, without falling back to parsing on the UI thread.
+It supports Rasputin ASCII and binary little-endian
 PLY 1.0 with double x/y/z vertices and triangular faces. Limits are 32 MiB per
 mesh, 16 KiB per sidecar, 500,000 vertices, 500,000 triangles, and a 60-second
 processing timeout. Export a smaller domain or use Rasputin's triangle budget

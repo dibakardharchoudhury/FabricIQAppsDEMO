@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import {
   MAX_TERRAIN_BYTES, MAX_TERRAIN_TRIANGLES, MAX_TERRAIN_VERTICES,
@@ -163,4 +164,29 @@ test('file validation and cancellation happen before launching a worker', async 
   await assert.rejects(importTerrain(mesh, new File([' '.repeat(16 * 1024 + 1)], 'too-big.json'), controller.signal), /16 KiB/)
   controller.abort()
   await assert.rejects(importTerrain(mesh, metadata, controller.signal), { name: 'AbortError' })
+})
+
+test('production terrain validation bundles its worker without a protected worker-script request', async () => {
+  const { build } = await import('vite')
+  const output = await build({
+    configFile: false,
+    root: fileURLToPath(new URL('../', import.meta.url)),
+    logLevel: 'silent',
+    build: {
+      write: false,
+      minify: false,
+      rollupOptions: {
+        input: fileURLToPath(new URL('../src/ui-shared/terrainImport.ts', import.meta.url)),
+        preserveEntrySignatures: 'strict',
+      },
+    },
+  })
+  assert.ok(!Array.isArray(output) && 'output' in output)
+  const chunks = output.output.filter(item => item.type === 'chunk')
+  assert.ok(chunks.some(chunk => chunk.exports.includes('importTerrain')))
+  const worker = chunks.find(chunk => chunk.code.includes('createObjectURL'))
+  assert.ok(worker, 'worker code must be embedded in the application module')
+  assert.match(worker.code, /new Worker\(objURL/)
+  assert.doesNotMatch(chunks.map(chunk => chunk.code).join('\n'), /new URL\([^)]*terrain\.worker/)
+  assert.ok(!output.output.some(item => item.type === 'asset' && /^terrain\.worker-/.test(item.fileName.split('/').at(-1)!)), 'no separate worker script should need host authentication')
 })
