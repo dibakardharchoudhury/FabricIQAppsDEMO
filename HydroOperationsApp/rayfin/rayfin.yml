@@ -17,7 +17,6 @@ services:
       externalEntraExchange: true
     allowedRedirectUris:
       - http://localhost:5173
-      - https://solar-dew-0ad1824bab-norwayeast.webapp.fabricapps.net
       - https://savvy-coast-6cc7d37cc3-norwayeast.webapp.fabricapps.net
   staticHosting:
     enabled: true
