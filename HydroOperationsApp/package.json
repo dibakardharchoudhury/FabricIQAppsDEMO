@@ -8,6 +8,8 @@
   },
   "type": "module",
   "scripts": {
+    "dev:master-data": "vite --open /master-data.html",
+    "test:master-data": "node --import tsx --test ./scripts/master-data.test.ts",
     "dev": "vite",
     "predev": "npm run validate-env && npm run env",
     "build": "tsc -b && vite build",

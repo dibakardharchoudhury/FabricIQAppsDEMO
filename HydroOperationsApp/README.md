@@ -1,5 +1,10 @@
 # Hydro Operations Fabric App
 
+The shared build also hosts **Concord**, a separate reusable master-data stewardship
+experience at `/master-data.html`. See the [Concord guide](../MasterDataManagement/README.md)
+for column-overlap review, ontology mappings, merge rules and governed Silver-to-Gold
+execution. It does not add Hydro navigation tabs or change existing source/agent provisioning.
+
 Hydro Intelligence has the same three accessible tabs in `ui=v1` and `ui=v2`:
 
 - **Fabric IQ** invokes the verified published Fabric Data Agent directly as the signed-in
