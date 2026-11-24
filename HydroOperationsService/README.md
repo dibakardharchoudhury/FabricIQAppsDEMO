@@ -1,5 +1,45 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Opt-in Azure AI Gateway client
+
+`hydro_orchestrator.ai_gateway.AIGatewayClient` consumes the existing
+`AIGatewayPower` gateway without changing Supervisor routing, native Fabric IQ
+grounding, hosted source authorization, or production write approvals.
+The installed `aigateway@azure` plugin's `/aigateway:build` workflow supplies the
+consumer contract; this client does not provision or modify gateway resources.
+
+The discovered model alias is `poweragents/gpt-5.2-chat`, using
+`https://aigatewayp-j4rqjxpeakwtc.swedencentral-01.ai.gateway.azure.com/default/models/openai/v1/chat/completions`.
+The discovered MCP servers are `fabric-espen-ontology`, `learn`, and `health`,
+using the documented `/default/toolservers/<server>/mcp` route. Server descriptions
+are not proof of ontology ownership, read-only behavior, or runtime readiness.
+Tool discovery preserves exact names and schemas; this client never executes tools.
+
+Pass an **existing approved** `AsyncTokenCredential`; no default credential chain,
+key lookup, login, role grant, or credential fallback is used. For the approved
+local Azure CLI identity, instantiate `azure.identity.aio.AzureCliCredential` and
+pass it to the client. It requests only `https://ai.gateway.azure.com/.default`;
+never substitute an ARM or Foundry token. Keep credentials in memory and out of
+browser bundles, logs, and persisted workflow state. Do not use this local CLI
+binding as a replacement for hosted per-user source authorization.
+
+After human approval for the exact prompt and billable token budget, call
+`await client.complete(prompt, max_output_tokens=32, approved=True)`.
+After separate approval for MCP initialization/listing on a named server, call
+`await client.list_tools("learn", approved=True)`. Both refuse requests by default,
+including token acquisition. Listing may create a temporary MCP session and audit
+records; no automatic pagination, tool execution, or request retry is performed.
+Initialization may open one protocol notification GET stream. Redirects and
+replays are blocked before credentials are obtained or another request is sent.
+The caller owns the credential lifecycle. Incomplete/refused model answers,
+partial tool inventories, transport failures, and HTTP access errors fail explicitly.
+
+The approved November 24, 2026 check obtained a gateway-scoped Entra token, but
+the single model request returned **HTTP 403**. Model execution and MCP discovery
+remain **unverified**; the gateway owner must review the identity's runtime access.
+No keys or gateway resources were changed. Offline tests use mocked HTTP/MCP
+responses, not billable requests or operational sources.
+
 ## Multi-workspace deployment
 
 One Foundry account owns model deployments and projects. Multiple Fabric workspaces
