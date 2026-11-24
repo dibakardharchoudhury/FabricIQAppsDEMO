@@ -63,6 +63,40 @@ test('v2 definitions without model refs parse namespaces, optional lineage, keys
   assert.equal(parse([facility, system, physical]).relationshipTypes.length, 0)
 })
 
+test('normalizes verified TOM cardinality defaults at physical endpoints without guessing semantic direction', () => {
+  const base = `relationship systems_facilities
+    fromColumn: silver_systems.facility_id
+    toColumn: silver_facilities.facility_id
+`
+  const edge = (text: string) => parse([facility, system, semantic, tmdl('relationships.tmdl', text)]).relationshipTypes[0]
+  for (const suffix of ['', '    fromCardinality: many\n', '    toCardinality: one\n', '    fromCardinality: many\n    toCardinality: one\n']) {
+    const relationship = edge(base + suffix)
+    assert.equal(relationship.sourceCardinality, 'many')
+    assert.equal(relationship.targetCardinality, 'one')
+    assert.deepEqual(relationship.sourceKeys, ['facility_id'])
+    assert.deepEqual(relationship.targetKeys, ['facility_id'])
+  }
+  assert.equal(edge(base + '    fromCardinality: one\n').sourceCardinality, 'one')
+  assert.equal(edge(base + '    toCardinality: many\n').targetCardinality, 'many')
+  const reverse = base.replace('fromColumn: silver_systems.facility_id', 'fromColumn: silver_facilities.facility_id')
+    .replace('toColumn: silver_facilities.facility_id', 'toColumn: silver_systems.facility_id')
+  assert.equal(edge(reverse).sourceCardinality, 'one')
+  assert.equal(edge(reverse).targetCardinality, 'many')
+  assert.equal(edge(reverse + '    fromCardinality: one\n    toCardinality: many\n').sourceCardinality, 'many')
+  assert.equal(edge(reverse + '    fromCardinality: one\n    toCardinality: many\n').targetCardinality, 'one')
+  for (const unsupported of ['none', 'unknown', '']) {
+    assert.throws(() => edge(base + `    fromCardinality: ${unsupported}\n`), /unsupported fromCardinality/)
+    assert.throws(() => edge(base + `    toCardinality: ${unsupported}\n`), /unsupported toCardinality/)
+  }
+  const unbound = parse([facility, system, tmdl('entityRelationships.tmdl', `entityRelationship unbound
+    fromEntity: 'hydro#systems'
+    toEntity: default#facilities
+`)]).relationshipTypes[0]
+  assert.equal(unbound.sourceCardinality, undefined)
+  assert.equal(unbound.targetCardinality, undefined)
+  assert.equal(unbound.compatibilityUnsupported, true)
+})
+
 test('CRLF tabs Unicode quoted names apostrophes descriptions and resourceLink siblings', () => {
   const contract = parse([tmdl("entities/plant#Station's sensors.tmdl", `/// Čidlo
 entity 'plant#Station''s sensors'

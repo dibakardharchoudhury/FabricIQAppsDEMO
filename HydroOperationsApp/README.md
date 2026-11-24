@@ -1,5 +1,10 @@
 # Hydro Operations Fabric App
 
+The shared build also hosts **Concord**, a separate reusable master-data stewardship
+experience at `/master-data.html`. See the [Concord guide](../MasterDataManagement/README.md)
+for column-overlap review, ontology mappings, merge rules and governed Silver-to-Gold
+execution. It does not add Hydro navigation tabs or change existing source/agent provisioning.
+
 Hydro Intelligence has the same three accessible tabs in `ui=v1` and `ui=v2`:
 
 - **Fabric IQ** invokes the verified published Fabric Data Agent directly as the signed-in
@@ -20,6 +25,106 @@ The direct answer itself is never summarized, truncated or replaced.
 A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
 **independent Fabric data stores** — plus an in‑browser 3D digital‑twin viewer.
+
+## Catchment terrain (Rasputin)
+
+**Catchment Terrain** (`tab=terrain`) is available in both layouts, independently of
+the optional Norwegian Energy Map. It displays one locally imported, pre-generated
+[Rasputin](https://github.com/expertanalytics/rasputin) surface mesh. Orbit, zoom,
+pan, reset-view and wireframe controls work without a Fabric source connection.
+Elevation colours are relative to the imported mesh, with a 1:1 vertical scale.
+
+The same tab includes a **synthetic rainfall-to-runoff calculator**, available
+without importing a mesh or connecting a source. Its invented seven-day rainfall
+series is `[0, 4, 10, 25, 12, 3, 0]` mm/day, assumed catchment area is 10 km² and
+runoff coefficient is 0.5. Edit these assumptions and choose **Calculate synthetic
+runoff**; changing an input clears previous results. **Reset synthetic example**
+restores the demonstration. Results include daily runoff depth, volume and average
+flow, plus seven-day totals. All inputs and results stay in page memory.
+
+Volume (m³/day) = rainfall (mm/day) × area (km²) × 1,000 × coefficient;
+daily average flow (m³/s) = volume ÷ 86,400. The default total is 270,000 m³.
+This is a uniform rainfall, constant-coefficient calculation, **not a calibrated
+inflow model or forecast**. It excludes snowmelt, evaporation, soil/groundwater
+storage, baseflow, routing and reservoirs; daily averages are not peak discharge.
+The area is not inferred from the terrain or the Kartverket demonstration mesh,
+which is not a delineated hydrological catchment. No live-source fallbacks,
+ontology bindings or operational SQL writes are introduced. Do not use these
+demonstration results for operational decisions. Run `npm run test:runoff`
+for calculator checks.
+
+Generate the mesh outside the app with Rasputin's Python/C++ toolchain:
+
+```sh
+rasputin mesh --dem terrain.tif --domain catchment.geojson --tolerance 5 --out catchment.ply
+```
+
+Use your actual input paths and projected output CRS; for a geographic DEM,
+specify a supported UTM `--out-crs`. Rasputin is installed from source, requires
+Python 3.12+ and a C++20 compiler, and does not support Windows natively; see its
+[installation guide](https://github.com/expertanalytics/rasputin/blob/master/INSTALL.md).
+Pin a reviewed Rasputin revision for reproducible exports.
+
+Create a matching JSON sidecar (this is the viewer's metadata contract, not a
+native Rasputin run record). Replace **every example value** with actual
+provenance and compute `meshSha256` from the exact complete PLY bytes:
+`shasum -a 256 catchment.ply` on macOS, `sha256sum catchment.ply` on Linux, or
+`Get-FileHash catchment.ply -Algorithm SHA256` in PowerShell.
+
+```json
+{
+  "schemaVersion": 1,
+  "catchmentName": "Your catchment name",
+  "crs": "EPSG:25833",
+  "elevationUnit": "m",
+  "verticalDatum": "Your DEM's documented vertical datum",
+  "source": "Your DEM dataset, version and acquisition date",
+  "attribution": "Required source credits and data licence",
+  "generatedAt": "2026-11-05T10:00:00Z",
+  "meshSha256": "<replace with the mesh file's 64-character SHA-256>",
+  "toleranceMetres": 5
+}
+```
+
+Select the surface `.ply` and sidecar `.json`, then **Import terrain**. The app
+verifies their SHA-256 match and validates the complete mesh in a cancellable
+worker before rendering. Production builds embed the worker code in the app module
+and start it locally, avoiding a separate worker-script fetch through Fabric's
+protected static hosting. Browser policy must permit local blob workers; failures
+remain visible, without falling back to parsing on the UI thread.
+It supports Rasputin ASCII and binary little-endian
+PLY 1.0 with double x/y/z vertices and triangular faces. Limits are 32 MiB per
+mesh, 16 KiB per sidecar, 500,000 vertices, 500,000 triangles, and a 60-second
+processing timeout. Export a smaller domain or use Rasputin's triangle budget
+for larger files. Truncated files, invalid indices, non-finite coordinates,
+degenerate triangles, unsupported declarations and hash mismatches fail visibly
+without retaining a previous mesh. Replacing either file or clearing the import
+also clears the old view and cancels outstanding work.
+
+Only metre-based UTM EPSG:25828-25838, EPSG:32601-32660 and EPSG:32701-32760 are
+accepted. Coordinates must be easting, northing, elevation in metres. The viewer
+subtracts a double-precision local origin before uploading float positions to
+the GPU, preserving small coordinate differences around large UTM coordinates.
+The original coordinate bounds, CRS, datum, credits and file hash remain visible.
+No reprojection, basemap overlay or vertical-datum conversion is performed.
+
+Catchment names, CRS, datum, timestamp, source, attribution and optional tolerance
+are **author-supplied**, not independently certified. A matching hash proves
+file pairing, not provenance or DEM accuracy. Additional face fields such as
+land-cover codes, fractions and DEM height shares are consumed but not
+visualized, and are explicitly listed as unsupported projections.
+VTK, GeoPackage, edge-only PLY, boundary overlays and land-cover colouring are
+not supported. Rasputin is MIT-licensed by Expert Analytics; its software licence
+does not replace the input datasets' attribution/licensing obligations.
+
+Imports exist only in the current page's memory and are discarded on navigation
+or reload. No files are uploaded, saved in browser storage, bundled as fallback
+terrain or written to operational SQL. This is reference visualization, not
+live source readiness, a calibrated inflow forecast, or ontology/asset linkage.
+No processing service, agent tool, Fabric notebook or deployment change is
+provisioned. Run `npm run test:terrain` for the import/metadata/navigation checks.
+
+## Deployment and architecture
 
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
 > The local launcher separates Fabric/energy source setup, Foundry multi-agent

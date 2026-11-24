@@ -1,8 +1,8 @@
-import { Activity, Bot, CloudSun, Factory, Gauge, Map, Network, Settings, Wrench } from 'lucide-react'
+import { Activity, Bot, CloudSun, Factory, Gauge, Map, Mountain, Network, Settings, Wrench } from 'lucide-react'
 import { lazy, type ComponentType } from 'react'
 import { filterEnergyMapTabs, resolveVisibleTab } from '../ui-shared/appFeatures'
 
-export type V2TabId = 'overview' | 'map' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
+export type V2TabId = 'overview' | 'map' | 'terrain' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
 
 export type V2Tab = {
   id: V2TabId
@@ -15,6 +15,7 @@ export type V2Tab = {
 const ALL_V2_TABS: V2Tab[] = [
   { id: 'overview', label: 'Overview', title: 'Overview', icon: Gauge, Page: lazy(() => import('./pages/OverviewPage').then(module => ({ default: module.OverviewPage }))) },
   { id: 'map', label: 'Norwegian Energy Map', title: 'Norwegian Energy Map', icon: Map, Page: lazy(() => import('../ui-shared/pages/OperationsMapPage').then(module => ({ default: module.OperationsMapPage }))) },
+  { id: 'terrain', label: 'Catchment Terrain', title: 'Catchment Terrain', icon: Mountain, Page: lazy(() => import('../ui-shared/pages/TerrainPage').then(module => ({ default: module.TerrainPage }))) },
   { id: 'telemetry', label: 'Real Time Telemetry', title: 'Real Time Telemetry', icon: Activity, Page: lazy(() => import('./pages/TelemetryPage').then(module => ({ default: module.TelemetryPage }))) },
   { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: lazy(() => import('./pages/WeatherPage').then(module => ({ default: module.WeatherPage }))) },
   { id: 'digital-twin', label: 'Digital Twin', title: 'Digital Twin', icon: Factory, Page: lazy(() => import('./pages/DigitalTwinPage').then(module => ({ default: module.DigitalTwinPage }))) },

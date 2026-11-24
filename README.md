@@ -8,6 +8,13 @@ playbook, actions, Teams, and email-alert capabilities while adopting Ontology v
 remain failures, not successful static capability skips. A companion React app
 ([`HydroOperationsApp/`](HydroOperationsApp/README.md)) composes the data on one screen.
 
+The separate [Concord master data stewardship app](MasterDataManagement/README.md)
+adds a reusable Silver-to-Gold governance workbench: source-column overlap and
+schema-drift review, canonical naming, ontology mappings, explicit merge rules,
+versioned golden records, and Direct Lake semantic-model definition generation.
+Its standalone entry is `master-data.html`; it is not deployed to a target by
+adding these source files.
+
 > [!NOTE]
 > All data is synthetic — no real plant or customer data.
 > The project is v2-only. Agent availability depends on Fabric product support; a successful

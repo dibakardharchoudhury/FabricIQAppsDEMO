@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as { version: string }
 
@@ -16,6 +17,14 @@ const appVersion = commitCount ? `${major}.${minor}.${commitCount}` : pkg.versio
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL('./index.html', import.meta.url)),
+        masterData: fileURLToPath(new URL('./master-data.html', import.meta.url)),
+      },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),

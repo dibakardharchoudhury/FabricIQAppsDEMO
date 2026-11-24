@@ -380,9 +380,10 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
       if (!from || !to) fail(binding, 'only single-column physical relationship bindings are supported.')
       const fromRef = column(from!, binding)
       const toRef = column(to!, binding)
-      const cardinality = (key: string): 'one' | 'many' | undefined => {
+      const cardinality = (key: 'fromCardinality' | 'toCardinality'): 'one' | 'many' => {
         const value = field(binding, key)
-        if (value === undefined) return undefined
+        // TOM deserializes these defaults and omits them again on TMDL serialization.
+        if (value === undefined) return key === 'fromCardinality' ? 'many' : 'one'
         if (value === 'one' || value === 'many') return value
         return fail(binding, `unsupported ${key}.`)
       }
