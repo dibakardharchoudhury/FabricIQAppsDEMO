@@ -47,9 +47,20 @@ a separately approved check produced these results:
 
 No MCP tools were executed. Learn is suitable for supplemental Microsoft/Azure
 documentation, not as a replacement for verified ontology business grounding.
-The two HTTP 500 failures need separate diagnosis; they do not establish which
-gateway or backend component failed. No automatic retries, key access, or
-gateway policy/backend changes were made. Existing agent routing remains unchanged.
+An approved follow-up returned the same explicit message for both failed servers:
+**"The tool server configuration is invalid. Contact the service administrator."**
+Both existing source bindings use OAuth authorization-code authentication and
+fail-closed mode. Their management provisioning state is `Succeeded`, which does
+not certify runtime configuration or completed backend OAuth authorization.
+The available non-secret metadata does not establish whether consent or stored
+OAuth credentials are missing; neither binding was replaced or weakened.
+
+Browser reauthorization of the existing bindings is a proposed next diagnostic
+repair, not a verified fix. It requires explicit approval and user-reviewed consent.
+The installed CLI's authorization path does not call `listSecrets`; its
+`mcp update --endpoints` path does, so endpoint-array updates are prohibited when
+secret retrieval is forbidden. No automatic retries, key access, OAuth-state
+changes, or gateway policy/backend changes were made. Existing agent routing remains unchanged.
 Offline tests use mocked HTTP/MCP responses, not billable requests or operational sources.
 
 ## Multi-workspace deployment
