@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEven
 import { Mountain } from 'lucide-react'
 import { importTerrain } from '../terrainImport'
 import type { ImportedTerrain } from '../terrainModel'
+import { SyntheticRunoffCalculator } from '../components/SyntheticRunoffCalculator'
 import '../styles/terrain.css'
 
 const TerrainCanvas = lazy(() => import('../components/TerrainCanvas').then(module => ({ default: module.TerrainCanvas })))
@@ -51,6 +52,7 @@ export function TerrainPage() {
   return <div className="v2-domain-page terrain-page">
     <header className="terrain-heading"><Mountain size={28} /><div><span className="v2-eyebrow">Rasputin terrain</span><h1>Catchment terrain</h1><p>Inspect one pre-generated catchment mesh. No processing service or Fabric source connection is required.</p></div></header>
     <p className="terrain-notice">Imported reference data, not live operational data or an inflow forecast. Catchment identity and provenance are supplied by the file author, not verified against Fabric assets. No ontology relationships are inferred.</p>
+    <SyntheticRunoffCalculator />
     <form className="terrain-import" onSubmit={event => void load(event)} ref={form} aria-label="Import catchment terrain">
       <label>Surface mesh (.ply, up to 32 MiB)<input type="file" accept=".ply" onChange={event => { invalidate(); setMesh(event.target.files?.[0]) }} /></label>
       <label>Provenance metadata (.json, up to 16 KiB)<input type="file" accept=".json,application/json" onChange={event => { invalidate(); setMetadata(event.target.files?.[0]) }} /></label>

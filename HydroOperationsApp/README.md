@@ -34,6 +34,25 @@ the optional Norwegian Energy Map. It displays one locally imported, pre-generat
 pan, reset-view and wireframe controls work without a Fabric source connection.
 Elevation colours are relative to the imported mesh, with a 1:1 vertical scale.
 
+The same tab includes a **synthetic rainfall-to-runoff calculator**, available
+without importing a mesh or connecting a source. Its invented seven-day rainfall
+series is `[0, 4, 10, 25, 12, 3, 0]` mm/day, assumed catchment area is 10 km² and
+runoff coefficient is 0.5. Edit these assumptions and choose **Calculate synthetic
+runoff**; changing an input clears previous results. **Reset synthetic example**
+restores the demonstration. Results include daily runoff depth, volume and average
+flow, plus seven-day totals. All inputs and results stay in page memory.
+
+Volume (m³/day) = rainfall (mm/day) × area (km²) × 1,000 × coefficient;
+daily average flow (m³/s) = volume ÷ 86,400. The default total is 270,000 m³.
+This is a uniform rainfall, constant-coefficient calculation, **not a calibrated
+inflow model or forecast**. It excludes snowmelt, evaporation, soil/groundwater
+storage, baseflow, routing and reservoirs; daily averages are not peak discharge.
+The area is not inferred from the terrain or the Kartverket demonstration mesh,
+which is not a delineated hydrological catchment. No live-source fallbacks,
+ontology bindings or operational SQL writes are introduced. Do not use these
+demonstration results for operational decisions. Run `npm run test:runoff`
+for calculator checks.
+
 Generate the mesh outside the app with Rasputin's Python/C++ toolchain:
 
 ```sh

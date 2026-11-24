@@ -31,3 +31,17 @@
 .terrain-stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .terrain-controls { padding: 12px; font-size: 12px; }
 .terrain-page a { color: var(--cp-link); }
+.terrain-runoff { display: grid; gap: 16px; min-width: 0; }
+.terrain-runoff h2 { margin: 0; }
+.terrain-runoff-form { display: grid; gap: 16px; }
+.terrain-runoff-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 12px; }
+.terrain-runoff-inputs label { display: grid; gap: 8px; font-size: 13px; font-weight: 600; min-width: 0; }
+.terrain-runoff-inputs input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--cp-border-strong); border-radius: 6px; background: var(--cp-surface); color: var(--cp-text); }
+.terrain-runoff fieldset { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--cp-border); border-radius: 8px; }
+.terrain-runoff legend { padding: 0 6px; font-size: 13px; }
+.terrain-runoff-results { display: grid; gap: 16px; min-width: 0; }
+.terrain-runoff-table { overflow-x: auto; }
+.terrain-runoff table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.terrain-runoff caption { text-align: left; color: var(--cp-text-muted); padding-bottom: 10px; }
+.terrain-runoff th, .terrain-runoff td { text-align: right; padding: 10px; border-bottom: 1px solid var(--cp-border); white-space: nowrap; }
+.terrain-runoff th:first-child { text-align: left; }
