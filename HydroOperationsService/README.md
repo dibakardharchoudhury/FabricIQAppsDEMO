@@ -34,11 +34,23 @@ replays are blocked before credentials are obtained or another request is sent.
 The caller owns the credential lifecycle. Incomplete/refused model answers,
 partial tool inventories, transport failures, and HTTP access errors fail explicitly.
 
-The approved November 24, 2026 check obtained a gateway-scoped Entra token, but
-the single model request returned **HTTP 403**. Model execution and MCP discovery
-remain **unverified**; the gateway owner must review the identity's runtime access.
-No keys or gateway resources were changed. Offline tests use mocked HTTP/MCP
-responses, not billable requests or operational sources.
+The November 24, 2026 checks initially returned HTTP 403 for the model, Learn,
+and Health. After explicitly approved, asset-scoped caller role assignments,
+a separately approved check produced these results:
+
+| Gateway asset | Verified outcome |
+| --- | --- |
+| `poweragents/gpt-5.2-chat` | HTTP 200, completed exact `gateway-ready` answer; 11 input and 5 output tokens |
+| `learn` | Complete tool listing: `learn_microsoft_docs_search`, `learn_microsoft_code_sample_search`, `learn_microsoft_docs_fetch` |
+| `fabric-espen-ontology` | Tool discovery failed with HTTP 500; not runtime ready |
+| `health` | Tool discovery failed with HTTP 500; not runtime ready |
+
+No MCP tools were executed. Learn is suitable for supplemental Microsoft/Azure
+documentation, not as a replacement for verified ontology business grounding.
+The two HTTP 500 failures need separate diagnosis; they do not establish which
+gateway or backend component failed. No automatic retries, key access, or
+gateway policy/backend changes were made. Existing agent routing remains unchanged.
+Offline tests use mocked HTTP/MCP responses, not billable requests or operational sources.
 
 ## Multi-workspace deployment
 
