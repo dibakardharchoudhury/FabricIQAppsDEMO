@@ -8,7 +8,9 @@ network/conflict review and cost approval.
 
 Open [the animated architecture walkthrough](flow.html) directly in a browser
 to watch packets automatically loop through the seven request/response stages,
-or replay the separate certificate-startup path. Stages are not clickable;
+or replay the separate certificate-startup path. The diagram-first canvas shows
+the existing resource groups, VNet/subnets and service icons together, with
+highlighted handoffs and narration below. Stages are not clickable;
 pause/resume and route selection control the illustration. Reduced-motion
 preferences start it paused. It is self-contained and offline, with no gateway requests, external
 assets, credentials or analytics. Its deployment evidence is a recorded snapshot,
