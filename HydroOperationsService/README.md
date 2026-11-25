@@ -42,25 +42,40 @@ a separately approved check produced these results:
 | --- | --- |
 | `poweragents/gpt-5.2-chat` | HTTP 200, completed exact `gateway-ready` answer; 11 input and 5 output tokens |
 | `learn` | Complete tool listing: `learn_microsoft_docs_search`, `learn_microsoft_code_sample_search`, `learn_microsoft_docs_fetch` |
-| `fabric-espen-ontology` | Tool discovery failed with HTTP 500; not runtime ready |
-| `health` | Tool discovery failed with HTTP 500; not runtime ready |
+| `fabric-espen-ontology` | November 25 discovery still returned HTTP 502 after the approved OBO token-version repair; not runtime ready |
+| `health` | November 25 post-consent discovery returned HTTP 500, invalid tool-server configuration; not runtime ready |
 
 No MCP tools were executed. Learn is suitable for supplemental Microsoft/Azure
 documentation, not as a replacement for verified ontology business grounding.
-An approved follow-up returned the same explicit message for both failed servers:
+Earlier approved checks returned the same explicit message for both failed servers:
 **"The tool server configuration is invalid. Contact the service administrator."**
-Both existing source bindings use OAuth authorization-code authentication and
-fail-closed mode. Their management provisioning state is `Succeeded`, which does
-not certify runtime configuration or completed backend OAuth authorization.
-The available non-secret metadata does not establish whether consent or stored
-OAuth credentials are missing; neither binding was replaced or weakened.
+The live ontology binding subsequently changed externally to `tokenExchange` /
+`entraOnBehalfOf`; that existing binding was preserved rather than restoring its
+old authorization-code flow. Approved metadata checks verified gateway
+preauthorization, matching managed-identity federation and gateway attachment,
+and an existing `Item.Read.All` delegated consent grant for the signed-in caller.
+A user-specific grant is not evidence that tenant-wide consent must be added.
+After separate approval, the existing exchange application's
+`api.requestedAccessTokenVersion` was changed from unset to `2`, matching the
+documented OBO setup. Readback preserved all other API settings, scopes and
+preauthorizations. One approved discovery still returned HTTP 502; the token-format
+repair did not establish working upstream access.
 
-Browser reauthorization of the existing bindings is a proposed next diagnostic
-repair, not a verified fix. It requires explicit approval and user-reviewed consent.
+Health retains its existing OAuth authorization-code binding. Its approved
+browser authorization was launched with the supported per-process CLI API override
+`AZURE_AIGATEWAY_API_VERSION=2025-09-01-preview` after the default API returned
+`ResourceNotFound`. The user confirmed consent, but the approved subsequent
+discovery still returned HTTP 500 with the invalid-configuration message.
+Both bindings remain fail-closed. Provisioning `Succeeded`, browser consent and
+application metadata readback do not certify MCP discovery or agent execution.
+The available non-secret metadata does not establish whether stored OAuth
+credentials are missing.
+
 The installed CLI's authorization path does not call `listSecrets`; its
 `mcp update --endpoints` path does, so endpoint-array updates are prohibited when
-secret retrieval is forbidden. No automatic retries, key access, OAuth-state
-changes, or gateway policy/backend changes were made. Existing agent routing remains unchanged.
+secret retrieval is forbidden. No keys were retrieved, created or rotated; no
+automatic retries, source-URL changes, gateway policy changes, or replacement or
+weakening of source bindings were performed. Existing agent routing remains unchanged.
 Offline tests use mocked HTTP/MCP responses, not billable requests or operational sources.
 
 ## Multi-workspace deployment
