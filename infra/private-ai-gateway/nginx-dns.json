@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "vnetName": { "type": "string", "defaultValue": "vnet_dbfabric" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "ai.espen.io",
+      "location": "global"
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "ai.espen.io/vnet-dbfabric",
+      "location": "global",
+      "dependsOn": ["[resourceId('Microsoft.Network/privateDnsZones', 'ai.espen.io')]"],
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": { "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]" }
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/A",
+      "apiVersion": "2020-06-01",
+      "name": "ai.espen.io/@",
+      "dependsOn": ["[resourceId('Microsoft.Network/privateDnsZones', 'ai.espen.io')]"],
+      "properties": {
+        "ttl": 300,
+        "aRecords": [
+          {
+            "ipv4Address": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', 'aci-aigproxy'), '2023-05-01').ipAddress.ip]"
+          }
+        ]
+      }
+    }
+  ]
+}

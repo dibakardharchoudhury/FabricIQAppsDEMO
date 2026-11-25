@@ -1,0 +1,140 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "type": "string", "defaultValue": "swedencentral" },
+    "vnetName": { "type": "string", "defaultValue": "vnet_dbfabric" },
+    "vaultName": { "type": "string" }
+  },
+  "variables": {
+    "workerIdentityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-aigproxy-cert')]",
+    "vaultId": "[resourceId('Microsoft.KeyVault/vaults', parameters('vaultName'))]",
+    "certOfficerRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a4417e6f-fecd-4de8-b567-7b0420556985')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "id-aigproxy-cert",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(variables('vaultId'), variables('workerIdentityId'), variables('certOfficerRole'))]",
+      "scope": "[concat('Microsoft.KeyVault/vaults/', parameters('vaultName'))]",
+      "dependsOn": ["[variables('workerIdentityId')]"],
+      "properties": {
+        "roleDefinitionId": "[variables('certOfficerRole')]",
+        "principalId": "[reference(variables('workerIdentityId'), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "nsg-aigproxy-cert",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowPrivateProxyHttps",
+            "properties": {
+              "priority": 100,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "10.0.3.0/28"
+            }
+          },
+          {
+            "name": "DenyInbound",
+            "properties": {
+              "priority": 4096,
+              "direction": "Inbound",
+              "access": "Deny",
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2024-05-01",
+      "name": "[concat(parameters('vnetName'), '/snet-aigproxy-cert')]",
+      "dependsOn": ["[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-aigproxy-cert')]"],
+      "properties": {
+        "addressPrefix": "10.0.3.0/28",
+        "natGateway": { "id": "[resourceId('Microsoft.Network/natGateways', 'nat-aigproxy')]" },
+        "networkSecurityGroup": { "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-aigproxy-cert')]" },
+        "delegations": [
+          {
+            "name": "containerInstance",
+            "properties": { "serviceName": "Microsoft.ContainerInstance/containerGroups" }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2024-05-01",
+      "name": "[concat(parameters('vnetName'), '/snet-aigproxy-vault')]",
+      "dependsOn": ["[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy-cert')]"],
+      "properties": {
+        "addressPrefix": "10.0.4.0/28",
+        "privateEndpointNetworkPolicies": "Disabled"
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-05-01",
+      "name": "pe-aigproxy-vault",
+      "location": "[parameters('location')]",
+      "dependsOn": ["[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy-vault')]"],
+      "properties": {
+        "subnet": { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy-vault')]" },
+        "privateLinkServiceConnections": [
+          {
+            "name": "vault",
+            "properties": {
+              "privateLinkServiceId": "[variables('vaultId')]",
+              "groupIds": ["vault"]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-05-01",
+      "name": "pe-aigproxy-vault/default",
+      "dependsOn": ["[resourceId('Microsoft.Network/privateEndpoints', 'pe-aigproxy-vault')]"],
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "vault",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net')]"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "workerIdentityId": { "type": "string", "value": "[variables('workerIdentityId')]" },
+    "workerClientId": { "type": "string", "value": "[reference(variables('workerIdentityId'), '2023-01-31').clientId]" },
+    "workerRoleId": {
+      "type": "string",
+      "value": "[extensionResourceId(variables('vaultId'), 'Microsoft.Authorization/roleAssignments', guid(variables('vaultId'), variables('workerIdentityId'), variables('certOfficerRole')))]"
+    }
+  }
+}

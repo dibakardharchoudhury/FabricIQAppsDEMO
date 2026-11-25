@@ -78,6 +78,12 @@ automatic retries, source-URL changes, gateway policy changes, or replacement or
 weakening of source bindings were performed. Existing agent routing remains unchanged.
 Offline tests use mocked HTTP/MCP responses, not billable requests or operational sources.
 
+The separately provisioned [private reverse proxy](../infra/private-ai-gateway/README.md)
+adds `https://ai.espen.io` inside the approved VNet only. Its private routing,
+DNS and self-signed certificate trust requirements are separate from gateway
+authentication. The client above still pins the original gateway origin; the
+proxy does not change agent routing or certify either failed MCP source.
+
 ## Multi-workspace deployment
 
 One Foundry account owns model deployments and projects. Multiple Fabric workspaces

@@ -1,0 +1,175 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "operatorObjectId": { "type": "string" },
+    "tenantId": { "type": "string" },
+    "vnetName": { "type": "string", "defaultValue": "vnet_dbfabric" },
+    "location": { "type": "string", "defaultValue": "swedencentral" }
+  },
+  "variables": {
+    "vaultName": "[concat('kv-aigp-', uniqueString(resourceGroup().id))]",
+    "identityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-aigproxy')]",
+    "vaultId": "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]",
+    "certOfficerRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a4417e6f-fecd-4de8-b567-7b0420556985')]",
+    "secretReaderRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "id-aigproxy",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2024-05-01",
+      "name": "pip-aigproxy-egress",
+      "location": "[parameters('location')]",
+      "sku": { "name": "Standard" },
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "publicIPAddressVersion": "IPv4"
+      }
+    },
+    {
+      "type": "Microsoft.Network/natGateways",
+      "apiVersion": "2024-05-01",
+      "name": "nat-aigproxy",
+      "location": "[parameters('location')]",
+      "sku": { "name": "Standard" },
+      "dependsOn": ["[resourceId('Microsoft.Network/publicIPAddresses', 'pip-aigproxy-egress')]"],
+      "properties": {
+        "idleTimeoutInMinutes": 10,
+        "publicIpAddresses": [
+          { "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'pip-aigproxy-egress')]" }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "nsg-aigproxy",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowPrivateHttps",
+            "properties": {
+              "priority": 100,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "10.0.2.0/24"
+            }
+          },
+          {
+            "name": "AllowAzureLoadBalancer",
+            "properties": {
+              "priority": 110,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "AzureLoadBalancer",
+              "destinationAddressPrefix": "*"
+            }
+          },
+          {
+            "name": "DenyOtherInbound",
+            "properties": {
+              "priority": 4096,
+              "direction": "Inbound",
+              "access": "Deny",
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2024-05-01",
+      "name": "[concat(parameters('vnetName'), '/snet-aigproxy')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/natGateways', 'nat-aigproxy')]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-aigproxy')]"
+      ],
+      "properties": {
+        "addressPrefix": "10.0.2.0/24",
+        "natGateway": { "id": "[resourceId('Microsoft.Network/natGateways', 'nat-aigproxy')]" },
+        "networkSecurityGroup": { "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-aigproxy')]" },
+        "delegations": [
+          {
+            "name": "applicationGateway",
+            "properties": { "serviceName": "Microsoft.Network/applicationGateways" }
+          }
+        ],
+        "serviceEndpoints": [
+          { "service": "Microsoft.KeyVault", "locations": ["[parameters('location')]"] }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('vaultName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": ["[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy')]"],
+      "properties": {
+        "tenantId": "[parameters('tenantId')]",
+        "sku": { "family": "A", "name": "standard" },
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true,
+        "enablePurgeProtection": true,
+        "softDeleteRetentionInDays": 90,
+        "publicNetworkAccess": "Disabled",
+        "networkAcls": {
+          "bypass": "AzureServices",
+          "defaultAction": "Deny",
+          "ipRules": [],
+          "virtualNetworkRules": [
+            { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy')]" }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(variables('vaultId'), parameters('operatorObjectId'), variables('certOfficerRole'))]",
+      "scope": "[concat('Microsoft.KeyVault/vaults/', variables('vaultName'))]",
+      "dependsOn": ["[variables('vaultId')]"],
+      "properties": {
+        "roleDefinitionId": "[variables('certOfficerRole')]",
+        "principalId": "[parameters('operatorObjectId')]",
+        "principalType": "User"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(variables('vaultId'), variables('identityId'), variables('secretReaderRole'))]",
+      "scope": "[concat('Microsoft.KeyVault/vaults/', variables('vaultName'))]",
+      "dependsOn": ["[variables('vaultId')]", "[variables('identityId')]"],
+      "properties": {
+        "roleDefinitionId": "[variables('secretReaderRole')]",
+        "principalId": "[reference(variables('identityId'), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    }
+  ],
+  "outputs": {
+    "vaultName": { "type": "string", "value": "[variables('vaultName')]" },
+    "identityId": { "type": "string", "value": "[variables('identityId')]" },
+    "subnetId": { "type": "string", "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy')]" }
+  }
+}

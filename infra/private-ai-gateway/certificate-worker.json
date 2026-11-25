@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workerScript": { "type": "string" },
+    "certificatePolicy": { "type": "string" },
+    "publicCertificatePem": { "type": "string", "defaultValue": "" },
+    "expectedPrivateIp": { "type": "string", "defaultValue": "10.0.2.10" },
+    "vaultName": { "type": "string" },
+    "location": { "type": "string", "defaultValue": "swedencentral" },
+    "vnetName": { "type": "string", "defaultValue": "vnet_dbfabric" }
+  },
+  "variables": {
+    "identityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-aigproxy-cert')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2023-05-01",
+      "name": "aci-aigproxy-cert",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": { "[variables('identityId')]": {} }
+      },
+      "properties": {
+        "osType": "Linux",
+        "restartPolicy": "Never",
+        "subnetIds": [
+          { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy-cert')]" }
+        ],
+        "containers": [
+          {
+            "name": "certificate",
+            "properties": {
+              "image": "mcr.microsoft.com/azure-cli@sha256:d483c14775d67577de4b2887aaef6d88f5a5371a151ad59872be91602cd89635",
+              "command": ["python3", "-c", "[parameters('workerScript')]"],
+              "resources": { "requests": { "cpu": 1, "memoryInGB": 1.5 } },
+              "environmentVariables": [
+                { "name": "VAULT_NAME", "value": "[parameters('vaultName')]" },
+                { "name": "IDENTITY_CLIENT_ID", "value": "[reference(variables('identityId'), '2023-01-31').clientId]" },
+                { "name": "CERTIFICATE_POLICY", "value": "[parameters('certificatePolicy')]" },
+                { "name": "PUBLIC_CERTIFICATE_PEM", "value": "[parameters('publicCertificatePem')]" },
+                { "name": "EXPECTED_PRIVATE_IP", "value": "[parameters('expectedPrivateIp')]" }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

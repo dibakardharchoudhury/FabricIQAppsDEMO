@@ -1,3 +1,161 @@
+# Private AI Gateway reverse proxy
+
+Status: Deployed and privately verified; superseded Application Gateway and temporary worker removed.
+
+- Approved target: existing subscription `d4d67f11-3766-4c12-8966-599f08e759da`,
+  resource group `dbfabricvnet`, VNet `vnet_dbfabric`, Sweden Central.
+- Private hostname: `ai.espen.io`; dedicated private DNS zone and VNet link.
+- Private NGINX ACI listener `10.0.3.12:443` in `10.0.3.0/28`.
+  The former Application Gateway subnet `10.0.2.0/24` remains reserved.
+- Private frontend only, HTTPS upstream using
+  the existing gateway hostname for Host and TLS validation. Preserve paths,
+  bearer authentication and streaming; disable request/response buffering.
+- Dedicated NAT Gateway and public egress IP provide outbound connectivity only.
+  No public listener, existing subnet replacement, peering or VPN creation.
+- Dedicated Key Vault and managed identity. Generate a self-signed certificate
+  inside the new vault; never download private keys, secrets or PFX files to
+  the deployer. The approved proxy loader uses only this certificate inside Azure.
+  Grant the operator certificate-management access and the proxy identity
+  certificate-secret read access only on this vault. Lock vault networking
+  with public access disabled and the firewall default set to Deny.
+- Approved replacement cost: approximately USD 85-120/month baseline plus
+  usage and taxes; estimate is not a regional/account-specific quote.
+- Approved checks: quota, deployment validation/what-if and readback, followed
+  by exactly one proxy-local `/healthz` GET and one unauthenticated forwarded
+  root GET. Those checks completed; no further model/MCP verification requests
+  or tool execution without separate approval. No recurring upstream probe.
+- Preserve the existing AI Gateway configuration, keys, bindings and routing.
+  Existing ontology/Health failures are outside this proxy deployment.
+- Client trust installation and a client network path remain operator prerequisites.
+  Agent 365 reachability is not established by this private deployment.
+- Recipe: incremental ARM JSON deployments through Azure CLI, with foundation,
+  private certificate creation, private NGINX and live-IP DNS stages.
+  Validate before provisioning.
+- Quota readback: 0/1000 Application Gateways, 0/500 NAT Gateways and 0/1000
+  public IPs reported in Sweden Central. Network-isolation feature registration
+  is required and specifically approved.
+- Prior completed deployment records below remain unchanged.
+
+### Approved private certificate amendment
+
+The foundation deployed after separately approved registration of
+`AllowBringYourOwnPublicIpAddress` and correction of the generated vault name to
+fit Key Vault's 24-character limit. Both network features are Registered.
+The new vault read back public access Disabled despite the initial enrollment
+setting, so local certificate creation was rejected before creating a certificate.
+Its unused firewall allowance was closed; the template now requires Disabled/Deny.
+The existing vault was not changed.
+
+The user approved two dedicated /28 subnets (certificate worker `10.0.3.0/28`
+and vault endpoint `10.0.4.0/28`), one private vault endpoint, and an isolated,
+temporary ACI certificate worker/identity. The worker identity receives only
+Certificates Officer on the new vault, not secret-read permissions. The private
+endpoint adds roughly USD 7-10/month plus data; temporary compute was estimated
+below USD 1 for a short run, without a price guarantee. The user explicitly
+approved removal of the temporary worker, its identity and its role after success.
+The existing vault private DNS zone receives the new vault's endpoint record;
+existing records and VNet links remain unchanged. The worker outputs only the
+public certificate and non-secret reference; it does not fetch stored private keys.
+
+### Approved NGINX replacement
+
+The private Application Gateway and DNS deployed successfully. Its initial NSG
+rule was corrected, with approval, to allow private-source HTTPS to its dedicated
+subnet as required by Azure. A private worker verified DNS and trusted TLS, but
+GET `/` returned 502. Direct unauthenticated GETs to the upstream root and the
+known completion route also returned 502, so changing probe paths did not help.
+No failing response was added to the healthy-status range.
+
+The user approved replacing Application Gateway with private NGINX in the
+existing container subnet, reusing NAT, the dedicated vault and `id-aigproxy`.
+Its startup container may load only this new TLS certificate/private key inside
+Azure into ephemeral shared files. No private material is downloaded to the
+deployer. The public certificate fingerprint is pinned during startup.
+The user approved private-source TCP 443 on the container subnet, private DNS
+cutover to the assigned ACI address, and removal of `agw-aigproxy` after successful
+private DNS/TLS and proxy-local `/healthz` verification. Verification is one
+`/healthz` GET plus one unauthenticated forwarded root GET, not model/MCP calls.
+The local health route certifies only the proxy; upstream errors remain visible.
+New estimate: USD 85-120/month for compute/NAT/private endpoint baseline plus
+usage and taxes, not an account-specific quote. This is single-instance, non-HA;
+container IP changes require a corresponding private DNS update.
+
+The replacement ARM template and all Python/JSON artifacts parsed successfully.
+ARM validation returned Succeeded; what-if contains exactly one Create,
+`aci-aigproxy`. The revised subnet NSG template also passed ARM validation, and
+the approved HTTPS-only rule was applied without changing other subnets.
+The loader uses the existing proxy identity and only its dedicated certificate
+secret; the deployed template parameters contain only code, public fingerprint
+and resource identifiers, never the secret value or private key. NGINX validates
+its configuration inside the official image before starting. Request retries,
+request/response buffering and upstream error interception are disabled.
+
+## Private proxy validation checklist
+
+- [x] Parse all ARM templates and certificate policy; check template scope,
+  private-only listener, streaming, TLS, DNS and absence of embedded credentials.
+- [x] Validate and what-if the foundation before creating resources.
+- [x] Register network isolation and deploy the incremental foundation.
+- [x] Generate the approved certificate without retrieving private material.
+  Close initial certificate-enrollment network access before proxy creation.
+- [x] Validate and what-if the proxy with the actual certificate reference.
+- [x] Deploy and read back private frontend, DNS, local proxy health and vault firewall.
+- [x] Export only the public certificate for operator-managed client trust.
+- [x] Persist infrastructure and deployment status; explicitly distinguish
+  infrastructure readiness from unperformed authenticated MCP/model verification.
+
+### Section 7: Private proxy validation proof
+
+November 25, 2026: `python3 -m json.tool` passed for both ARM templates and
+the certificate policy; `git diff --check` passed. No application, container or
+dependency changes require an application build. Static role review confirmed
+Key Vault Certificates Officer for the operator and Key Vault Secrets User for
+the dedicated identity, scoped only to the new vault; no subscription-wide grants.
+`az deployment group validate` returned Succeeded with no error for the
+foundation. `az deployment group what-if` returned Succeeded and only eight
+Create entries (new vault, two vault-scoped roles, identity, NAT, NSG, egress IP
+and dedicated subnet); all existing resources were Ignore. Network-isolation
+registration subsequently completed under explicit approval. The superseded
+Application Gateway stage underwent separate validation with its real certificate
+reference before deployment.
+
+The private certificate network and worker templates each passed
+`az deployment group validate` and `what-if` with additive resources only.
+Both deployments succeeded. The first worker run required explicit certificate
+readback rather than relying on the creation response shape; the corrected run
+reused the same certificate without renewal/rotation, exited 0, and produced only
+public certificate metadata. Public certificate expiry is November 25, 2027.
+The new vault remains Disabled/Deny with an approved private endpoint.
+Actual vault-scoped roles match the approved operator, proxy and temporary worker.
+The proxy template passed ARM validation with the actual versionless certificate
+reference. Its what-if contains exactly four Creates (private Application Gateway,
+narrow private DNS zone, VNet link, apex A record), and no existing-resource updates.
+No authenticated gateway/MCP/model request was used for these checks.
+
+The final private `aci-aigproxy` replacement is Running at `10.0.3.12`, with both
+containers Running and zero restarts. Actual in-image `nginx -t` passed.
+The approved private worker exited 0 after DNS/trusted-TLS validation, one
+`/healthz` GET (200) and one forwarded root GET (upstream JSON 502).
+It explicitly reported runtime uncertified and no model/MCP calls.
+The current VNet link is Completed, and the vault private endpoint is Approved
+for this exact vault. Vault public access remains Disabled/default Deny.
+Only the approved operator Certificates Officer and persistent proxy Secrets User
+remain at the dedicated vault scope. The temporary worker, worker identity and
+worker role have been deleted. Application Gateway deletion completed successfully;
+a scoped resource-list readback confirms the gateway, temporary worker and worker
+identity are absent. The reserved subnet/NSG are retained rather than deleted
+without further approval. Private DNS readback is `10.0.3.12`, TTL 300.
+
+The final source templates pin the exact NGINX and Azure CLI image digests
+reported by the verified running containers. The digest-pinned NGINX template's
+ARM validation returned Succeeded. All 11 offline cases pass, covering certificate-worker reuse,
+no ambiguous certificate creation replay, private-DNS rejection, bounded forwarded
+requests, fail-closed local health, explicit non-certification for upstream 502,
+and private-loader failure cleanup/reuse. Obsolete Application Gateway deployment
+and verifier artifacts have been removed from the final source.
+
+---
+
 # Feature workspace infrastructure deployment
 
 > **Status:** Deployed - Selected conversation view retention

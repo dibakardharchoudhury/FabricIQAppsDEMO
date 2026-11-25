@@ -1,0 +1,78 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "nginxConfig": { "type": "string" },
+    "certificateLoader": { "type": "string" },
+    "certificateFingerprint": { "type": "string" },
+    "vaultName": { "type": "string" },
+    "identityId": { "type": "string" },
+    "location": { "type": "string", "defaultValue": "swedencentral" },
+    "vnetName": { "type": "string", "defaultValue": "vnet_dbfabric" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2023-05-01",
+      "name": "aci-aigproxy",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": { "[parameters('identityId')]": {} }
+      },
+      "properties": {
+        "osType": "Linux",
+        "restartPolicy": "Always",
+        "ipAddress": {
+          "type": "Private",
+          "ports": [{ "protocol": "TCP", "port": 443 }]
+        },
+        "subnetIds": [
+          { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'snet-aigproxy-cert')]" }
+        ],
+        "volumes": [{ "name": "tls", "emptyDir": {} }],
+        "containers": [
+          {
+            "name": "nginx",
+            "properties": {
+              "image": "nginx@sha256:0616b208d25086f7a903e993626c56193787307fec4423bf7d3ce77194d2b1c5",
+              "command": [
+                "/bin/sh",
+                "-c",
+                "set -eu; umask 077; printf '%s' \"$NGINX_CONFIG\" > /etc/nginx/nginx.conf; n=0; until [ -f /certs/ready ]; do n=$((n + 1)); if [ \"$n\" -ge 120 ]; then printf '%s\\n' 'Certificate loader did not become ready.' >&2; exit 1; fi; sleep 5; done; nginx -t; exec nginx -g 'daemon off;'"
+              ],
+              "resources": { "requests": { "cpu": 0.5, "memoryInGB": 0.5 } },
+              "ports": [{ "protocol": "TCP", "port": 443 }],
+              "environmentVariables": [{ "name": "NGINX_CONFIG", "value": "[parameters('nginxConfig')]" }],
+              "volumeMounts": [{ "name": "tls", "mountPath": "/certs", "readOnly": true }],
+              "readinessProbe": {
+                "exec": {
+                  "command": ["/bin/sh", "-c", "test -f /certs/ready && nginx -t >/dev/null 2>&1"]
+                },
+                "initialDelaySeconds": 10,
+                "periodSeconds": 10
+              }
+            }
+          },
+          {
+            "name": "certificate-loader",
+            "properties": {
+              "image": "mcr.microsoft.com/azure-cli@sha256:d483c14775d67577de4b2887aaef6d88f5a5371a151ad59872be91602cd89635",
+              "command": ["python3", "-c", "[parameters('certificateLoader')]"],
+              "resources": { "requests": { "cpu": 0.5, "memoryInGB": 1.5 } },
+              "environmentVariables": [
+                { "name": "VAULT_NAME", "value": "[parameters('vaultName')]" },
+                { "name": "IDENTITY_CLIENT_ID", "value": "[reference(parameters('identityId'), '2023-01-31').clientId]" },
+                { "name": "CERTIFICATE_FINGERPRINT", "value": "[parameters('certificateFingerprint')]" }
+              ],
+              "volumeMounts": [{ "name": "tls", "mountPath": "/certs", "readOnly": false }]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "privateIp": { "type": "string", "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', 'aci-aigproxy'), '2023-05-01').ipAddress.ip]" }
+  }
+}
