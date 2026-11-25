@@ -6,6 +6,14 @@ They do not change `AIGatewayPower`, its credentials, policies or MCP bindings.
 Do not reuse the hardcoded subnet ranges in another environment without a new
 network/conflict review and cost approval.
 
+Open [the animated architecture walkthrough](flow.html) directly in a browser
+to watch packets automatically loop through the seven request/response stages,
+or replay the separate certificate-startup path. Stages are not clickable;
+pause/resume and route selection control the illustration. Reduced-motion
+preferences start it paused. It is self-contained and offline, with no gateway requests, external
+assets, credentials or analytics. Its deployment evidence is a recorded snapshot,
+not a live health check; choosing a route does not change the app or Azure.
+
 ## Addressing and access
 
 The private NGINX listener is `https://ai.espen.io`, currently at
