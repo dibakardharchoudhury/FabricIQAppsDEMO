@@ -67,6 +67,37 @@ Installation dates are descriptive registry attributes, not a time-intelligence 
 Weather, operational SQL, Eventhouse readings, and ontology control/audit tables are
 excluded. Signal counts and active flags must not be interpreted as telemetry health.
 
+### Fabric semantic view
+
+[`Hydro Core Assets View`](SemanticViews/Hydro%20Core%20Assets%20View/hydro_core_assets.yaml)
+defines the same five datasets, four parent-child relationships, and eight inventory
+metrics using Fabric's preview semantic-view YAML format (`0.2.0.dev0`). Its source is
+stored in `Energy_IQ_LakehouseRTI_V6` under
+`Context/Semantic Views/Hydro Core Assets View/hydro_core_assets.yaml`.
+This Lakehouse does not use schemas, so dataset sources are unqualified table names;
+the live compiler rejects a `dbo.` prefix. No source tables were changed.
+
+The view was published on 2026-11-27 with zero errors or warnings, producing its own
+[read-only Direct Lake model](https://app.powerbi.com/groups/475f0e52-67dc-40d1-aa12-6c9b9634204b/datasets/12d9a6c2-c379-4faa-aa7f-74c8146ab24d/details).
+Generated TMDL was read back from `SystemContext/Semantic Views/Hydro Core Assets View/`,
+and live queries confirmed all eight measures and facility-to-signal filtering.
+The separately authored `Hydro Core Assets` model and the ontology remain unchanged.
+
+Unlike the directly authored model, the preview view exposes source column names
+and columns without applying column renames, hiding, or measure formatting.
+All measures are generated in a `Metrics` table. The YAML deliberately contains
+only supported constructs; it is not a lossless export of Power BI presentation
+metadata or a claim of compatibility with newer standalone Apache Ossie versions.
+
+To update the view, save its YAML to the same `Context` path and publish that view
+again. Saving alone does not update the model. Never edit generated `SystemContext`
+output. Republishing updates this view's generated model, not the original model.
+The preview rejects publishing in workspaces connected to Git, deployment pipelines,
+or Power Platform solutions, or with workspace-level private links enabled; don't
+disconnect workspace integrations to bypass these restrictions. See Microsoft's
+[semantic-view reference](https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-yaml-reference)
+and [publishing instructions](https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-publish).
+
 ## Ontology generations and optional agents
 
 The canonical `RTI_004`, `RTI_005`, and `RTI_006` notebook names remain unchanged, including their

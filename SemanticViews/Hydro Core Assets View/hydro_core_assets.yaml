@@ -1,0 +1,106 @@
+version: 0.2.0.dev0
+name: Hydro Core Assets View
+description: >-
+  Core engineering asset inventory. Filters flow from Facilities through Systems,
+  Equipment, Instruments, and Signals. Counts and registry-active flags do not
+  represent live telemetry, ingestion, freshness, or operational health.
+datasets:
+  - name: Facilities
+    source: silver_facilities
+    description: One row per facility in the engineering master data.
+  - name: Systems
+    source: silver_systems
+    description: One row per engineering system belonging to a facility.
+  - name: Equipment
+    source: silver_equipment
+    description: >-
+      One row per physical asset belonging to a system. Status and active flags
+      describe the registry, not live operating conditions.
+  - name: Instruments
+    source: silver_instruments
+    description: One row per registered instrument belonging to physical equipment.
+  - name: Signals
+    source: silver_signal_master
+    description: >-
+      One row per registered OPC UA signal associated with an instrument.
+      No telemetry event values, timestamps, quality, or freshness are included.
+relationships:
+  - name: Systems belong to Facilities
+    from: Systems
+    to: Facilities
+    from_columns:
+      - facility_id
+    to_columns:
+      - facility_id
+  - name: Equipment belongs to Systems
+    from: Equipment
+    to: Systems
+    from_columns:
+      - system_id
+    to_columns:
+      - system_id
+  - name: Instruments belong to Equipment
+    from: Instruments
+    to: Equipment
+    from_columns:
+      - equipment_id
+    to_columns:
+      - equipment_id
+  - name: Signals originate from Instruments
+    from: Signals
+    to: Instruments
+    from_columns:
+      - instrument_id
+    to_columns:
+      - instrument_id
+metrics:
+  - name: Facility Count
+    description: Number of facilities in the current facility filter context.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "COUNTROWS('Facilities')"
+  - name: System Count
+    description: Number of systems in the current facility and system filter context.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "COUNTROWS('Systems')"
+  - name: Equipment Count
+    description: Number of physical assets in the current asset hierarchy filter context.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "COUNTROWS('Equipment')"
+  - name: Active Equipment Count
+    description: >-
+      Registry assets marked active; respects existing selections on is_active.
+      This is not a telemetry health measure.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "CALCULATE([Equipment Count], KEEPFILTERS('Equipment'[is_active] = TRUE()))"
+  - name: Instrument Count
+    description: Number of registered instruments in the current asset hierarchy filter context.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "COUNTROWS('Instruments')"
+  - name: Active Instrument Count
+    description: Instruments marked active in the registry, not healthy telemetry streams.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "CALCULATE([Instrument Count], KEEPFILTERS('Instruments'[is_active] = TRUE()))"
+  - name: Signal Count
+    description: Number of registered signal definitions, not telemetry events.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "COUNTROWS('Signals')"
+  - name: Active Signal Count
+    description: Signals marked active in the registry; does not certify ingestion or delivery.
+    expression:
+      dialects:
+        - dialect: DAX
+          expression: "CALCULATE([Signal Count], KEEPFILTERS('Signals'[is_active] = TRUE()))"
