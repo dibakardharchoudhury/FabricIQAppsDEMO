@@ -1,3 +1,114 @@
+# Private Logic App deployment (2026-11-27)
+
+Status: Blocked — infrastructure deployed; runtime storage blocked by inherited policy.
+
+The user approved Logic Apps Standard WS1 in subscription
+`d4d67f11-3766-4c12-8966-599f08e759da`, resource group `dbfabricvnet`,
+Sweden Central, with private ingress and private backing storage. The classic
+Foundry wizard uses Consumption, so this is a private-network equivalent, not
+an identical hosting plan or automatic Foundry integration.
+
+Use existing `vnet_dbfabric`; add dedicated integration, private endpoint and
+temporary deployment-helper subnets without replacing the VNet. Disable public
+network access from creation on both app and storage. Create private DNS and
+endpoints for the app/SCM and blob, file, queue and table storage. Use HTTPS-only,
+TLS 1.2+, managed identity, disabled FTP/basic publishing authentication and a
+minimal stateful Request/Response workflow with no external actions.
+
+The user separately approved a temporary private container and narrowly scoped
+permissions to publish/test the workflow and removal of that helper, identity and
+permissions afterwards. Never print storage credentials or signed callback URLs.
+No temporary public access, Foundry/model changes or reverse-proxy changes.
+Azure management-plane URLs and disabled platform public DNS names remain;
+"private" means no publicly accessible application or storage data-plane ingress.
+Outbound internet is not blanket-denied; this is not an isolated Azure control plane.
+
+Validation: Bicep compilation, ARM validation/what-if, live public-access and
+private-endpoint/DNS readback, followed by a real private starter-workflow request.
+Regional Microsoft.Web usage readback is 0 of 12; WS1 is listed in Sweden Central.
+Commit and push only this task's deployment artifacts and this additive plan entry.
+Artifacts are in `infra/private-logic-app/`. Deployment uses incremental ARM/Bicep.
+Integration is `10.0.5.0/26`, endpoints `10.0.6.0/27`, temporary helper `10.0.7.0/28`.
+Temporary permissions are Website Contributor on the new app only and Storage
+Account Key Operator Service Role on its new storage only. These permissions and
+the identity/container are removed after the private verification attempt.
+The helper writes the workflow directly to private Azure Files and calls only
+the starter workflow. No storage keys or signed callback URLs leave the helper.
+`az quota` is installed but Microsoft.Quota is unregistered; no provider
+registration or quota increase was performed. Provider-specific usage and ARM
+validation are the availability checks; deployment still determines live capacity.
+
+The pre-existing, unrelated deployment history below is preserved.
+
+## Validation outcomes — private Logic App
+
+- [x] Bicep compilation: main and helper compile without diagnostics.
+- [x] Template validation: `az deployment group validate` succeeded.
+- [x] What-if: succeeded; only task resources are Create, existing resources Ignore.
+- [x] Authentication: selected subscription and tenant match the approved context.
+- [ ] Effective policy compatibility: inherited Modify policy disables required keys.
+- [x] Static roles: built-in role IDs verified live; assignments are resource-scoped.
+
+## Section 7: Validation Proof — private Logic App
+
+On 2026-11-27, `az bicep build --stdout` passed for both task templates and
+`python3 -m py_compile` passed for the private helper. Main ARM group validation
+and ResourceIdOnly what-if both returned Succeeded. Regional ACI usage is
+5/100 container groups and 14/100 standard cores; storage account count is 11.
+Microsoft.Web regional usage is 0/12. Microsoft.Quota is unregistered, so no
+quota-service claim is made. The existing `nat-aigproxy` is Succeeded and used
+only for temporary helper outbound connectivity; no public ingress is added.
+There is no application container build: the helper uses Microsoft's Azure CLI
+image, and the Logic App uses the managed Standard runtime. Helper ARM
+validation/preview will also run after the new app/storage IDs exist and before
+creating the helper. Final verification must test runtime, not just ARM success.
+
+## Deployment outcome and keyless investigation
+
+The app `logic-dbfabric-private-sk5xyotnt4w2k` and its WS1 plan exist.
+App and backing storage public network access are Disabled. App/SCM resolve
+inside the VNet to `10.0.6.8`; storage file/queue/table/blob resolve to
+`10.0.6.4`, `.5`, `.6`, `.7`. All five private endpoints are Approved/Succeeded.
+External app and SCM root requests returned 403. These facts do not certify runtime.
+
+Private helper sign-in needed `--allow-no-subscriptions` for narrowly scoped
+permissions and a propagation retry. Private DNS succeeded, but file publishing
+failed with `KeyBasedAuthenticationNotPermitted`. No workflow request succeeded.
+Although ARM validation and deployment both succeeded with shared keys requested,
+live readback remained false. The first subscription-only policy inventory
+missed inherited assignments. A later ARM query with `$filter=atScope()` found
+management-group `MCAPSGovDeployPolicies`, including
+`StorageAccount_DisableLocalAuth_Modify` ("SFI-ID4.2.1 Storage Accounts - Safe
+Secrets Standard"), which modifies `allowSharedKeyAccess` to false.
+No governance assignment, exception, exemption tag or policy was changed.
+
+All temporary helper instances, temporary identities, their role assignments
+and `snet-logic-deploy` were removed and absence was verified. The private
+app/plan/storage/endpoints/DNS remain. WS1 continues to incur compute charges.
+No Foundry integration or working workflow is claimed.
+
+The user selected "Investigate a supported keyless alternative without changing
+the policy". Current Microsoft Learn explicitly says Workflow Service Plan
+Logic Apps cannot disable storage account key access, while ASE v3-hosted
+Logic Apps can after managed-identity setup:
+https://learn.microsoft.com/azure/logic-apps/create-single-tenant-workflows-azure-portal#set-up-managed-identity-access-to-your-storage-account
+
+The supported policy-compatible Logic App option is Windows ASE v3 with an
+internal VIP, managed-identity runtime storage and private storage endpoints.
+It needs a separately approved Isolated v2 hosting plan and dedicated delegated
+subnet; no ASE exists in the subscription. No ASE was provisioned. Exact regional
+pricing was not verified (retail lookup for I1v2 returned no meters).
+Sample-only no-content-share settings and generic Azure Functions identity
+guidance are not treated as supported WS1 replacements for the documented
+platform restriction. Deployment now fails before mutations when the existing
+storage is key-disabled, and before helper creation if Modify changes it.
+Final scoped Bicep compilation and two policy-gate regression tests passed.
+Final live readback confirmed public access Disabled on app/storage, shared-key
+access still false, and FTP/SCM basic publishing both false. This is a blocked
+deployment record, not a runtime success certificate.
+
+---
+
 # Feature workspace infrastructure deployment
 
 > **Status:** Deployed - Selected conversation view retention
