@@ -1,0 +1,55 @@
+/// One row per instrument from silver_instruments, linked to its physical equipment by equipment_id.
+table Instruments
+
+	/// Number of registered instruments in the current asset hierarchy filter context.
+	measure 'Instrument Count' = COUNTROWS('Instruments')
+		formatString: #,##0
+		displayFolder: Inventory
+
+	/// Instruments marked active in the registry, not a count of healthy telemetry streams.
+	measure 'Active Instrument Count' = CALCULATE([Instrument Count], KEEPFILTERS('Instruments'[Is Active] = TRUE()))
+		formatString: #,##0
+		displayFolder: Inventory
+
+	column 'Instrument ID'
+		dataType: string
+		isHidden
+		isKey
+		summarizeBy: none
+		sourceColumn: instrument_id
+
+	column 'Equipment ID'
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: equipment_id
+
+	/// Engineering tag identifying the instrument.
+	column 'Instrument Tag'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: tag
+
+	/// Instrument classification recorded in the source.
+	column 'Instrument Type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: instrument_type
+
+	/// Source unit of measure; values with different units must not be added together.
+	column Unit
+		dataType: string
+		summarizeBy: none
+		sourceColumn: unit
+
+	/// Whether the instrument is marked active in the engineering registry.
+	column 'Is Active'
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: is_active
+
+	partition Instruments = entity
+		mode: directLake
+		source
+			entityName: silver_instruments
+			expressionSource: 'Direct Lake - Hydro Core Assets'

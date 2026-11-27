@@ -1,0 +1,87 @@
+/// One row per physical asset from silver_equipment. Status and active flags are registry metadata, not live health.
+table Equipment
+
+	/// Number of physical assets in the current asset hierarchy filter context.
+	measure 'Equipment Count' = COUNTROWS('Equipment')
+		formatString: #,##0
+		displayFolder: Inventory
+
+	/// Registry assets marked active; respects existing selections on the active flag.
+	measure 'Active Equipment Count' = CALCULATE([Equipment Count], KEEPFILTERS('Equipment'[Is Active] = TRUE()))
+		formatString: #,##0
+		displayFolder: Inventory
+
+	column 'Equipment ID'
+		dataType: string
+		isHidden
+		isKey
+		summarizeBy: none
+		sourceColumn: equipment_id
+
+	column 'System ID'
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: system_id
+
+	/// Physical equipment tag assigned by the engineering source.
+	column 'Equipment Tag'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: tag
+
+	/// Source classification code for the physical asset.
+	column 'Equipment Type Code'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: equipment_type_code
+
+	/// Human-readable physical asset classification.
+	column 'Equipment Type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: equipment_type_name
+
+	/// Equipment manufacturer recorded in the asset registry.
+	column Manufacturer
+		dataType: string
+		summarizeBy: none
+		sourceColumn: manufacturer
+
+	/// Manufacturer model designation.
+	column 'Equipment Model'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: model
+
+	/// Source criticality classification; not additive and no severity ordering is inferred.
+	column Criticality
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: criticality
+
+	/// Installation date from the asset registry; no time-intelligence calculations are defined.
+	column 'Install Date'
+		dataType: dateTime
+		formatString: yyyy-MM-dd
+		summarizeBy: none
+		sourceColumn: install_date
+
+	/// Registry status, not a telemetry-derived operating condition.
+	column 'Registry Status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: status
+
+	/// Whether the source registry marks this physical asset active.
+	column 'Is Active'
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: is_active
+
+	partition Equipment = entity
+		mode: directLake
+		source
+			entityName: silver_equipment
+			expressionSource: 'Direct Lake - Hydro Core Assets'

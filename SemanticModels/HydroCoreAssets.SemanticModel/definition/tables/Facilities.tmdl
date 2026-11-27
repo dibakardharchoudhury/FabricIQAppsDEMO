@@ -1,0 +1,45 @@
+/// One row per facility from silver_facilities. The root of the source asset hierarchy.
+table Facilities
+
+	/// Number of facilities in the current facility filter context.
+	measure 'Facility Count' = COUNTROWS('Facilities')
+		formatString: #,##0
+		displayFolder: Inventory
+
+	column 'Facility ID'
+		dataType: string
+		isHidden
+		isKey
+		summarizeBy: none
+		sourceColumn: facility_id
+
+	/// Facility name recorded in the engineering master data.
+	column 'Facility Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: facility_name
+
+	/// Facility category supplied by the source.
+	column 'Facility Type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: type
+
+	/// Country recorded for the facility.
+	column Country
+		dataType: string
+		dataCategory: Country
+		summarizeBy: none
+		sourceColumn: country
+
+	/// Original commissioning date text; retained without guessing a date format.
+	column 'Commissioned Date Text'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: commissioned_date
+
+	partition Facilities = entity
+		mode: directLake
+		source
+			entityName: silver_facilities
+			expressionSource: 'Direct Lake - Hydro Core Assets'

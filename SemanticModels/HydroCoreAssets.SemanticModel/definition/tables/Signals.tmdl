@@ -1,0 +1,55 @@
+/// One row per registered OPC UA signal from silver_signal_master. Contains signal identity, not event readings, timestamps, quality, or freshness.
+table Signals
+
+	/// Number of registered signal definitions, not the number of telemetry events.
+	measure 'Signal Count' = COUNTROWS('Signals')
+		formatString: #,##0
+		displayFolder: Inventory
+
+	/// Signals marked active in the registry; this does not certify ingestion or delivery.
+	measure 'Active Signal Count' = CALCULATE([Signal Count], KEEPFILTERS('Signals'[Is Active] = TRUE()))
+		formatString: #,##0
+		displayFolder: Inventory
+
+	column 'OPC UA Node ID'
+		dataType: string
+		isHidden
+		isKey
+		summarizeBy: none
+		sourceColumn: opcua_node_id
+
+	column 'Instrument ID'
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: instrument_id
+
+	/// Engineering tag of the registered signal.
+	column 'Signal Tag'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: tag
+
+	/// Signal classification recorded in the signal master.
+	column 'Signal Type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: signal_type
+
+	/// Unit of the signal's measurements; no measurement values are included in this model.
+	column Unit
+		dataType: string
+		summarizeBy: none
+		sourceColumn: unit
+
+	/// Whether the signal definition is marked active in the source registry.
+	column 'Is Active'
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: is_active
+
+	partition Signals = entity
+		mode: directLake
+		source
+			entityName: silver_signal_master
+			expressionSource: 'Direct Lake - Hydro Core Assets'

@@ -1,0 +1,14 @@
+/// Asset inventory only. Filters flow from facilities through systems, equipment, instruments, and signals. Counts do not represent live telemetry or operational health.
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: en-US
+	discourageImplicitMeasures
+
+	annotation PBI_QueryOrder = ["Direct Lake - Hydro Core Assets"]
+
+ref table Facilities
+ref table Systems
+ref table Equipment
+ref table Instruments
+ref table Signals

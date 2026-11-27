@@ -43,6 +43,30 @@ an existing project, even for a fresh Fabric workspace; check only for missing
 resources. Subsequent updates normally leave it unchecked.
 See the [project-sharing and creation decision table](HydroOperationsApp/DEPLOY.md#choosing-project-sharing-and-creation).
 
+## Core asset semantic model
+
+[`Hydro Core Assets`](SemanticModels/HydroCoreAssets.SemanticModel) is a separate
+Power BI Direct Lake semantic model for `ws-FabricIQAppsDemoEspenFeature`, backed by
+the verified `Energy_IQ_LakehouseRTI_V6` silver tables. It does not replace or modify
+the Fabric IQ ontology. The source expression is deliberately workspace-specific;
+resolve and verify the target workspace and Lakehouse before deploying it elsewhere.
+The [deployed model](https://app.powerbi.com/groups/475f0e52-67dc-40d1-aa12-6c9b9634204b/datasets/3a771294-afdd-4a5a-aef6-1f59af001d94/details)
+was created and refreshed on 2026-11-27, with definition/source readback and live DAX
+checks of all eight measures, unique nonblank keys, parent-key coverage, and
+facility-to-signal filter propagation. At that time it contained 3 facilities,
+3 systems, 15 equipment records, 90 instruments, and 90 signals. These are demo
+inventory counts, not fixed model limits or runtime health guarantees.
+
+The five source grains are preserved as Facilities -> Systems -> Equipment ->
+Instruments -> Signals, with four active many-to-one relationships and filtering
+from parent to child only. This intentional inventory hierarchy avoids materializing
+new denormalized tables or modifying the existing sources. Redundant ancestor keys
+are omitted to prevent ambiguous filter paths. Record counts and registry-active
+counts are explicit measures; downstream selections do not filter ancestor counts.
+Installation dates are descriptive registry attributes, not a time-intelligence model.
+Weather, operational SQL, Eventhouse readings, and ontology control/audit tables are
+excluded. Signal counts and active flags must not be interpreted as telemetry health.
+
 ## Ontology generations and optional agents
 
 The canonical `RTI_004`, `RTI_005`, and `RTI_006` notebook names remain unchanged, including their

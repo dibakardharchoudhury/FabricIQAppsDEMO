@@ -1,0 +1,6 @@
+/// Verified source: Energy_IQ_LakehouseRTI_V6 in ws-FabricIQAppsDemoEspenFeature. No data is copied into this definition.
+expression 'Direct Lake - Hydro Core Assets' =
+		let
+		    Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/475f0e52-67dc-40d1-aa12-6c9b9634204b/9d6fdce5-8a68-44f0-a20f-cd835d6f5331", [HierarchicalNavigation=true])
+		in
+		    Source

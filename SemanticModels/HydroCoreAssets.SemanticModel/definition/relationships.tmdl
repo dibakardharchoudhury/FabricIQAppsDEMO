@@ -1,0 +1,27 @@
+relationship 'Systems belong to Facilities'
+	fromCardinality: many
+	toCardinality: one
+	crossFilteringBehavior: oneDirection
+	fromColumn: Systems.'Facility ID'
+	toColumn: Facilities.'Facility ID'
+
+relationship 'Equipment belongs to Systems'
+	fromCardinality: many
+	toCardinality: one
+	crossFilteringBehavior: oneDirection
+	fromColumn: Equipment.'System ID'
+	toColumn: Systems.'System ID'
+
+relationship 'Instruments belong to Equipment'
+	fromCardinality: many
+	toCardinality: one
+	crossFilteringBehavior: oneDirection
+	fromColumn: Instruments.'Equipment ID'
+	toColumn: Equipment.'Equipment ID'
+
+relationship 'Signals originate from Instruments'
+	fromCardinality: many
+	toCardinality: one
+	crossFilteringBehavior: oneDirection
+	fromColumn: Signals.'Instrument ID'
+	toColumn: Instruments.'Instrument ID'

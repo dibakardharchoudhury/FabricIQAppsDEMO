@@ -1,0 +1,38 @@
+/// One row per engineering system from silver_systems. Facility filters propagate to downstream assets.
+table Systems
+
+	/// Number of systems in the current facility and system filter context.
+	measure 'System Count' = COUNTROWS('Systems')
+		formatString: #,##0
+		displayFolder: Inventory
+
+	column 'System ID'
+		dataType: string
+		isHidden
+		isKey
+		summarizeBy: none
+		sourceColumn: system_id
+
+	column 'Facility ID'
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: facility_id
+
+	/// Engineering name of the system within its parent facility.
+	column 'System Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: system_name
+
+	/// Source engineering system classification code (OAG RDS); not a relationship key.
+	column 'System Classification Code'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: oag_rds_system_code
+
+	partition Systems = entity
+		mode: directLake
+		source
+			entityName: silver_systems
+			expressionSource: 'Direct Lake - Hydro Core Assets'
