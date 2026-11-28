@@ -1,3 +1,53 @@
+# Internal ASE v3 Logic App deployment (2026-11-28)
+
+Status: Blocked — keyless first-time bootstrap and workflow publishing are not verified.
+
+The user approved proceeding with ASE v3 for a private, keyless Standard
+Logic App and verifying an actual private workflow invocation. Use the
+previously approved subscription, resource group, VNet and region. Preserve
+the current WS1 resources; deleting them requires separate approval. Do not
+change or bypass the inherited storage authentication policy. The previously
+approved temporary private verification helper and its temporary permissions
+must be removed after use. Validate current Azure state, cost, identity,
+private DNS, supported deployment and runtime paths before provisioning.
+
+## Architecture and validation
+
+The proposed ASE is internal-VIP, in a new dedicated delegated `/24` in
+`vnet_dbfabric`, with a Windows Isolated v2 plan and private app/SCM DNS.
+The host storage would use a user-assigned managed identity and remain private
+with shared-key access disabled. The prior WS1 app and plan are retained.
+An internal ASE app's `publicNetworkAccess` setting controls its default
+internal entry point; disabling it would require a separate app private
+endpoint, rather than automatically making the ILB more private.
+
+Preflight on 2026-11-28: `I1V2` is listed for Sweden Central; Microsoft.Web
+regional usage is 0 of 13, but this does not guarantee ASE capacity. The
+Microsoft.Quota CLI could not query Microsoft.Web because the provider is not
+registered. The VNet subnet list has no overlap with `10.0.8.0/24`; check
+again before creating anything. No ASE exists in the selected subscription.
+Private DNS records must use the actual ASE inbound IP and domain after
+creation. The four documented storage roles are available as built-in roles.
+
+Microsoft documents disabling storage keys for an ASE v3 Logic App **after**
+configuring managed identity, but does not establish that its documented
+creation/publishing path works when key access has never been enabled.
+Azure Functions documentation says Dedicated plans do not have the default
+Azure Files content-share dependency, but that is not proof of the complete
+Logic Apps bootstrap and private workflow publishing path. Microsoft support
+or an authoritative Logic Apps-specific example must confirm this path before
+provisioning a chargeable ASE. Do not change policy or enable keys to test it.
+No new Azure resources, temporary helper, or role assignments were created
+in this phase. The old WS1 plan continues to incur charges.
+
+Sources:
+- https://learn.microsoft.com/azure/logic-apps/create-single-tenant-workflows-azure-portal#set-up-managed-identity-access-to-your-storage-account
+- https://learn.microsoft.com/azure/azure-functions/storage-considerations#create-an-app-without-azure-files
+- https://learn.microsoft.com/azure/app-service/environment/using#configure-dns
+- https://learn.microsoft.com/azure/app-service/overview-access-restrictions
+
+---
+
 # Private Logic App deployment (2026-11-27)
 
 Status: Blocked — infrastructure deployed; runtime storage blocked by inherited policy.
